@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Troubleshooting — H3cApp</title>
+  <meta name="description" content="What to check when H3cApp says the model isn't found, generation is slow, a download stops, fast mode is missing; where files are saved, supported systems, reporting problems and licenses.">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/faq.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/faq.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/faq.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/faq.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="Troubleshooting — H3cApp">
+  <meta property="og:description" content="What to check when the model isn't found, generation is slow, and more.">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/faq.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image-en.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="../assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="../assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="../assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="Site">
+        <ul>
+          <li><a href="./#examples">Examples</a></li>
+          <li><a href="./#requirements">Requirements</a></li>
+          <li><a href="getting-started.html">Getting started</a></li>
+          <li><a href="guide.html">Guide</a></li>
+          <li><a href="faq.html" aria-current="page">Troubleshooting</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="../faq.html" hreflang="ja" lang="ja">日本語</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>Troubleshooting</h1>
+      <p class="lead">Common stumbling points and what to check, in order. Written for H3cApp v0.4.4.</p>
+      <nav class="toc" aria-label="On this page">
+        <p>On this page</p>
+        <ol>
+          <li><a href="#model-not-found">“Model not found” appears</a></li>
+          <li><a href="#slow">Generation is very slow</a></li>
+          <li><a href="#download">The download stopped, or there isn't enough space</a></li>
+          <li><a href="#fast-mode">“Fast mode (experimental)” isn't shown</a></li>
+          <li><a href="#saved">Where are videos saved?</a></li>
+          <li><a href="#project-required">Why batches need a project</a></li>
+          <li><a href="#old-mac">It doesn't run on an older macOS or an Intel Mac</a></li>
+          <li><a href="#gatekeeper">A warning appears at launch</a></li>
+          <li><a href="#update">Updating from an earlier version</a></li>
+          <li><a href="#report">Reporting a problem</a></li>
+          <li><a href="#license">Licenses and terms</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="model-not-found" aria-labelledby="q1">
+      <h2 id="q1">“Model not found” appears</h2>
+      <ol class="steps">
+        <li>Click the status icon at the top right of the window and check “Model in use” and “Load error”.</li>
+        <li>Check that the registered folder is the “MiniMax-H3” folder that directly contains <code>FL2VA</code> (and <code>Ref2VA</code> if you use references). Registering the FL2VA folder itself, or a folder above it, won't load.</li>
+        <li>If you moved the model folder, register its new location with “<span class="ui">Add Folder…</span>” in “<span class="ui">Model Manager</span>” and select that model.</li>
+        <li>If it fails only when using reference images, videos or audio, Ref2VA may not be downloaded. Add it from <a href="getting-started.html#models">Getting the model</a>.</li>
+      </ol>
+    </section>
+
+    <section class="section section-narrow" id="slow" aria-labelledby="q2">
+      <h2 id="q2">Generation is very slow</h2>
+      <p>Check these in order.</p>
+      <ol class="steps">
+        <li><strong>Size</strong>: larger sizes take longer. Try Small or Medium first.</li>
+        <li><strong>Length</strong>: time grows faster than the length (at 512×512 with standard settings, 5 s took about 6 minutes and 15 s about 30 minutes in one measurement).</li>
+        <li><strong>Reference files</strong>: generation with reference images, videos and audio tends to take longer, and large reference videos slow the whole generation down a lot.</li>
+        <li><strong>Compute mode</strong>: on an M5-class Mac, check that “Fast (int8 cache)” is selected. “Low memory (SSD streaming)” needs less memory but takes longer.</li>
+        <li><strong>Free memory</strong>: quit other apps before generating. Running out of memory and swapping slows things down a lot.</li>
+      </ol>
+      <p>“Size” in “<span class="ui">Advanced Settings</span>” shows a rough time estimate for the current settings, with a warning when it would take more than an hour.</p>
+    </section>
+
+    <section class="section section-narrow" id="download" aria-labelledby="q3">
+      <h2 id="q3">The download stopped, or there isn't enough space</h2>
+      <ul>
+        <li>The download can resume. If it stopped, click “<span class="ui">Resume</span>” in the download window, or reopen the app and start again with the same destination. Files already downloaded are skipped.</li>
+        <li>If there isn't enough space, choose a disk with room using “<span class="ui">Change…</span>” next to “<span class="ui">Save to</span>” (not possible during a download). FL2VA alone needs about 144.1 GB, and about 288.1 GB with Ref2VA. The int8 cache (about 19.3 GB each) is created on the internal disk, separately from the model's location.</li>
+        <li>Leaving “<span class="ui">Also include Ref2VA</span>” off at first, so only FL2VA is downloaded, keeps the size down.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="fast-mode" aria-labelledby="q4">
+      <h2 id="q4">“Fast mode (experimental)” isn't shown</h2>
+      <p>“Fast mode (experimental)” appears in the advanced settings only on an M5-class GPU (with hardware tensor units) and a build that supports it. The DMG on GitHub is such a build. It is not shown on M4 or earlier chips.</p>
+      <p>It is a separate feature from the “Fast (int8 cache)” compute mode and the “Fast” speed setting. See <a href="guide.html#speed">the three speed settings</a>.</p>
+    </section>
+
+    <section class="section section-narrow" id="saved" aria-labelledby="q5">
+      <h2 id="q5">Where are videos saved?</h2>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><th scope="row">No project open</th><td>A temporary file, deleted when you generate the next one. Save it with “<span class="ui">Export Video…</span>” (starts in Downloads) or “<span class="ui">Save as Project…</span>”.</td></tr>
+            <tr><th scope="row">Project open</th><td>In the project folder (by default <code>~/Movies/H3cApp/&lt;name&gt;</code>): an MP4 named with the date, time and seed, plus a record of its settings (.json). It stays until you delete it.</td></tr>
+            <tr><th scope="row">Model</th><td>The destination chosen at download time (by default <code>~/Library/Application Support/h3c-app/MiniMax-H3</code>).</td></tr>
+            <tr><th scope="row">int8 cache</th><td>Inside <code>~/Library/Application Support/h3c-app/cache</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="project-required" aria-labelledby="q6">
+      <h2 id="q6">Why batches need a project</h2>
+      <p>Without an open project, each video is a temporary file that the next generation deletes. A batch would therefore lose all but its last video, so it needs a project to save them in. If you choose 2 or more with no project open, the app asks you to create a new project or pick an existing one. See <a href="guide.html#projects">Projects and batches</a>.</p>
+    </section>
+
+    <section class="section section-narrow" id="old-mac" aria-labelledby="q7">
+      <h2 id="q7">It doesn't run on an older macOS or an Intel Mac</h2>
+      <p>H3cApp is for Apple Silicon Macs with macOS 15 Sequoia or later. It won't launch on macOS 14 or earlier, and Intel Macs are not supported.</p>
+      <p class="small muted">Up to v0.4.3 the description said “macOS 13 or later”, but the generation engine actually needed macOS 15, so the requirement was corrected in v0.4.4.</p>
+    </section>
+
+    <section class="section section-narrow" id="gatekeeper" aria-labelledby="q8">
+      <h2 id="q8">A warning appears at launch</h2>
+      <p>The DMG on the GitHub releases page is signed and notarized by Apple. If you still see a warning, check:</p>
+      <ul>
+        <li>that you downloaded it from the <a href="https://github.com/JunzoKamahara/H3cApp/releases/latest">official releases page</a>;</li>
+        <li>the app version (“About H3cApp” in the app menu) and that your Mac runs macOS 15 or later.</li>
+      </ul>
+      <p>We don't recommend turning off Gatekeeper or similar. If unsure, see Apple's guide <a href="https://support.apple.com/en-us/102445">Safely open apps on your Mac</a>.</p>
+    </section>
+
+    <section class="section section-narrow" id="update" aria-labelledby="q9">
+      <h2 id="q9">Updating from an earlier version</h2>
+      <p>Open the new DMG and drag H3cApp into Applications to replace the old one. Settings, presets and registered models carry over. Up to v0.3.0 the app was called “h3c-app”, so once you have v0.4.0 or later installed you can delete the old <code>h3c-app.app</code>.</p>
+    </section>
+
+    <section class="section section-narrow" id="report" aria-labelledby="q10">
+      <h2 id="q10">Reporting a problem</h2>
+      <p>Please use <a href="https://github.com/JunzoKamahara/H3cApp/issues">GitHub Issues</a>. This information helps:</p>
+      <ul>
+        <li>App version (e.g. 0.4.4), macOS version, chip (e.g. M5), memory</li>
+        <li>How you generated (from text or images), shape, size, length, and advanced settings (compute mode, speed, fast mode, …)</li>
+        <li>What you did and what happened (steps to reproduce), and the exact error message</li>
+      </ul>
+      <p>Issues are public. Leave out prompts you don't want to share and file locations that include personal names.</p>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="q11">
+      <h2 id="q11">Licenses and terms</h2>
+      <ul>
+        <li><strong>The app (H3cApp)</strong>: <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/LICENSE">MIT License</a>, based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez). Notices for bundled software are in <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a>.</li>
+        <li><strong>The video model (MiniMax-H3)</strong>: under its own license, the MiniMax H3 Community License, separate from the app. Read the <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE">license</a> and the provider's <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/QA-about-License.md">license Q&amp;A</a> before use.</li>
+        <li><strong>Add-on models (LoRA)</strong>: follow the terms of each one's source.</li>
+      </ul>
+      <p>This site can't tell you whether commercial or other uses are allowed; check the latest licenses above. The app is distributed free of charge, but the data for downloading the model and the electricity for generating are on you.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">Report a problem (Issues)</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md">README</a></li>
+        <li><a href="faq.html#license">License</a></li>
+        <li><a href="../faq.html" hreflang="ja" lang="ja">日本語</a></li>
+      </ul>
+      <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). It generates video with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax-H3</a> by MiniMax (MiniMax H3 Community License).</p>
+    </div>
+  </footer>
+  <script src="../assets/js/main.js" defer></script>
+</body>
+</html>

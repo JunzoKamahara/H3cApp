@@ -20,6 +20,15 @@
     }
   }
 
+  var english = (document.documentElement.lang || "").indexOf("en") === 0;
+  var messages = english ? {
+    ok: "Copied. Paste it into the app's prompt field.",
+    error: "Couldn't copy automatically. Press ⌘C to copy the selected text."
+  } : {
+    ok: "コピーしました。アプリのプロンプト欄に貼り付けてください。",
+    error: "自動でコピーできませんでした。選択された文字を ⌘C でコピーしてください。"
+  };
+
   document.querySelectorAll("[data-copy-target]").forEach(function (button) {
     var target = document.getElementById(button.getAttribute("data-copy-target"));
     var status = document.getElementById(button.getAttribute("data-copy-status"));
@@ -29,12 +38,12 @@
     button.addEventListener("click", function () {
       var text = target.value;
       var done = function () {
-        setStatus(status, "コピーしました。アプリのプロンプト欄に貼り付けてください。", "ok");
+        setStatus(status, messages.ok, "ok");
       };
       var failed = function () {
         target.focus();
         target.select();
-        setStatus(status, "自動でコピーできませんでした。選択された文字を ⌘C でコピーしてください。", "error");
+        setStatus(status, messages.error, "error");
       };
       if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(text).then(done, function () {

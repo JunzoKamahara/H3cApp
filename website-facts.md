@@ -15,6 +15,16 @@ of them, then the pages (see `website-maintenance.md`).
   user-facing feature exists only on `main`, so nothing main-only is
   described.
 
+## Languages
+
+Japanese at `/H3cApp/` (main, x-default) and English at `/H3cApp/en/`
+(added 2026-10-11). English UI names come from the v0.4.4
+`en.lproj/Localizable.strings` (e.g. 動画を書き出す… = Export Video…,
+高速（int8キャッシュ）= Fast (int8 cache), 詳細設定 = Advanced Settings,
+モデル管理 = Model Manager, サイズを確認… = Check Size…). The screenshots
+show the Japanese UI on both versions; the English pages say so.
+`og-image-en.jpg` is the English share image.
+
 ## Distribution
 
 | item | value | source |

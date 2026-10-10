@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Getting started — H3cApp</title>
+  <meta name="description" content="Install H3cApp, get the AI model, and make and save your first video, without using the Terminal.">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/getting-started.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/getting-started.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/getting-started.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/getting-started.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="Getting started — H3cApp">
+  <meta property="og:description" content="From installing the app and getting the model to making and saving your first video.">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/getting-started.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image-en.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="../assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="../assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="../assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="Site">
+        <ul>
+          <li><a href="./#examples">Examples</a></li>
+          <li><a href="./#requirements">Requirements</a></li>
+          <li><a href="getting-started.html" aria-current="page">Getting started</a></li>
+          <li><a href="guide.html">Guide</a></li>
+          <li><a href="faq.html">Troubleshooting</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="../getting-started.html" hreflang="ja" lang="ja">日本語</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>Getting started</h1>
+      <p class="lead">Install the app, get the AI model, and make your first video, step by step. No Terminal needed.</p>
+      <p class="small muted">Button names below are as they appear when macOS is set to English; the app follows the system language (English or Japanese).</p>
+      <nav class="toc" aria-label="On this page">
+        <p>On this page</p>
+        <ol>
+          <li><a href="#install">Install the app</a></li>
+          <li><a href="#models">Get the AI model</a></li>
+          <li><a href="#compute">Check the compute mode</a></li>
+          <li><a href="#first-video">Make and save your first video</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="install" aria-labelledby="install-title">
+      <h2 id="install-title">1. Install the app</h2>
+      <ol class="steps">
+        <li>
+          <strong>Check your Mac.</strong> In the Apple menu, open “About This Mac” and confirm the chip is “Apple M…” and macOS is 15 (Sequoia) or later. Intel Macs and macOS 14 or earlier will not work.
+        </li>
+        <li>
+          <strong>Download the DMG.</strong> Open the <a href="https://github.com/JunzoKamahara/H3cApp/releases/latest">latest release page</a> and, under <strong>Assets</strong>, click <code>H3cApp-0.4.4.dmg</code> (about 18.9 MB; the number changes with the version). The files labeled “Source code” are for developers, not for installing.
+        </li>
+        <li>
+          <strong>Open the DMG.</strong> Double-click the downloaded DMG file; a window with the H3cApp icon opens.
+        </li>
+        <li>
+          <strong>Copy the app to Applications.</strong> Drag the H3cApp icon onto “Applications”. If an older version is there, replace it.
+        </li>
+        <li>
+          <strong>Launch the app.</strong> Double-click H3cApp in the Applications folder. H3cApp is notarized by Apple. If a warning appears at launch, see <a href="faq.html#gatekeeper">Troubleshooting</a>.
+        </li>
+      </ol>
+      <div class="checkpoint">
+        <p><strong>That completes installing the app.</strong> You can't make videos yet, though: the AI model comes next.</p>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="models" aria-labelledby="models-title">
+      <h2 id="models-title">2. Get the AI model</h2>
+      <p>H3cApp uses MiniMax-H3, a video generation model released by MiniMax. The model is not part of the app, so you download it once at the start.</p>
+      <div class="warn">
+        <p><strong>Start when you have time and disk space to spare.</strong> “FL2VA”, used to generate from text and from first/last images, is about 144.1 GB on its own (shown in the app as about 134.2 GB). Depending on your connection it can take several hours or more.</p>
+      </div>
+      <p>If no model is registered when H3cApp starts, a window titled “<span class="ui">Download the MiniMax-H3 Model</span>” opens.</p>
+
+      <h3>To download</h3>
+      <ol class="steps">
+        <li>
+          <strong>Choose where to save it.</strong> “<span class="ui">Save to</span>” starts at <code>~/Library/Application Support/h3c-app/MiniMax-H3</code> on the internal disk. To use another disk, pick a folder with “<span class="ui">Change…</span>” (a MiniMax-H3 folder is created inside it). The model is read during generation, so disk speed affects generation time; an external disk is not necessarily as fast as the internal SSD.
+        </li>
+        <li>
+          <strong>Decide which models you need.</strong> At first, we recommend leaving “<span class="ui">Also include Ref2VA (reference images and videos; roughly doubles the size)</span>” <strong>off</strong>. You can add the reference images/videos/audio feature later.
+        </li>
+        <li>
+          <strong>Click “<span class="ui">Check Size…</span>”.</strong> After it checks the Hugging Face file list, the real total appears, for example “134.2GB in total (81 files)”. Make sure the destination has enough free space.
+        </li>
+        <li>
+          <strong>Click “<span class="ui">Start Download</span>”.</strong> Progress, file count and speed are shown. If you “<span class="ui">Cancel</span>” or the connection drops, it resumes where it left off next time. If it fails, click “<span class="ui">Resume</span>”.
+        </li>
+        <li>
+          <strong>When “<span class="ui">Download complete.</span>” appears, click “<span class="ui">Done</span>”.</strong> The model is registered and starts loading.
+        </li>
+      </ol>
+
+      <h3>If you already have the model</h3>
+      <p>If you already have a MiniMax-H3 folder containing FL2VA (and optionally Ref2VA), choose it with “<span class="ui">Add Folder…</span>” in the download window to register it without downloading.</p>
+
+      <h3>Downloading later, or adding Ref2VA</h3>
+      <p>“<span class="ui">Later</span>” closes the download window. To download later, use “<span class="ui">Download and Add…</span>” in “<span class="ui">Model Manager</span>” (the stacked-squares icon at the top right of the window).</p>
+      <p>Use the same window to add Ref2VA for reference images, videos and audio. Make the destination the same MiniMax-H3 folder as your current model (no change needed if you first downloaded to the default location; otherwise use “<span class="ui">Change…</span>” and choose the folder that contains MiniMax-H3), turn on “<span class="ui">Also include Ref2VA</span>” and download. FL2VA files already there are skipped, so only Ref2VA is fetched. When it finishes, the model list gains a second entry for the same folder. The int8 cache is kept per entry, so keep the original entry selected to avoid rebuilding the cache.</p>
+
+      <h3>Is it ready?</h3>
+      <p>Check the status icon at the top right of the window.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Icon</th><th scope="col">Label</th><th scope="col">Meaning</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Hourglass</th><td>Preparing the model</td><td>Loading. Wait a moment.</td></tr>
+            <tr><th scope="row">Checkmark</th><td>Ready</td><td>You can generate.</td></tr>
+            <tr><th scope="row">Warning triangle</th><td>Model not found</td><td>No model registered, or its folder moved. See <a href="faq.html#model-not-found">Troubleshooting</a>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Click the icon to see the model in use and any load error.</p>
+    </section>
+
+    <section class="section section-narrow" id="compute" aria-labelledby="compute-title">
+      <h2 id="compute-title">3. Check the compute mode</h2>
+      <p>The compute mode decides how the model is loaded and computed. Open “<span class="ui">Advanced Settings</span>” at the top right of the panel (or press <kbd>⌘</kbd><kbd>,</kbd>) and look at “<span class="ui">Compute mode</span>”. To begin, the mode the app picked is fine.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Your Mac</th><th scope="col">Mode</th><th scope="col">What to do</th></tr></thead>
+          <tbody>
+            <tr>
+              <th scope="row">M5-class GPU</th>
+              <td>Fast (int8 cache)<br><span class="small muted">selected by default</span></td>
+              <td>Once, build the cache with “<span class="ui">Build Cache…</span>” (about 19.3 GB, stored on the internal disk in <code>~/Library/Application Support/h3c-app/cache</code>). Generating before that shows “The int8 cache wasn't found”.</td>
+            </tr>
+            <tr>
+              <th scope="row">Other Apple Silicon</th>
+              <td>Low memory (SSD streaming)<br><span class="small muted">selected by default</span></td>
+              <td>Works as is, with no cache. It needs less memory but takes longer.</td>
+            </tr>
+            <tr>
+              <th scope="row">A Mac with lots of memory</th>
+              <td>Resident (for plenty of memory, no cache)</td>
+              <td>Loads the whole model into memory. The app shows a warning below 32 GB of physical memory on an M5-class Mac, or below 64 GB on others. It is not a mode for Macs with little memory.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small">To use the reference images/videos/audio feature (Ref2VA) with “Fast (int8 cache)”, build a separate Ref2VA cache too (another 19.3 GB or so). How this differs from the speed setting and “Fast mode (experimental)” is explained in <a href="guide.html#speed">the three speed settings</a>.</p>
+      <div class="checkpoint">
+        <p><strong>When the status icon shows “Ready” and the compute mode is set up (cache built on an M5-class Mac), you are ready for your first generation.</strong></p>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="first-video" aria-labelledby="first-title">
+      <h2 id="first-title">4. Make and save your first video</h2>
+      <p>Start with one small 5-second video to make sure everything works.</p>
+      <figure class="shot">
+        <img src="../assets/images/app-composer.jpg" width="1600" height="995" loading="lazy" alt="The panel at the bottom of the H3cApp window: a From text / From images switch at the top left, Presets and Advanced Settings at the top right, the prompt field in the middle, buttons for shape, size, length and count below it, and the up-arrow generate button at the bottom right.">
+        <figcaption>The bottom panel (real v0.4.4 screen, shown in Japanese; this one is set to Landscape, Medium ×2). Below the prompt field are Shape, Size, Length and the video count; the generate button (↑) is at the bottom right.</figcaption>
+      </figure>
+      <ol class="steps">
+        <li>Make sure the status icon shows “Ready”.</li>
+        <li>In the switch at the top left of the panel, choose “<span class="ui">From text</span>” (selected by default).</li>
+        <li>
+          Copy the example prompt below and paste it into the prompt field.
+          <div class="copy-block">
+            <label for="prompt-example" class="small"><strong>Example prompt</strong> (a small orange cat playing with a ball of yarn on a wooden floor in soft afternoon light; fixed camera, gentle movement; only quiet room sound, no speech or music)</label>
+            <textarea id="prompt-example" readonly rows="5">A small orange cat plays with a ball of yarn on a wooden floor in soft afternoon light. Static camera, gentle movement. Soft room ambience, no speech, no music.</textarea>
+            <div class="copy-row">
+              <button type="button" class="copy-button" data-copy-target="prompt-example" data-copy-status="copy-status-1" hidden>Copy</button>
+              <span class="copy-status" id="copy-status-1" role="status" aria-live="polite">You can also select the text and press <kbd>⌘</kbd><kbd>C</kbd>.</span>
+            </div>
+          </div>
+          <p class="small muted">This is just an example input; it won't necessarily give the same picture or sound.</p>
+        </li>
+        <li>Below the prompt field, set “<span class="ui">Shape</span>” to “<span class="ui">Square</span>”, “<span class="ui">Size</span>” to “<span class="ui">Small (256×256)</span>”, “<span class="ui">Length</span>” to “<span class="ui">5 s</span>”, and the video count to 1. Size starts at “Medium (512×512)”, so change it to Small.</li>
+        <li>Leave “<span class="ui">Advanced Settings</span>” at the top right of the panel as it is.</li>
+        <li>Click the up-arrow (↑) button at the bottom right, or press <kbd>Enter</kbd> in the prompt field, to start (<kbd>Shift</kbd>+<kbd>Enter</kbd> adds a line).</li>
+        <li>While it runs, the preview shows progress, elapsed time and “About … left (done around …)”. At first it says “Estimating the time left…”. On the author's M5 with 24 GB, this setting took 1 min 44 s.</li>
+        <li>When it finishes, the video appears in the preview. Play it with the play button (▶) and check the sound too.</li>
+        <li>
+          <strong>Save it</strong>, in one of two ways:
+          <ul>
+            <li>“<span class="ui">Export Video…</span>” (<kbd>⌘</kbd><kbd>S</kbd>): saves an MP4 wherever you like; it starts in Downloads.</li>
+            <li>“<span class="ui">Save as Project…</span>” in the project menu (folder icon at the top left): name it, and the current prompt, settings and this video are saved together in <code>~/Movies/H3cApp/&lt;name&gt;</code>.</li>
+          </ul>
+        </li>
+      </ol>
+      <div class="warn">
+        <p>Without an open project, the video is a temporary file. If you don't export it or save it as a project, it is deleted when you generate the next one.</p>
+      </div>
+      <div class="checkpoint">
+        <p><strong>Well done.</strong> Next, try the Medium size or make a video from an image. Continue to the <a href="guide.html">Guide</a>.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">Report a problem (Issues)</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md">README</a></li>
+        <li><a href="faq.html#license">License</a></li>
+        <li><a href="../getting-started.html" hreflang="ja" lang="ja">日本語</a></li>
+      </ul>
+      <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). It generates video with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax-H3</a> by MiniMax (MiniMax H3 Community License).</p>
+    </div>
+  </footer>
+  <script src="../assets/js/main.js" defer></script>
+</body>
+</html>

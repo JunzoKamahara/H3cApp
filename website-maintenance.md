@@ -12,6 +12,8 @@ docs/
   guide.html              #images #projects #speed #size #prompts #advanced
   faq.html                #model-not-found #slow #download #fast-mode #saved
                           #project-required #old-mac #gatekeeper #update #report #license
+  en/                     English versions of the four pages, same file names and
+                          the same anchors; assets are shared via ../assets/
   assets/css/style.css
   assets/js/main.js       copy buttons only
   assets/images/          app-window.jpg, app-composer.jpg, og-image.jpg, icons
@@ -23,6 +25,14 @@ note-handoff.md           brief for the note article (not published)
 
 All links inside the site are relative, so it works under the project
 path `/H3cApp/` and from a local folder.
+
+Japanese is the main language (`/H3cApp/`, x-default); English lives in
+`/H3cApp/en/`. Every page links its counterpart in the header and footer
+(the 日本語 / English switch) and declares both with `hreflang`. Keep the
+two in step: same sections, same anchors, same numbers. English UI names
+are the app's own English strings (`en.lproj/Localizable.strings` of the
+release), e.g. Export Video…, Fast (int8 cache), Advanced Settings.
+`main.js` picks the copy-button messages from `<html lang>`.
 
 ## Publishing (first time)
 
@@ -98,4 +108,7 @@ relevant sections when available:
 - Advanced settings, 計算方式 and サイズ sections → getting-started.html#compute,
   guide.html#speed
 - "画像から" with 最初・最後の画像 and with 参照画像・動画・音声 → guide.html#images
+- English-UI versions of app-window.jpg and app-composer.jpg for the en/
+  pages (they currently show the Japanese UI, captioned as such): run the
+  release app with macOS (or the app's language) set to English
 - "プロジェクトを選んで生成" sheet and the project video list → guide.html#projects

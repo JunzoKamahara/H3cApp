@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>H3cApp — AI video with sound, made on your Mac</title>
+  <meta name="description" content="H3cApp is a macOS app that turns text and images into short videos with sound, generated on your Apple Silicon Mac. How to download, install, get the model and make a first video.">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:locale:alternate" content="ja_JP">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="H3cApp — AI video with sound, made on your Mac">
+  <meta property="og:description" content="A macOS app that turns text and images into short videos with sound on Apple Silicon. A ready-to-use app: no Python or PyTorch setup.">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image-en.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="../assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="../assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="../assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="Site">
+        <ul>
+          <li><a href="#examples">Examples</a></li>
+          <li><a href="#requirements">Requirements</a></li>
+          <li><a href="getting-started.html">Getting started</a></li>
+          <li><a href="guide.html">Guide</a></li>
+          <li><a href="faq.html">Troubleshooting</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="../" hreflang="ja" lang="ja">日本語</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow">H3cApp for macOS</p>
+        <h1 id="hero-title">AI video with sound, made on your Mac.</h1>
+        <p class="lead">H3cApp is a macOS app that turns text and images into short videos with sound. Generation runs on your Apple Silicon Mac. It is a ready-to-use app, so there is no Python or PyTorch environment to set up.</p>
+        <div class="cta-row">
+          <a class="button button-primary" href="https://github.com/JunzoKamahara/H3cApp/releases/latest">Download the latest version</a>
+          <a class="button button-secondary" href="getting-started.html">How to get started</a>
+        </div>
+        <p class="cta-note">For Apple Silicon Macs with macOS 15 Sequoia or later. The AI model (about 144 GB and up) is a separate download.</p>
+      </div>
+      <figure class="hero-shot">
+        <img src="../assets/images/app-window.jpg" width="1520" height="1304" alt="The H3cApp window. The preview shows a generated landscape video of a person playing guitar in a stone plaza at dusk, with Export Video, Settings Used and Use as Reference buttons above it and the collapsed prompt panel with a summary line and the up-arrow generate button below.">
+        <figcaption>The real H3cApp v0.4.4 window, showing example 3 (the panel shrinks while generating). The app follows the system language; this screenshot is in Japanese.</figcaption>
+      </figure>
+    </section>
+
+    <section class="section" id="examples" aria-labelledby="examples-title">
+      <h2 id="examples-title">Examples</h2>
+      <p>These videos were generated with H3cApp v0.4.4 from the prompts below. All of them have sound; press play to hear it (nothing plays automatically).</p>
+      <div class="examples">
+        <figure class="example">
+          <div class="media">
+            <video controls playsinline preload="none" width="512" height="512" poster="../assets/video/ex2-poster.jpg" aria-label="Example 2: a cat playing with a ball of yarn on a wooden floor (512×512)">
+              <source src="../assets/video/ex2.mp4" type="video/mp4">
+              <a href="../assets/video/ex2.mp4">Open the video file</a>
+            </video>
+          </div>
+          <figcaption>
+            <p class="spec">Square, Medium (512×512), 5 s, with sound</p>
+            <p class="small muted">From text, 20 steps, speed “Standard”, seed 7. Took 5 min 59 s (M5, 24 GB).</p>
+            <p class="prompt">A small orange cat plays with a ball of yarn on a wooden floor in soft afternoon light. Static camera, gentle movement. Soft room ambience, no speech, no music.</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media">
+            <video controls playsinline preload="none" width="1344" height="768" poster="../assets/video/ex3-poster.jpg" aria-label="Example 3: a street musician playing guitar in a stone plaza at dusk (landscape, upscaled 2x)">
+              <source src="../assets/video/ex3.mp4" type="video/mp4">
+              <a href="../assets/video/ex3.mp4">Open the video file</a>
+            </video>
+          </div>
+          <figcaption>
+            <p class="spec">Landscape, Medium (generated at 672×384, upscaled 2x to 1344×768), 5 s, with sound</p>
+            <p class="small muted">From text, 20 steps, speed “Standard”, seed 7. Took 6 min 9 s (M5, 24 GB). The 2x upscale is high-quality resampling after generation.</p>
+            <p class="prompt">A street musician plays an acoustic guitar in a quiet stone plaza at dusk, warm lights in the windows behind him. Slow push-in camera. Gentle guitar melody, distant footsteps, no speech.</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media">
+            <video controls playsinline preload="none" width="256" height="256" poster="../assets/video/ex1-poster.jpg" aria-label="Example 1: the same prompt as example 2 at Square, Small (256×256)">
+              <source src="../assets/video/ex1.mp4" type="video/mp4">
+              <a href="../assets/video/ex1.mp4">Open the video file</a>
+            </video>
+          </div>
+          <figcaption>
+            <p class="spec">Square, Small (256×256), 5 s, with sound</p>
+            <p class="small muted">Same prompt, seed and settings as the first cat, only the size set to Small. This is the first setting tried in <a href="getting-started.html#first-video">Getting started</a>; details are rougher. Took 1 min 44 s (M5, 24 GB).</p>
+          </figcaption>
+        </figure>
+      </div>
+      <p class="small muted">The videos are re-encoded for the web. The same prompt and seed can give different results on another Mac or with other settings. The author also has <a href="https://youtu.be/PZrm470rGo0">a video on YouTube</a> (external site).</p>
+    </section>
+
+    <section class="section" id="features" aria-labelledby="features-title">
+      <h2 id="features-title">What you can do</h2>
+      <ul class="features">
+        <li>
+          <h3>Turn text into video</h3>
+          <p>From a text prompt, H3cApp makes a video (MP4) with matching picture and sound. Lengths run from 1 to 15 seconds, in landscape, square or portrait.</p>
+          <p class="small"><a href="getting-started.html#first-video">Make your first video</a></p>
+        </li>
+        <li>
+          <h3>Bring an image to life</h3>
+          <p>Start a video from a first (and optionally last) image, or make a new video that takes after reference images, videos and audio.</p>
+          <p class="small"><a href="guide.html#images">Using images</a></p>
+        </li>
+        <li>
+          <h3>Try several takes of the same idea</h3>
+          <p>With a project, generate several videos in a row with different seeds, and bring back the settings of the one you like later.</p>
+          <p class="small"><a href="guide.html#projects">Projects and batches</a></p>
+        </li>
+      </ul>
+    </section>
+
+    <section class="section" id="requirements" aria-labelledby="req-title">
+      <h2 id="req-title">Will it run on my Mac?</h2>
+      <p>Check the supported system and free disk space before you download. The AI model in particular is very large and is downloaded separately from the app.</p>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr>
+              <th scope="row">Mac</th>
+              <td>A Mac with Apple Silicon (an M-series chip). Intel Macs are not supported.</td>
+            </tr>
+            <tr>
+              <th scope="row">macOS</th>
+              <td>macOS 15 Sequoia or later</td>
+            </tr>
+            <tr>
+              <th scope="row">With an M5-class GPU</th>
+              <td>The fastest compute mode, “Fast (int8 cache)”, and “Fast mode (experimental)” are available.</td>
+            </tr>
+            <tr>
+              <th scope="row">Other Apple Silicon</th>
+              <td>Runs with “Low memory (SSD streaming)” or “Resident (for plenty of memory)”. Speed and memory needs depend on the Mac and the settings, and are not M5-equivalent.</td>
+            </tr>
+            <tr>
+              <th scope="row">Memory</th>
+              <td>The author tested on an M5 with 24 GB of memory (512×512 up to 15 s fit in 24 GB). Less memory has not been tested.</td>
+            </tr>
+            <tr>
+              <th scope="row">App</th>
+              <td>DMG, about 18.9 MB (signed and notarized)</td>
+            </tr>
+            <tr>
+              <th scope="row">AI model (from text, first/last image)</th>
+              <td>FL2VA: about 144.1 GB (134.2 GiB). Needed first.</td>
+            </tr>
+            <tr>
+              <th scope="row">AI model (reference images, videos, audio)</th>
+              <td>Ref2VA: another 144.1 GB or so, about 288.1 GB (268.3 GiB) in total. Add it when you need it.</td>
+            </tr>
+            <tr>
+              <th scope="row">Other space</th>
+              <td>About 19.3 GB per int8 cache (when used on an M5-class Mac), generated videos, copies of reference files, and working space.</td>
+            </tr>
+          </tbody>
+          <caption>As of October 10, 2026, version 0.4.4. Model sizes are the totals of the Hugging Face file listing. The app labels sizes “GB” but computes them in GiB (1 GiB = 1,073,741,824 bytes), so FL2VA shows as about 134.2.</caption>
+        </table>
+      </div>
+      <p class="small">Downloading the model the first time needs an internet connection; generating videos runs on your Mac. See <a href="getting-started.html#models">Getting the model</a> for details.</p>
+    </section>
+
+    <section class="section" id="flow" aria-labelledby="flow-title">
+      <h2 id="flow-title">How it goes</h2>
+      <ol class="flow">
+        <li>
+          <h3>Install the app</h3>
+          <p>Download the DMG from the GitHub releases page and drag H3cApp into Applications.</p>
+          <p class="small"><a href="getting-started.html#install">Installing</a></p>
+        </li>
+        <li>
+          <h3>Get the model</h3>
+          <p>From the window shown at first launch, download the model (about 144 GB). Depending on your connection this can take several hours or more. An interrupted download resumes.</p>
+          <p class="small"><a href="getting-started.html#models">Getting the model</a></p>
+        </li>
+        <li>
+          <h3>Make a video</h3>
+          <p>Make one small 5-second video, play it, and save it.</p>
+          <p class="small"><a href="getting-started.html#first-video">Your first video</a></p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="section" id="performance" aria-labelledby="perf-title">
+      <h2 id="perf-title">How long it takes</h2>
+      <p>Measured on the author's Mac. Other settings change both the time and the result.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Video length</th>
+              <th scope="col">Speed “Standard”</th>
+              <th scope="col">Speed “Fastest” + Fast mode (experimental)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">5 s</th><td class="num">5 min 59 s</td><td class="num">2 min 38 s</td></tr>
+            <tr><th scope="row">10 s</th><td class="num">15 min 56 s</td><td class="num">5 min 39 s</td></tr>
+            <tr><th scope="row">15 s</th><td class="num">30 min 08 s</td><td class="num">9 min 25 s</td></tr>
+          </tbody>
+          <caption>M5, 24 GB / square 512×512 / from text / 20 steps / compute mode “Fast (int8 cache)” / prompt “A cat playing with a ball of yarn.”, seed 7 / one run per setting (measured October 2–3, 2026). Time from pressing generate to the finished file; the model download is not included. “Standard” and “Fastest” skip different amounts of work, so this does not compare the same output.</caption>
+        </table>
+      </div>
+      <p class="small">Other sizes and speed settings are in the README's <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md#measured-generation-times">measured generation times</a>.</p>
+    </section>
+
+    <section class="section" id="download" aria-labelledby="dl-title">
+      <h2 id="dl-title">Download</h2>
+      <p>The latest version is on the GitHub releases page. As of October 10, 2026, the latest is v0.4.4 (released October 7, 2026).</p>
+      <div class="cta-row">
+        <a class="button button-primary" href="https://github.com/JunzoKamahara/H3cApp/releases/latest">Download the latest version</a>
+        <a class="button button-secondary" href="getting-started.html#install">Installing</a>
+      </div>
+      <div class="note">
+        <p>Under <strong>Assets</strong> on the releases page, choose the <strong>.dmg</strong> file, such as <code>H3cApp-0.4.4.dmg</code>. “Source code (zip)” and “Source code (tar.gz)” are for developers and are not used for a normal install.</p>
+      </div>
+      <p class="small">See each release's notes for what changed.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">Report a problem (Issues)</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md">README</a></li>
+        <li><a href="faq.html#license">License</a></li>
+        <li><a href="../" hreflang="ja" lang="ja">日本語</a></li>
+      </ul>
+      <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). It generates video with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax-H3</a> by MiniMax (MiniMax H3 Community License).</p>
+    </div>
+  </footer>
+  <script src="../assets/js/main.js" defer></script>
+</body>
+</html>

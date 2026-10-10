@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Guide — H3cApp</title>
+  <meta name="description" content="Using H3cApp: two ways to make video from images, projects and batches, the three speed settings, sizes and 2x upscaling, and writing prompts.">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/guide.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/guide.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/guide.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/guide.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="Guide — H3cApp">
+  <meta property="og:description" content="Making video from images, projects and batches, the speed settings, sizes and 2x upscaling.">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/guide.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image-en.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="../assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="../assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="../assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="Site">
+        <ul>
+          <li><a href="./#examples">Examples</a></li>
+          <li><a href="./#requirements">Requirements</a></li>
+          <li><a href="getting-started.html">Getting started</a></li>
+          <li><a href="guide.html" aria-current="page">Guide</a></li>
+          <li><a href="faq.html">Troubleshooting</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="../guide.html" hreflang="ja" lang="ja">日本語</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>Guide</h1>
+      <p class="lead">Once your first video works, move on to image-based generation and batches in a project. This page follows H3cApp v0.4.4 with macOS set to English.</p>
+      <nav class="toc" aria-label="On this page">
+        <p>On this page</p>
+        <ol>
+          <li><a href="#images">Making video from images</a></li>
+          <li><a href="#projects">Projects and batches</a></li>
+          <li><a href="#speed">The three speed settings</a></li>
+          <li><a href="#size">Sizes and 2x upscaling</a></li>
+          <li><a href="#prompts">Writing prompts</a></li>
+          <li><a href="#advanced">For advanced users</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="images" aria-labelledby="images-title">
+      <h2 id="images-title">Making video from images</h2>
+      <p>Choose “<span class="ui">From images</span>” at the top left of the panel, then one of two ways to use images. They mean quite different things, so pick by what you want.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col"></th><th scope="col">First/last image</th><th scope="col">Reference images, videos and audio</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">What it does</th><td>Makes a video that starts from your image. Add a last image too and it leads into that.</td><td>Makes a new video that takes after the images, videos and audio (a person, a mood, a sound). The first frame is not necessarily the reference image.</td></tr>
+            <tr><th scope="row">Model needed</th><td>FL2VA (the one you download first)</td><td>Ref2VA (<a href="getting-started.html#models">added later</a>). With “Fast (int8 cache)” on an M5-class Mac, build a cache for Ref2VA too.</td></tr>
+            <tr><th scope="row">How to set it</th><td>Pick an image under “<span class="ui">First image</span>” and, if needed, “<span class="ui">Also Set the Last Image…</span>”</td><td>Add files with “<span class="ui">Choose Files…</span>”. They are used in the order added; to change the order, remove and add again.</td></tr>
+            <tr><th scope="row">Notes</th><td>Images are center-cropped to the shape being generated.</td><td>Audio alone can't be the only reference; combine it with an image or video. Large reference videos make generation much longer.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Examples</h3>
+      <ul>
+        <li><strong>First image</strong>: use a landscape photo you took and bring it to life with a prompt like “clouds drift slowly, leaves sway”.</li>
+        <li><strong>Reference</strong>: add a character image as a reference and make a new scene with a prompt like “the character walks through a park”.</li>
+      </ul>
+      <p class="small">Click a file name in the prompt panel to see the image or video in use. A generated video can also be added as a reference with “<span class="ui">Use as Reference</span>” in the preview.</p>
+    </section>
+
+    <section class="section section-narrow" id="projects" aria-labelledby="projects-title">
+      <h2 id="projects-title">Projects and batches</h2>
+      <p>A project is a folder that keeps the prompt and settings, copies of the reference files, and the generated videos together. It defaults to <code>~/Movies/H3cApp/&lt;name&gt;</code>. Without an open project, each video is a temporary file that the next generation deletes.</p>
+      <h3>Creating and opening projects</h3>
+      <ul>
+        <li>Use the project menu at the top left (folder icon), or the project menu in the menu bar.</li>
+        <li>“<span class="ui">New Project…</span>”: name it and choose where to save it. The current prompt, settings and reference files go in.</li>
+        <li>“<span class="ui">Save as Project…</span>”: with no project open, saves the current prompt and settings together with the video in the preview.</li>
+        <li>“<span class="ui">Open Project…</span>” and “Recent Projects”: opening a saved project brings its prompt and settings back.</li>
+      </ul>
+      <h3>Several videos with the same settings</h3>
+      <ol class="steps">
+        <li>Choose a count such as 3 with the count button below the prompt field (1 to 20).</li>
+        <li>Generate: videos are made one after another with different seeds and saved in the project. With “Randomness” set to “Fixed”, the seed counts up by one.</li>
+        <li>If you choose 2 or more with no project open, “<span class="ui">Choose a Project to Generate</span>” appears. Create a “<span class="ui">New Project</span>” or pick an “<span class="ui">Existing Project</span>”. “<span class="ui">Cancel</span>” returns without generating.</li>
+        <li>When you pick an existing project whose saved prompt and settings differ from the current ones, the app asks before overwriting them. “<span class="ui">Overwrite and Generate</span>” generates with the current prompt and settings and saves them in the project.</li>
+      </ol>
+      <h3>Viewing and reusing videos</h3>
+      <p>“<span class="ui">Project Videos…</span>” in the project menu opens the list.</p>
+      <ul>
+        <li>“<span class="ui">Show</span>”: shows it in the preview.</li>
+        <li>“<span class="ui">Restore Settings</span>”: puts that video's prompt and settings back in the panel with its seed fixed, so generating makes the same video again.</li>
+        <li>“<span class="ui">Use as Reference</span>”: adds that video as a reference video (needs Ref2VA).</li>
+        <li>“<span class="ui">Delete…</span>”: moves the video and its settings record to the Trash.</li>
+      </ul>
+      <p class="small">“<span class="ui">Settings Used…</span>” above the preview shows the settings of the video on screen, and “<span class="ui">Back to the Form</span>” puts them back in the panel.</p>
+    </section>
+
+    <section class="section section-narrow" id="speed" aria-labelledby="speed-title">
+      <h2 id="speed-title">The three speed settings</h2>
+      <p>“<span class="ui">Advanced Settings</span>” has three settings that affect speed. Their names are similar, but they are different things.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Setting</th><th scope="col">Choices</th><th scope="col">What changes</th></tr></thead>
+          <tbody>
+            <tr>
+              <th scope="row">Compute mode</th>
+              <td>Fast (int8 cache) / Resident (for plenty of memory, no cache) / Low memory (SSD streaming)</td>
+              <td>How the model is loaded and computed; choose it for your Mac. “Fast (int8 cache)” needs an M5-class GPU. Resident is for Macs with plenty of memory.</td>
+            </tr>
+            <tr>
+              <th scope="row">Speed</th>
+              <td>Standard (best quality) / Fast / Fastest</td>
+              <td>Skips part of the work to go faster. Because the shortcuts differ, the result can change even with the same seed.</td>
+            </tr>
+            <tr>
+              <th scope="row">Fast mode (experimental)</th>
+              <td>On / off (off by default)</td>
+              <td>A separate feature shown only on supported M5 Macs. It helps most with long videos and may not speed up short or small ones. The result changes even with the same seed.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Start with the defaults and a small video, and try the speed setting if the wait is too long. Under “Size” in the advanced settings, the app shows a rough estimate for the current settings, based on this Mac's past generations.</p>
+      <p class="small muted">The advanced settings also have “Steps”, “Denoiser reuse” and “Layer count”. Fewer layers can break the audio, so leave them alone until you are comfortable.</p>
+    </section>
+
+    <section class="section section-narrow" id="size" aria-labelledby="size-title">
+      <h2 id="size-title">Sizes and 2x upscaling</h2>
+      <p>Choose with “<span class="ui">Shape</span>” and “<span class="ui">Size</span>” below the prompt field. Larger sizes take longer.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Shape</th><th scope="col">Small</th><th scope="col">Medium</th><th scope="col">Large</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Square</th><td class="num">256×256</td><td class="num">512×512</td><td class="num">768×768</td></tr>
+            <tr><th scope="row">Landscape</th><td class="num">448×256</td><td class="num">672×384</td><td class="num">960×544</td></tr>
+            <tr><th scope="row">Portrait</th><td class="num">256×448</td><td class="num">384×672</td><td class="num">544×960</td></tr>
+          </tbody>
+          <caption>Generated sizes (v0.4.4). The default is Square, Medium.</caption>
+        </table>
+      </div>
+      <ul>
+        <li><strong>2x upscale</strong>: turn on “<span class="ui">Upscale 2x</span>” in the Size menu to enlarge the generated video 2x in each direction with high-quality resampling. It is not AI super-resolution that draws in detail. The upscale itself takes very little time. Example: Landscape, Large upscaled 2x is 1920×1088 (not exactly 1920×1080).</li>
+        <li><strong>Custom size</strong>: turn on “<span class="ui">Use a custom size</span>” under “<span class="ui">Size</span>” in the advanced settings to enter the finished width and height. The generated size is limited to 600,000 pixels.</li>
+        <li><strong>Length</strong>: choose 1 to 15 seconds. Because of how the model works, the actual length comes out a little longer (choosing 5 s gives about 5.2 s).</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="prompts" aria-labelledby="prompts-title">
+      <h2 id="prompts-title">Writing prompts</h2>
+      <p>Short sentences covering what is on screen, how it moves, the camera and the sound tend to work well.</p>
+      <ul>
+        <li><strong>What is there</strong>: A small orange cat on a wooden floor</li>
+        <li><strong>How it moves</strong>: plays with a ball of yarn, gentle movement</li>
+        <li><strong>Camera</strong>: Static camera / Slow push-in camera</li>
+        <li><strong>Sound</strong>: Soft room ambience, no speech, no music</li>
+      </ul>
+      <p>You can describe the sound in the prompt too. If you don't want speech or music, say so, as in “no speech” and “no music”.</p>
+      <p class="small">The model provider's <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md">prompt writing guide</a> is also useful.</p>
+    </section>
+
+    <section class="section section-narrow" id="advanced" aria-labelledby="advanced-title">
+      <h2 id="advanced-title">For advanced users</h2>
+      <details>
+        <summary>Add-on models (LoRA)</summary>
+        <p>Register LoRA files in “<span class="ui">Model Manager</span>” and turn them on under “<span class="ui">Add-on models (LoRA)</span>” in the advanced settings to stack them (up to 8). 4-step Turbo LoRAs are supported. Not every LoRA works; the app tells you when one can't be loaded. Follow each LoRA's own terms of use.</p>
+      </details>
+      <details>
+        <summary>Local API</summary>
+        <p>H3cApp has an HTTP API reachable only from the same Mac (<code>127.0.0.1</code>), for driving generation from scripts. See <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md#api">API</a> in the README.</p>
+      </details>
+      <details>
+        <summary>Building from source</summary>
+        <p>Not needed to use the app. Developer instructions are in <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md#building-from-source">Building from source</a> in the README.</p>
+      </details>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">Report a problem (Issues)</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md">README</a></li>
+        <li><a href="faq.html#license">License</a></li>
+        <li><a href="../guide.html" hreflang="ja" lang="ja">日本語</a></li>
+      </ul>
+      <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). It generates video with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax-H3</a> by MiniMax (MiniMax H3 Community License).</p>
+    </div>
+  </footer>
+  <script src="../assets/js/main.js" defer></script>
+</body>
+</html>
