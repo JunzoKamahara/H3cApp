@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="../assets/js/lang.js"></script>
   <title>H3cApp — AI video with sound, made on your Mac</title>
-  <meta name="description" content="H3cApp is a macOS app that turns text and images into short videos with sound, generated on your Apple Silicon Mac. How to download, install, get the model and make a first video.">
+  <meta name="description" content="H3cApp is a macOS app that turns text and images into short videos with sound on your Apple Silicon Mac, using the MiniMax H3 video model. How to download, install, get the model and make a first video.">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/">
@@ -50,12 +50,12 @@
       <div class="hero-copy">
         <p class="eyebrow">H3cApp for macOS</p>
         <h1 id="hero-title">AI video with sound, made on your Mac.</h1>
-        <p class="lead">H3cApp is a macOS app that turns text and images into short videos with sound. Generation runs on your Apple Silicon Mac. It is a ready-to-use app, so there is no Python or PyTorch environment to set up.</p>
+        <p class="lead">H3cApp is a macOS app that turns text and images into short videos with sound, using MiniMax H3, a video generation model by MiniMax. Generation runs on your Apple Silicon Mac. It is a ready-to-use app, so there is no Python or PyTorch environment to set up.</p>
         <div class="cta-row">
           <a class="button button-primary" href="https://github.com/JunzoKamahara/H3cApp/releases/latest">Download the latest version</a>
           <a class="button button-secondary" href="getting-started.html">How to get started</a>
         </div>
-        <p class="cta-note">For Apple Silicon Macs with macOS 15 Sequoia or later. The AI model (about 144 GB and up) is a separate download.</p>
+        <p class="cta-note">For Apple Silicon Macs with macOS 15 Sequoia or later. The MiniMax H3 model (about 144 GB and up) is a separate download and comes under MiniMax H3's own license.</p>
       </div>
       <figure class="hero-shot">
         <img src="../assets/images/app-window-en.jpg" width="1520" height="1304" alt="The H3cApp window in English. The preview shows a generated landscape video of a person playing guitar in a stone plaza at dusk, with Export Video…, Settings Used…, Use as Reference and Show in Finder buttons above it, and the collapsed prompt panel with a summary line and the up-arrow generate button below.">
@@ -65,7 +65,7 @@
 
     <section class="section" id="examples" aria-labelledby="examples-title">
       <h2 id="examples-title">Examples</h2>
-      <p>These videos were generated with H3cApp v0.4.4 from the prompts below. All of them have sound; press play to hear it (nothing plays automatically).</p>
+      <p>These videos were generated with H3cApp v0.4.4 (model: MiniMax H3) from the prompts below. All of them have sound; press play to hear it (nothing plays automatically).</p>
       <div class="examples">
         <figure class="example">
           <div class="media">
@@ -162,11 +162,11 @@
             </tr>
             <tr>
               <th scope="row">AI model (from text, first/last image)</th>
-              <td>FL2VA: about 144.1 GB (134.2 GiB). Needed first.</td>
+              <td>MiniMax H3 FL2VA: about 144.1 GB (134.2 GiB). Needed first.</td>
             </tr>
             <tr>
               <th scope="row">AI model (reference images, videos, audio)</th>
-              <td>Ref2VA: another 144.1 GB or so, about 288.1 GB (268.3 GiB) in total. Add it when you need it.</td>
+              <td>MiniMax H3 Ref2VA: another 144.1 GB or so, about 288.1 GB (268.3 GiB) in total. Add it when you need it.</td>
             </tr>
             <tr>
               <th scope="row">Other space</th>
@@ -175,6 +175,9 @@
           </tbody>
           <caption>As of October 10, 2026, version 0.4.4. Model sizes are the totals of the Hugging Face file listing. The app labels sizes “GB” but computes them in GiB (1 GiB = 1,073,741,824 bytes), so FL2VA shows as about 134.2.</caption>
         </table>
+      </div>
+      <div class="warn" id="model-license">
+        <p><strong>Mind the model's license.</strong> MiniMax H3, the model that generates the videos, comes under its own, somewhat unusual license, the MiniMax H3 Community License, separate from the app's MIT License. It differs from typical open-source licenses: for example, it only applies in certain regions. Before downloading and using the model, read the <a href="faq.html#license">key points of the license</a> and the <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE">full license</a>.</p>
       </div>
       <p class="small">Downloading the model the first time needs an internet connection; generating videos runs on your Mac. See <a href="getting-started.html#models">Getting the model</a> for details.</p>
     </section>
@@ -247,7 +250,7 @@
         <li><a href="../?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
       </ul>
       <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
-      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). It generates video with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax-H3</a> by MiniMax (MiniMax H3 Community License).</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). Videos are generated with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>, a video generation model by MiniMax, which comes under its own license, the MiniMax H3 Community License.</p>
     </div>
   </footer>
   <script src="../assets/js/main.js" defer></script>

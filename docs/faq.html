@@ -158,7 +158,14 @@
       <h2 id="q11">ライセンスと利用条件</h2>
       <ul>
         <li><strong>アプリ本体（H3cApp）</strong>：<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/LICENSE">MIT License</a>。Salvatore Sanfilippo氏（antirez）の<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしています。同梱しているほかのソフトウェアの表記は<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a>にあります。</li>
-        <li><strong>動画生成モデル（MiniMax-H3）</strong>：アプリとは別のライセンス（MiniMax H3 Community License）です。利用の前に<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE">ライセンス本文</a>と、提供元の<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/QA-about-License.md">ライセンスに関するQ&amp;A</a>を確認してください。</li>
+        <li><strong>動画生成モデル（MiniMax H3）</strong>：H3cAppは動画の生成にMiniMaxのMiniMax H3を使っています。モデルにはアプリとは別の、MiniMax H3独自の少し特殊なライセンス（MiniMax H3 Community License）が適用されます。一般的なオープンソースのライセンスとは条件が異なるので注意してください。主な点は次のとおりです（要約です）。
+          <ul>
+            <li>ライセンスの対象となる地域が定められていて、EU、英国、韓国、米国は対象外とされています。</li>
+            <li>利用方針（Acceptable Use Policy）で禁止されている使い方があります。</li>
+            <li>モデルや生成した動画を、ほかのAIモデルの改善に使うことは認められていません。</li>
+            <li>商用の製品・サービスで使う場合の条件（一定以上の売上での事前の許可、画面への「MiniMax H3」の表示など）があります。</li>
+          </ul>
+          利用の前に、必ず<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE">ライセンス本文</a>と、提供元の<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/QA-about-License.md">ライセンスに関するQ&amp;A</a>を確認してください。</li>
         <li><strong>追加モデル（LoRA）</strong>：それぞれの配布元の条件に従います。</li>
       </ul>
       <p>商用利用などの可否は、このサイトでは判断できません。上記の最新のライセンスを確認してください。アプリは無料で配布していますが、モデルのダウンロードの通信量や、生成にかかる電力などは利用者の負担になります。</p>
@@ -175,7 +182,7 @@
         <li><a href="en/faq.html?lang=en" hreflang="en" lang="en">English</a></li>
       </ul>
       <p>H3cApp：大阪成蹊大学データサイエンス学部 鎌原淳三／Junzo Kamahara</p>
-      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画生成モデルはMiniMaxの<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax-H3</a>（MiniMax H3 Community License）を使います。</p>
+      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画の生成にはMiniMaxの動画生成モデル<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>を使っています。モデルにはMiniMax H3独自のライセンス（MiniMax H3 Community License）が適用されます。</p>
     </div>
   </footer>
   <script src="assets/js/main.js" defer></script>

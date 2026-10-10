@@ -84,7 +84,10 @@
 
     <section class="section section-narrow" id="models" aria-labelledby="models-title">
       <h2 id="models-title">2. Get the AI model</h2>
-      <p>H3cApp uses MiniMax-H3, a video generation model released by MiniMax. The model is not part of the app, so you download it once at the start.</p>
+      <p>H3cApp uses MiniMax H3, a video generation model released by MiniMax. The model is not part of the app, so you download it once at the start.</p>
+      <div class="warn">
+        <p><strong>Before downloading, check the model's license.</strong> MiniMax H3 comes under its own, somewhat unusual license, the MiniMax H3 Community License, separate from the app's MIT License. It differs from typical open-source licenses: for example, it only applies in certain regions. The key points are in <a href="faq.html#license">Licenses and terms</a>; the exact terms are in the <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE">full license</a>.</p>
+      </div>
       <div class="warn">
         <p><strong>Start when you have time and disk space to spare.</strong> “FL2VA”, used to generate from text and from first/last images, is about 144.1 GB on its own (shown in the app as about 134.2 GB). Depending on your connection it can take several hours or more.</p>
       </div>
@@ -216,7 +219,7 @@
         <li><a href="../getting-started.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
       </ul>
       <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
-      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). It generates video with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax-H3</a> by MiniMax (MiniMax H3 Community License).</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). Videos are generated with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>, a video generation model by MiniMax, which comes under its own license, the MiniMax H3 Community License.</p>
     </div>
   </footer>
   <script src="../assets/js/main.js" defer></script>

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="assets/js/lang.js"></script>
   <title>H3cApp — Macで、音のあるAI動画を。</title>
-  <meta name="description" content="H3cAppは、Apple SiliconのMac上で文章や画像から音声付きの動画をつくるmacOSアプリです。ダウンロード、インストール、モデルの準備、最初の動画づくりまでを案内します。">
+  <meta name="description" content="H3cAppは、MiniMaxの動画生成モデルMiniMax H3を使い、Apple SiliconのMac上で文章や画像から音声付きの動画をつくるmacOSアプリです。ダウンロード、インストール、モデルの準備、最初の動画づくりまでを案内します。">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/">
@@ -50,12 +50,12 @@
       <div class="hero-copy">
         <p class="eyebrow">H3cApp for macOS</p>
         <h1 id="hero-title">Macで、音のあるAI動画を。</h1>
-        <p class="lead">H3cAppは、文章や画像から音声付きの動画をつくるmacOSアプリです。生成はApple SiliconのMacの中で行います。ダウンロードして使う配布アプリなので、PythonやPyTorchの環境構築は必要ありません。</p>
+        <p class="lead">H3cAppは、MiniMaxの動画生成モデル「MiniMax H3」を使って、文章や画像から音声付きの動画をつくるmacOSアプリです。生成はApple SiliconのMacの中で行います。ダウンロードして使う配布アプリなので、PythonやPyTorchの環境構築は必要ありません。</p>
         <div class="cta-row">
           <a class="button button-primary" href="https://github.com/JunzoKamahara/H3cApp/releases/latest">最新版をダウンロード</a>
           <a class="button button-secondary" href="getting-started.html">はじめ方を見る</a>
         </div>
-        <p class="cta-note">Apple SiliconのMac・macOS 15 Sequoia以降が対象です。アプリとは別に、AIモデル（約144GB〜）のダウンロードが必要です。</p>
+        <p class="cta-note">Apple SiliconのMac・macOS 15 Sequoia以降が対象です。アプリとは別に、MiniMax H3のモデル（約144GB〜）のダウンロードが必要です。モデルにはMiniMax H3独自のライセンスが適用されます。</p>
       </div>
       <figure class="hero-shot">
         <img src="assets/images/app-window.jpg" width="1520" height="1304" alt="H3cAppのウィンドウ。プレビューに生成した横長の動画（夕暮れの石畳の広場でギターを弾く人）が表示され、上に「動画を書き出す…」「使用した設定…」「参照に使う」のボタン、下に折りたたんだパネルとプロンプトの要約、上向き矢印の生成ボタンがある。">
@@ -65,7 +65,7 @@
 
     <section class="section" id="examples" aria-labelledby="examples-title">
       <h2 id="examples-title">生成例</h2>
-      <p>H3cApp v0.4.4で、下のプロンプトから実際に生成した動画です。どれも音声付きです。再生ボタンを押すと音も流れます（自動では再生しません）。</p>
+      <p>H3cApp v0.4.4（モデルはMiniMax H3）で、下のプロンプトから実際に生成した動画です。どれも音声付きです。再生ボタンを押すと音も流れます（自動では再生しません）。</p>
       <div class="examples">
         <figure class="example">
           <div class="media">
@@ -162,11 +162,11 @@
             </tr>
             <tr>
               <th scope="row">AIモデル（文章・最初/最後の画像から）</th>
-              <td>FL2VA：約144.1GB（134.2GiB）。最初に必要です。</td>
+              <td>MiniMax H3のFL2VA：約144.1GB（134.2GiB）。最初に必要です。</td>
             </tr>
             <tr>
               <th scope="row">AIモデル（参照画像・動画・音声を使う場合）</th>
-              <td>Ref2VA：さらに約144.1GB。合計約288.1GB（268.3GiB）。必要になってから追加できます。</td>
+              <td>MiniMax H3のRef2VA：さらに約144.1GB。合計約288.1GB（268.3GiB）。必要になってから追加できます。</td>
             </tr>
             <tr>
               <th scope="row">そのほかに必要な容量</th>
@@ -175,6 +175,9 @@
           </tbody>
           <caption>2026年10月10日時点・v0.4.4の情報。モデルの容量はHugging Faceのファイル一覧の合計です。アプリの画面では「GB」と表示されますが、計算はGiB（1GiB＝1,073,741,824バイト）で、FL2VAは約134.2と表示されます。</caption>
         </table>
+      </div>
+      <div class="warn" id="model-license">
+        <p><strong>モデルのライセンスにご注意ください。</strong>動画を生成するモデルMiniMax H3には、アプリ本体（MIT License）とは別に、MiniMax H3独自の少し特殊なライセンス（MiniMax H3 Community License）が適用されます。利用できる地域が限られているなど、一般的なオープンソースのライセンスとは条件が異なります。モデルをダウンロードして使う前に、<a href="faq.html#license">ライセンスと利用条件の要点</a>と<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE">ライセンス本文</a>を確認してください。</p>
       </div>
       <p class="small">モデルの初回ダウンロードにはインターネット接続が必要です。動画の生成そのものはMacの中で行います。くわしくは<a href="getting-started.html#models">モデルの準備</a>をご覧ください。</p>
     </section>
@@ -247,7 +250,7 @@
         <li><a href="en/?lang=en" hreflang="en" lang="en">English</a></li>
       </ul>
       <p>H3cApp：大阪成蹊大学データサイエンス学部 鎌原淳三／Junzo Kamahara</p>
-      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画生成モデルはMiniMaxの<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax-H3</a>（MiniMax H3 Community License）を使います。</p>
+      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画の生成にはMiniMaxの動画生成モデル<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>を使っています。モデルにはMiniMax H3独自のライセンス（MiniMax H3 Community License）が適用されます。</p>
     </div>
   </footer>
   <script src="assets/js/main.js" defer></script>

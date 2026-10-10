@@ -157,7 +157,15 @@ screenshot (assets.st-note.com, older UI) is not used.
   Third-party notices in `THIRD_PARTY_NOTICES.md` (ccv, BSD-3-Clause).
 - Model: MiniMax H3 Community License
   (https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE, Q&A at
-  docs/QA-about-License.md). The site does not judge commercial use.
+  docs/QA-about-License.md). The site does not judge commercial use. It
+  calls the license "somewhat unusual" (per the author) and summarizes,
+  from the license text read 2026-10-11: Applicable Territory excludes the
+  EU, UK, Republic of Korea and USA (I.3, I.5, V.4); Acceptable Use Policy
+  (Exhibit A); MiniMax H3 Works and Outputs may not improve other AI models
+  (V.3); commercial terms - written authorization above USD 20M yearly
+  revenue, "MiniMax H3" shown in the UI of commercial products (IV). Shown
+  on index (#model-license warning), getting-started #models, faq #license,
+  and every footer, in both languages.
 
 ## Open points for the editor
 
