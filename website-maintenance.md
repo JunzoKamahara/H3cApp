@@ -108,7 +108,7 @@ relevant sections when available:
 - Advanced settings, 計算方式 and サイズ sections → getting-started.html#compute,
   guide.html#speed
 - "画像から" with 最初・最後の画像 and with 参照画像・動画・音声 → guide.html#images
-- English-UI versions of app-window.jpg and app-composer.jpg for the en/
-  pages (they currently show the Japanese UI, captioned as such): run the
-  release app with macOS (or the app's language) set to English
+(The en/ pages have their own English-UI screenshots, `*-en.jpg`; take
+both languages when retaking. Launch the release app with
+`open -n H3cApp.app --args -AppleLanguages "(en)"` for English.)
 - "プロジェクトを選んで生成" sheet and the project video list → guide.html#projects

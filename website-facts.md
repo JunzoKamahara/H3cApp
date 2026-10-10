@@ -21,9 +21,13 @@ Japanese at `/H3cApp/` (main, x-default) and English at `/H3cApp/en/`
 (added 2026-10-11). English UI names come from the v0.4.4
 `en.lproj/Localizable.strings` (e.g. 動画を書き出す… = Export Video…,
 高速（int8キャッシュ）= Fast (int8 cache), 詳細設定 = Advanced Settings,
-モデル管理 = Model Manager, サイズを確認… = Check Size…). The screenshots
-show the Japanese UI on both versions; the English pages say so.
-`og-image-en.jpg` is the English share image.
+モデル管理 = Model Manager, サイズを確認… = Check Size…). The English
+pages use English-UI screenshots (`app-window-en.jpg`,
+`app-composer-en.jpg`): the v0.4.4 app from the DMG launched with
+`-AppleLanguages (en)`, the same scratch project and example 3 regenerated
+(seed 7, same settings; 5:58 this run), taken 2026-10-11 while macOS was in
+light appearance (the Japanese ones are dark). In English the count chip
+reads “×1”. `og-image-en.jpg` is the English share image.
 
 ## Distribution
 
