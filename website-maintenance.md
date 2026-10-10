@@ -34,6 +34,18 @@ are the app's own English strings (`en.lproj/Localizable.strings` of the
 release), e.g. Export Video…, Fast (int8 cache), Advanced Settings.
 `main.js` picks the copy-button messages from `<html lang>`.
 
+Language redirect (`assets/js/lang.js`, loaded first in every `<head>`): a
+visitor whose browser's first language is Japanese gets the Japanese page,
+anyone else the English one; the counterpart comes from `data-alt-href` on
+`<html>`, and the `#anchor` is kept. Clicking the 日本語 / English switch
+(links carry `?lang=ja` / `?lang=en`) stores the choice in `localStorage`
+(`h3c-site-lang`), which then always wins; the `?lang=` parameter alone
+also prevents a redirect, so switching works without storage. Crawlers
+(user agents with bot/crawl/spider/…) are not redirected. When adding a
+page, give both versions `data-alt-href`, the script tag and `?lang=` on
+the switch links. To test, run headless Chrome with
+`--accept-lang=en-US` / `--accept-lang=ja` (`--lang` is ignored on macOS).
+
 ## Publishing (first time)
 
 0. The site URL is `https://junzokamahara.github.io/H3cApp/`, which needs
