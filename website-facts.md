@@ -151,6 +151,7 @@ version at the time not recorded, so not presented as a v0.4.4 measurement):
 | `docs/assets/video/ex3.mp4` | landscape 中 x2 (672x384 → 1344x768), 5 s, guitar prompt; 369 s (6:09) | same |
 | `docs/assets/images/app-window.jpg` | real v0.4.4 window (760x652 pt) right after ex3 finished via the API (panel collapsed, summary line shown) | `screencapture -l` of the v0.4.4 app run from the DMG |
 | `docs/assets/images/app-composer.jpg` | real v0.4.4 window relaunched with a scratch project (panel expanded, empty preview), resized to 1600 px | same; the window frame default was enlarged for the shot and restored afterwards |
+| `docs/assets/images/app-lora.jpg`, `app-lora-en.jpg` | モデル管理 → LoRA tab (sheet only, 1100x910 px, dark), three lightx2v Turbo LoRAs registered (fl2v 4step v1.2, fl2v 8step v1.0, ref2v 4step v0.1), none checked | `screencapture -l` of the dev build (0.4.4; ModelManagerView unchanged since v0.4.4), ja and `-AppleLanguages (en)`, cropped to the sheet; LoRA list and window frame staged via `defaults` and restored from a backup afterwards |
 | `docs/assets/images/og-image.jpg` | 1200x630 share image: app icon, title, and a frame of ex2 | composed with Pillow (Hiragino) |
 | icons | from `native/H3Spike/Packaging/AppIcon.icns` | `iconutil`, `sips` |
 
