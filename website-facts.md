@@ -114,6 +114,18 @@ Not used: the older note's "FL2VA 164GB".
   = 1920x1088. Custom finished size, generated canvas <= 600,000 pixels.
 - Lengths snap to 5 + 17k frames at 24 fps (5 s → 124 frames ≈ 5.17 s).
 - Ref2VA: up to 12 references (engine); audio cannot be the only reference.
+- LoRA (guide `#lora`): モデル管理 → tab "LoRA" → "追加…" (.safetensors);
+  row shows format / "N/50ブロック" / rank or "MiniMax-H3用として読み込めません";
+  per-row "強さ" (blank = 1) and "ステップ" (Turbo step count, auto-read from
+  `\d+step` in the file name); up to 8 on (`maxStackedLoRAs`); "削除" only
+  drops the list entry. 詳細設定 "追加モデル（LoRA）" toggles + "管理…".
+  Turning a Turbo LoRA on sets steps to its count; off restores 20 only if
+  untouched (`followTurboLoRASteps`); note turns red when steps differ; warns
+  when more than one Turbo LoRA is on. LoRAs are recorded in a video's
+  settings and in projects; unregistered ones are reported on open. The app
+  can't tell FL2V vs Ref2V files apart; lightx2v/Minimax-h3-Turbo names them
+  `fl2v`/`ref2v` and `4step`/`8step` (HF file list, 2026-10-11, Apache-2.0).
+  Works with all three compute modes; formats per README "LoRA".
 
 ## Performance shown on the site
 

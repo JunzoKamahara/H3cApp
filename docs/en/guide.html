@@ -54,6 +54,7 @@
           <li><a href="#speed">The three speed settings</a></li>
           <li><a href="#size">Sizes and 2x upscaling</a></li>
           <li><a href="#prompts">Writing prompts</a></li>
+          <li><a href="#lora">Using add-on models (LoRA, optional)</a></li>
           <li><a href="#advanced">For advanced users</a></li>
         </ol>
       </nav>
@@ -172,12 +173,60 @@
       <p class="small">The model provider's <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md">prompt writing guide</a> is also useful.</p>
     </section>
 
+    <section class="section section-narrow" id="lora" aria-labelledby="lora-title">
+      <h2 id="lora-title">Using add-on models (LoRA, optional)</h2>
+      <p>A LoRA is a small extra weight file applied on top of MiniMax H3. There are “Turbo” LoRAs that let you generate in far fewer steps, and LoRAs trained for a particular look or motion. <strong>You don't need any LoRA to make videos with H3cApp.</strong> Try them once you're comfortable with the basics.</p>
+
+      <h3>Getting a LoRA file</h3>
+      <p>H3cApp doesn't download LoRAs, so get a <code>.safetensors</code> file made for MiniMax H3 yourself. LoRAs for other video models won't work.</p>
+      <p>For faster generation you can use <a href="https://huggingface.co/lightx2v/Minimax-h3-Turbo">Minimax-h3-Turbo</a> by lightx2v (Hugging Face). The file names tell you what each one is for:</p>
+      <ul>
+        <li>Names with <code>fl2v</code>: for “<span class="ui">From text</span>” and “<span class="ui">First/last image</span>”</li>
+        <li>Names with <code>ref2v</code>: for “<span class="ui">Reference images, videos and audio</span>”</li>
+        <li><code>4step</code> / <code>8step</code>: the step count to generate with that LoRA</li>
+      </ul>
+      <p class="small muted">The app can't tell in advance which mode a file was made for. Turn on the file that matches the mode you're using.</p>
+
+      <h3>Registering and using one</h3>
+      <ol class="steps">
+        <li>
+          <strong>Open “<span class="ui">Model Manager</span>” in the toolbar and choose the “<span class="ui">LoRA</span>” tab.</strong>
+        </li>
+        <li>
+          <strong>Click “<span class="ui">Add…</span>” and choose the <code>.safetensors</code> file.</strong> If the file can be loaded, its format, the number of blocks it covers and its rank are shown. If it can't be loaded for MiniMax H3, the reason is shown instead.
+        </li>
+        <li>
+          <strong>Turn the LoRA on.</strong> Use its checkbox in the Model Manager, or turn it on under “<span class="ui">Add-on models (LoRA)</span>” in “<span class="ui">Advanced Settings</span>”. “<span class="ui">Strength</span>” multiplies its effect; blank means 1.
+        </li>
+        <li>
+          <strong>Generate as usual.</strong> A LoRA that is on is used for every generation until you turn it off.
+        </li>
+      </ol>
+
+      <h3>Turbo LoRAs and the step count</h3>
+      <p>A Turbo LoRA is trained to generate in a fixed number of steps (4 or 8). If the file name contains something like <code>4step</code>, the app reads that number and sets “<span class="ui">Steps</span>” to it when you turn the LoRA on. When you turn it off, the steps go back, unless you changed them yourself.</p>
+      <ul>
+        <li>With a 4-step LoRA, going from the default 20 steps to 4 makes generation much faster. The result looks different from generating without the LoRA.</li>
+        <li>Quality drops at any other step count than the one it was trained for. If you change the steps by hand, the note in the advanced settings turns red.</li>
+        <li>If the step count can't be read from the file name, type it in the “<span class="ui">Steps</span>” field in the Model Manager. Leave it blank for a regular LoRA.</li>
+        <li>Turn on only one Turbo LoRA. Stacking several makes the effect too strong.</li>
+      </ul>
+
+      <h3>Good to know</h3>
+      <ul>
+        <li>You can stack up to 8 LoRAs. Their effects add up.</li>
+        <li>LoRAs work with all three compute modes. Each step takes a little longer for the LoRA.</li>
+        <li>The LoRAs that were on and their strengths are recorded in a video's settings and in projects. If you open a project whose LoRA isn't registered in the Model Manager, the app tells you it can't be used.</li>
+        <li>“<span class="ui">Delete</span>” in the Model Manager only removes the LoRA from the list; the file stays.</li>
+      </ul>
+      <p class="small">Supported formats: diffusers / PEFT, ComfyUI and kohya (BF16 / F16 / F32). Not every LoRA works. See <a href="https://github.com/JunzoKamahara/H3cApp#lora">LoRA</a> in the README for details.</p>
+      <div class="warn">
+        <p>Each LoRA comes with its own terms from whoever distributes it. Check them together with the MiniMax H3 license (see <a href="faq.html#license">Licenses and terms</a>).</p>
+      </div>
+    </section>
+
     <section class="section section-narrow" id="advanced" aria-labelledby="advanced-title">
       <h2 id="advanced-title">For advanced users</h2>
-      <details>
-        <summary>Add-on models (LoRA)</summary>
-        <p>Register LoRA files in “<span class="ui">Model Manager</span>” and turn them on under “<span class="ui">Add-on models (LoRA)</span>” in the advanced settings to stack them (up to 8). 4-step Turbo LoRAs are supported. Not every LoRA works; the app tells you when one can't be loaded. Follow each LoRA's own terms of use.</p>
-      </details>
       <details>
         <summary>Local API</summary>
         <p>H3cApp has an HTTP API reachable only from the same Mac (<code>127.0.0.1</code>), for driving generation from scripts. See <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md#api">API</a> in the README.</p>

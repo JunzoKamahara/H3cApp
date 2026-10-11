@@ -55,6 +55,7 @@
           <li><a href="#speed">速度に関わる3つの設定</a></li>
           <li><a href="#size">サイズと2倍拡大</a></li>
           <li><a href="#prompts">プロンプトの書き方</a></li>
+          <li><a href="#lora">追加モデル（LoRA）を使う（任意）</a></li>
           <li><a href="#advanced">上級者向け</a></li>
         </ol>
       </nav>
@@ -173,12 +174,60 @@
       <p class="small">モデル提供元の<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md">プロンプト作成ガイド（英語）</a>も参考になります。このサイトの例は英語です。日本語のプロンプトでの仕上がりは確認していません。</p>
     </section>
 
+    <section class="section section-narrow" id="lora" aria-labelledby="lora-title">
+      <h2 id="lora-title">追加モデル（LoRA）を使う（任意）</h2>
+      <p>LoRAは、MiniMax H3に重ねて使う小さな追加の重みファイルです。少ないステップで生成できるようにする「Turbo」LoRAや、特定の見た目・動きを学習させたLoRAがあります。<strong>使わなくても、H3cAppはそのまま動画をつくれます。</strong>慣れてから試せば十分です。</p>
+
+      <h3>LoRAファイルを用意する</h3>
+      <p>H3cAppはLoRAをダウンロードしないので、MiniMax H3用の <code>.safetensors</code> ファイルを自分で入手します。ほかの動画モデル用のLoRAは使えません。</p>
+      <p>速く生成したいときは、lightx2vが公開している<a href="https://huggingface.co/lightx2v/Minimax-h3-Turbo">Minimax-h3-Turbo</a>（Hugging Face）が使えます。ファイル名で用途が分かれています。</p>
+      <ul>
+        <li><code>fl2v</code> が入ったもの：「<span class="ui">文章から</span>」と「<span class="ui">最初・最後の画像</span>」用</li>
+        <li><code>ref2v</code> が入ったもの：「<span class="ui">参照画像・動画・音声</span>」用</li>
+        <li><code>4step</code>／<code>8step</code>：そのLoRAで生成するときのステップ数</li>
+      </ul>
+      <p class="small muted">アプリは、どちらのモード用のファイルかを事前に判定できません。使うモードに合ったファイルをオンにしてください。</p>
+
+      <h3>登録して使う</h3>
+      <ol class="steps">
+        <li>
+          <strong>ツールバーの「<span class="ui">モデル管理</span>」を開き、「<span class="ui">LoRA</span>」タブを選びます。</strong>
+        </li>
+        <li>
+          <strong>「<span class="ui">追加…</span>」で <code>.safetensors</code> ファイルを選びます。</strong>読み込めるファイルなら、形式・対象のブロック数・rankが表示されます。MiniMax H3用として読み込めない場合は、その理由が表示されます。
+        </li>
+        <li>
+          <strong>使うLoRAをオンにします。</strong>モデル管理のチェックボックスか、「<span class="ui">詳細設定</span>」の「<span class="ui">追加モデル（LoRA）</span>」でオンにします。「<span class="ui">強さ</span>」は効き具合の倍率で、空欄は1です。
+        </li>
+        <li>
+          <strong>いつもどおり生成します。</strong>オンにしたLoRAは、オフにするまでの生成すべてに使われます。
+        </li>
+      </ol>
+
+      <h3>Turbo LoRAとステップ数</h3>
+      <p>Turbo LoRAは、決まったステップ数（4や8）で生成するように学習されています。ファイル名に <code>4step</code> などが入っていれば、アプリがそのステップ数を読み取り、オンにしたときに「<span class="ui">生成ステップ数</span>」を合わせます。オフにすると、ステップ数を自分で変えていなければ元に戻ります。</p>
+      <ul>
+        <li>4ステップ用なら、ステップ数が既定の20から4に減るので、生成時間が大きく短くなります。仕上がりはLoRAを使わない場合と変わります。</li>
+        <li>学習したステップ数以外では品質が落ちます。ステップ数を手で変えた場合は、詳細設定の注意書きが赤くなります。</li>
+        <li>ファイル名から読み取れない場合は、モデル管理の「<span class="ui">ステップ</span>」欄に入力します。空欄なら通常のLoRAとして扱われます。</li>
+        <li>Turbo LoRAは1つだけオンにしてください。複数重ねると効果が強くなりすぎます。</li>
+      </ul>
+
+      <h3>知っておくこと</h3>
+      <ul>
+        <li>最大8個まで重ねられます。効果は足し合わされます。</li>
+        <li>3つの計算方式のどれでも使えます。LoRAの分だけ、1ステップあたりの時間は少し長くなります。</li>
+        <li>オンにしたLoRAと強さは、生成した動画の設定やプロジェクトに記録されます。プロジェクトを開いたときにそのLoRAがモデル管理に登録されていないと、使えない旨が表示されます。</li>
+        <li>モデル管理の「<span class="ui">削除</span>」は一覧から外すだけで、ファイルは消えません。</li>
+      </ul>
+      <p class="small">対応する形式：diffusers／PEFT、ComfyUI、kohya の各形式（BF16／F16／F32）。すべてのLoRAが使えるとは限りません。詳しくはREADMEの<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.ja.md#lora">LoRA</a>をご覧ください。</p>
+      <div class="warn">
+        <p>LoRAには、それぞれの配布元の利用条件があります。MiniMax H3のライセンス（<a href="faq.html#license">ライセンスと利用条件</a>）とあわせて確認してください。</p>
+      </div>
+    </section>
+
     <section class="section section-narrow" id="advanced" aria-labelledby="advanced-title">
       <h2 id="advanced-title">上級者向け</h2>
-      <details>
-        <summary>追加モデル（LoRA）</summary>
-        <p>「<span class="ui">モデル管理</span>」でLoRAファイルを登録し、「<span class="ui">詳細設定</span>」の「<span class="ui">追加モデル（LoRA）</span>」でオンにすると、重ねて適用できます（最大8個）。4ステップで生成するTurbo LoRAにも対応しています。すべてのLoRAが使えるとは限らず、読み込めない場合はアプリが表示します。LoRAそれぞれの利用条件にも従ってください。</p>
-      </details>
       <details>
         <summary>ローカルAPI</summary>
         <p>H3cAppは、同じMacの中からだけ使えるHTTP APIを持っています（<code>127.0.0.1</code>）。スクリプトから生成を指示したい場合に使います。仕様はREADMEの<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.ja.md#api">API</a>をご覧ください。</p>
