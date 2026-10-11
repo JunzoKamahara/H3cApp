@@ -48,4 +48,16 @@
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/faq.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/faq.html"/>
   </url>
+  <url>
+    <loc>https://junzokamahara.github.io/H3cApp/settings.html</loc>
+    <lastmod>2026-10-11</lastmod>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/settings.html"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/settings.html"/>
+  </url>
+  <url>
+    <loc>https://junzokamahara.github.io/H3cApp/en/settings.html</loc>
+    <lastmod>2026-10-11</lastmod>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/settings.html"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/settings.html"/>
+  </url>
 </urlset>

@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en" data-alt-href="../settings.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="../assets/js/lang.js"></script>
+  <title>Advanced settings explained — H3cApp</title>
+  <meta name="description" content="H3cApp's advanced settings explained: size, steps, compute mode, speed and fast mode, denoiser reuse, layer count, seed, LoRA and presets.">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/settings.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/settings.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/settings.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/settings.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="Advanced settings explained — H3cApp">
+  <meta property="og:description" content="What each advanced setting changes, with defaults and allowed values.">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/settings.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image-en.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="../assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="../assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="../assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="Site">
+        <ul>
+          <li><a href="./#examples">Examples</a></li>
+          <li><a href="./#requirements">Requirements</a></li>
+          <li><a href="getting-started.html">Getting started</a></li>
+          <li><a href="guide.html">Guide</a></li>
+          <li><a href="faq.html">Troubleshooting</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="../settings.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>Advanced settings explained</h1>
+      <p class="lead">What each item in “Advanced Settings” changes, in the order the dialog shows them. <strong>The defaults are fine to start with.</strong> Come back here when you want to tune the wait or the result. This page follows the H3cApp v0.4.4 screens.</p>
+      <nav class="toc" aria-label="On this page">
+        <p>On this page</p>
+        <ol>
+          <li><a href="#overview">Overview and opening the dialog</a></li>
+          <li><a href="#size">Size</a></li>
+          <li><a href="#steps">Steps</a></li>
+          <li><a href="#compute">Compute mode</a></li>
+          <li><a href="#speed">Speed and fast mode (experimental)</a></li>
+          <li><a href="#reuse">Denoiser reuse (reuse)</a></li>
+          <li><a href="#layers">Layer count (DiT blocks)</a></li>
+          <li><a href="#seed">Randomness (seed)</a></li>
+          <li><a href="#lora">Add-on models (LoRA)</a></li>
+          <li><a href="#presets">Restore Defaults and presets</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="overview" aria-labelledby="overview-title">
+      <h2 id="overview-title">Overview and opening the dialog</h2>
+      <p>Open it with the “<span class="ui">Advanced Settings</span>” button at the top right of the prompt panel, or with “Advanced Settings…” in the app menu (H3cApp) (⌘,). Changes apply from the next generation; changing something while a video is being generated doesn't affect that run.</p>
+      <p>When anything differs from the defaults, the button reads “<span class="ui">Advanced Settings · modified</span>”.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Item</th><th scope="col">Default</th><th scope="col">Values</th><th scope="col">Main effect</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><a href="#size">Size</a></th><td>Preset (square, medium)</td><td>Preset / custom size</td><td>Bigger is slower</td></tr>
+            <tr><th scope="row"><a href="#steps">Steps</a></th><td class="num">20</td><td class="num">3–40</td><td>More is slower; fewer lowers quality</td></tr>
+            <tr><th scope="row"><a href="#compute">Compute mode</a></th><td>Fast (int8 cache) on M5-class Macs, otherwise Low memory (SSD streaming)</td><td>3 modes</td><td>Speed, and the memory and disk needed</td></tr>
+            <tr><th scope="row"><a href="#speed">Speed</a></th><td>Standard (best quality)</td><td>Standard (best quality) / Fast / Fastest</td><td>Faster, but the result changes</td></tr>
+            <tr><th scope="row"><a href="#speed">Fast mode (experimental)</a></th><td>Off</td><td>On / off (shown only where supported)</td><td>Faster, more so for long videos</td></tr>
+            <tr><th scope="row"><a href="#reuse">Denoiser reuse</a></th><td class="num">2</td><td class="num">1–3</td><td>Higher is faster; quality may drop</td></tr>
+            <tr><th scope="row"><a href="#layers">Layer count</a></th><td class="num">50 (all)</td><td class="num">35–50</td><td>Fewer is faster, but can break the audio</td></tr>
+            <tr><th scope="row"><a href="#seed">Randomness</a></th><td>Random each time</td><td>Random each time / Fixed</td><td>Whether a result can be reproduced</td></tr>
+            <tr><th scope="row"><a href="#lora">Add-on models (LoRA)</a></th><td>None</td><td>Up to 8</td><td>Changes the look or the steps needed</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="size" aria-labelledby="size-title">
+      <h2 id="size-title">Size</h2>
+      <p>You normally pick the size with “<span class="ui">Shape</span>” and “<span class="ui">Size</span>” under the prompt (see <a href="guide.html#size">Sizes and 2x upscaling</a>). The advanced settings let you enter a size that isn't a preset.</p>
+      <ul>
+        <li><strong>Use a custom size</strong>: lets you enter the “<span class="ui">Width</span>” and “<span class="ui">Height</span>” of the finished video, in multiples of 32.</li>
+        <li><strong>Generate at half size and upscale 2x</strong>: generates at half the size, then doubles it. Width and height are then multiples of 64. The upscale happens after generation, so it adds almost no time.</li>
+        <li><strong>Limits</strong>: the generated size (half the finished size when upscaling) must be at most 600,000 pixels, with each side 256–1344. Beyond that the line turns red and you can't generate as is.</li>
+      </ul>
+      <p>Choosing a preset with “<span class="ui">Size</span>” in the prompt panel switches the custom size off again.</p>
+      <p>Below this section, “<span class="ui">Estimate on this Mac: about … min</span>” shows roughly how long the current settings will take. It's worked out from this Mac's past generations, so it gets better as you generate more. If it's expected to take over an hour, a red note appears.</p>
+    </section>
+
+    <section class="section section-narrow" id="steps" aria-labelledby="steps-title">
+      <h2 id="steps-title">Steps</h2>
+      <p>How many times the video is refined, starting from noise. The default is 20; you can pick 3–40.</p>
+      <ul>
+        <li>Most of the generation time goes into these steps, so more steps take correspondingly longer.</li>
+        <li>Fewer steps are faster but lower the quality of detail and motion.</li>
+        <li>Turning on a Turbo LoRA switches to that LoRA's step count (4 or 8) automatically (see <a href="guide.html#lora">Using add-on models</a>).</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="compute" aria-labelledby="compute-title">
+      <h2 id="compute-title">Compute mode</h2>
+      <p>How the model is loaded and computed. It mainly changes the speed and the memory and disk needed. The modes compute at slightly different precision, so the same seed isn't guaranteed to give exactly the same result in every mode.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Mode</th><th scope="col">How it works</th><th scope="col">Suited to</th></tr></thead>
+          <tbody>
+            <tr>
+              <th scope="row">Fast (int8 cache)</th>
+              <td>Computes while reading an int8 cache made in advance. The fastest mode.</td>
+              <td>GPUs with tensor units (M5 and later). The cache needs about 19.3 GB of disk per model (FL2VA and Ref2VA each need their own).</td>
+            </tr>
+            <tr>
+              <th scope="row">Resident (for plenty of memory, no cache)</th>
+              <td>Loads the whole model into memory at each launch. No cache is made.</td>
+              <td>Macs with plenty of memory. Uses about 18 GiB in int8 on M5 and later, or about 37 GiB in BF16 on other Macs.</td>
+            </tr>
+            <tr>
+              <th scope="row">Low memory (SSD streaming)</th>
+              <td>Computes from the original model, reading only the parts it needs from the SSD.</td>
+              <td>Any Apple silicon Mac. Uses little memory, but is slower.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <ul>
+        <li><strong>Building the cache</strong>: if you pick Fast (int8 cache) and there's no cache yet, “<span class="ui">There is no int8 cache yet.</span>” appears. Click “<span class="ui">Build Cache…</span>” to make it inside the app.</li>
+        <li><strong>Red notes</strong>: with Resident on a Mac with little memory (under 32 GB on M5 and later, under 64 GB otherwise), or with SSD streaming at a large size and 10 seconds or more, the app warns that swapping may make it very slow.</li>
+      </ul>
+      <p class="small muted">Fast (int8 cache) can only be chosen on an M5-class GPU.</p>
+    </section>
+
+    <section class="section section-narrow" id="speed" aria-labelledby="speed-title">
+      <h2 id="speed-title">Speed and fast mode (experimental)</h2>
+      <p>“Speed” skips part of the work to go faster. Because what's skipped changes, <strong>the composition and details change even with the same seed</strong>.</p>
+      <ul>
+        <li><strong>Standard (best quality)</strong>: computes everything.</li>
+        <li><strong>Fast</strong>: reuses the Transformer's results between steps. The app's description gives about 2.7x for the DiT part at 5 seconds and 20 steps. Image quality holds, but the composition differs from Standard.</li>
+        <li><strong>Fastest</strong>: on top of Fast, computes some tokens together. About 2.9x for the DiT part. Fine detail can get slightly softer.</li>
+      </ul>
+      <p>While Fast or Fastest is selected, <a href="#reuse">denoiser reuse</a> below runs at 1.</p>
+      <h3>Fast mode (experimental)</h3>
+      <p>A separate checkbox shown only on supported M5 setups. Off by default.</p>
+      <ul>
+        <li>Computes attention in int8 on the M5's neural accelerators.</li>
+        <li>The longer the video, the bigger the gain: the app's description gives about 1.4x at 15 seconds and 20 steps, with about 1.3 GB more memory. Short videos gain little and can even be slower in some conditions.</li>
+        <li>The video changes even with the same seed. Combinations with the speed setting and reuse haven't been fully tested.</li>
+      </ul>
+      <p class="small">For example, a 512×512, 15-second video on an M5 with 24 GB took 30:08 at Standard and 9:25 with Fastest plus fast mode (see <a href="./#performance">How long it takes</a> on the top page).</p>
+    </section>
+
+    <section class="section section-narrow" id="reuse" aria-labelledby="reuse-title">
+      <h2 id="reuse-title">Denoiser reuse (reuse)</h2>
+      <p>Runs the model only once every N times and fills in the rest from earlier results, to go faster. The default is 2; you can pick 1–3.</p>
+      <ul>
+        <li><strong>1 (standard)</strong>: runs the model every time.</li>
+        <li><strong>2 (faster)</strong>: the default.</li>
+        <li><strong>3 (fastest)</strong>: faster still, but quality may drop.</li>
+      </ul>
+      <p>While the speed is Fast or Fastest, this can't be changed and runs at 1. Your value is kept and used again when you go back to Standard (best quality). With 7 steps or fewer, a value of 2 or more leaves very few real model runs, so a red note appears.</p>
+    </section>
+
+    <section class="section section-narrow" id="layers" aria-labelledby="layers-title">
+      <h2 id="layers-title">Layer count (DiT blocks)</h2>
+      <p>How many of the model's 50 layers (DiT blocks) to use. The default is 50 (all layers); you can pick 35–50. Below 50, the least influential layers are skipped to go faster. This works independently of the speed setting.</p>
+      <div class="warn">
+        <p><strong>Fewer layers can break the audio.</strong> At 45 layers the audio was confirmed to turn into heavy noise, and the video changes too. Leave it at 50 until you're comfortable.</p>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="seed" aria-labelledby="seed-title">
+      <h2 id="seed-title">Randomness (seed)</h2>
+      <p>How the random number the generation starts from (the seed) is chosen.</p>
+      <ul>
+        <li><strong>Random each time</strong>: the default. Each generation uses a different seed, so the same prompt gives a different video every time.</li>
+        <li><strong>Fixed</strong>: uses the seed you enter. When you switch to it, the field holds the seed the last generation actually used. Any whole number from 0 to 18446744073709551615 works.</li>
+      </ul>
+      <p>With the same prompt, size, length and settings, the same seed gives the same video, which is handy for comparing the effect of a single setting. Changing the <a href="#speed">speed</a>, fast mode, the layer count or the <a href="#compute">compute mode</a> can change the video even with the same seed.</p>
+      <p>When a project makes several videos in a row with Fixed selected, the seed goes up by 1 for each video.</p>
+      <p>You can see a finished video's seed under “<span class="ui">Settings Used…</span>” above the preview, and “<span class="ui">Use the Same Seed</span>” puts it back in this field.</p>
+    </section>
+
+    <section class="section section-narrow" id="lora" aria-labelledby="lora-title">
+      <h2 id="lora-title">Add-on models (LoRA)</h2>
+      <p>Switch the LoRAs registered in the “<span class="ui">Model Manager</span>” on or off here and set their strength. “<span class="ui">Manage…</span>” opens the Model Manager. You don't need any LoRA to make videos. See <a href="guide.html#lora">Using add-on models (LoRA)</a> in the guide for details.</p>
+    </section>
+
+    <section class="section section-narrow" id="presets" aria-labelledby="presets-title">
+      <h2 id="presets-title">Restore Defaults and presets</h2>
+      <ul>
+        <li><strong>Restore Defaults</strong>: the button at the bottom left of the dialog. Puts every item back to its default and turns off any LoRAs. The size goes back to square, medium.</li>
+        <li><strong>Presets</strong>: choose “<span class="ui">Save Current Settings as Preset…</span>” from “<span class="ui">Presets</span>” at the top right of the prompt panel to save the shape, size, length and the advanced settings (LoRAs included) under a name. The prompt isn't included. New windows start from the preset used last.</li>
+        <li><strong>Projects</strong>: when a project is open, its settings are saved in the project too (see <a href="guide.html#projects">Projects and batches</a>).</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">Report a problem (Issues)</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md">README</a></li>
+        <li><a href="faq.html#license">License</a></li>
+        <li><a href="../settings.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+      </ul>
+      <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). Videos are generated with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>, a video generation model by MiniMax, which comes under its own license, the MiniMax H3 Community License.</p>
+    </div>
+  </footer>
+  <script src="../assets/js/main.js" defer></script>
+</body>
+</html>

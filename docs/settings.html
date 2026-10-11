@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="ja" data-alt-href="en/settings.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="assets/js/lang.js"></script>
+  <title>詳細設定の解説 — H3cApp</title>
+  <meta name="description" content="H3cAppの詳細設定の解説。サイズ、生成ステップ数、計算方式、速度と高速モード、ノイズ除去の再利用、層数、シード、LoRA、プリセット。">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/settings.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/settings.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/settings.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/settings.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="詳細設定の解説 — H3cApp">
+  <meta property="og:description" content="詳細設定の各項目が何を変えるのか、既定値と選べる値。">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/settings.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へ移動</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="サイト内">
+        <ul>
+          <li><a href="./#examples">生成例</a></li>
+          <li><a href="./#requirements">動作条件</a></li>
+          <li><a href="getting-started.html">はじめ方</a></li>
+          <li><a href="guide.html">使い方</a></li>
+          <li><a href="faq.html">困ったとき</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="en/settings.html?lang=en" hreflang="en" lang="en">English</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>詳細設定の解説</h1>
+      <p class="lead">「詳細設定」の各項目が何を変えるのかを、画面の上から順に説明します。<strong>最初は既定のままで問題ありません。</strong>待ち時間や仕上がりを調整したくなったときに読んでください。内容はH3cApp v0.4.4の画面に合わせています。</p>
+      <nav class="toc" aria-label="このページの目次">
+        <p>このページの内容</p>
+        <ol>
+          <li><a href="#overview">一覧と開き方</a></li>
+          <li><a href="#size">サイズ</a></li>
+          <li><a href="#steps">生成ステップ数</a></li>
+          <li><a href="#compute">計算方式</a></li>
+          <li><a href="#speed">速度と高速モード（試験的）</a></li>
+          <li><a href="#reuse">ノイズ除去の再利用（reuse）</a></li>
+          <li><a href="#layers">使用する層数（DiTブロック）</a></li>
+          <li><a href="#seed">ランダムさ（シード）</a></li>
+          <li><a href="#lora">追加モデル（LoRA）</a></li>
+          <li><a href="#presets">既定に戻す・プリセット</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="overview" aria-labelledby="overview-title">
+      <h2 id="overview-title">一覧と開き方</h2>
+      <p>プロンプト欄の右上にある「<span class="ui">詳細設定</span>」ボタン、またはアプリのメニュー（H3cApp）の「詳細設定…」（⌘,）で開きます。変更は次の生成から使われます。生成中に変えても、実行中の生成には影響しません。</p>
+      <p>既定から変えた項目があると、ボタンの表示が「<span class="ui">詳細設定・変更あり</span>」になります。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">項目</th><th scope="col">既定</th><th scope="col">選べる値</th><th scope="col">主な影響</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><a href="#size">サイズ</a></th><td>プリセット（正方形・中）</td><td>プリセット／カスタムサイズ</td><td>大きいほど遅い</td></tr>
+            <tr><th scope="row"><a href="#steps">生成ステップ数</a></th><td class="num">20</td><td class="num">3〜40</td><td>多いほど遅く、少ないと品質が落ちる</td></tr>
+            <tr><th scope="row"><a href="#compute">計算方式</a></th><td>M5クラスでは高速（int8キャッシュ）、それ以外は省メモリ（SSDストリーミング）</td><td>3種類</td><td>速さと必要なメモリ・ディスク</td></tr>
+            <tr><th scope="row"><a href="#speed">速度</a></th><td>標準（高品質）</td><td>標準（高品質）／高速／最速</td><td>速くなるが仕上がりが変わる</td></tr>
+            <tr><th scope="row"><a href="#speed">高速モード（試験的）</a></th><td>オフ</td><td>オン／オフ（対応環境のみ表示）</td><td>長い動画ほど速くなる</td></tr>
+            <tr><th scope="row"><a href="#reuse">ノイズ除去の再利用</a></th><td class="num">2</td><td class="num">1〜3</td><td>大きいほど速く、品質は下がることがある</td></tr>
+            <tr><th scope="row"><a href="#layers">使用する層数</a></th><td class="num">50（全層）</td><td class="num">35〜50</td><td>減らすと速いが、音声が壊れることがある</td></tr>
+            <tr><th scope="row"><a href="#seed">ランダムさ</a></th><td>毎回変える</td><td>毎回変える／固定する</td><td>同じ結果を再現するかどうか</td></tr>
+            <tr><th scope="row"><a href="#lora">追加モデル（LoRA）</a></th><td>なし</td><td>最大8個</td><td>見た目や必要なステップ数が変わる</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="size" aria-labelledby="size-title">
+      <h2 id="size-title">サイズ</h2>
+      <p>ふだんのサイズは、プロンプト欄の下の「<span class="ui">画面の形</span>」と「<span class="ui">大きさ</span>」で選びます（<a href="guide.html#size">サイズと2倍拡大</a>）。詳細設定では、プリセットにないサイズを指定できます。</p>
+      <ul>
+        <li><strong>カスタムサイズを使う</strong>：オンにすると、完成する動画の「<span class="ui">幅</span>」と「<span class="ui">高さ</span>」を入力できます。32の倍数で指定します。</li>
+        <li><strong>半分のサイズで生成して2倍に拡大</strong>：オンにすると、半分のサイズで生成してから縦横2倍に拡大します。このとき幅・高さは64の倍数です。拡大は生成のあとに行うので、時間はほとんど増えません。</li>
+        <li><strong>上限</strong>：生成するサイズ（2倍拡大のときはその半分）は60万ピクセル以下、1辺256〜1344です。超えると赤字で表示され、そのままでは生成できません。</li>
+      </ul>
+      <p>プロンプト欄の「<span class="ui">大きさ</span>」でプリセットを選ぶと、カスタムサイズは解除されます。</p>
+      <p>この欄の下には、「<span class="ui">このMacでの目安: 約○分</span>」と、いまの設定でのおおよその所要時間が表示されます。このMacでのこれまでの生成時間から計算するので、生成を重ねるほど当たりやすくなります。1時間以上かかる見込みのときは、赤字で注意が出ます。</p>
+    </section>
+
+    <section class="section section-narrow" id="steps" aria-labelledby="steps-title">
+      <h2 id="steps-title">生成ステップ数</h2>
+      <p>ノイズから映像を少しずつ仕上げていく回数です。既定は20で、3〜40から選べます。</p>
+      <ul>
+        <li>生成時間の大部分はこのステップの計算なので、ステップ数を増やすと、そのぶん時間がかかります。</li>
+        <li>減らすと速くなりますが、細部や動きの品質が落ちます。</li>
+        <li>Turbo LoRAをオンにすると、そのLoRA用のステップ数（4や8）に自動で切り替わります（<a href="guide.html#lora">LoRAを使う</a>）。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="compute" aria-labelledby="compute-title">
+      <h2 id="compute-title">計算方式</h2>
+      <p>モデルの読み込み方と計算のしかたです。主に、速さと、必要なメモリ・ディスクが変わります。方式によって計算の精度が少し違うため、同じシードでも結果が完全に同じになるとは限りません。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">方式</th><th scope="col">しくみ</th><th scope="col">向いているMac</th></tr></thead>
+          <tbody>
+            <tr>
+              <th scope="row">高速（int8キャッシュ）</th>
+              <td>事前に作ったint8のキャッシュを読みながら計算します。もっとも速い方式です。</td>
+              <td>Tensor演算ユニットを持つGPU（M5以降）。キャッシュ用に、モデル1つあたり約19.3GBのディスクが必要です（FL2VAとRef2VAで別々）。</td>
+            </tr>
+            <tr>
+              <th scope="row">常駐（大容量メモリ向け、キャッシュ不要）</th>
+              <td>起動のたびにモデル全体をメモリに展開して計算します。キャッシュは作りません。</td>
+              <td>メモリに大きな余裕があるMac。M5以降ではint8で約18GiB、それ以外ではBF16のまま約37GiBを使います。</td>
+            </tr>
+            <tr>
+              <th scope="row">省メモリ（SSDストリーミング）</th>
+              <td>元のモデルから、必要な部分だけをSSDから読みながら計算します。</td>
+              <td>どのApple Siliconでも使えます。メモリは少なくて済みますが、遅くなります。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <ul>
+        <li><strong>キャッシュの作成</strong>：「高速（int8キャッシュ）」を選んでキャッシュがまだないと、「<span class="ui">int8キャッシュがまだありません。</span>」と表示されます。「<span class="ui">キャッシュを作成…</span>」を押すと、アプリの中で作成できます。</li>
+        <li><strong>赤字の注意</strong>：常駐を選んでいてこのMacのメモリが少ない場合（M5以降で32GB未満、それ以外で64GB未満）や、SSDストリーミングで大きなサイズ・10秒以上を選んだ場合は、スワップで非常に遅くなるおそれがあると表示されます。</li>
+      </ul>
+      <p class="small muted">「高速（int8キャッシュ）」は、M5クラスのGPUでないと選べません。</p>
+    </section>
+
+    <section class="section section-narrow" id="speed" aria-labelledby="speed-title">
+      <h2 id="speed-title">速度と高速モード（試験的）</h2>
+      <p>「速度」は、計算の一部を省いて速くする設定です。省き方が変わるので、<strong>同じシードでも構図や細部が変わります</strong>。</p>
+      <ul>
+        <li><strong>標準（高品質）</strong>：省略なしで計算します。</li>
+        <li><strong>高速</strong>：ステップの間でTransformerの計算結果を使い回します。アプリの説明では、5秒・20ステップのDiT部分で約2.7倍速です。画質は保たれますが、構図は標準と変わります。</li>
+        <li><strong>最速</strong>：高速に加えて、一部のトークンをまとめて計算します。DiT部分で約2.9倍速です。細部がわずかに甘くなることがあります。</li>
+      </ul>
+      <p>「高速」「最速」のあいだは、下の<a href="#reuse">ノイズ除去の再利用</a>は1で動きます。</p>
+      <h3>高速モード（試験的）</h3>
+      <p>M5の対応環境でだけ表示される、別のチェックボックスです。既定はオフです。</p>
+      <ul>
+        <li>M5のニューラルアクセラレータで、Attentionの計算をint8で行います。</li>
+        <li>長い動画ほど効果が大きく、アプリの説明では15秒・20ステップで約1.4倍速、メモリは約1.3GB増えます。短い動画では効果が小さく、条件によっては遅くなることもあります。</li>
+        <li>同じシードでも映像が変わります。速度設定やreuseとの組み合わせは、十分に検証されていません。</li>
+      </ul>
+      <p class="small">例として、M5・24GBで512×512・15秒をつくったとき、標準では30分8秒、「最速」と高速モードの組み合わせでは9分25秒でした（トップページの<a href="./#performance">生成時間の目安</a>）。</p>
+    </section>
+
+    <section class="section section-narrow" id="reuse" aria-labelledby="reuse-title">
+      <h2 id="reuse-title">ノイズ除去の再利用（reuse）</h2>
+      <p>N回に1回だけモデルを計算し、残りは前回までの結果から補って速くします。既定は2で、1〜3から選べます。</p>
+      <ul>
+        <li><strong>1（標準）</strong>：毎回モデルを計算します。</li>
+        <li><strong>2（高速）</strong>：既定値です。</li>
+        <li><strong>3（さらに高速）</strong>：さらに速くなりますが、品質が下がる可能性があります。</li>
+      </ul>
+      <p>速度が「高速」「最速」のあいだは選べず、1で計算します。設定した値は残っていて、「標準（高品質）」に戻すと使われます。ステップ数が7以下のときに2以上にすると、モデルを計算する回数が極端に少なくなるため、赤字で注意が出ます。</p>
+    </section>
+
+    <section class="section section-narrow" id="layers" aria-labelledby="layers-title">
+      <h2 id="layers-title">使用する層数（DiTブロック）</h2>
+      <p>モデルの50層（DiTブロック）のうち、何層を使うかです。既定は50（全層）で、35〜50から選べます。50未満にすると、影響の小さい層から省いて速くします。速度の設定とは別に効きます。</p>
+      <div class="warn">
+        <p><strong>層を減らすと音声が壊れることがあります。</strong>45層で音声が強い雑音に変わることを確認しています。映像も変わります。慣れるまでは50のままにしてください。</p>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="seed" aria-labelledby="seed-title">
+      <h2 id="seed-title">ランダムさ（シード）</h2>
+      <p>生成の出発点になる乱数（シード）の決め方です。</p>
+      <ul>
+        <li><strong>毎回変える</strong>：既定です。生成のたびに別のシードを使うので、同じプロンプトでも毎回違う動画になります。</li>
+        <li><strong>固定する</strong>：入力したシードを使います。切り替えたときは、直前の生成で実際に使われたシードが入っています。0〜18446744073709551615の整数を指定できます。</li>
+      </ul>
+      <p>プロンプト・サイズ・長さ・設定がすべて同じなら、同じシードで同じ動画になります。ひとつだけ設定を変えて違いを比べるときに便利です。ただし、<a href="#speed">速度</a>や高速モード、層数、<a href="#compute">計算方式</a>を変えると、同じシードでも映像は変わることがあります。</p>
+      <p>プロジェクトで複数本を続けて生成するときに「固定する」にしていると、シードを1ずつ増やしながら生成します。</p>
+      <p>できた動画のシードは、プレビュー上部の「<span class="ui">使用した設定…</span>」で確認でき、「<span class="ui">同じシードを使う</span>」でこの欄に戻せます。</p>
+    </section>
+
+    <section class="section section-narrow" id="lora" aria-labelledby="lora-title">
+      <h2 id="lora-title">追加モデル（LoRA）</h2>
+      <p>「<span class="ui">モデル管理</span>」で登録したLoRAを、ここでオン・オフし、強さを決めます。「<span class="ui">管理…</span>」からモデル管理を開けます。使わなくても動画はつくれます。くわしくは使い方ページの<a href="guide.html#lora">追加モデル（LoRA）を使う</a>をご覧ください。</p>
+    </section>
+
+    <section class="section section-narrow" id="presets" aria-labelledby="presets-title">
+      <h2 id="presets-title">既定に戻す・プリセット</h2>
+      <ul>
+        <li><strong>既定に戻す</strong>：詳細設定の左下のボタンです。すべての項目を既定に戻し、オンにしていたLoRAもオフにします。サイズも正方形・中に戻ります。</li>
+        <li><strong>プリセット</strong>：プロンプト欄の右上の「<span class="ui">プリセット</span>」から「<span class="ui">現在の設定をプリセットとして保存…</span>」を選ぶと、画面の形・大きさ・長さと詳細設定（LoRAを含む）を名前を付けて保存できます。プロンプトは含みません。新しいウィンドウは、最後に使ったプリセットの設定で始まります。</li>
+        <li><strong>プロジェクト</strong>：プロジェクトを開いているときは、設定もプロジェクトに保存されます（<a href="guide.html#projects">プロジェクトと複数生成</a>）。</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">不具合の報告（Issues）</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.ja.md">README</a></li>
+        <li><a href="faq.html#license">ライセンス</a></li>
+        <li><a href="en/settings.html?lang=en" hreflang="en" lang="en">English</a></li>
+      </ul>
+      <p>H3cApp：大阪成蹊大学データサイエンス学部 鎌原淳三／Junzo Kamahara</p>
+      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画の生成にはMiniMaxの動画生成モデル<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>を使っています。モデルにはMiniMax H3独自のライセンス（MiniMax H3 Community License）が適用されます。</p>
+    </div>
+  </footer>
+  <script src="assets/js/main.js" defer></script>
+</body>
+</html>

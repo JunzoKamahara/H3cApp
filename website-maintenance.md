@@ -9,14 +9,17 @@ plain links).
 docs/
   index.html              top page (#examples #features #requirements #flow #performance #download)
   getting-started.html    #install #models #compute #first-video
-  guide.html              #images #projects #speed #size #prompts #advanced
+  guide.html              #images #projects #speed #size #prompts #lora #advanced
+  settings.html           詳細設定 explained, in dialog order: #overview #size #steps
+                          #compute #speed #reuse #layers #seed #lora #presets
+                          (not in the top nav; linked from the guide TOC and #speed)
   faq.html                #model-not-found #slow #download #fast-mode #saved
                           #project-required #old-mac #gatekeeper #update #report #license
-  en/                     English versions of the four pages, same file names and
+  en/                     English versions of the five pages, same file names and
                           the same anchors; assets are shared via ../assets/
   assets/css/style.css
   assets/js/main.js       copy buttons only
-  assets/images/          app-window.jpg, app-composer.jpg, og-image.jpg, icons
+  assets/images/          app-window.jpg, app-composer.jpg, app-lora.jpg, og-image.jpg, icons
   assets/video/           ex1-3.mp4 and posters
   .nojekyll  robots.txt  sitemap.xml
 website-facts.md          sources for every number and UI name (not published)
@@ -118,7 +121,7 @@ relevant sections when available:
   during download → getting-started.html#models
 - Model manager → getting-started.html#models / faq.html#model-not-found
 - Advanced settings, 計算方式 and サイズ sections → getting-started.html#compute,
-  guide.html#speed
+  guide.html#speed, settings.html
 - "画像から" with 最初・最後の画像 and with 参照画像・動画・音声 → guide.html#images
 (The en/ pages have their own English-UI screenshots, `*-en.jpg`; take
 both languages when retaking. Launch the release app with
