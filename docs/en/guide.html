@@ -45,7 +45,7 @@
   <main id="main">
     <div class="page-head">
       <h1>Guide</h1>
-      <p class="lead">Once your first video works, move on to image-based generation and batches in a project. This page follows H3cApp v0.4.4 with macOS set to English.</p>
+      <p class="lead">Once your first video works, move on to image-based generation and batches in a project. This page follows H3cApp v0.4.5 with macOS set to English.</p>
       <nav class="toc" aria-label="On this page">
         <p>On this page</p>
         <ol>
@@ -96,14 +96,14 @@
       <h3>Several videos with the same settings</h3>
       <ol class="steps">
         <li>Choose a count such as 3 with the count button below the prompt field (1 to 20).</li>
-        <li>Generate: videos are made one after another with different seeds and saved in the project. With “Randomness” set to “Fixed”, the seed counts up by one.</li>
+        <li>Generate: videos are made one after another with different seeds and saved in the project. With “Randomness” set to “Fixed”, only the first video uses that seed; the rest get random seeds.</li>
         <li>If you choose 2 or more with no project open, “<span class="ui">Choose a Project to Generate</span>” appears. Create a “<span class="ui">New Project</span>” or pick an “<span class="ui">Existing Project</span>”. “<span class="ui">Cancel</span>” returns without generating.</li>
         <li>When you pick an existing project whose saved prompt and settings differ from the current ones, the app asks before overwriting them. “<span class="ui">Overwrite and Generate</span>” generates with the current prompt and settings and saves them in the project.</li>
       </ol>
       <h3>Viewing and reusing videos</h3>
       <p>“<span class="ui">Project Videos…</span>” in the project menu opens the list.</p>
       <ul>
-        <li>“<span class="ui">Show</span>”: shows it in the preview.</li>
+        <li>“<span class="ui">Show</span>” (or click the thumbnail): shows it in the preview and puts its prompt and settings back in the panel with the seed fixed.</li>
         <li>“<span class="ui">Restore Settings</span>”: puts that video's prompt and settings back in the panel with its seed fixed, so generating makes the same video again.</li>
         <li>“<span class="ui">Use as Reference</span>”: adds that video as a reference video (needs Ref2VA).</li>
         <li>“<span class="ui">Delete…</span>”: moves the video and its settings record to the Trash.</li>
@@ -151,7 +151,7 @@
             <tr><th scope="row">Landscape</th><td class="num">448×256</td><td class="num">672×384</td><td class="num">960×544</td></tr>
             <tr><th scope="row">Portrait</th><td class="num">256×448</td><td class="num">384×672</td><td class="num">544×960</td></tr>
           </tbody>
-          <caption>Generated sizes (v0.4.4). The default is Square, Medium.</caption>
+          <caption>Generated sizes (v0.4.5). The default is Square, Medium.</caption>
         </table>
       </div>
       <ul>

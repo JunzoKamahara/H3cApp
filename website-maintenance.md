@@ -19,7 +19,7 @@ docs/
                           the same anchors; assets are shared via ../assets/
   assets/css/style.css
   assets/js/main.js       copy buttons only
-  assets/images/          app-window.jpg, app-composer.jpg, app-lora.jpg, og-image.jpg, icons
+  assets/images/          app-window.jpg, app-composer.jpg, app-lora.jpg, app-advanced.jpg, og-image.jpg, icons
   assets/video/           ex1-3.mp4 and posters
   .nojekyll  robots.txt  sitemap.xml
 website-facts.md          sources for every number and UI name (not published)

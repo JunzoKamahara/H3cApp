@@ -4,16 +4,18 @@ The numbers and UI names the GitHub Pages site (`docs/`) relies on, with
 where each came from. Update this file first when a new release changes any
 of them, then the pages (see `website-maintenance.md`).
 
-- Checked: 2026-10-10
-- Version described: **v0.4.4** (latest release; published 2026-10-07)
-- Tag commit: `3c2eeefe4ccf60f3c498d44f8737dd2598897b51`
+- Checked: 2026-10-12
+- Version described: **v0.4.5** (latest release; published 2026-10-12). Changes from
+  v0.4.4: a batch with a fixed seed uses it for the first video only (the rest
+  random; 0.4.4 counted up), and the project video list's thumbnail / 表示
+  also restores the video's settings with its seed pinned. Screens are otherwise
+  unchanged, so captions saying "v0.4.4の実画面" stay true.
+- Tag commit: `9c75a640f4a3f2ebb35f956e444380bcf257b023`
 - Repository: renamed from `h3c-app` to `H3cApp` for the site URL
   `https://junzokamahara.github.io/H3cApp/` (decided 2026-10-10); the site
   links to `github.com/JunzoKamahara/H3cApp`. Old URLs redirect on GitHub.
-- `main` at check time: `a72a839`. The only changes after v0.4.4 are the
-  progress-estimate decode units/seeds (`84bffed`) and the roadmap. No
-  user-facing feature exists only on `main`, so nothing main-only is
-  described.
+- `main` at check time: the v0.4.5 tag plus site-only commits; nothing
+  main-only is described.
 
 ## Languages
 
@@ -33,10 +35,10 @@ reads “×1”. `og-image-en.jpg` is the English share image.
 
 | item | value | source |
 |---|---|---|
-| DMG | `H3cApp-0.4.4.dmg`, 18,910,925 bytes (about 18.9 MB) | `gh release view v0.4.4` |
-| Direct URL | https://github.com/JunzoKamahara/H3cApp/releases/download/v0.4.4/H3cApp-0.4.4.dmg | same |
+| DMG | `H3cApp-0.4.5.dmg`, 18,917,009 bytes (about 18.9 MB), sha256 ca7540a0…f244f814 | local build, uploaded to v0.4.5 |
+| Direct URL | https://github.com/JunzoKamahara/H3cApp/releases/download/v0.4.5/H3cApp-0.4.5.dmg | same |
 | Site link target | https://github.com/JunzoKamahara/H3cApp/releases/latest (no version-specific link on the buttons) | |
-| Signing | Developer ID, notarized and stapled; `spctl` reports "Notarized Developer ID" for the DMG and for the app inside it | checked 2026-10-10 on the mounted DMG |
+| Signing | Developer ID, notarized and stapled; `spctl` reports "Notarized Developer ID" for the DMG and for the app inside it | checked 2026-10-12 (v0.4.5: `stapler validate`, `spctl`, mounted DMG shows 0.4.5, minos 15.0) |
 | Install | open the DMG, drag H3cApp to Applications | |
 | Minimum macOS | 15.0 (`LSMinimumSystemVersion` in the v0.4.4 Info.plist). Releases up to 0.4.3 said 13, which was wrong (engine uses macOS 15 MPSGraph SDPA, macOS 14 BF16) | `native/H3Spike/Packaging/Info.plist` at v0.4.4, release notes |
 | CPU | Apple Silicon only (arm64 build) | |
@@ -152,6 +154,7 @@ version at the time not recorded, so not presented as a v0.4.4 measurement):
 | `docs/assets/images/app-window.jpg` | real v0.4.4 window (760x652 pt) right after ex3 finished via the API (panel collapsed, summary line shown) | `screencapture -l` of the v0.4.4 app run from the DMG |
 | `docs/assets/images/app-composer.jpg` | real v0.4.4 window relaunched with a scratch project (panel expanded, empty preview), resized to 1600 px | same; the window frame default was enlarged for the shot and restored afterwards |
 | `docs/assets/images/app-lora.jpg`, `app-lora-en.jpg` | モデル管理 → LoRA tab (sheet only, 1100x910 px, dark), three lightx2v Turbo LoRAs registered (fl2v 4step v1.2, fl2v 8step v1.0, ref2v 4step v0.1), none checked | `screencapture -l` of the dev build (0.4.4; ModelManagerView unchanged since v0.4.4), ja and `-AppleLanguages (en)`, cropped to the sheet; LoRA list and window frame staged via `defaults` and restored from a backup afterwards |
+| `docs/assets/images/app-advanced.jpg`, `app-advanced-en.jpg` | 詳細設定 sheet right after 既定に戻す (scrolled to the top, 1064x1268 px, light; the dark appearance could not be forced), no project open | `screencapture -l` of the dev build (AdvancedSettingsView unchanged since v0.4.4); the ja shot's estimate reflects a 1 s length, the en shot's 5 s |
 | `docs/assets/images/og-image.jpg` | 1200x630 share image: app icon, title, and a frame of ex2 | composed with Pillow (Hiragino) |
 | icons | from `native/H3Spike/Packaging/AppIcon.icns` | `iconutil`, `sips` |
 

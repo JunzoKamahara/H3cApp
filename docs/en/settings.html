@@ -45,7 +45,7 @@
   <main id="main">
     <div class="page-head">
       <h1>Advanced settings explained</h1>
-      <p class="lead">What each item in “Advanced Settings” changes, in the order the dialog shows them. <strong>The defaults are fine to start with.</strong> Come back here when you want to tune the wait or the result. This page follows the H3cApp v0.4.4 screens.</p>
+      <p class="lead">What each item in “Advanced Settings” changes, in the order the dialog shows them. <strong>The defaults are fine to start with.</strong> Come back here when you want to tune the wait or the result. This page follows H3cApp v0.4.5.</p>
       <nav class="toc" aria-label="On this page">
         <p>On this page</p>
         <ol>
@@ -67,6 +67,10 @@
       <h2 id="overview-title">Overview and opening the dialog</h2>
       <p>Open it with the “<span class="ui">Advanced Settings</span>” button at the top right of the prompt panel, or with “Advanced Settings…” in the app menu (H3cApp) (⌘,). Changes apply from the next generation; changing something while a video is being generated doesn't affect that run.</p>
       <p>When anything differs from the defaults, the button reads “<span class="ui">Advanced Settings · modified</span>”.</p>
+      <figure class="shot">
+        <img src="../assets/images/app-advanced-en.jpg" width="1064" height="1268" loading="lazy" alt="The Advanced Settings dialog. From the top: Size (Use a custom size, the current size and the estimate on this Mac), Steps 20, Compute mode Fast (int8 cache), Speed with Standard (best quality), Fast and Fastest, the Fast mode (experimental) checkbox, Denoiser reuse 2 (faster) and Layer count 50 (all layers, standard), with Restore Defaults and Close buttons at the bottom.">
+        <figcaption>Advanced Settings right after Restore Defaults (actual v0.4.4 screen on an M5 Mac). Randomness and Add-on models (LoRA) are further down when you scroll.</figcaption>
+      </figure>
       <div class="table-wrap">
         <table>
           <thead><tr><th scope="col">Item</th><th scope="col">Default</th><th scope="col">Values</th><th scope="col">Main effect</th></tr></thead>
@@ -185,7 +189,7 @@
         <li><strong>Fixed</strong>: uses the seed you enter. When you switch to it, the field holds the seed the last generation actually used. Any whole number from 0 to 18446744073709551615 works.</li>
       </ul>
       <p>With the same prompt, size, length and settings, the same seed gives the same video, which is handy for comparing the effect of a single setting. Changing the <a href="#speed">speed</a>, fast mode, the layer count or the <a href="#compute">compute mode</a> can change the video even with the same seed.</p>
-      <p>When a project makes several videos in a row with Fixed selected, the seed goes up by 1 for each video.</p>
+      <p>When a project makes several videos in a row with Fixed selected, only the first video uses that seed; the rest get random seeds.</p>
       <p>You can see a finished video's seed under “<span class="ui">Settings Used…</span>” above the preview, and “<span class="ui">Use the Same Seed</span>” puts it back in this field.</p>
     </section>
 
