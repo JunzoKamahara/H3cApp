@@ -337,7 +337,12 @@ struct ProjectVideosSheet: View {
 
     private func row(_ video: ProjectVideo) -> some View {
         HStack(spacing: H3Spacing.md) {
-            VideoThumbnail(url: video.url)
+            Button { show(video) } label: {
+                VideoThumbnail(url: video.url)
+            }
+            .buttonStyle(.plain)
+            .disabled(viewModel.isGenerating)
+            .help(showHelp(video))
             VStack(alignment: .leading, spacing: 2) {
                 Text(video.url.lastPathComponent)
                     .font(.callout.monospaced())
@@ -354,11 +359,9 @@ struct ProjectVideosSheet: View {
                 }
             }
             Spacer()
-            Button("表示") {
-                viewModel.showProjectVideo(video)
-                isPresented = false
-            }
-            .disabled(viewModel.isGenerating)
+            Button("表示") { show(video) }
+                .disabled(viewModel.isGenerating)
+                .help(showHelp(video))
             Button("設定を戻す") {
                 viewModel.restoreProjectVideo(video)
                 isPresented = false
@@ -377,6 +380,20 @@ struct ProjectVideosSheet: View {
             .fixedSize()
         }
         .padding(.vertical, 2)
+    }
+
+    /// Shows the video and puts its settings (seed pinned) into the form,
+    /// so the window and the panel describe the same video.
+    private func show(_ video: ProjectVideo) {
+        viewModel.showProjectVideo(video)
+        viewModel.restoreProjectVideo(video)
+        isPresented = false
+    }
+
+    private func showHelp(_ video: ProjectVideo) -> String {
+        video.record == nil
+            ? String(localized: "この動画をプレビューに表示します")
+            : String(localized: "この動画をプレビューに表示し、プロンプトと設定もシード固定でパネルに戻します")
     }
 
     private func summary(_ record: ProjectVideoRecord) -> String {

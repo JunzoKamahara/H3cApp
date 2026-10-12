@@ -116,8 +116,8 @@ to skip that step and stream the original BF16 weights instead.
   request. Videos stay until you delete them (to the Trash). Opening a
   project restores its form; Restore Settings on a video pins its seed to
   make it again. Generated videos can be used as references, and the
-  composer's count makes several videos in a row with different seeds (a
-  fixed seed counts up) into the project - with none open, generating first
+  composer's count makes several videos in a row with different seeds (with
+  a fixed seed, only the first uses it; the rest are random) into the project - with none open, generating first
   asks for a new or existing project, and asks before replacing an existing
   project's different prompt and settings; after the first, each one
   reuses the encoded prompt and references (about 8 s saved for text,

@@ -389,7 +389,7 @@ struct CreationFormView: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("同じプロンプトと設定で、シードを変えて続けて生成し、プロジェクトに保存します（シード固定のときは1ずつ増やします）。プロジェクトがないときは、生成するときに作成または選択します")
+        .help("同じプロンプトと設定で、シードを変えて続けて生成し、プロジェクトに保存します（シード固定のときは1本目だけ固定し、2本目以降はランダム）。プロジェクトがないときは、生成するときに作成または選択します")
     }
 
     private func composerChip(systemImage: String, text: String) -> some View {

@@ -651,9 +651,10 @@ final class GenerationViewModel: ObservableObject {
 
     private struct BatchState {
         var total: Int
-        /// The fixed seed of the first video (the next ones count up from
-        /// it), or nil for a new random seed each time.
-        var baseSeed: UInt64?
+        /// The fixed seed of the first video, or nil for a random one. The
+        /// videos after the first always get a new random seed, so a pinned
+        /// seed (e.g. from 設定を戻す) doesn't repeat or crowd one region.
+        var firstSeed: UInt64?
         var request: GenerationRequest
     }
 
@@ -687,7 +688,7 @@ final class GenerationViewModel: ObservableObject {
         guard engine != nil, canGenerate else { return }
         saveProjectIfChanged(importingReferences: false)
         let total = project == nil ? 1 : (count ?? batchCount).clamped(to: batchCountRange)
-        batchState = BatchState(total: total, baseSeed: seedFixed ? UInt64(seedText) : nil,
+        batchState = BatchState(total: total, firstSeed: seedFixed ? UInt64(seedText) : nil,
                                 request: makeRequest())
         // Items after the first reuse the AdaLN schedule (released below
         // when the batch ends).
@@ -764,8 +765,9 @@ final class GenerationViewModel: ObservableObject {
     private func runBatchItem(index: Int) {
         guard let engine, let batch = batchState else { return }
         let request = batch.request
-        let seed = batch.baseSeed.map { $0 &+ UInt64(index - 1) } ?? UInt64.random(in: UInt64.min ... UInt64.max)
-        let seedWasRandom = batch.baseSeed == nil
+        let fixedSeed = index == 1 ? batch.firstSeed : nil
+        let seed = fixedSeed ?? UInt64.random(in: UInt64.min ... UInt64.max)
+        let seedWasRandom = fixedSeed == nil
         batchProgress = batch.total > 1 ? BatchProgress(index: index, total: batch.total) : nil
 
         deleteTemporaryPreview()
