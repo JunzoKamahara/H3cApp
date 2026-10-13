@@ -668,6 +668,13 @@ int h3_gpu_euler_bf16(h3_gpu *gpu, h3_gpu_tensor *sample,
                       size_t sample_offset, const h3_gpu_tensor *last,
                       const h3_gpu_tensor *previous, uint32_t elements,
                       float delta, float ratio);
+/* Apply one re-noise step to an F32 sample range from a BF16 velocity:
+ * clean = sample + sigma * velocity; sample = clean + sigma_next *
+ * (noise - clean), noise from h3_renoise_normal(element, keys). */
+int h3_gpu_renoise_bf16(h3_gpu *gpu, h3_gpu_tensor *sample,
+                        size_t sample_offset, const h3_gpu_tensor *velocity,
+                        uint32_t elements, float sigma, float sigma_next,
+                        const uint32_t keys[2]);
 int h3_gpu_silu_mul_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                          const h3_gpu_tensor *gate,
                          const h3_gpu_tensor *up, uint32_t elements);

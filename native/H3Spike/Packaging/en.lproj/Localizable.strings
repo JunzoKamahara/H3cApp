@@ -48,6 +48,10 @@
 "登録された追加モデルはありません。「管理…」から追加できます。" = "No add-on models are registered. You can add them from “Manage…”.";
 "オンにした追加モデルは重ねて適用されます。強さは学習時の効き具合に対する倍率です（空欄=1）。" = "Add-on models that are switched on are applied together. Strength multiplies the effect they were trained with (blank = 1).";
 "「%@」はTurbo用の追加モデルです。生成ステップ数を%lldに合わせました（%lld以外では品質が落ちます）。" = "“%@” is a Turbo add-on model. Steps were set to %lld (quality drops at any other value than %lld).";
+"ステップの進め方: re-noise（追加モデルの推奨）" = "Step rule: re-noise (recommended by the add-on model)";
+"音声のシフト値: %@（追加モデルの推奨）" = "Audio shift: %@ (recommended by the add-on model)";
+"「%@」の推奨に合わせて、ステップの進め方をre-noiseにします（ノイズ除去の再利用は1になります）。" = "Following “%@”, steps use the re-noise rule (denoising reuse runs at 1).";
+"追加モデルの推奨に合わせて、音声のシフト値を%@にします（標準は3）。" = "Following the add-on model, the audio shift is %@ (default 3).";
 "Turbo用の追加モデルを複数重ねると効果が強くなりすぎます。1つにすることをおすすめします。" = "Stacking several Turbo add-on models makes the effect too strong. Using just one is recommended.";
 "読み込むモデル（最初/最後の画像・参照画像・動画）に対応したファイルか、事前に確認できません。" = "Whether the file fits the model being loaded (first/last image, or reference images and videos) can't be checked in advance.";
 "追加モデル（LoRA）" = "Add-on models (LoRA)";

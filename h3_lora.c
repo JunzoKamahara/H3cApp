@@ -307,6 +307,24 @@ static const char *style_name(int style) {
     }
 }
 
+/* DMAD records its sampling as free text, e.g. "4 steps, video shift 12,
+ * audio shift 2, re-noise step rule, 1344x768, ...". */
+static void parse_sampling(const char *text, h3_lora_info *info) {
+    if (!text) return;
+    char lower[256];
+    size_t length = 0;
+    for (; text[length] && length + 1 < sizeof(lower); length++)
+        lower[length] = (char)tolower((unsigned char)text[length]);
+    lower[length] = '\0';
+    if (strstr(lower, "re-noise") || strstr(lower, "renoise"))
+        info->sampler = H3_SAMPLER_RENOISE;
+    const char *shift = strstr(lower, "audio shift");
+    if (shift) {
+        float value = strtof(shift + strlen("audio shift"), NULL);
+        if (value > 0.0f && value <= 100.0f) info->audio_sigma_shift = value;
+    }
+}
+
 int h3_lora_inspect(const char *path, h3_lora_info *info, char *error,
                     size_t error_size) {
     if (error && error_size) error[0] = '\0';
@@ -339,6 +357,7 @@ int h3_lora_inspect(const char *path, h3_lora_info *info, char *error,
             break;
         }
     }
+    parse_sampling(h3_st_metadata(&adapter->header, "sampling"), info);
     for (int refiner = 0; refiner < 2; refiner++) {
         int blocks = refiner ? H3_LORA_REFINER_BLOCKS : H3_LORA_DIT_BLOCKS;
         for (int block = 0; block < blocks; block++) {

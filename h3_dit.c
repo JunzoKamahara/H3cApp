@@ -151,6 +151,8 @@ struct h3_dit {
     int keep_bf16_mlp;
     int activation_aliases;
     h3_dit_attention_mode attention_mode;
+    int sampler;              /* H3_SAMPLER_EULER or H3_SAMPLER_RENOISE */
+    uint64_t sampler_seed;    /* drives the re-noise rule's fresh noise */
     int fused_patch_projection;
     int fused_patch_pack;
     int token_reduction;
@@ -3734,6 +3736,7 @@ static int denoise_euler_gpu(h3_dit *dit, float *video_latent,
                              h3_dit_progress progress, void *progress_opaque,
                              h3_dit_preview preview, void *preview_opaque,
                              char *error, size_t error_size) {
+    int renoise = dit->sampler == H3_SAMPLER_RENOISE;
     uint8_t selected[H3_MAX_STEPS] = {0};
     int selected_count = h3_dit_reuse_schedule(
         dit->sigmas.steps, reuse_interval, selected, sizeof(selected));
@@ -3835,16 +3838,34 @@ static int denoise_euler_gpu(h3_dit *dit, float *video_latent,
             ? dit->previous_video_velocity : dit->video_output_bf16;
         const h3_gpu_tensor *previous_audio = previous_evaluated >= 0
             ? dit->previous_audio_velocity : dit->audio_output_bf16;
-        ok = gpu_op(dit, h3_gpu_euler_bf16(
-                dit->gpu, dit->video_input, video_offset,
-                dit->video_output_bf16, previous_video, (uint32_t)video_count,
-                dit->sigmas.video[step] - dit->sigmas.video[step + 1],
-                video_ratio), error, error_size, "GPU video Euler step") &&
-             gpu_op(dit, h3_gpu_euler_bf16(
-                dit->gpu, dit->audio_input, audio_offset,
-                dit->audio_output_bf16, previous_audio, (uint32_t)audio_count,
-                dit->sigmas.audio[step] - dit->sigmas.audio[step + 1],
-                audio_ratio), error, error_size, "GPU audio Euler step");
+        if (renoise) {
+            uint32_t video_keys[2], audio_keys[2];
+            h3_renoise_keys(dit->sampler_seed, step, 0, video_keys);
+            h3_renoise_keys(dit->sampler_seed, step, 1, audio_keys);
+            ok = gpu_op(dit, h3_gpu_renoise_bf16(
+                    dit->gpu, dit->video_input, video_offset,
+                    dit->video_output_bf16, (uint32_t)video_count,
+                    dit->sigmas.video[step], dit->sigmas.video[step + 1],
+                    video_keys), error, error_size, "GPU video re-noise step") &&
+                 gpu_op(dit, h3_gpu_renoise_bf16(
+                    dit->gpu, dit->audio_input, audio_offset,
+                    dit->audio_output_bf16, (uint32_t)audio_count,
+                    dit->sigmas.audio[step], dit->sigmas.audio[step + 1],
+                    audio_keys), error, error_size, "GPU audio re-noise step");
+        } else {
+            ok = gpu_op(dit, h3_gpu_euler_bf16(
+                    dit->gpu, dit->video_input, video_offset,
+                    dit->video_output_bf16, previous_video,
+                    (uint32_t)video_count,
+                    dit->sigmas.video[step] - dit->sigmas.video[step + 1],
+                    video_ratio), error, error_size, "GPU video Euler step") &&
+                 gpu_op(dit, h3_gpu_euler_bf16(
+                    dit->gpu, dit->audio_input, audio_offset,
+                    dit->audio_output_bf16, previous_audio,
+                    (uint32_t)audio_count,
+                    dit->sigmas.audio[step] - dit->sigmas.audio[step + 1],
+                    audio_ratio), error, error_size, "GPU audio Euler step");
+        }
         if (ok && (evaluate || preview)) {
             int finish = preview || step + 1 == dit->sigmas.steps ||
                          (window && pending_evaluations >= window);
@@ -3990,6 +4011,11 @@ int h3_dit_denoise_euler_preview(
         fail(error, error_size, "invalid Euler denoising arguments");
         return 0;
     }
+    if (dit->sampler == H3_SAMPLER_RENOISE && reuse_interval != 1) {
+        fail(error, error_size,
+             "the re-noise sampler cannot be combined with denoiser reuse");
+        return 0;
+    }
     if (gpu_sampler_requested(dit))
         return denoise_euler_gpu(dit, video_latent, audio_latent,
                                  reuse_interval, progress, progress_opaque,
@@ -4072,7 +4098,21 @@ int h3_dit_denoise_euler_preview(
                     ? dit->sigmas.audio[previous_evaluated] : 0.0f,
                 previous_evaluated >= 0);
         }
-        if (ok) {
+        if (ok && dit->sampler == H3_SAMPLER_RENOISE) {
+            uint32_t video_keys[2], audio_keys[2];
+            h3_renoise_keys(dit->sampler_seed, step, 0, video_keys);
+            h3_renoise_keys(dit->sampler_seed, step, 1, audio_keys);
+            ok = h3_renoise_velocity_step(
+                     video_latent, video_velocity, video_count,
+                     dit->sigmas.video[step], dit->sigmas.video[step + 1],
+                     video_keys) &&
+                 h3_renoise_velocity_step(
+                     audio_latent, audio_velocity, audio_count,
+                     dit->sigmas.audio[step], dit->sigmas.audio[step + 1],
+                     audio_keys);
+            if (!ok) fail(error, error_size,
+                          "re-noise solver rejected step %d", step);
+        } else if (ok) {
             ok = h3_euler_velocity_step(
                      video_latent, video_velocity, video_count,
                      dit->sigmas.video[step], dit->sigmas.video[step + 1]) &&
@@ -4113,6 +4153,12 @@ int h3_dit_denoise_euler(h3_dit *dit, float *video_latent,
 
 void h3_dit_set_attention_mode(h3_dit *dit, h3_dit_attention_mode mode) {
     if (dit) dit->attention_mode = mode;
+}
+
+void h3_dit_set_sampler(h3_dit *dit, int sampler, uint64_t seed) {
+    if (!dit) return;
+    dit->sampler = sampler;
+    dit->sampler_seed = seed;
 }
 
 void h3_dit_release_backend_scratch(h3_dit *dit) {

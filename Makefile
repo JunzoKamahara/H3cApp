@@ -77,6 +77,9 @@ h3_tests: tests/test_h3.o $(LIB_OBJ)
 h3_metal_tests: tests/test_metal.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+h3_renoise_tests: tests/test_renoise.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 h3_bf16_tests: tests/test_bf16.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
@@ -248,7 +251,7 @@ tests/%.o: tests/%.c
 -include $(wildcard *.d tests/*.d)
 
 clean:
-	rm -f h3_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests \
+	rm -f h3_tests h3_metal_tests h3_bf16_tests h3_renoise_tests h3_tokenizer_tests \
 		h3_text_tests h3_real_prompt_test h3_real_dit_block_test \
 		h3_audio_gpu_tests h3_determinism_tests h3_repro_check \
 		h3_real_audio_vae_test h3_real_audio_encoder_test \

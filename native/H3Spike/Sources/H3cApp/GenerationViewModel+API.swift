@@ -80,11 +80,18 @@ extension GenerationViewModel {
             return .json(200, library.loras.map {
                 ["id": $0.id.uuidString, "name": $0.name, "path": $0.path,
                  "strength": $0.strength, "recommended_steps": $0.recommendedSteps.map { $0 as Any } ?? NSNull(),
-                 "enabled": $0.enabled]
+                 "enabled": $0.enabled, "recommended_sampling": recommendedSampling($0)]
             })
         default:
             return .error(404, "no such endpoint: \(request.method) \(request.path)")
         }
+    }
+
+    /// What the adapter's metadata asks for (see samplingSettings).
+    private func recommendedSampling(_ entry: LoRAEntry) -> Any {
+        guard case .success(let info) = library.loraInfo(for: entry) else { return NSNull() }
+        return ["sampler": info.recommendsRenoise ? "renoise" : "euler",
+                "audio_shift": info.recommendedAudioShift.map { $0 as Any } ?? NSNull()]
     }
 
     private func statusResponse() -> HTTPResponse {
@@ -377,9 +384,30 @@ extension GenerationViewModel {
         let turboSteps = library.enabledLoRAs.first { $0.recommendedSteps != nil }?.recommendedSteps
         steps = requestedSteps ?? turboSteps ?? defaultStepsForAPI
 
+        // "sampler" ("auto", "euler", "renoise") and "audio_shift" (0 =
+        // auto) override, for this one generation, the step rule and audio
+        // shift the enabled LoRAs' metadata recommends - for A/B tests.
+        var override = SamplingOverride()
+        if let sampler = json["sampler"] {
+            switch sampler as? String {
+            case "auto"?: break
+            case "euler"?: override.renoise = false
+            case "renoise"?: override.renoise = true
+            default: return .error(400, "\"sampler\" must be \"auto\", \"euler\" or \"renoise\"")
+            }
+        }
+        if let shift = json["audio_shift"] {
+            guard let number = shift as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  (0 ... 100).contains(number.doubleValue) else {
+                return .error(400, "\"audio_shift\" must be a number from 0 (auto) to 100")
+            }
+            if number.doubleValue > 0 { override.audioShift = number.floatValue }
+        }
+
         guard canGenerate else {
             return .error(409, validationMessage ?? "a generation is already running")
         }
+        samplingOverride = override.renoise == nil && override.audioShift == nil ? nil : override
         generate(count: count)
         return .json(202, ["ok": true])
     }

@@ -68,6 +68,10 @@ struct ProjectVideoRecord: Codable {
     var appVersion: String
     /// The form as it ran, with this video's seed pinned.
     var draft: ProjectDraft
+    /// Set only when they differ from the engine defaults (Euler, audio
+    /// shift 3): "renoise" and the audio shift a LoRA's metadata asked for.
+    var sampler: String? = nil
+    var audioSigmaShift: Double? = nil
 }
 
 struct OpenProject: Equatable {
@@ -827,6 +831,8 @@ extension ResolvedResult {
                 ResolvedLoRA(name: URL(fileURLWithPath: $0.path).deletingPathExtension().lastPathComponent,
                              path: $0.path, strength: $0.strength)
             },
+            sampling: .init(renoise: record.sampler == "renoise",
+                            audioShift: Float(record.audioSigmaShift ?? 0)),
             references: referenceNames(draft),
             deviceLine: record.deviceLine,
             completedAt: record.completedAt,

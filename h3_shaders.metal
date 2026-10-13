@@ -4442,6 +4442,39 @@ kernel void h3_euler_bf16(device float *sample [[buffer(0)]],
     sample[sample_index] = fma(args.delta, velocity, sample[sample_index]);
 }
 
+/* Must match h3_pcg_hash / h3_renoise_normal in h3_host.c. */
+inline uint h3_pcg_hash(uint value) {
+    uint state = value * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+struct h3_renoise_args {
+    uint sample_offset;
+    uint elements;
+    float sigma;
+    float sigma_next;
+    uint key0;
+    uint key1;
+};
+
+kernel void h3_renoise_bf16(device float *sample [[buffer(0)]],
+                            device const ushort *velocity [[buffer(1)]],
+                            constant h3_renoise_args &args [[buffer(2)]],
+                            uint gid [[thread_position_in_grid]]) {
+    if (gid >= args.elements) return;
+    uint sample_index = args.sample_offset + gid;
+    float clean = fma(args.sigma, h3_bf16_to_f32(velocity[gid]),
+                      sample[sample_index]);
+    uint a = h3_pcg_hash(h3_pcg_hash(gid) ^ args.key0);
+    uint b = h3_pcg_hash(a ^ args.key1);
+    float u1 = (float(a >> 8) + 1.0f) * (1.0f / 16777216.0f);
+    float u2 = float(b >> 8) * (1.0f / 16777216.0f);
+    float noise = precise::sqrt(-2.0f * precise::log(u1)) *
+                  precise::cos(6.28318530717958647692f * u2);
+    sample[sample_index] = fma(args.sigma_next, noise - clean, clean);
+}
+
 kernel void h3_silu_mul_bf16(device const ushort *gate [[buffer(0)]],
                               device const ushort *up [[buffer(1)]],
                               device ushort *output [[buffer(2)]],

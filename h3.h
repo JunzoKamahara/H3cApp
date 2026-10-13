@@ -71,6 +71,12 @@ typedef struct {
     int rank_max;
     char format[16];     /* "diffusers", "comfyui", "native" or "kohya" */
     char base_model[96]; /* from metadata when the trainer recorded it */
+    /* The adapter's recommended sampling, when its metadata records one in
+     * the DMAD style ("sampling": "4 steps, ..., audio shift 2, re-noise
+     * step rule, ..."): sampler is H3_SAMPLER_RENOISE when it names the
+     * re-noise rule, audio_sigma_shift is 0 when not given. */
+    int sampler;
+    float audio_sigma_shift;
 } h3_lora_info;
 
 typedef struct {
@@ -166,13 +172,27 @@ typedef struct {
      * default. Requires h3_fast_attention_available(); fixed for the whole
      * generation. Independent of the other speed settings above. */
     int fast_attention;
+    /* Denoising step rule: H3_SAMPLER_EULER (0, the official pipeline's
+     * Euler ODE step) or H3_SAMPLER_RENOISE, which predicts the clean latent
+     * at every step and adds fresh seeded noise at the next sigma - the
+     * DMD-style rule few-step students such as DMAD are trained with.
+     * Re-noise evaluates every step, so it requires denoise_reuse 1. */
+    int sampler;
+    /* Audio sigma-schedule shift. 0 keeps the default (3.0); some few-step
+     * adapters were trained with another value (DMAD uses 2.0). */
+    float audio_sigma_shift;
 } h3_params;
+
+enum {
+    H3_SAMPLER_EULER = 0,
+    H3_SAMPLER_RENOISE = 1
+};
 
 #define H3_PARAMS_DEFAULT { \
     H3_DEFAULT_WIDTH, H3_DEFAULT_HEIGHT, H3_DEFAULT_FRAMES, H3_DEFAULT_STEPS, \
     UINT64_C(42), NULL, NULL, NULL, NULL, 0, H3_REFERENCE_IMAGE_MATCH, \
     1, H3_DEFAULT_DIT_LAYERS, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, \
-    NULL, 0, 0 \
+    NULL, 0, 0, H3_SAMPLER_EULER, 0.0f \
 }
 
 typedef struct {

@@ -120,6 +120,9 @@ double h3_time_shift_slope(double sigma, double from_shift, double to_shift);
 int h3_schedule_build(int steps, h3_sigma_schedule *schedule);
 /* Released linear base grid: evaluations model forwards plus terminal zero. */
 int h3_serving_schedule_build(int evaluations, h3_sigma_schedule *schedule);
+/* Same grid with another audio shift (the video shift stays 12). */
+int h3_serving_schedule_build_shifted(int evaluations, float audio_shift,
+                                      h3_sigma_schedule *schedule);
 
 int h3_layout_build(const h3_layout_spec *spec, h3_layout *layout,
                     char *error, size_t error_size);
@@ -144,5 +147,18 @@ int h3_res_step(float *output, const float *sample, const float *denoised,
                 const float *sigmas, int step, int total_steps);
 int h3_euler_velocity_step(float *sample, const float *velocity, size_t count,
                            float sigma, float sigma_next);
+
+/* Re-noise step rule (DMD-style few-step sampling): predict the clean latent
+ * x0 = sample + sigma * velocity, then draw fresh noise at the next sigma:
+ * sample = (1 - sigma_next) * x0 + sigma_next * noise. The noise is a
+ * counter-based hash of (seed, step, stream, element), so the CPU and the
+ * GPU (h3_gpu_renoise_bf16) produce the same values. stream is 0 for video
+ * and 1 for audio. */
+uint32_t h3_pcg_hash(uint32_t value);
+void h3_renoise_keys(uint64_t seed, int step, int stream, uint32_t keys[2]);
+float h3_renoise_normal(uint32_t index, const uint32_t keys[2]);
+int h3_renoise_velocity_step(float *sample, const float *velocity,
+                             size_t count, float sigma, float sigma_next,
+                             const uint32_t keys[2]);
 
 #endif

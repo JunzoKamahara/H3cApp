@@ -177,7 +177,14 @@ int h3_schedule_build(int steps, h3_sigma_schedule *schedule) {
 }
 
 int h3_serving_schedule_build(int evaluations, h3_sigma_schedule *schedule) {
-    if (!schedule || evaluations < 2 || evaluations > H3_MAX_STEPS) return 0;
+    return h3_serving_schedule_build_shifted(
+        evaluations, (float)H3_AUDIO_SIGMA_SHIFT, schedule);
+}
+
+int h3_serving_schedule_build_shifted(int evaluations, float audio_shift,
+                                      h3_sigma_schedule *schedule) {
+    if (!schedule || evaluations < 2 || evaluations > H3_MAX_STEPS ||
+        !(audio_shift > 0.0f)) return 0;
     memset(schedule, 0, sizeof(*schedule));
     schedule->steps = evaluations;
     float denominator = (float)evaluations;
@@ -185,8 +192,8 @@ int h3_serving_schedule_build(int evaluations, h3_sigma_schedule *schedule) {
         float base = 1.0f - (float)index / denominator;
         schedule->video[index] = (float)H3_VIDEO_SIGMA_SHIFT * base /
             (1.0f + ((float)H3_VIDEO_SIGMA_SHIFT - 1.0f) * base);
-        schedule->audio[index] = (float)H3_AUDIO_SIGMA_SHIFT * base /
-            (1.0f + ((float)H3_AUDIO_SIGMA_SHIFT - 1.0f) * base);
+        schedule->audio[index] = audio_shift * base /
+            (1.0f + (audio_shift - 1.0f) * base);
     }
     schedule->video[evaluations] = 0.0f;
     schedule->audio[evaluations] = 0.0f;
@@ -672,5 +679,45 @@ int h3_euler_velocity_step(float *sample, const float *velocity, size_t count,
     float delta = sigma - sigma_next;
     for (size_t index = 0; index < count; index++)
         sample[index] += delta * velocity[index];
+    return 1;
+}
+
+/* PCG-RXS-M-XS 32-bit hash (Jarzynski & Olano, "Hash Functions for GPU
+ * Rendering", 2020). Must match h3_pcg_hash in h3_shaders.metal. */
+uint32_t h3_pcg_hash(uint32_t value) {
+    uint32_t state = value * 747796405u + 2891336453u;
+    uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+void h3_renoise_keys(uint64_t seed, int step, int stream, uint32_t keys[2]) {
+    uint32_t key = h3_pcg_hash((uint32_t)(step * 2 + stream) + 0x9e3779b9u);
+    key = h3_pcg_hash((uint32_t)(seed >> 32) ^ key);
+    keys[0] = h3_pcg_hash((uint32_t)seed ^ key);
+    keys[1] = h3_pcg_hash(keys[0] + 0x632be5abu);
+}
+
+/* Box-Muller from two hashed uniforms; u1 is in (0, 1] so log() is finite.
+ * The element index goes through the hash before the key is mixed in, so
+ * different steps get unrelated fields rather than shifted copies. */
+float h3_renoise_normal(uint32_t index, const uint32_t keys[2]) {
+    uint32_t a = h3_pcg_hash(h3_pcg_hash(index) ^ keys[0]);
+    uint32_t b = h3_pcg_hash(a ^ keys[1]);
+    float u1 = ((float)(a >> 8) + 1.0f) * (1.0f / 16777216.0f);
+    float u2 = (float)(b >> 8) * (1.0f / 16777216.0f);
+    return sqrtf(-2.0f * logf(u1)) * cosf(6.28318530717958647692f * u2);
+}
+
+int h3_renoise_velocity_step(float *sample, const float *velocity,
+                             size_t count, float sigma, float sigma_next,
+                             const uint32_t keys[2]) {
+    if (!sample || !velocity || !keys || count > UINT32_MAX ||
+        !isfinite(sigma) || !isfinite(sigma_next) ||
+        !(sigma > sigma_next) || sigma_next < 0.0f) return 0;
+    for (size_t index = 0; index < count; index++) {
+        float clean = sample[index] + sigma * velocity[index];
+        float noise = h3_renoise_normal((uint32_t)index, keys);
+        sample[index] = clean + sigma_next * (noise - clean);
+    }
     return 1;
 }

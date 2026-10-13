@@ -395,6 +395,22 @@ struct AdvancedSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(viewModel.steps == turboSteps ? palette.textSecondary : palette.errorColor)
             }
+            if let renoiseEntry = enabled.first(where: {
+                if case .success(let info) = library.loraInfo(for: $0) { return info.recommendsRenoise }
+                return false
+            }) {
+                Text("「\(renoiseEntry.name)」の推奨に合わせて、ステップの進め方をre-noiseにします（ノイズ除去の再利用は1になります）。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+            }
+            if viewModel.samplingSettings.audioShift > 0 {
+                // As a String: a Float interpolated into a localized string
+                // formats as %f.
+                let shift = "\(viewModel.samplingSettings.audioShift)"
+                Text("追加モデルの推奨に合わせて、音声のシフト値を\(shift)にします（標準は3）。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+            }
             if turbo.count > 1 {
                 Text("Turbo用の追加モデルを複数重ねると効果が強くなりすぎます。1つにすることをおすすめします。")
                     .font(.caption)

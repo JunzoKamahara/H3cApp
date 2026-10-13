@@ -95,9 +95,44 @@ final class GenerationViewModel: ObservableObject {
     /// Reuse actually sent to the engine: the 高速/最速 presets rely on core
     /// reuse, which the engine won't combine with denoiser reuse, and were
     /// measured at reuse 1 - so they run at 1 whatever denoiseReuse holds.
+    /// The re-noise step rule evaluates every step, so it runs at 1 too.
     var effectiveDenoiseReuse: Int {
-        speedMode == .quality ? denoiseReuse.clamped(to: reuseRange) : 1
+        speedMode == .quality && !samplingSettings.renoise ? denoiseReuse.clamped(to: reuseRange) : 1
     }
+
+    struct SamplingSettings: Equatable {
+        var renoise = false
+        /// 0 = the engine's default audio shift (3).
+        var audioShift: Float = 0
+    }
+
+    /// The step rule and audio shift for the next generation: what the
+    /// enabled LoRAs' metadata recommends (DMAD records "re-noise step rule"
+    /// and "audio shift 2"), else the engine's Euler rule and default shift.
+    /// An API request can override either for one generation (A/B tests).
+    var samplingSettings: SamplingSettings {
+        var settings = SamplingSettings()
+        for entry in library.enabledLoRAs {
+            guard case .success(let info) = library.loraInfo(for: entry) else { continue }
+            if info.recommendsRenoise { settings.renoise = true }
+            if settings.audioShift == 0, let shift = info.recommendedAudioShift {
+                settings.audioShift = Float(shift)
+            }
+        }
+        if let override = samplingOverride {
+            if let renoise = override.renoise { settings.renoise = renoise }
+            if let shift = override.audioShift { settings.audioShift = shift }
+        }
+        return settings
+    }
+
+    /// Set by POST /api/generate's "sampler"/"audio_shift" and cleared once
+    /// that generation's request is built; nil fields keep the LoRA's choice.
+    struct SamplingOverride {
+        var renoise: Bool?
+        var audioShift: Float?
+    }
+    var samplingOverride: SamplingOverride?
     // Opt-in fast mode (experimental): ccv's int8 attention, M5 only. Off by
     // default, offered only where the engine reports it can run, and kept
     // separate from speedMode - no speed preset turns it on.
@@ -640,6 +675,7 @@ final class GenerationViewModel: ObservableObject {
         var computeMode: ComputeMode
         var speedMode: SpeedMode
         var loras: [ResolvedLoRA]
+        var sampling: SamplingSettings
         var referenceNames: [String]
         var deviceLine: String
         var shape: ProgressEstimator.Shape
@@ -677,7 +713,7 @@ final class GenerationViewModel: ObservableObject {
                 self.isGenerating = false
                 self.isCancelling = false
                 self.phase = ""
-                if !cancelled { self.startGenerating(count: count) }
+                if cancelled { self.samplingOverride = nil } else { self.startGenerating(count: count) }
             }
             return
         }
@@ -690,6 +726,7 @@ final class GenerationViewModel: ObservableObject {
         let total = project == nil ? 1 : (count ?? batchCount).clamped(to: batchCountRange)
         batchState = BatchState(total: total, firstSeed: seedFixed ? UInt64(seedText) : nil,
                                 request: makeRequest())
+        samplingOverride = nil
         // Items after the first reuse the AdaLN schedule (released below
         // when the batch ends).
         if total > 1 { engine?.setBatchReuse(true) }
@@ -730,6 +767,9 @@ final class GenerationViewModel: ObservableObject {
         // Decided here, once, for this generation: the value is copied into
         // params, so later toggles in the form can't affect a running job.
         params.fastAttention = useFastAttention
+        let sampling = samplingSettings
+        params.renoise = sampling.renoise
+        params.audioSigmaShift = sampling.audioShift
 
         var draft = currentDraft()
         if let projectURL = project?.url {
@@ -754,6 +794,7 @@ final class GenerationViewModel: ObservableObject {
             computeMode: computeMode,
             speedMode: speedMode,
             loras: loras,
+            sampling: sampling,
             referenceNames: referenceNames(draft),
             deviceLine: deviceLine,
             shape: progressShape(sizeProfile: sizeProfile, frames: requestedFrames,
@@ -856,7 +897,9 @@ final class GenerationViewModel: ObservableObject {
             effectiveDenoiseReuse: request.effectiveDenoiseReuse,
             ccvAttentionCalls: result.ccvAttentionCalls,
             ccvAttentionDirectCalls: result.ccvAttentionDirectCalls,
-            deviceLine: request.deviceLine, appVersion: Self.appVersion, draft: draft)
+            deviceLine: request.deviceLine, appVersion: Self.appVersion, draft: draft,
+            sampler: request.sampling.renoise ? "renoise" : nil,
+            audioSigmaShift: request.sampling.audioShift > 0 ? Double(request.sampling.audioShift) : nil)
         if let projectURL = request.projectURL {
             if let stored = storeInProject(videoAt: url, projectURL: projectURL, record: record,
                                            completedAt: completedAt, seed: result.seed) {
@@ -892,6 +935,7 @@ final class GenerationViewModel: ObservableObject {
             seed: result.seed,
             seedWasRandom: seedWasRandom,
             loras: request.loras,
+            sampling: request.sampling,
             references: request.referenceNames,
             deviceLine: request.deviceLine,
             completedAt: completedAt,

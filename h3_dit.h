@@ -112,6 +112,9 @@ typedef enum {
     H3_DIT_ATTENTION_CCV_INT8_DIRECT  /* ccv int8 on the BF16 head-major Q/K/V */
 } h3_dit_attention_mode;
 void h3_dit_set_attention_mode(h3_dit *dit, h3_dit_attention_mode mode);
+/* Step rule for the following denoise calls: H3_SAMPLER_EULER (default)
+ * or H3_SAMPLER_RENOISE, whose fresh noise is derived from seed. */
+void h3_dit_set_sampler(h3_dit *dit, int sampler, uint64_t seed);
 
 /* Reset mutable sampler state and replace seed-dependent condition rows before
  * reusing an otherwise identical prepared transformer. */

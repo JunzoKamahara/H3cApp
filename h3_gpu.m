@@ -445,7 +445,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_token_pool_bf16", @"h3_token_pool_adaln_bf16",
             @"h3_token_expand_delta_bf16",
             @"h3_token_expand_adaln_bf16",
-            @"h3_euler_bf16", @"h3_silu_mul_bf16",
+            @"h3_euler_bf16", @"h3_renoise_bf16", @"h3_silu_mul_bf16",
             @"h3_weight_norm_f32", @"h3_add_scaled_f32",
             @"h3_alias_free_snake_f32", @"h3_snake1d_f32",
             @"h3_audio_qkv_split_f32", @"h3_audio_attention_pool_f32",
@@ -1093,6 +1093,11 @@ typedef struct {
 } gqa_args;
 typedef struct { uint32_t sample_offset, elements; float delta, ratio; }
     euler_args;
+typedef struct {
+    uint32_t sample_offset, elements;
+    float sigma, sigma_next;
+    uint32_t key0, key1;
+} renoise_args;
 
 static int h3_gpu_linear_mps(H3GPU *gpu, h3_gpu_tensor *output,
                              const h3_gpu_tensor *input,
@@ -5054,6 +5059,27 @@ int h3_gpu_euler_bf16(h3_gpu *opaque, h3_gpu_tensor *sample,
             [encoder setBuffer:TENSOR(last).buffer offset:0 atIndex:1];
             [encoder setBuffer:TENSOR(previous).buffer offset:0 atIndex:2];
             [encoder setBytes:&args length:sizeof(args) atIndex:3];
+        });
+}
+
+int h3_gpu_renoise_bf16(h3_gpu *opaque, h3_gpu_tensor *sample,
+                        size_t sample_offset, const h3_gpu_tensor *velocity,
+                        uint32_t elements, float sigma, float sigma_next,
+                        const uint32_t keys[2]) {
+    H3GPU *gpu = GPU(opaque);
+    if (!sample || !keys || TENSOR(sample).dtype != H3_GPU_F32 ||
+        sample_offset > TENSOR(sample).elements ||
+        elements > TENSOR(sample).elements - sample_offset ||
+        sample_offset > UINT32_MAX || elements > UINT32_MAX - sample_offset ||
+        !h3_gpu_require_bf16(gpu, velocity, elements, @"re-noise velocity"))
+        return 0;
+    renoise_args args = {(uint32_t)sample_offset, elements, sigma, sigma_next,
+                         keys[0], keys[1]};
+    return h3_gpu_dispatch_1d(gpu, @"h3_renoise_bf16", elements,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(sample).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(velocity).buffer offset:0 atIndex:1];
+            [encoder setBytes:&args length:sizeof(args) atIndex:2];
         });
 }
 

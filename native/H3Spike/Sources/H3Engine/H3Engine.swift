@@ -98,6 +98,11 @@ public struct H3LoRAInfo: Sendable, Equatable {
     public let rankMax: Int
     public let format: String
     public let baseModel: String
+    /// The sampling the adapter's metadata recommends, when it records one
+    /// (DMAD: "... audio shift 2, re-noise step rule ..."): the re-noise
+    /// step rule, and an audio sigma shift other than the engine's 3.
+    public let recommendsRenoise: Bool
+    public let recommendedAudioShift: Double?
 
     /// Reads only the safetensors header - cheap enough to call from the UI.
     public static func inspect(path: String) throws -> H3LoRAInfo {
@@ -111,7 +116,9 @@ public struct H3LoRAInfo: Sendable, Equatable {
             blocks: Int(info.blocks), refinerBlocks: Int(info.refiner_blocks),
             projections: Int(info.projections), unsupported: Int(info.unsupported),
             rankMin: Int(info.rank_min), rankMax: Int(info.rank_max),
-            format: fixedCString(info.format), baseModel: fixedCString(info.base_model))
+            format: fixedCString(info.format), baseModel: fixedCString(info.base_model),
+            recommendsRenoise: info.sampler == Int32(H3_SAMPLER_RENOISE),
+            recommendedAudioShift: info.audio_sigma_shift > 0 ? Double(info.audio_sigma_shift) : nil)
     }
 }
 
@@ -152,6 +159,12 @@ public struct H3GenerationParams: Sendable {
     // same seed gives a different video than the standard mode. Separate
     // from the speed settings above and never turned on by them.
     public var fastAttention = false
+    // h3_params.sampler / audio_sigma_shift: the re-noise step rule and the
+    // audio schedule shift a few-step adapter was trained with (DMAD), taken
+    // from its metadata; the defaults are the engine's Euler rule and 3.0.
+    // Re-noise evaluates every step, so it needs denoiseReuse 1.
+    public var renoise = false
+    public var audioSigmaShift: Float = 0
     public init() {}
 }
 
@@ -443,13 +456,16 @@ public final class H3Engine: @unchecked Sendable {
                 cParams.token_reduction = params.tokenReduction ? 1 : 0
                 cParams.ssd_streaming = params.ssdStreaming ? 1 : 0
                 cParams.fast_attention = params.fastAttention ? 1 : 0
+                cParams.sampler = params.renoise ? Int32(H3_SAMPLER_RENOISE)
+                                                 : Int32(H3_SAMPLER_EULER)
+                cParams.audio_sigma_shift = params.audioSigmaShift
                 // The values actually handed to the engine (not the form's
                 // labels), for checking presets and defaults end to end.
-                NSLog("h3: generation params - %dx%d, %d frames, %d steps, dit_layers %d, denoise_reuse %d, core_reuse %d, token_reduction %d, fast_attention %d, ssd_streaming %d, seed %llu",
+                NSLog("h3: generation params - %dx%d, %d frames, %d steps, dit_layers %d, denoise_reuse %d, core_reuse %d, token_reduction %d, fast_attention %d, ssd_streaming %d, sampler %d, audio_shift %.3g, seed %llu",
                       cParams.width, cParams.height, cParams.frames, cParams.steps,
                       cParams.dit_layers, cParams.denoise_reuse, cParams.core_reuse,
                       cParams.token_reduction, cParams.fast_attention, cParams.ssd_streaming,
-                      cParams.seed)
+                      cParams.sampler, Double(cParams.audio_sigma_shift), cParams.seed)
                 cParams.on_progress = h3ProgressTrampoline
                 cParams.on_frame = h3FrameTrampoline
                 cParams.callback_opaque = bridgeHandle.toOpaque()

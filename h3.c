@@ -192,6 +192,13 @@ failed:
     return NULL;
 }
 
+/* The sigma schedule is baked into a prepared DiT, so its audio shift is
+ * part of the prepared key. */
+static float h3_audio_sigma_shift(const h3_params *params) {
+    return params->audio_sigma_shift > 0.0f ? params->audio_sigma_shift
+                                            : (float)H3_AUDIO_SIGMA_SHIFT;
+}
+
 static char *h3_prepared_key(const char *conditioning,
                              const h3_params *params,
                              int render_width, int render_height) {
@@ -200,7 +207,7 @@ static char *h3_prepared_key(const char *conditioning,
             &key,
             "%s|shape=%dx%dx%d|steps=%d|layers=%d|reuse-core=%d|reduce=%d"
             "|row-fc2=%d|reference-rope=%d|ssd-streaming=%d"
-            "|slow=%d%d%d%d%d%d%d%d%d%d",
+            "|slow=%d%d%d%d%d%d%d%d%d%d|audio-shift=%.6g",
             conditioning, render_width, render_height, params->frames,
             params->steps, params->dit_layers, params->core_reuse,
             params->token_reduction, params->use_int8_row_fc2,
@@ -215,7 +222,8 @@ static char *h3_prepared_key(const char *conditioning,
             params->use_slower_scalar_qkv_rms,
             params->use_slower_uncached_int8_scales,
             params->use_slower_dynamic_fc1_k,
-            params->use_slower_grouped_quantizer)) {
+            params->use_slower_grouped_quantizer,
+            (double)h3_audio_sigma_shift(params))) {
         free(key.text);
         return NULL;
     }
@@ -641,6 +649,22 @@ static int h3_valid_params(h3_ctx *ctx, const h3_params *params) {
     }
     if (params->fast_attention != 0 && params->fast_attention != 1) {
         h3_set_error(ctx, "fast attention must be zero or one");
+        return 0;
+    }
+    if (params->sampler != H3_SAMPLER_EULER &&
+        params->sampler != H3_SAMPLER_RENOISE) {
+        h3_set_error(ctx, "sampler must be Euler or re-noise");
+        return 0;
+    }
+    if (params->sampler == H3_SAMPLER_RENOISE && params->denoise_reuse != 1) {
+        h3_set_error(ctx, "the re-noise sampler evaluates every step and "
+                         "cannot be combined with denoiser reuse");
+        return 0;
+    }
+    if (!(params->audio_sigma_shift == 0.0f ||
+          (params->audio_sigma_shift > 0.0f &&
+           params->audio_sigma_shift <= 100.0f))) {
+        h3_set_error(ctx, "audio sigma shift must be 0 (default) or in (0, 100]");
         return 0;
     }
     if (params->fast_attention && !h3_fast_attention_available()) {
@@ -1716,7 +1740,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         goto cleanup;
     }
     h3_sigma_schedule sigmas;
-    if (!h3_serving_schedule_build(params->steps, &sigmas)) {
+    if (!h3_serving_schedule_build_shifted(
+            params->steps, h3_audio_sigma_shift(params), &sigmas)) {
         h3_set_error(ctx, "cannot construct the requested sigma schedule");
         goto cleanup;
     }
@@ -1841,6 +1866,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     h3_debug_hash("noise video", video, video_count * sizeof(*video));
     h3_debug_hash("noise audio", audio, audio_count * sizeof(*audio));
     h3_dit_set_attention_mode(dit, h3_resolve_attention_mode(params));
+    h3_dit_set_sampler(dit, params->sampler, params->seed);
     uint64_t ccv_calls_before = h3_gpu_ccv_attention_dispatch_count();
     uint64_t ccv_direct_before = h3_gpu_ccv_attention_direct_count();
     if (!h3_dit_denoise_euler_preview(
