@@ -213,6 +213,7 @@ struct ModelManagerView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 loraInfoText(entry)
+                loraSamplingControls(entry)
             }
             Spacer()
             HStack(spacing: 4) {
@@ -270,6 +271,42 @@ struct ModelManagerView: View {
             .font(.caption2)
             .foregroundStyle(isError ? palette.errorColor : palette.textSecondary)
             .lineLimit(2)
+    }
+
+    /// The step rule and audio shift this LoRA runs with, set by hand for
+    /// files that don't declare them (see ModelLibrary.sampling(for:)).
+    /// 自動 shows what the file's metadata says.
+    private func loraSamplingControls(_ entry: LoRAEntry) -> some View {
+        let info = try? library.loraInfo(for: entry).get()
+        let declared = info?.recommendsRenoise == true ? "re-noise" : "Euler"
+        let declaredShift = info?.recommendedAudioShift.map { $0.formatted() } ?? "3"
+        return HStack(spacing: 6) {
+            Text("ステップの進め方").font(.caption2).foregroundStyle(palette.textSecondary)
+                .fixedSize()
+            Picker("", selection: Binding(
+                get: { entry.sampler },
+                set: { library.setLoRASampler(id: entry.id, $0) }
+            )) {
+                Text("自動（\(declared)）").tag(LoRASampler.auto)
+                Text("Euler").tag(LoRASampler.euler)
+                Text("re-noise（LCM方式）").tag(LoRASampler.renoise)
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .fixedSize()
+            .help("少ないステップ向けに蒸留したLoRAの多くは、re-noise（ComfyUIのlcmサンプラーと同じ計算）を推奨しています。自動は、ファイルの説明に書かれた方式を使います（書かれていなければEuler）。re-noiseでは、ノイズ除去の再利用は1になります。")
+            Text("音声シフト").font(.caption2).foregroundStyle(palette.textSecondary)
+                .fixedSize()
+            TextField(declaredShift, text: Binding(
+                get: { entry.audioShiftText },
+                set: { library.setLoRAAudioShift(id: entry.id, text: $0) }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .controlSize(.small)
+            .frame(width: 44)
+            .help("音声のノイズの減らし方を決める値。空欄は、ファイルの説明に書かれた値（なければ標準の3）。")
+        }
     }
 
     private func addLoRA() {

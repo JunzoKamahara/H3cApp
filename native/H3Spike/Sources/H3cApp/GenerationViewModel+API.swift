@@ -80,7 +80,8 @@ extension GenerationViewModel {
             return .json(200, library.loras.map {
                 ["id": $0.id.uuidString, "name": $0.name, "path": $0.path,
                  "strength": $0.strength, "recommended_steps": $0.recommendedSteps.map { $0 as Any } ?? NSNull(),
-                 "enabled": $0.enabled, "recommended_sampling": recommendedSampling($0)]
+                 "enabled": $0.enabled, "recommended_sampling": recommendedSampling($0),
+                 "sampler": $0.sampler.rawValue, "audio_shift": $0.audioShift.map { $0 as Any } ?? NSNull()]
             })
         default:
             return .error(404, "no such endpoint: \(request.method) \(request.path)")
@@ -346,35 +347,56 @@ extension GenerationViewModel {
         // replaces the stack; the older single "lora_name"/"lora_scale"
         // pair still works. Neither means no LoRA. Strength multiplies the
         // adapter's own alpha/rank scale; omitted keeps the entry's own.
-        var requested: [(name: String, strength: Any?)] = []
+        // "sampler" ("auto", "euler", "renoise") and "audio_shift" (0 =
+        // auto) set the entry's own step rule and audio shift, like モデル管理.
+        var requested: [(name: String, strength: Any?, sampler: Any?, audioShift: Any?)] = []
         if let list = json["loras"] as? [Any] {
             for item in list {
                 if let name = item as? String {
-                    requested.append((name, nil))
+                    requested.append((name, nil, nil, nil))
                 } else if let object = item as? [String: Any], let name = object["name"] as? String {
-                    requested.append((name, object["strength"]))
+                    requested.append((name, object["strength"], object["sampler"], object["audio_shift"]))
                 } else {
                     return .error(400, "each \"loras\" item must be a name or {\"name\", \"strength\"}")
                 }
             }
         } else if let loraName = json["lora_name"] as? String, !loraName.isEmpty {
-            requested.append((loraName, json["lora_scale"]))
+            requested.append((loraName, json["lora_scale"], nil, nil))
         }
         if requested.count > maxStackedLoRAs {
             return .error(400, "at most \(maxStackedLoRAs) LoRAs can be stacked")
         }
-        var stack: [(entry: LoRAEntry, strength: Any?)] = []
-        for (name, strength) in requested {
+        var stack: [(entry: LoRAEntry, strength: Any?, sampler: LoRASampler?, audioShift: Double?)] = []
+        for (name, strength, sampler, audioShift) in requested {
             guard let entry = library.loras.first(where: { $0.name == name }) else {
                 return .error(400, "unknown LoRA \(name) - see GET /api/loras")
             }
             if let strength, !(strength is NSNumber) {
                 return .error(400, "strength for \(name) must be a number")
             }
-            stack.append((entry, strength))
+            var samplerChoice: LoRASampler?
+            if let sampler {
+                guard let text = sampler as? String, let choice = LoRASampler(rawValue: text) else {
+                    return .error(400, "sampler for \(name) must be \"auto\", \"euler\" or \"renoise\"")
+                }
+                samplerChoice = choice
+            }
+            var shift: Double?
+            if let audioShift {
+                guard let number = audioShift as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                      (0 ... 100).contains(number.doubleValue) else {
+                    return .error(400, "audio_shift for \(name) must be a number from 0 (auto) to 100")
+                }
+                shift = number.doubleValue
+            }
+            stack.append((entry, strength, samplerChoice, shift))
         }
-        for (entry, strength) in stack {
+        for (entry, strength, sampler, audioShift) in stack {
             if let strength { library.setLoRAScale(id: entry.id, scaleText: "\(strength)") }
+            if let sampler { library.setLoRASampler(id: entry.id, sampler) }
+            if let audioShift {
+                library.setLoRAAudioShift(id: entry.id, text: audioShift > 0 ? audioShift.formatted(.number.grouping(.never)) : "")
+            }
         }
         library.setEnabledLoRAs(Set(stack.map { $0.entry.id }))
 

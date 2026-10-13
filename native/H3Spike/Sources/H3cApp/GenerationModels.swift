@@ -417,12 +417,12 @@ struct ResolvedResult {
                 : String(localized: "追加モデル（LoRA）: \(file)（強さ \(strength)）"))
         }
         if sampling.renoise {
-            lines.append(String(localized: "ステップの進め方: re-noise（追加モデルの推奨）"))
+            lines.append(String(localized: "ステップの進め方: re-noise（LCM方式、追加モデルの設定）"))
         }
         if sampling.audioShift > 0 {
             // As a String, like the LoRA strength above.
             let shift = "\(sampling.audioShift)"
-            lines.append(String(localized: "音声のシフト値: \(shift)（追加モデルの推奨）"))
+            lines.append(String(localized: "音声のシフト値: \(shift)（追加モデルの設定）"))
         }
         if !references.isEmpty {
             lines.append(String(localized: "参照: \(references.joined(separator: ", "))"))

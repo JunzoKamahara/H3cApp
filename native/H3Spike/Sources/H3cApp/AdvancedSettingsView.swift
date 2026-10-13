@@ -395,11 +395,8 @@ struct AdvancedSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(viewModel.steps == turboSteps ? palette.textSecondary : palette.errorColor)
             }
-            if let renoiseEntry = enabled.first(where: {
-                if case .success(let info) = library.loraInfo(for: $0) { return info.recommendsRenoise }
-                return false
-            }) {
-                Text("「\(renoiseEntry.name)」の推奨に合わせて、ステップの進め方をre-noiseにします（ノイズ除去の再利用は1になります）。")
+            if let renoiseEntry = enabled.first(where: { library.sampling(for: $0).renoise }) {
+                Text("「\(renoiseEntry.name)」の設定に合わせて、ステップの進め方をre-noise（LCM方式）にします（ノイズ除去の再利用は1になります）。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
             }
@@ -407,7 +404,7 @@ struct AdvancedSettingsView: View {
                 // As a String: a Float interpolated into a localized string
                 // formats as %f.
                 let shift = "\(viewModel.samplingSettings.audioShift)"
-                Text("追加モデルの推奨に合わせて、音声のシフト値を\(shift)にします（標準は3）。")
+                Text("追加モデルの設定に合わせて、音声のシフト値を\(shift)にします（標準は3）。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
             }

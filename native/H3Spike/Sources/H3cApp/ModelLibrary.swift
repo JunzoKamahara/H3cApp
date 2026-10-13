@@ -31,6 +31,14 @@ struct H3ModelEntry: Identifiable, Codable, Equatable {
     }
 }
 
+/// The denoising step rule a LoRA runs with. auto follows what the file's
+/// metadata declares (DMAD writes "re-noise step rule"); nothing is guessed
+/// from names. re-noise is ComfyUI's "lcm" sampler rule, which LCM/DMD-style
+/// few-step distillations usually recommend.
+enum LoRASampler: String, Codable, CaseIterable {
+    case auto, euler, renoise
+}
+
 struct LoRAEntry: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
@@ -46,15 +54,22 @@ struct LoRAEntry: Identifiable, Codable, Equatable {
     /// Part of the stack applied to the next generation. Any number of
     /// entries (up to maxStackedLoRAs) can be on at once; they add up.
     var enabled: Bool
+    /// Set by hand for adapters whose files don't declare their sampling;
+    /// auto / empty text follow the metadata (see ModelLibrary.sampling(for:)).
+    var sampler: LoRASampler
+    var audioShiftText: String
 
     init(id: UUID = UUID(), name: String, path: String, scaleText: String = "",
-         recommendedSteps: Int? = nil, enabled: Bool = false) {
+         recommendedSteps: Int? = nil, enabled: Bool = false,
+         sampler: LoRASampler = .auto, audioShiftText: String = "") {
         self.id = id
         self.name = name
         self.path = path
         self.scaleText = scaleText
         self.recommendedSteps = recommendedSteps
         self.enabled = enabled
+        self.sampler = sampler
+        self.audioShiftText = audioShiftText
     }
 
     init(from decoder: Decoder) throws {
@@ -65,10 +80,18 @@ struct LoRAEntry: Identifiable, Codable, Equatable {
         scaleText = try container.decodeIfPresent(String.self, forKey: .scaleText) ?? ""
         recommendedSteps = try container.decodeIfPresent(Int.self, forKey: .recommendedSteps)
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        sampler = try container.decodeIfPresent(LoRASampler.self, forKey: .sampler) ?? .auto
+        audioShiftText = try container.decodeIfPresent(String.self, forKey: .audioShiftText) ?? ""
     }
 
     var strength: Float {
         guard let value = Float(scaleText), value.isFinite else { return 1 }
+        return value
+    }
+
+    /// The hand-set audio shift, or nil (empty or out of the engine's range).
+    var audioShift: Float? {
+        guard let value = Float(audioShiftText), value > 0, value <= 100 else { return nil }
         return value
     }
 
@@ -220,6 +243,19 @@ final class ModelLibrary: ObservableObject {
         persistLoRAs()
     }
 
+    func setLoRASampler(id: UUID, _ sampler: LoRASampler) {
+        guard let index = loras.firstIndex(where: { $0.id == id }) else { return }
+        loras[index].sampler = sampler
+        persistLoRAs()
+    }
+
+    /// Empty text goes back to the metadata's value (or the engine's 3).
+    func setLoRAAudioShift(id: UUID, text: String) {
+        guard let index = loras.firstIndex(where: { $0.id == id }) else { return }
+        loras[index].audioShiftText = text.filter { $0.isNumber || $0 == "." }
+        persistLoRAs()
+    }
+
     func renameLoRA(id: UUID, name: String) {
         guard let index = loras.firstIndex(where: { $0.id == id }), !name.isEmpty else { return }
         loras[index].name = name
@@ -266,6 +302,20 @@ final class ModelLibrary: ObservableObject {
         let result = Result { try H3LoRAInfo.inspect(path: entry.path) }
         if case .success = result { loraInfoCache[entry.path] = result }
         return result
+    }
+
+    /// What one entry asks of the step rule and the audio shift: its own
+    /// setting, else what its file's metadata declares. Names are never
+    /// used to guess, and nothing here is specific to one adapter.
+    func sampling(for entry: LoRAEntry) -> (renoise: Bool, audioShift: Float?) {
+        let info = try? loraInfo(for: entry).get()
+        let renoise: Bool
+        switch entry.sampler {
+        case .euler: renoise = false
+        case .renoise: renoise = true
+        case .auto: renoise = info?.recommendsRenoise ?? false
+        }
+        return (renoise, entry.audioShift ?? info?.recommendedAudioShift.map { Float($0) })
     }
 
     // MARK: Persistence

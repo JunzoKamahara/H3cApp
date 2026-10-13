@@ -107,17 +107,18 @@ final class GenerationViewModel: ObservableObject {
     }
 
     /// The step rule and audio shift for the next generation: what the
-    /// enabled LoRAs' metadata recommends (DMAD records "re-noise step rule"
-    /// and "audio shift 2"), else the engine's Euler rule and default shift.
-    /// An API request can override either for one generation (A/B tests).
+    /// enabled LoRAs ask for - each entry's own setting in モデル管理, else
+    /// what its file's metadata declares (DMAD records "re-noise step rule"
+    /// and "audio shift 2") - else the engine's Euler rule and default
+    /// shift. Re-noise wins if any enabled LoRA asks for it; the first
+    /// audio shift in stack order wins. An API request can override either
+    /// for one generation (A/B tests).
     var samplingSettings: SamplingSettings {
         var settings = SamplingSettings()
         for entry in library.enabledLoRAs {
-            guard case .success(let info) = library.loraInfo(for: entry) else { continue }
-            if info.recommendsRenoise { settings.renoise = true }
-            if settings.audioShift == 0, let shift = info.recommendedAudioShift {
-                settings.audioShift = Float(shift)
-            }
+            let wanted = library.sampling(for: entry)
+            if wanted.renoise { settings.renoise = true }
+            if settings.audioShift == 0, let shift = wanted.audioShift { settings.audioShift = shift }
         }
         if let override = samplingOverride {
             if let renoise = override.renoise { settings.renoise = renoise }
