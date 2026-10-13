@@ -55,6 +55,9 @@ struct ModelManagerView: View {
         }
         .frame(width: 560, height: 460)
         .background(palette.canvas)
+        // A file put back, or the 書類-folder permission granted since,
+        // shows up on the next look.
+        .onAppear { library.retryFailedLoRAInfo() }
     }
 
     // MARK: H3 models
@@ -255,13 +258,15 @@ struct ModelManagerView: View {
         let text: String
         var isError = false
         switch library.loraInfo(for: entry) {
-        case .success(let info):
+        case nil:
+            text = String(localized: "ファイルの情報を読み込んでいます…")
+        case .success(let info)?:
             var parts = [info.format,
                          String(localized: "\(info.blocks)/50ブロック") + (info.refinerBlocks > 0 ? "+refiner" : ""),
                          info.rankMin == info.rankMax ? "rank \(info.rankMax)" : "rank \(info.rankMin)–\(info.rankMax)"]
             if info.unsupported > 0 { parts.append(String(localized: "未対応\(info.unsupported)件は無視")) }
             text = parts.joined(separator: summarySeparator)
-        case .failure(let error):
+        case .failure(let error)?:
             text = FileManager.default.fileExists(atPath: entry.path)
                 ? String(localized: "MiniMax-H3用として読み込めません: \(error.localizedDescription)")
                 : String(localized: "ファイルが見つかりません")
@@ -277,8 +282,8 @@ struct ModelManagerView: View {
     /// files that don't declare them (see ModelLibrary.sampling(for:)).
     /// 自動 shows what the file's metadata says.
     private func loraSamplingControls(_ entry: LoRAEntry) -> some View {
-        let info = try? library.loraInfo(for: entry).get()
-        let declared = info?.recommendsRenoise == true ? "re-noise" : "Euler"
+        let info = try? library.loraInfo(for: entry)?.get()
+        let declared = info.map { $0.recommendsRenoise ? "re-noise" : "Euler" } ?? "…"
         let declaredShift = info?.recommendedAudioShift.map { $0.formatted() } ?? "3"
         return HStack(spacing: 6) {
             Text("ステップの進め方").font(.caption2).foregroundStyle(palette.textSecondary)

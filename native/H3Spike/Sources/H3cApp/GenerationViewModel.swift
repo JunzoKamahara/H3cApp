@@ -615,7 +615,7 @@ final class GenerationViewModel: ObservableObject {
             if !FileManager.default.fileExists(atPath: lora.path) {
                 return String(localized: "追加モデル「\(lora.name)」のファイルが見つかりません。モデル管理で確認してください")
             }
-            if case .failure = library.loraInfo(for: lora) {
+            if case .failure? = library.loraInfo(for: lora) {
                 return String(localized: "追加モデル「\(lora.name)」はMiniMax-H3用として読み込めません。モデル管理で確認してください")
             }
         }
@@ -704,12 +704,18 @@ final class GenerationViewModel: ObservableObject {
         // so the request points at files inside it. Copying runs in the
         // background; wait for it rather than block the window.
         saveProjectIfChanged()
-        if let copying = referenceImportTask {
+        // The enabled LoRAs' headers are read in the background (see
+        // ModelLibrary.loraInfo); 自動 sampling and the file check need them.
+        let pendingLoRAs = library.enabledLoRAs.filter { library.isLoRAInfoPending($0) }
+        let copying = referenceImportTask
+        if copying != nil || !pendingLoRAs.isEmpty {
             isGenerating = true
             isCancelling = false
-            phase = String(localized: "参照ファイルをプロジェクトにコピーしています")
+            phase = copying != nil ? String(localized: "参照ファイルをプロジェクトにコピーしています")
+                                   : String(localized: "追加モデルのファイルを確認しています")
             Task {
-                await copying.value
+                await copying?.value
+                await self.library.loadLoRAInfo(for: pendingLoRAs)
                 let cancelled = self.isCancelling
                 self.isGenerating = false
                 self.isCancelling = false

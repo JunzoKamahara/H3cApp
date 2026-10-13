@@ -116,9 +116,13 @@ final class ModelLibrary: ObservableObject {
     @Published private(set) var models: [H3ModelEntry] = []
     @Published private(set) var activeModelID: UUID?
     @Published private(set) var loras: [LoRAEntry] = []
-    /// Successful h3_lora_inspect results by path, filled on demand (header
-    /// reads only). Failures aren't kept, so a file put back is picked up.
-    private var loraInfoCache: [String: Result<H3LoRAInfo, Error>] = [:]
+    /// h3_lora_inspect results by path (header reads only), filled on a
+    /// background task: opening a file can wait indefinitely - e.g. on
+    /// macOS's 書類-folder permission prompt - and must never hold up the
+    /// main thread. Failures are kept until retryFailedLoRAInfo() so views
+    /// don't re-read a bad file on every redraw.
+    @Published private var loraInfoCache: [String: Result<H3LoRAInfo, Error>] = [:]
+    private var loraInfoTasks: [String: Task<Result<H3LoRAInfo, Error>, Never>] = [:]
 
     private let defaults = UserDefaults.standard
     private static let modelsKey = "H3ModelLibrary.models"
@@ -135,6 +139,9 @@ final class ModelLibrary: ObservableObject {
         models = Self.decodeArray(H3ModelEntry.self, key: Self.modelsKey)
         loras = Self.decodeArray(LoRAEntry.self, key: Self.lorasKey)
         activeModelID = UUID(uuidString: defaults.string(forKey: Self.activeModelKey) ?? "")
+        // Read the registered LoRAs' headers in the background right away,
+        // so their info is usually ready before anything asks for it.
+        for entry in loras { requestLoRAInfo(path: entry.path) }
 
         // Upgrading from before this feature existed: seed the one path the
         // app used to hardcode, so an existing setup (and any already-built
@@ -233,6 +240,7 @@ final class ModelLibrary: ObservableObject {
                               recommendedSteps: LoRAEntry.detectedSteps(fromFileName: fileName))
         loras.append(entry)
         persistLoRAs()
+        requestLoRAInfo(path: path)
     }
 
     /// Empty text clears it (an ordinary, non-distilled LoRA).
@@ -297,18 +305,54 @@ final class ModelLibrary: ObservableObject {
         persistLoRAs()
     }
 
-    func loraInfo(for entry: LoRAEntry) -> Result<H3LoRAInfo, Error> {
+    /// The file's header info, or nil while it is still being read (the
+    /// read is started here; views refresh when it lands).
+    func loraInfo(for entry: LoRAEntry) -> Result<H3LoRAInfo, Error>? {
         if let cached = loraInfoCache[entry.path] { return cached }
-        let result = Result { try H3LoRAInfo.inspect(path: entry.path) }
-        if case .success = result { loraInfoCache[entry.path] = result }
-        return result
+        requestLoRAInfo(path: entry.path)
+        return nil
+    }
+
+    func isLoRAInfoPending(_ entry: LoRAEntry) -> Bool { loraInfoCache[entry.path] == nil }
+
+    /// Waits - without blocking the main thread - until these entries'
+    /// headers have been read. Generating calls this first, so 自動
+    /// sampling and the file check use the real metadata.
+    func loadLoRAInfo(for entries: [LoRAEntry]) async {
+        for entry in entries where loraInfoCache[entry.path] == nil {
+            loraInfoCache[entry.path] = await requestLoRAInfo(path: entry.path).value
+        }
+    }
+
+    /// Forgets failed reads, so a file that was put back (or a permission
+    /// granted since) is picked up. Called when モデル管理 opens.
+    func retryFailedLoRAInfo() {
+        for (path, result) in loraInfoCache {
+            if case .failure = result { loraInfoCache[path] = nil }
+        }
+    }
+
+    @discardableResult
+    private func requestLoRAInfo(path: String) -> Task<Result<H3LoRAInfo, Error>, Never> {
+        if let running = loraInfoTasks[path] { return running }
+        let task = Task.detached(priority: .userInitiated) {
+            Result { try H3LoRAInfo.inspect(path: path) }
+        }
+        loraInfoTasks[path] = task
+        Task { [weak self] in
+            let result = await task.value
+            guard let self else { return }
+            self.loraInfoTasks[path] = nil
+            self.loraInfoCache[path] = result
+        }
+        return task
     }
 
     /// What one entry asks of the step rule and the audio shift: its own
     /// setting, else what its file's metadata declares. Names are never
     /// used to guess, and nothing here is specific to one adapter.
     func sampling(for entry: LoRAEntry) -> (renoise: Bool, audioShift: Float?) {
-        let info = try? loraInfo(for: entry).get()
+        let info = try? loraInfo(for: entry)?.get()
         let renoise: Bool
         switch entry.sampler {
         case .euler: renoise = false

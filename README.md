@@ -97,7 +97,11 @@ to skip that step and stream the original BF16 weights instead.
   [lightx2v/Minimax-h3-Turbo](https://huggingface.co/lightx2v/Minimax-h3-Turbo))
   works end to end; each LoRA can carry a recommended step count
   (auto-detected from names like `..._4step_...`), and switching such a
-  Turbo LoRA on moves the generation to that many steps.
+  Turbo LoRA on moves the generation to that many steps. Each LoRA also has
+  a **step rule** (auto / Euler / re-noise) and an **audio shift**, for
+  few-step adapters trained with another sampler, such as
+  [DMAD](https://github.com/Yzmblog/DMAD) (see
+  [Step rule and audio shift](#step-rule-and-audio-shift)).
 - **Three compute modes**, see [Compute modes](#compute-modes): a fast int8
   attention cache, a resident mode for a Mac with memory to spare that
   needs no cache file, and a slow-but-low-memory SSD-streaming mode.
@@ -297,6 +301,43 @@ cache (7.5 → 9.3 s) and about 2 s with SSD streaming (11.9 → 13.9 s); stacki
 second, rank-16 LoRA on top costs nothing measurable. Its diffusers and
 ComfyUI releases produce bit-identical videos.
 
+### Step rule and audio shift
+
+The engine normally steps with the official pipeline's Euler rule. Some
+few-step distillations are trained with the **re-noise** rule instead — the
+rule of ComfyUI's `lcm` sampler, which LCM/DMD-style adapters usually
+recommend: at every step the model's velocity gives a clean-latent
+prediction `x0 = x + σ·v`, and the next step starts from fresh noise at the
+next sigma, `x = (1 − σ_next)·x0 + σ_next·ε`. The noise comes from a hash of
+the seed, the step and the element, so the same seed still reproduces the
+same video (`h3_params.sampler`; [h3_host.c](h3_host.c),
+`h3_renoise_bf16` in [h3_shaders.metal](h3_shaders.metal)). Re-noise
+evaluates every step, so denoiser reuse runs at 1 with it. Some adapters
+were also trained with another audio sigma shift than the engine's 3
+(`h3_params.audio_sigma_shift`).
+
+Each LoRA in the model manager has both settings:
+
+- **Step rule**: 自動 (auto), Euler or re-noise. Auto uses what the file's
+  metadata declares and is Euler otherwise; nothing is guessed from file
+  names. Today only DMAD's files declare it (their `sampling` metadata
+  says "re-noise step rule" and "audio shift 2"); for any other adapter,
+  set it from the publisher's instructions.
+- **Audio shift**: empty means the metadata's value, else the default 3.
+
+If any enabled LoRA asks for re-noise, the job uses it; the first audio
+shift in stack order wins. The used-settings summary and each project
+video's record show both.
+
+Compared on M5 at 448x256 and 672x384, 5 s, 4 steps, 3 prompts x 2 seeds
+(DMAD with re-noise and audio shift 2 against the lightx2v Turbo v1.2 LoRA
+with Euler): both take the same time. Turbo gives clearly more detail; it
+also showed colored flare blobs or garbled burned-in captions in 4 of 12
+videos, where DMAD showed none, but DMAD's music came out 6-11 dB quieter.
+Run with Euler instead, DMAD looked dull and soft — use the rule an
+adapter was trained with. Turbo is an Euler adapter; with re-noise it
+showed ghosting.
+
 ## Reference-conditioning cost: why a bigger reference is not free
 
 A Ref2VA reference isn't encoded once and cached — the DiT re-attends to it
@@ -480,7 +521,7 @@ plain filesystem paths, not uploads.
 | `POST` | `/api/cancel` | Cancels the running job, if any. |
 | `GET` | `/api/result/video` | Streams the current result as `video/mp4`; `404` if none, or once the next job's `generate()` call deletes it. |
 | `GET` | `/api/models` | Registered H3 model directories (id, name, path, whether active). |
-| `GET` | `/api/loras` | Registered LoRA files (id, name, path, strength, recommended steps, whether enabled). |
+| `GET` | `/api/loras` | Registered LoRA files (id, name, path, strength, recommended steps, whether enabled, step rule `sampler` and `audio_shift` as set in the model manager, and `recommended_sampling` from the file's metadata - `null` while the file is still being read). |
 | `GET` | `/api/project` | The open project: name, path, count, and its videos (file, seed, completion time, generation time). |
 | `POST` | `/api/project/new` | `{"name", "directory"?}` creates a project from the current form (default directory `~/Movies/H3cApp`) and opens it. |
 | `POST` | `/api/project/open` | `{"path"}` opens a project folder; the form takes its saved state. |
@@ -505,7 +546,8 @@ plain filesystem paths, not uploads.
 | `seed` | random | 0–18446744073709551615, as a number or a decimal string (a string keeps a large seed exact for clients whose JSON numbers are doubles). |
 | `first_frame_path` / `last_frame_path` | none | FL2VA anchors; cannot combine with `reference_paths`. |
 | `reference_paths` | `[]` | Ordered Ref2VA references; image/video/audio is auto-detected per path. At least one image or video is required if any audio path is included. |
-| `loras` | `[]` | The LoRA stack for this job: names from `GET /api/loras`, or `{"name": ..., "strength": 0.8}` objects (strength multiplies the adapter's trained scale; omitted keeps the entry's saved strength). Omitting it means no LoRA, even if some are switched on in the window. |
+| `loras` | `[]` | The LoRA stack for this job: names from `GET /api/loras`, or `{"name": ..., "strength": 0.8}` objects (strength multiplies the adapter's trained scale; omitted keeps the entry's saved strength). An object may also set `"sampler"` (`"auto"`, `"euler"`, `"renoise"`) and `"audio_shift"` (0 = auto); like strength, these are saved to the entry. Omitting `loras` means no LoRA, even if some are switched on in the window. |
+| `sampler` / `audio_shift` | from the LoRAs | Override the [step rule and audio shift](#step-rule-and-audio-shift) for this one job only (`"auto"`, `"euler"`, `"renoise"`; 0 = auto), e.g. for A/B tests. |
 | `lora_name` / `lora_scale` | none | Older single-LoRA form of `loras`; ignored when `loras` is given. |
 | `count` | `1` | 1–20 videos in a row with different seeds; above 1 needs an open project. |
 | `from_form` | `false` | `true` generates from the form as it is (e.g. after `/api/project/restore`); only `count` may accompany it. |

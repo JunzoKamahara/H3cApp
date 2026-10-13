@@ -48,6 +48,8 @@
 "登録された追加モデルはありません。「管理…」から追加できます。" = "No add-on models are registered. You can add them from “Manage…”.";
 "オンにした追加モデルは重ねて適用されます。強さは学習時の効き具合に対する倍率です（空欄=1）。" = "Add-on models that are switched on are applied together. Strength multiplies the effect they were trained with (blank = 1).";
 "「%@」はTurbo用の追加モデルです。生成ステップ数を%lldに合わせました（%lld以外では品質が落ちます）。" = "“%@” is a Turbo add-on model. Steps were set to %lld (quality drops at any other value than %lld).";
+"追加モデルのファイルを確認しています" = "Checking the add-on model files";
+"ファイルの情報を読み込んでいます…" = "Reading the file’s information…";
 "ステップの進め方: re-noise（LCM方式、追加モデルの設定）" = "Step rule: re-noise (LCM-style, set by the add-on model)";
 "音声のシフト値: %@（追加モデルの設定）" = "Audio shift: %@ (set by the add-on model)";
 "「%@」の設定に合わせて、ステップの進め方をre-noise（LCM方式）にします（ノイズ除去の再利用は1になります）。" = "Following “%@”, steps use the re-noise (LCM-style) rule (denoising reuse runs at 1).";

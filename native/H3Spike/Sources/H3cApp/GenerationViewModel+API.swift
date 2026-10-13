@@ -90,7 +90,7 @@ extension GenerationViewModel {
 
     /// What the adapter's metadata asks for (see samplingSettings).
     private func recommendedSampling(_ entry: LoRAEntry) -> Any {
-        guard case .success(let info) = library.loraInfo(for: entry) else { return NSNull() }
+        guard case .success(let info)? = library.loraInfo(for: entry) else { return NSNull() }
         return ["sampler": info.recommendsRenoise ? "renoise" : "euler",
                 "audio_shift": info.recommendedAudioShift.map { $0 as Any } ?? NSNull()]
     }
