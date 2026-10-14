@@ -32,6 +32,7 @@ struct CreationFormView: View {
                 if viewModel.creationMethod == .image {
                     imageInputSection
                 }
+                lipSyncSection
                 promptSection
             }
             bottomBar
@@ -224,6 +225,48 @@ struct CreationFormView: View {
         .padding(H3Spacing.md)
         .background(palette.surfaceMuted)
         .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
+    }
+
+    // MARK: 音声に合わせる (lip sync)
+
+    /// Forced audio: the chosen file's audio becomes the soundtrack and the
+    /// picture is generated to match it. A one-line button until a file is
+    /// chosen, so the panel stays as small as before for everyone else.
+    @ViewBuilder
+    private var lipSyncSection: some View {
+        if let path = viewModel.forcedAudioPath {
+            VStack(alignment: .leading, spacing: H3Spacing.sm) {
+                Text("この音声に合わせて、口の動きなどの映像をつくります。動画の音は、この音声そのものになります。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+                HStack {
+                    Image(systemName: "waveform").foregroundStyle(palette.textSecondary)
+                    Text("音声").font(.caption)
+                    FileLink(path: path) { quickLookURL = $0 }
+                    Spacer()
+                    TextField("開始位置", value: $viewModel.forcedAudioOffset,
+                              format: .number.precision(.fractionLength(0 ... 2)))
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 64)
+                        .help("音声の何秒目から使うか")
+                    Text("秒から").font(.caption)
+                    Button("変更…") { viewModel.pickForcedAudio() }
+                    Button("取り除く") { viewModel.forcedAudioPath = nil }
+                }
+            }
+            .padding(H3Spacing.md)
+            .background(palette.surfaceMuted)
+            .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
+        } else {
+            Button {
+                viewModel.pickForcedAudio()
+            } label: {
+                Label("音声に合わせる（リップシンク）…", systemImage: "waveform")
+            }
+            .font(.caption)
+            .help("音声ファイルを選ぶと、その音声に合わせた映像をつくります")
+        }
     }
 
     private func referenceIcon(for kind: H3ReferenceKind) -> String {

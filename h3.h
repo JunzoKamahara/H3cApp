@@ -181,6 +181,14 @@ typedef struct {
     /* Audio sigma-schedule shift. 0 keeps the default (3.0); some few-step
      * adapters were trained with another value (DMAD uses 2.0). */
     float audio_sigma_shift;
+    /* Forced audio (lip sync): when set, the audio of this file from
+     * forced_audio_offset seconds on, as long as the video, is encoded and
+     * given to the DiT as clean audio (audio sigma 0) at every denoising
+     * step, so only the picture is generated - to match what it hears. The
+     * output carries that audio itself. Any format AVFoundation reads;
+     * NULL is off. */
+    const char *forced_audio_path;
+    double forced_audio_offset;
 } h3_params;
 
 enum {
@@ -192,7 +200,7 @@ enum {
     H3_DEFAULT_WIDTH, H3_DEFAULT_HEIGHT, H3_DEFAULT_FRAMES, H3_DEFAULT_STEPS, \
     UINT64_C(42), NULL, NULL, NULL, NULL, 0, H3_REFERENCE_IMAGE_MATCH, \
     1, H3_DEFAULT_DIT_LAYERS, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, \
-    NULL, 0, 0, H3_SAMPLER_EULER, 0.0f \
+    NULL, 0, 0, H3_SAMPLER_EULER, 0.0f, NULL, 0.0 \
 }
 
 typedef struct {

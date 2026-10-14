@@ -115,6 +115,15 @@ void h3_dit_set_attention_mode(h3_dit *dit, h3_dit_attention_mode mode);
 /* Step rule for the following denoise calls: H3_SAMPLER_EULER (default)
  * or H3_SAMPLER_RENOISE, whose fresh noise is derived from seed. */
 void h3_dit_set_sampler(h3_dit *dit, int sampler, uint64_t seed);
+/* Forced audio for the following denoise calls: hold the audio stream on
+ * this clean latent ([32,2,T], h3_dit_forward's audio layout,
+ * h3_dit_audio_elements values) so that only the picture is generated,
+ * conditioned on that sound at every step. With an all-zero audio sigma
+ * schedule the audio is the clean latent throughout; otherwise it follows
+ * the latent's noise trajectory. The audio passed to the denoise call is
+ * its initial noise, as usual. NULL turns it off. */
+int h3_dit_set_forced_audio(h3_dit *dit, const float *clean_latent,
+                            size_t elements, char *error, size_t error_size);
 
 /* Reset mutable sampler state and replace seed-dependent condition rows before
  * reusing an otherwise identical prepared transformer. */

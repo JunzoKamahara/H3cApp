@@ -388,3 +388,12 @@
 "今のプロンプトと設定、参照ファイルをプロジェクトとして保存します（プレビューに保存できる動画はありません）。これから生成する動画はこのフォルダに保存され、削除するまで残ります。" = "Saves the current prompt and settings and the reference files as a project (there is no video in the preview to save). Videos you generate next are saved in this folder and stay until you delete them.";
 "この動画をプレビューに表示します" = "Shows this video in the preview";
 "この動画をプレビューに表示し、プロンプトと設定もシード固定でパネルに戻します" = "Shows this video in the preview and puts its prompt and settings back in the panel with the seed fixed";
+"音声に合わせる（リップシンク）…" = "Match a Voice or Song (Lip Sync)…";
+"音声ファイルを選ぶと、その音声に合わせた映像をつくります" = "Choose an audio file to make a video that matches it";
+"この音声に合わせて、口の動きなどの映像をつくります。動画の音は、この音声そのものになります。" = "Makes the picture, such as mouth movements, to match this audio. The video's sound is this audio itself.";
+"音声" = "Audio";
+"開始位置" = "Start";
+"音声の何秒目から使うか" = "Where in the audio to start, in seconds";
+"秒から" = "s onward";
+"音声に合わせる（リップシンク）: %@（%@秒から）" = "Matched to audio (lip sync): %1$@ (from %2$@ s)";
+"合わせる音声のファイルが見つかりません: %@" = "The audio file to match can't be found: %@";

@@ -20,3 +20,9 @@ private let clockFormatter: DateFormatter = {
 func formatClockTime(_ date: Date) -> String {
     clockFormatter.string(from: date)
 }
+
+/// A lip-sync start offset in seconds, without trailing zeros ("12.5", "3").
+func formatAudioOffset(_ seconds: Double) -> String {
+    let rounded = (seconds * 100).rounded() / 100
+    return rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%g", rounded)
+}

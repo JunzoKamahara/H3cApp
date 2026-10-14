@@ -127,8 +127,48 @@ static void gpu_matches_cpu(h3_gpu *gpu) {
     free(velocity_bf16);
 }
 
+/* Forced audio: starting from noise, Euler steps with the held velocity
+ * stay on sigma * noise + (1 - sigma) * clean and end on the clean latent. */
+static void forced_trajectory(void) {
+    enum { COUNT = 4096 };
+    h3_sigma_schedule sigmas;
+    check(h3_serving_schedule_build_shifted(20, 3.0f, &sigmas),
+          "build schedule for forced trajectory");
+    float *sample = malloc(COUNT * sizeof(*sample));
+    float *noise = malloc(COUNT * sizeof(*noise));
+    float *clean = malloc(COUNT * sizeof(*clean));
+    float *velocity = malloc(COUNT * sizeof(*velocity));
+    uint32_t keys[2];
+    h3_renoise_keys(7, 0, 1, keys);
+    for (int index = 0; index < COUNT; index++) {
+        noise[index] = sample[index] = h3_renoise_normal((uint32_t)index, keys);
+        clean[index] = 0.5f * sinf(0.01f * (float)index);
+    }
+    check(h3_forced_trajectory_start(sample, velocity, clean, COUNT,
+                                     sigmas.audio[0]),
+          "start forced trajectory");
+    float worst = 0.0f;
+    for (int step = 0; step < sigmas.steps; step++) {
+        check(h3_euler_velocity_step(sample, velocity, COUNT,
+                                     sigmas.audio[step],
+                                     sigmas.audio[step + 1]),
+              "forced Euler step");
+        float sigma = sigmas.audio[step + 1];
+        for (int index = 0; index < COUNT; index++) {
+            float expected = sigma * noise[index] +
+                             (1.0f - sigma) * clean[index];
+            float error = fabsf(sample[index] - expected);
+            if (error > worst) worst = error;
+        }
+    }
+    check(sigmas.audio[sigmas.steps] == 0.0f, "schedule ends at sigma 0");
+    check(worst < 1e-5f, "forced audio stays on its trajectory");
+    free(sample); free(noise); free(clean); free(velocity);
+}
+
 int main(void) {
     noise_statistics();
+    forced_trajectory();
     char error[512] = {0};
     h3_gpu *gpu = h3_gpu_create("h3_shaders.metal", error, sizeof(error));
     if (!gpu) {

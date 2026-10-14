@@ -589,3 +589,141 @@ int h3_av_read_audio_f32(const char *path, int max_samples,
         return 1;
     }
 }
+
+int h3_av_read_audio_range_f32(const char *path, double start_seconds,
+                               int samples, float **pcm,
+                               char *error, size_t error_size) {
+    enum { AUDIO_CHANNELS = 2 };
+    const int AUDIO_RATE = 32000;
+    if (error && error_size) error[0] = '\0';
+    if (pcm) *pcm = NULL;
+    if (!path || !*path || !pcm || samples < 1 ||
+        samples > AUDIO_RATE * 60 || !isfinite(start_seconds) ||
+        start_seconds < 0.0) {
+        h3_av_set_error(error, error_size, @"invalid forced audio arguments");
+        return 0;
+    }
+    @autoreleasepool {
+        NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
+        AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        /* Synchronous for the same reason as h3_av_read_audio_f32. */
+        NSArray<AVAssetTrack *> *tracks = [asset tracksWithMediaType:AVMediaTypeAudio];
+        CMTime duration = asset.duration;
+#pragma clang diagnostic pop
+        if (tracks.count == 0) {
+            h3_av_set_error(error, error_size,
+                [NSString stringWithFormat:@"%s has no audio track", path]);
+            return 0;
+        }
+        if (CMTIME_IS_NUMERIC(duration) &&
+            start_seconds >= CMTimeGetSeconds(duration)) {
+            h3_av_set_error(error, error_size,
+                [NSString stringWithFormat:
+                    @"forced audio start %.3fs is past the end of %s (%.3fs)",
+                    start_seconds, path, CMTimeGetSeconds(duration)]);
+            return 0;
+        }
+        NSError *readerError = nil;
+        AVAssetReader *reader = [[AVAssetReader alloc] initWithAsset:asset error:&readerError];
+        if (!reader) {
+            h3_av_set_error(error, error_size,
+                readerError.localizedDescription ? readerError.localizedDescription
+                                                  : @"cannot open audio for reading");
+            return 0;
+        }
+        NSDictionary *outputSettings = @{
+            AVFormatIDKey: @(kAudioFormatLinearPCM),
+            AVSampleRateKey: @(AUDIO_RATE),
+            AVNumberOfChannelsKey: @(AUDIO_CHANNELS),
+            AVLinearPCMBitDepthKey: @32,
+            AVLinearPCMIsFloatKey: @YES,
+            AVLinearPCMIsNonInterleaved: @NO,
+            AVLinearPCMIsBigEndianKey: @NO,
+        };
+        AVAssetReaderTrackOutput *output = [AVAssetReaderTrackOutput
+            assetReaderTrackOutputWithTrack:tracks.firstObject outputSettings:outputSettings];
+        if (![reader canAddOutput:output]) {
+            h3_av_set_error(error, error_size, @"cannot add audio output");
+            return 0;
+        }
+        [reader addOutput:output];
+        /* Read from the start with a little slack before the wanted range,
+         * then place samples by their presentation time: a compressed
+         * track's first decoded buffer need not begin exactly at the
+         * requested time. */
+        double lead = start_seconds > 0.5 ? 0.5 : start_seconds;
+        reader.timeRange = CMTimeRangeMake(
+            CMTimeMakeWithSeconds(start_seconds - lead, AUDIO_RATE),
+            CMTimeMakeWithSeconds(lead + (double)samples / AUDIO_RATE + 0.5,
+                                  AUDIO_RATE));
+        if (![reader startReading]) {
+            h3_av_set_error(error, error_size,
+                reader.error.localizedDescription ? reader.error.localizedDescription
+                                                   : @"cannot start reading audio");
+            return 0;
+        }
+        size_t outputElements = (size_t)samples * AUDIO_CHANNELS;
+        float *channelMajor = calloc(outputElements, sizeof(*channelMajor));
+        if (!channelMajor) {
+            [reader cancelReading];
+            h3_av_set_error(error, error_size, @"out of memory decoding audio");
+            return 0;
+        }
+        int64_t first = (int64_t)llround(start_seconds * AUDIO_RATE);
+        int64_t written = 0;
+        float scratch[4096 * AUDIO_CHANNELS];
+        while (1) {
+            CMSampleBufferRef sampleBuffer = [output copyNextSampleBuffer];
+            if (!sampleBuffer) break;
+            CMBlockBufferRef blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer);
+            CMTime when = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+            if (blockBuffer && CMTIME_IS_NUMERIC(when)) {
+                int64_t position = (int64_t)llround(CMTimeGetSeconds(when) *
+                                                    AUDIO_RATE);
+                size_t length = CMBlockBufferGetDataLength(blockBuffer);
+                size_t frameStride = AUDIO_CHANNELS * sizeof(float);
+                size_t frames = length / frameStride;
+                for (size_t done = 0; done < frames;) {
+                    size_t chunk = frames - done < 4096 ? frames - done : 4096;
+                    CMBlockBufferCopyDataBytes(blockBuffer, done * frameStride,
+                                               chunk * frameStride, scratch);
+                    for (size_t frame = 0; frame < chunk; frame++) {
+                        int64_t target = position + (int64_t)(done + frame) -
+                                         first;
+                        if (target < 0 || target >= samples) continue;
+                        for (int channel = 0; channel < AUDIO_CHANNELS; channel++)
+                            channelMajor[(size_t)channel * (size_t)samples +
+                                         (size_t)target] =
+                                scratch[frame * AUDIO_CHANNELS + channel];
+                        if (target + 1 > written) written = target + 1;
+                    }
+                    done += chunk;
+                }
+            }
+            CFRelease(sampleBuffer);
+        }
+        if (reader.status == AVAssetReaderStatusFailed) {
+            free(channelMajor);
+            h3_av_set_error(error, error_size,
+                reader.error.localizedDescription ? reader.error.localizedDescription
+                                                   : @"audio decode failed");
+            return 0;
+        }
+        if (written == 0) {
+            free(channelMajor);
+            h3_av_set_error(error, error_size,
+                [NSString stringWithFormat:
+                    @"no audio decoded from %s at %.3fs", path, start_seconds]);
+            return 0;
+        }
+        for (size_t index = 0; index < outputElements; index++) {
+            float value = channelMajor[index];
+            channelMajor[index] = value > 1.0f ? 1.0f :
+                                  value < -1.0f ? -1.0f : value;
+        }
+        *pcm = channelMajor;
+        return 1;
+    }
+}

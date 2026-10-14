@@ -209,6 +209,11 @@ final class GenerationViewModel: ObservableObject {
     @Published var firstFramePath: String?
     @Published var lastFramePath: String?
     @Published var referenceImages: [H3ReferenceInput] = []
+    /// Lip sync (h3_params.forced_audio_path): this file's audio, from
+    /// forcedAudioOffset seconds on, is the video's soundtrack, and only the
+    /// picture is generated - to match it. Works with every creation method.
+    @Published var forcedAudioPath: String?
+    @Published var forcedAudioOffset: Double = 0
 
     /// The LoRA stack is chosen from ModelLibrary's registered library
     /// (entries switched on there or in the form) and applies in every
@@ -544,6 +549,13 @@ final class GenerationViewModel: ObservableObject {
         if let path = chooseFile(allowedContentTypes: imageTypes) { lastFramePath = path }
     }
 
+    func pickForcedAudio() {
+        if let path = chooseFile(allowedContentTypes: forcedAudioTypes) {
+            if path != forcedAudioPath { forcedAudioOffset = 0 }
+            forcedAudioPath = path
+        }
+    }
+
     func addReferenceImages() {
         for path in chooseFiles(allowedContentTypes: referenceMediaTypes) {
             let kind: H3ReferenceKind = isVideoFile(path: path) ? .video : (isAudioFile(path: path) ? .audio : .image)
@@ -610,6 +622,9 @@ final class GenerationViewModel: ObservableObject {
                     return String(localized: "音声だけの参照はできません。画像か動画の参照も追加してください")
                 }
             }
+        }
+        if let forcedAudioPath, !FileManager.default.fileExists(atPath: forcedAudioPath) {
+            return String(localized: "合わせる音声のファイルが見つかりません: \(URL(fileURLWithPath: forcedAudioPath).lastPathComponent)")
         }
         for lora in library.enabledLoRAs {
             if !FileManager.default.fileExists(atPath: lora.path) {
@@ -777,11 +792,14 @@ final class GenerationViewModel: ObservableObject {
         let sampling = samplingSettings
         params.renoise = sampling.renoise
         params.audioSigmaShift = sampling.audioShift
+        params.forcedAudioPath = forcedAudioPath
+        params.forcedAudioOffset = max(0, forcedAudioOffset)
 
         var draft = currentDraft()
         if let projectURL = project?.url {
             draft.firstFrame = draft.firstFrame.map { ProjectFiles.stored($0, in: projectURL) }
             draft.lastFrame = draft.lastFrame.map { ProjectFiles.stored($0, in: projectURL) }
+            draft.forcedAudio = draft.forcedAudio.map { ProjectFiles.stored($0, in: projectURL) }
             draft.references = draft.references.map { .init(kind: $0.kind, path: ProjectFiles.stored($0.path, in: projectURL)) }
         }
         draft.fastAttention = params.fastAttention
@@ -946,7 +964,9 @@ final class GenerationViewModel: ObservableObject {
             references: request.referenceNames,
             deviceLine: request.deviceLine,
             completedAt: completedAt,
-            generationSeconds: generationSeconds)
+            generationSeconds: generationSeconds,
+            forcedAudio: request.params.forcedAudioPath.map { URL(fileURLWithPath: $0).lastPathComponent },
+            forcedAudioOffset: request.params.forcedAudioOffset)
         loadActualDuration(for: url)
     }
 

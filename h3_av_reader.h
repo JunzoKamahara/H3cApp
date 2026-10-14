@@ -33,4 +33,13 @@ int h3_av_read_audio_f32(const char *path, int max_samples,
                          float **pcm, int *samples,
                          char *error, size_t error_size);
 
+/* Decode exactly `samples` stereo 32 kHz frames of the first audio stream,
+ * starting `start_seconds` into it, as channel-major F32 [2,samples]. A
+ * stream that ends early is padded with silence; one that ends before
+ * start_seconds is an error. Used for forced audio, which may come from a
+ * long track. */
+int h3_av_read_audio_range_f32(const char *path, double start_seconds,
+                               int samples, float **pcm,
+                               char *error, size_t error_size);
+
 #endif

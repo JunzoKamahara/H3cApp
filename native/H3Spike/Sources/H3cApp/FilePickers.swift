@@ -8,6 +8,8 @@ let imageTypes: [UTType] = [.image]
 // rejects any reference set with audio but no image/video among them
 // ("reference audio requires an image or video reference").
 let referenceMediaTypes: [UTType] = [.image, .movie, .audio]
+// Lip sync takes the audio track of an audio file or of a video.
+let forcedAudioTypes: [UTType] = [.audio, .movie]
 // "safetensors" has no registered system UTI, so this synthesizes a dynamic
 // one from the extension - still filters the open panel correctly.
 let safetensorsTypes: [UTType] = [UTType(filenameExtension: "safetensors") ?? .data]

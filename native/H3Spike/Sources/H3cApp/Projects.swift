@@ -39,6 +39,10 @@ struct ProjectDraft: Codable, Equatable {
     var seedFixed: Bool
     var seed: String
     var loras: [SettingsPreset.LoRA]
+    /// Lip sync: the audio file held as the soundtrack, and where in it
+    /// the video starts (seconds). Absent in drafts from before 0.5.
+    var forcedAudio: String? = nil
+    var forcedAudioOffset: Double? = nil
 }
 
 /// project.json
@@ -356,7 +360,9 @@ extension GenerationViewModel {
             ditLayers: ditLayers,
             seedFixed: seedFixed,
             seed: seedText,
-            loras: effectiveLoRAs.map { .init(path: $0.path, strength: $0.strength) })
+            loras: effectiveLoRAs.map { .init(path: $0.path, strength: $0.strength) },
+            forcedAudio: forcedAudioPath,
+            forcedAudioOffset: forcedAudioPath == nil ? nil : forcedAudioOffset)
     }
 
     /// Puts a draft into the form. Relative paths resolve against
@@ -372,6 +378,8 @@ extension GenerationViewModel {
         if let mode = ImageInputMode(rawValue: draft.imageInputMode) { imageInputMode = mode }
         firstFramePath = draft.firstFrame.map(resolve)
         lastFramePath = draft.lastFrame.map(resolve)
+        forcedAudioPath = draft.forcedAudio.map(resolve)
+        forcedAudioOffset = draft.forcedAudioOffset ?? 0
         referenceImages = draft.references.compactMap { reference in
             H3ReferenceKind(storedName: reference.kind).map { H3ReferenceInput(kind: $0, path: resolve(reference.path)) }
         }
@@ -458,6 +466,7 @@ extension GenerationViewModel {
             let name = { (path: String) in URL(fileURLWithPath: path).lastPathComponent }
             draft.firstFrame = draft.firstFrame.map(name)
             draft.lastFrame = draft.lastFrame.map(name)
+            draft.forcedAudio = draft.forcedAudio.map(name)
             draft.references = draft.references.map { .init(kind: $0.kind, path: name($0.path)) }
             return draft
         }
@@ -636,6 +645,7 @@ extension GenerationViewModel {
         var draft = currentDraft()
         draft.firstFrame = draft.firstFrame.map { ProjectFiles.stored($0, in: project.url) }
         draft.lastFrame = draft.lastFrame.map { ProjectFiles.stored($0, in: project.url) }
+        draft.forcedAudio = draft.forcedAudio.map { ProjectFiles.stored($0, in: project.url) }
         draft.references = draft.references.map { .init(kind: $0.kind, path: ProjectFiles.stored($0.path, in: project.url)) }
         guard force || draft != file.draft || batchCount != file.batchCount else { return }
         file.draft = draft
@@ -651,7 +661,7 @@ extension GenerationViewModel {
 
     /// The form's input files that still have to be copied into the project.
     private func referencesToImport(for projectURL: URL) -> [String] {
-        var paths = [firstFramePath, lastFramePath].compactMap { $0 } + referenceImages.map(\.path)
+        var paths = [firstFramePath, lastFramePath, forcedAudioPath].compactMap { $0 } + referenceImages.map(\.path)
         paths = paths.filter {
             !ProjectFiles.isImported($0, in: projectURL) && FileManager.default.fileExists(atPath: $0)
         }
@@ -688,6 +698,7 @@ extension GenerationViewModel {
             }
             if let path = self.firstFramePath, case let new = copy(of: path), new != path { self.firstFramePath = new }
             if let path = self.lastFramePath, case let new = copy(of: path), new != path { self.lastFramePath = new }
+            if let path = self.forcedAudioPath, case let new = copy(of: path), new != path { self.forcedAudioPath = new }
             for index in self.referenceImages.indices {
                 let path = self.referenceImages[index].path
                 let new = copy(of: path)
@@ -836,7 +847,9 @@ extension ResolvedResult {
             references: referenceNames(draft),
             deviceLine: record.deviceLine,
             completedAt: record.completedAt,
-            generationSeconds: record.generationSeconds)
+            generationSeconds: record.generationSeconds,
+            forcedAudio: draft.forcedAudio.map { URL(fileURLWithPath: $0).lastPathComponent },
+            forcedAudioOffset: draft.forcedAudioOffset ?? 0)
     }
 }
 

@@ -343,6 +343,34 @@ extension GenerationViewModel {
             creationMethod = .text
         }
 
+        // Lip sync: "forced_audio_path" holds that file's audio as the
+        // soundtrack, from "forced_audio_offset" seconds on (default 0).
+        // Works with every creation method; omitted means off.
+        if let forced = json["forced_audio_path"] {
+            guard let path = forced as? String, !path.isEmpty else {
+                return .error(400, "\"forced_audio_path\" must be a file path")
+            }
+            guard FileManager.default.fileExists(atPath: path) else {
+                return .error(400, "forced_audio_path not found: \(path)")
+            }
+            var offset = 0.0
+            if let value = json["forced_audio_offset"] {
+                guard let number = value as? NSNumber, number.doubleValue.isFinite,
+                      number.doubleValue >= 0 else {
+                    return .error(400, "\"forced_audio_offset\" must be a number of seconds >= 0")
+                }
+                offset = number.doubleValue
+            }
+            forcedAudioPath = path
+            forcedAudioOffset = offset
+        } else {
+            if json["forced_audio_offset"] != nil {
+                return .error(400, "\"forced_audio_offset\" needs \"forced_audio_path\"")
+            }
+            forcedAudioPath = nil
+            forcedAudioOffset = 0
+        }
+
         // "loras": [{"name": ..., "strength": 0.8}, ...] (or bare names)
         // replaces the stack; the older single "lora_name"/"lora_scale"
         // pair still works. Neither means no LoRA. Strength multiplies the

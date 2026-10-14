@@ -199,6 +199,16 @@ static float h3_audio_sigma_shift(const h3_params *params) {
                                             : (float)H3_AUDIO_SIGMA_SHIFT;
 }
 
+/* Forced audio reaches the DiT fully clean - audio sigma 0 at every step.
+ * H3_FORCED_AUDIO_MODE=noised instead holds it on its noise trajectory, the
+ * way ComfyUI's noise mask does; on the same seeds that synced the mouth
+ * clearly worse (lipsync-test/REPORT.md). Changes the sigma schedule, so it
+ * is part of the prepared key. */
+static int h3_forced_audio_clean(const h3_params *params) {
+    const char *mode = getenv("H3_FORCED_AUDIO_MODE");
+    return params->forced_audio_path && !(mode && !strcmp(mode, "noised"));
+}
+
 static char *h3_prepared_key(const char *conditioning,
                              const h3_params *params,
                              int render_width, int render_height) {
@@ -207,7 +217,7 @@ static char *h3_prepared_key(const char *conditioning,
             &key,
             "%s|shape=%dx%dx%d|steps=%d|layers=%d|reuse-core=%d|reduce=%d"
             "|row-fc2=%d|reference-rope=%d|ssd-streaming=%d"
-            "|slow=%d%d%d%d%d%d%d%d%d%d|audio-shift=%.6g",
+            "|slow=%d%d%d%d%d%d%d%d%d%d|audio-shift=%.6g|clean-audio=%d",
             conditioning, render_width, render_height, params->frames,
             params->steps, params->dit_layers, params->core_reuse,
             params->token_reduction, params->use_int8_row_fc2,
@@ -223,7 +233,8 @@ static char *h3_prepared_key(const char *conditioning,
             params->use_slower_uncached_int8_scales,
             params->use_slower_dynamic_fc1_k,
             params->use_slower_grouped_quantizer,
-            (double)h3_audio_sigma_shift(params))) {
+            (double)h3_audio_sigma_shift(params),
+            h3_forced_audio_clean(params))) {
         free(key.text);
         return NULL;
     }
@@ -659,6 +670,13 @@ static int h3_valid_params(h3_ctx *ctx, const h3_params *params) {
     if (params->sampler == H3_SAMPLER_RENOISE && params->denoise_reuse != 1) {
         h3_set_error(ctx, "the re-noise sampler evaluates every step and "
                          "cannot be combined with denoiser reuse");
+        return 0;
+    }
+    if (params->forced_audio_path &&
+        (!*params->forced_audio_path ||
+         !isfinite(params->forced_audio_offset) ||
+         params->forced_audio_offset < 0.0)) {
+        h3_set_error(ctx, "forced audio needs a file and an offset >= 0");
         return 0;
     }
     if (!(params->audio_sigma_shift == 0.0f ||
@@ -1167,6 +1185,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     h3_live_preview live_preview;
     memset(&live_preview, 0, sizeof(live_preview));
     float *video = NULL, *audio = NULL;
+    float *forced_pcm = NULL, *forced_latent = NULL;
+    int forced_samples = 0;
     h3_video_frames frames;
     memset(&frames, 0, sizeof(frames));
     h3_audio_waveform waveform;
@@ -1730,6 +1750,41 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                       condition_video_elements * sizeof(*condition_video_rows));
     if (progress.cancelled) goto cleanup;
 
+    if (params->forced_audio_path) {
+        /* As long as the decoder's own soundtrack would be, so the writer
+         * muxes it exactly where generated audio would have gone. */
+        forced_samples = temporal.audio_t * 800;
+        if (!h3_av_read_audio_range_f32(
+                params->forced_audio_path, params->forced_audio_offset,
+                forced_samples, &forced_pcm, detail, sizeof(detail))) {
+            h3_set_error(ctx, "%s", detail);
+            goto cleanup;
+        }
+        h3_audio_latent latent;
+        memset(&latent, 0, sizeof(latent));
+        if (!h3_audio_vae_encode(
+                audio_vae_path, "h3_shaders.metal", forced_pcm,
+                forced_samples, h3_audio_encoder_progress_bridge, &progress,
+                &latent, detail, sizeof(detail))) {
+            h3_audio_latent_free(&latent);
+            h3_set_error(ctx, "%s", detail);
+            goto cleanup;
+        }
+        if (latent.channels != 32 || latent.stereo != 2 ||
+            latent.length != temporal.audio_t) {
+            h3_audio_latent_free(&latent);
+            h3_set_error(ctx, "forced audio encoder produced invalid geometry");
+            goto cleanup;
+        }
+        forced_latent = latent.values;
+        latent.values = NULL;
+        h3_audio_latent_free(&latent);
+        h3_debug_hash("forced audio", forced_latent,
+                      (size_t)temporal.audio_t * 2 * 32 *
+                          sizeof(*forced_latent));
+        if (progress.cancelled) goto cleanup;
+    }
+
     h3_layout_spec spec = {(int)text.tokens, temporal.video_t, latent_h,
                            latent_w, temporal.audio_t, temporal.frame_count,
                            keyframes, keyframe_count,
@@ -1744,6 +1799,10 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             params->steps, h3_audio_sigma_shift(params), &sigmas)) {
         h3_set_error(ctx, "cannot construct the requested sigma schedule");
         goto cleanup;
+    }
+    if (h3_forced_audio_clean(params)) {
+        for (int step = 0; step <= sigmas.steps; step++) sigmas.audio[step] = 0.0f;
+        fprintf(stderr, "h3: forced audio is held clean (audio sigma 0)\n");
     }
     float spatial_rope_scale = !params->use_reference_rope &&
         render_width == 256 && render_height == 256 ? 0.5f : 1.0f;
@@ -1867,6 +1926,13 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     h3_debug_hash("noise audio", audio, audio_count * sizeof(*audio));
     h3_dit_set_attention_mode(dit, h3_resolve_attention_mode(params));
     h3_dit_set_sampler(dit, params->sampler, params->seed);
+    /* Set on every run, so a retained DiT never carries it over. */
+    if (!h3_dit_set_forced_audio(dit, forced_latent,
+                                 forced_latent ? audio_count : 0,
+                                 detail, sizeof(detail))) {
+        h3_set_error(ctx, "%s", detail);
+        goto cleanup;
+    }
     uint64_t ccv_calls_before = h3_gpu_ccv_attention_dispatch_count();
     uint64_t ccv_direct_before = h3_gpu_ccv_attention_direct_count();
     if (!h3_dit_denoise_euler_preview(
@@ -1886,6 +1952,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         goto cleanup;
     }
     h3_dit_release_backend_scratch(dit);
+    h3_dit_set_forced_audio(dit, NULL, 0, NULL, 0);
     h3_debug_hash("denoised video", video, video_count * sizeof(*video));
     h3_debug_hash("denoised audio", audio, audio_count * sizeof(*audio));
     uint64_t ccv_calls = h3_gpu_ccv_attention_dispatch_count() -
@@ -1895,12 +1962,25 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     if (!dit_is_cached) h3_dit_free(dit);
     dit = NULL;
     if (progress.cancelled) goto cleanup;
-    h3_progress_emit(&progress, "audio VAE", 0, 7);
-    if (!h3_audio_vae_decode(audio_vae_path, "h3_shaders.metal", audio,
-                             temporal.audio_t, h3_audio_vae_progress_bridge,
-                             &progress, &waveform, detail, sizeof(detail))) {
-        h3_set_error(ctx, "%s", detail);
-        goto cleanup;
+    const char *decode_forced = getenv("H3_FORCED_AUDIO_DECODE");
+    if (forced_pcm && !(decode_forced && *decode_forced &&
+                        strcmp(decode_forced, "0"))) {
+        /* The file's own audio, not its trip through the audio VAE (set
+         * H3_FORCED_AUDIO_DECODE=1 to hear the decoded latent instead). */
+        waveform.channels = 2;
+        waveform.samples = forced_samples;
+        waveform.sample_rate = 32000;
+        waveform.pcm = forced_pcm;
+        forced_pcm = NULL;
+    } else {
+        h3_progress_emit(&progress, "audio VAE", 0, 7);
+        if (!h3_audio_vae_decode(audio_vae_path, "h3_shaders.metal", audio,
+                                 temporal.audio_t,
+                                 h3_audio_vae_progress_bridge, &progress,
+                                 &waveform, detail, sizeof(detail))) {
+            h3_set_error(ctx, "%s", detail);
+            goto cleanup;
+        }
     }
     /* The PCM handed to the encoder (the AAC track itself is not bit-exact). */
     h3_debug_hash("audio waveform", waveform.pcm,
@@ -2068,6 +2148,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     }
 
 cleanup:
+    free(forced_pcm);
+    free(forced_latent);
     free(conditioning_key);
     free(prepared_key);
     free(decoder_key);

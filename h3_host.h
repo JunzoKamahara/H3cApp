@@ -161,4 +161,13 @@ int h3_renoise_velocity_step(float *sample, const float *velocity,
                              size_t count, float sigma, float sigma_next,
                              const uint32_t keys[2]);
 
+/* Forced audio: hold a stream on the noise trajectory of a known clean
+ * latent, sample = sigma * noise + (1 - sigma) * clean. On entry sample
+ * holds the initial noise; it is moved onto the trajectory at sigma and
+ * velocity receives clean - noise, the data-ward velocity of every point
+ * on it, so each Euler step lands exactly on the next trajectory point and
+ * the last one (sigma 0) on the clean latent. */
+int h3_forced_trajectory_start(float *sample, float *velocity,
+                               const float *clean, size_t count, float sigma);
+
 #endif

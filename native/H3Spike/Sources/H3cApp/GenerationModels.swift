@@ -367,6 +367,9 @@ struct ResolvedResult {
     let completedAt: Date
     // Wall-clock time from pressing generate to the finished file.
     let generationSeconds: Double
+    /// Lip sync: the held audio file's name and where in it the video starts.
+    var forcedAudio: String? = nil
+    var forcedAudioOffset: Double = 0
 
     var seedDecimalString: String { String(seed) }
 
@@ -426,6 +429,10 @@ struct ResolvedResult {
         }
         if !references.isEmpty {
             lines.append(String(localized: "参照: \(references.joined(separator: ", "))"))
+        }
+        if let forcedAudio {
+            let offset = formatAudioOffset(forcedAudioOffset)
+            lines.append(String(localized: "音声に合わせる（リップシンク）: \(forcedAudio)（\(offset)秒から）"))
         }
         lines.append(String(localized: "動作環境: \(deviceLine)"))
         return lines.joined(separator: "\n")

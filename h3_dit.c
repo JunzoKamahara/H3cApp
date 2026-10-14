@@ -153,6 +153,7 @@ struct h3_dit {
     h3_dit_attention_mode attention_mode;
     int sampler;              /* H3_SAMPLER_EULER or H3_SAMPLER_RENOISE */
     uint64_t sampler_seed;    /* drives the re-noise rule's fresh noise */
+    float *forced_audio;      /* clean [32,2,T] audio latent, or NULL */
     int fused_patch_projection;
     int fused_patch_pack;
     int token_reduction;
@@ -272,6 +273,7 @@ struct h3_dit {
     h3_gpu_tensor *video_output_bf16;
     h3_gpu_tensor *previous_audio_velocity;
     h3_gpu_tensor *previous_video_velocity;
+    h3_gpu_tensor *forced_audio_velocity; /* F32 rows, GPU sampler only */
 };
 
 static void fail(char *error, size_t error_size, const char *format, ...) {
@@ -3778,6 +3780,39 @@ static int denoise_euler_gpu(h3_dit *dit, float *video_latent,
         free(audio_rows);
         return 0;
     }
+    /* Forced audio: start the audio on the clean latent's trajectory and
+     * keep the velocity that holds it there in forced_audio_velocity; it
+     * replaces the model's audio velocity after every evaluation. */
+    int forced = dit->forced_audio != NULL;
+    /* Audio sigma 0 throughout (h3.c's default for forced audio): the audio
+     * simply is the clean latent and is never stepped. */
+    int forced_clean = forced && dit->sigmas.audio[0] == 0.0f;
+    float *forced_velocity = forced
+        ? malloc(audio_count * sizeof(*forced_velocity)) : NULL;
+    float *forced_rows = forced
+        ? malloc(audio_count * sizeof(*forced_rows)) : NULL;
+    if (forced && !dit->forced_audio_velocity)
+        dit->forced_audio_velocity = h3_gpu_tensor_new_f32(dit->gpu,
+                                                           audio_count);
+    if (forced && (!forced_velocity || !forced_rows ||
+                   !dit->forced_audio_velocity ||
+                   !h3_forced_trajectory_start(
+                       audio_latent, forced_velocity, dit->forced_audio,
+                       h3_dit_audio_elements(dit), dit->sigmas.audio[0]) ||
+                   !h3_dit_pack_audio(forced_velocity, AUDIO_CHANNELS,
+                                      dit->audio_t, forced_rows,
+                                      audio_count) ||
+                   !h3_gpu_tensor_write_f32(dit->forced_audio_velocity,
+                                            forced_rows, audio_count))) {
+        fail(error, error_size, "cannot prepare GPU forced audio");
+        free(forced_velocity);
+        free(forced_rows);
+        free(video_rows);
+        free(audio_rows);
+        return 0;
+    }
+    free(forced_velocity);
+    free(forced_rows);
     int ok = h3_dit_patchify_video(video_latent, VIDEO_CHANNELS,
         dit->latent_t, dit->latent_h, dit->latent_w, video_rows, video_count) &&
         h3_dit_pack_audio(audio_latent, AUDIO_CHANNELS, dit->audio_t,
@@ -3817,6 +3852,11 @@ static int denoise_euler_gpu(h3_dit *dit, float *video_latent,
             if (ok) ok = encode_forward(dit, step, 0, 0,
                                         disable_command_split,
                                         error, error_size);
+            if (ok && forced)
+                ok = gpu_op(dit, h3_gpu_cast_f32_to_bf16(
+                    dit->gpu, dit->audio_output_bf16,
+                    dit->forced_audio_velocity, (uint32_t)audio_count),
+                    error, error_size, "force audio velocity");
             if (ok) {
                 last_evaluated = step;
                 pending_evaluations++;
@@ -3847,11 +3887,22 @@ static int denoise_euler_gpu(h3_dit *dit, float *video_latent,
                     dit->video_output_bf16, (uint32_t)video_count,
                     dit->sigmas.video[step], dit->sigmas.video[step + 1],
                     video_keys), error, error_size, "GPU video re-noise step") &&
-                 gpu_op(dit, h3_gpu_renoise_bf16(
-                    dit->gpu, dit->audio_input, audio_offset,
-                    dit->audio_output_bf16, (uint32_t)audio_count,
-                    dit->sigmas.audio[step], dit->sigmas.audio[step + 1],
-                    audio_keys), error, error_size, "GPU audio re-noise step");
+                 (forced_clean ? 1 : forced
+                  /* Forced audio stays on its own trajectory: fresh noise
+                   * would leave it, while an Euler step with the held
+                   * velocity lands on the next trajectory point. */
+                  ? gpu_op(dit, h3_gpu_euler_bf16(
+                        dit->gpu, dit->audio_input, audio_offset,
+                        dit->audio_output_bf16, dit->audio_output_bf16,
+                        (uint32_t)audio_count,
+                        dit->sigmas.audio[step] - dit->sigmas.audio[step + 1],
+                        0.0f), error, error_size, "GPU forced audio step")
+                  : gpu_op(dit, h3_gpu_renoise_bf16(
+                        dit->gpu, dit->audio_input, audio_offset,
+                        dit->audio_output_bf16, (uint32_t)audio_count,
+                        dit->sigmas.audio[step], dit->sigmas.audio[step + 1],
+                        audio_keys), error, error_size,
+                        "GPU audio re-noise step"));
         } else {
             ok = gpu_op(dit, h3_gpu_euler_bf16(
                     dit->gpu, dit->video_input, video_offset,
@@ -3859,12 +3910,12 @@ static int denoise_euler_gpu(h3_dit *dit, float *video_latent,
                     (uint32_t)video_count,
                     dit->sigmas.video[step] - dit->sigmas.video[step + 1],
                     video_ratio), error, error_size, "GPU video Euler step") &&
-                 gpu_op(dit, h3_gpu_euler_bf16(
+                 (forced_clean ? 1 : gpu_op(dit, h3_gpu_euler_bf16(
                     dit->gpu, dit->audio_input, audio_offset,
                     dit->audio_output_bf16, previous_audio,
                     (uint32_t)audio_count,
                     dit->sigmas.audio[step] - dit->sigmas.audio[step + 1],
-                    audio_ratio), error, error_size, "GPU audio Euler step");
+                    audio_ratio), error, error_size, "GPU audio Euler step"));
         }
         if (ok && (evaluate || preview)) {
             int finish = preview || step + 1 == dit->sigmas.steps ||
@@ -4061,6 +4112,17 @@ int h3_dit_denoise_euler_preview(
         return 0;
     }
     int ok = 1;
+    int forced = dit->forced_audio != NULL;
+    int forced_clean = forced && dit->sigmas.audio[0] == 0.0f;
+    float *forced_velocity = forced
+        ? malloc(audio_count * sizeof(*forced_velocity)) : NULL;
+    if (forced && (!forced_velocity ||
+                   !h3_forced_trajectory_start(
+                       audio_latent, forced_velocity, dit->forced_audio,
+                       audio_count, dit->sigmas.audio[0]))) {
+        fail(error, error_size, "cannot prepare forced audio");
+        ok = 0;
+    }
     int last_evaluated = -1;
     int previous_evaluated = -1;
     for (int step = 0; step < dit->sigmas.steps && ok; step++) {
@@ -4098,6 +4160,9 @@ int h3_dit_denoise_euler_preview(
                     ? dit->sigmas.audio[previous_evaluated] : 0.0f,
                 previous_evaluated >= 0);
         }
+        if (ok && forced)
+            memcpy(audio_velocity, forced_velocity,
+                   audio_count * sizeof(*audio_velocity));
         if (ok && dit->sampler == H3_SAMPLER_RENOISE) {
             uint32_t video_keys[2], audio_keys[2];
             h3_renoise_keys(dit->sampler_seed, step, 0, video_keys);
@@ -4106,19 +4171,23 @@ int h3_dit_denoise_euler_preview(
                      video_latent, video_velocity, video_count,
                      dit->sigmas.video[step], dit->sigmas.video[step + 1],
                      video_keys) &&
-                 h3_renoise_velocity_step(
-                     audio_latent, audio_velocity, audio_count,
-                     dit->sigmas.audio[step], dit->sigmas.audio[step + 1],
-                     audio_keys);
+                 (forced_clean ? 1 : forced
+                  ? h3_euler_velocity_step(
+                        audio_latent, audio_velocity, audio_count,
+                        dit->sigmas.audio[step], dit->sigmas.audio[step + 1])
+                  : h3_renoise_velocity_step(
+                        audio_latent, audio_velocity, audio_count,
+                        dit->sigmas.audio[step], dit->sigmas.audio[step + 1],
+                        audio_keys));
             if (!ok) fail(error, error_size,
                           "re-noise solver rejected step %d", step);
         } else if (ok) {
             ok = h3_euler_velocity_step(
                      video_latent, video_velocity, video_count,
                      dit->sigmas.video[step], dit->sigmas.video[step + 1]) &&
-                 h3_euler_velocity_step(
+                 (forced_clean || h3_euler_velocity_step(
                      audio_latent, audio_velocity, audio_count,
-                     dit->sigmas.audio[step], dit->sigmas.audio[step + 1]);
+                     dit->sigmas.audio[step], dit->sigmas.audio[step + 1]));
             if (!ok) fail(error, error_size,
                           "Euler solver rejected step %d", step);
         }
@@ -4138,6 +4207,7 @@ int h3_dit_denoise_euler_preview(
     free(previous_video);
     free(last_audio);
     free(previous_audio);
+    free(forced_velocity);
     h3_gpu_profile_mark(dit->gpu, "Euler denoise");
     return ok;
 }
@@ -4159,6 +4229,27 @@ void h3_dit_set_sampler(h3_dit *dit, int sampler, uint64_t seed) {
     if (!dit) return;
     dit->sampler = sampler;
     dit->sampler_seed = seed;
+}
+
+int h3_dit_set_forced_audio(h3_dit *dit, const float *clean_latent,
+                            size_t elements, char *error, size_t error_size) {
+    if (!dit) return 0;
+    free(dit->forced_audio);
+    dit->forced_audio = NULL;
+    if (!clean_latent) return 1;
+    if (elements != h3_dit_audio_elements(dit)) {
+        fail(error, error_size, "forced audio has %zu values, expected %zu",
+             elements, h3_dit_audio_elements(dit));
+        return 0;
+    }
+    dit->forced_audio = malloc(elements * sizeof(*dit->forced_audio));
+    if (!dit->forced_audio) {
+        fail(error, error_size, "out of memory storing forced audio");
+        return 0;
+    }
+    memcpy(dit->forced_audio, clean_latent,
+           elements * sizeof(*dit->forced_audio));
+    return 1;
 }
 
 void h3_dit_release_backend_scratch(h3_dit *dit) {
@@ -4221,7 +4312,9 @@ void h3_dit_free(h3_dit *dit) {
     FREE(video_output);
     FREE(audio_output_bf16); FREE(video_output_bf16);
     FREE(previous_audio_velocity); FREE(previous_video_velocity);
+    FREE(forced_audio_velocity);
 #undef FREE
+    free(dit->forced_audio);
     h3_dit_schedule_free(dit->schedule);
     if (dit->ssd_streaming && getenv("H3_PROFILE")) {
         double gib = (double)dit->stream_bytes / (1024.0 * 1024.0 * 1024.0);

@@ -721,3 +721,15 @@ int h3_renoise_velocity_step(float *sample, const float *velocity,
     }
     return 1;
 }
+
+int h3_forced_trajectory_start(float *sample, float *velocity,
+                               const float *clean, size_t count, float sigma) {
+    if (!sample || !velocity || !clean || !isfinite(sigma) ||
+        sigma < 0.0f || sigma > 1.0f) return 0;
+    for (size_t index = 0; index < count; index++) {
+        float noise = sample[index];
+        velocity[index] = clean[index] - noise;
+        sample[index] = sigma * noise + (1.0f - sigma) * clean[index];
+    }
+    return 1;
+}

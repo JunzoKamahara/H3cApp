@@ -112,8 +112,14 @@ int main(int argc, char **argv) {
     h3_params params = H3_PARAMS_DEFAULT;
     params.output_path = output_path;
     int size = env_int("H3SPIKE_SIZE", 256);
-    params.width = size;
-    params.height = size;
+    params.width = env_int("H3SPIKE_WIDTH", size);
+    params.height = env_int("H3SPIKE_HEIGHT", size);
+    params.first_frame = getenv("H3SPIKE_FIRST_FRAME");
+    /* Forced audio (lip sync): H3SPIKE_FORCED_AUDIO=<file>, optional
+     * H3SPIKE_FORCED_AUDIO_OFFSET=<seconds>. */
+    params.forced_audio_path = getenv("H3SPIKE_FORCED_AUDIO");
+    if (getenv("H3SPIKE_FORCED_AUDIO_OFFSET"))
+        params.forced_audio_offset = atof(getenv("H3SPIKE_FORCED_AUDIO_OFFSET"));
     params.frames = env_int("H3SPIKE_FRAMES", 9);
     params.steps = env_int("H3SPIKE_STEPS", 4);
     params.seed = (uint64_t)env_int("H3SPIKE_SEED", 42);
