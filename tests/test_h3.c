@@ -171,7 +171,7 @@ static void position_checksums(const h3_layout *layout, double sums[3],
 }
 
 static void test_layout_tiny(void) {
-    h3_layout_spec spec = {12, 2, 2, 2, 8, 5, NULL, 0, NULL, 0};
+    h3_layout_spec spec = {12, 2, 2, 2, 8, 5, NULL, 0, NULL, 0, 0, 0.0};
     h3_layout layout;
     char error[256];
     CHECK(h3_layout_build(&spec, &layout, error, sizeof(error)));
@@ -191,7 +191,7 @@ static void test_layout_tiny(void) {
 static void test_layout_fl2va(void) {
     int keyframes[] = {0, 55};
     h3_layout_spec spec = {128, 17, 30, 54, 93, 56,
-                           keyframes, 2, NULL, 0};
+                           keyframes, 2, NULL, 0, 0, 0.0};
     h3_layout layout;
     char error[256];
     CHECK(h3_layout_build(&spec, &layout, error, sizeof(error)));
@@ -214,6 +214,38 @@ static void test_layout_fl2va(void) {
     h3_layout_free(&layout);
 }
 
+/* Clip continuation: 22 pinned frames are 7 one-step keyframes at their
+ * own frames (0, 1, 5, 9, 13, 17, 18), each at text_len + frame * 5/3, and
+ * an audio window on the clip's own timeline. */
+static void test_layout_continuation(void) {
+    int keyframes[7];
+    for (int step = 0; step < 7; step++) keyframes[step] = h3_video_step_frame(step);
+    CHECK(keyframes[1] == 1 && keyframes[2] == 5 && keyframes[5] == 17 &&
+          keyframes[6] == 18 && h3_video_step_frame(7) == 22);
+    h3_layout_spec spec = {128, 17, 30, 54, 93, 56,
+                           keyframes, 7, NULL, 0, 37, 0.0};
+    h3_layout layout;
+    char error[256];
+    CHECK(h3_layout_build(&spec, &layout, error, sizeof(error)));
+    CHECK(layout.img_cond_rows == 7 * 405);
+    CHECK(layout.audio_cond_rows == 74);
+    CHECK(layout.segment_count == 1 + 7 + 1 + 2);
+    CHECK(layout.segments[8].kind == H3_SEG_REF_AUDIO);
+    for (int step = 0; step < 7; step++) {
+        size_t row = layout.segments[1 + step].start;
+        CHECK(close_enough(layout.positions[row].t,
+                           128.0 + 5.0 / 3.0 * keyframes[step], 1e-12));
+    }
+    /* The pinned frames line up with the clip's own first frames: the
+     * target video's first latent step sits where the first keyframe is. */
+    size_t video = layout.segments[layout.segment_count - 1].start;
+    CHECK(layout.positions[video].t == layout.positions[layout.segments[1].start].t);
+    size_t audio = layout.segments[8].start;
+    CHECK(layout.positions[audio].t == 128.0 &&
+          layout.positions[audio + 36].t == 164.0);
+    h3_layout_free(&layout);
+}
+
 static void test_layout_ref2va(void) {
     h3_layout_ref references[] = {
         {H3_LAYOUT_REF_IMAGE, 0, 16, 24, 0},
@@ -221,7 +253,7 @@ static void test_layout_ref2va(void) {
         {H3_LAYOUT_REF_AUDIO, 0, 0, 0, 80}
     };
     h3_layout_spec spec = {192, 17, 30, 54, 93, 56,
-                           NULL, 0, references, 3};
+                           NULL, 0, references, 3, 0, 0.0};
     h3_layout layout;
     char error[256];
     CHECK(h3_layout_build(&spec, &layout, error, sizeof(error)));
@@ -568,6 +600,7 @@ int main(void) {
     test_dit_reuse_schedule();
     test_layout_tiny();
     test_layout_fl2va();
+    test_layout_continuation();
     test_layout_ref2va();
     test_safetensors();
     test_weight_fingerprint();

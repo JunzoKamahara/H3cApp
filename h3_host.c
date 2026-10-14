@@ -302,6 +302,13 @@ static int h3_frame_grid(int latent_h, int latent_w, h3_position **positions,
     return 1;
 }
 
+int h3_video_step_frame(int step) {
+    int frame = 0;
+    for (int index = 0; index < step; index++)
+        frame += h3_frame_per_token[index % 5];
+    return frame;
+}
+
 static double h3_video_span_sum(int latent_t) {
     double sum = 0.0;
     for (int index = 0; index < latent_t; index++) {
@@ -381,20 +388,39 @@ int h3_layout_build(const h3_layout_spec *spec, h3_layout *layout,
     free(text);
 
     double cursor = (double)spec->text_len;
+    /* A one-step condition latent sits at its pixel frame's time: the first
+     * frame at the start of the clip, the last one span - rescale later,
+     * and a continuation's pinned steps at their own frames in between. */
     for (size_t index = 0; index < spec->keyframe_count; index++) {
-        double condition_time;
-        if (spec->keyframes[index] == 0) {
-            condition_time = (double)spec->text_len;
-        } else if (spec->keyframes[index] == spec->frame_count - 1) {
-            condition_time = (double)spec->text_len +
-                             h3_video_span_sum(spec->latent_t) - h3_frame_rescale;
-        } else {
-            h3_builder_fail(&builder, "only first and last keyframes are valid");
+        int keyframe = spec->keyframes[index];
+        if (keyframe < 0 || keyframe >= spec->frame_count) {
+            h3_builder_fail(&builder, "keyframe lies outside the clip");
             goto fail;
         }
+        /* The last frame keeps its original span-based form, so its
+         * position stays bit-identical to earlier releases. */
+        double condition_time = keyframe == spec->frame_count - 1
+            ? (double)spec->text_len + h3_video_span_sum(spec->latent_t) -
+                  h3_frame_rescale
+            : (double)spec->text_len + h3_frame_rescale * (double)keyframe;
         for (size_t row = 0; row < frame_rows; row++) frame[row].t = condition_time;
         if (!h3_emit(&builder, H3_SEG_COND, frame, frame_rows)) goto fail;
         layout->img_cond_rows += frame_rows;
+    }
+    if (spec->keyframe_audio_t > 0) {
+        if (spec->reference_count) {
+            h3_builder_fail(&builder, "audio keyframes and references are mutually exclusive");
+            goto fail;
+        }
+        size_t rows = 0;
+        h3_position *audio = h3_audio_grid(
+            (double)spec->text_len + spec->keyframe_audio_start,
+            spec->keyframe_audio_t, w_axis[0], w_axis[w_count - 1], &rows);
+        if (!audio) goto oom;
+        int ok = h3_emit(&builder, H3_SEG_REF_AUDIO, audio, rows);
+        free(audio);
+        if (!ok) goto fail;
+        layout->audio_cond_rows += rows;
     }
 
     for (size_t index = 0; index < spec->reference_count; index++) {

@@ -65,6 +65,11 @@ typedef struct {
     size_t keyframe_count;
     const h3_layout_ref *references;
     size_t reference_count;
+    /* Audio keyframe (clip continuation): audio condition rows on the
+     * clip's own timeline, keyframe_audio_t steps starting at
+     * keyframe_audio_start (in audio steps from the start of the clip). */
+    int keyframe_audio_t;
+    double keyframe_audio_start;
 } h3_layout_spec;
 
 typedef struct {
@@ -167,6 +172,11 @@ int h3_renoise_velocity_step(float *sample, const float *velocity,
  * velocity receives clean - noise, the data-ward velocity of every point
  * on it, so each Euler step lands exactly on the next trajectory point and
  * the last one (sigma 0) on the clean latent. */
+/* The first pixel frame of latent step `step` in a clip (steps cover
+ * 1, 4, 4, 4, 4 frames in turn), so frame_count - h3_video_step_frame(n)
+ * frames remain after n steps. */
+int h3_video_step_frame(int step);
+
 int h3_forced_trajectory_start(float *sample, float *velocity,
                                const float *clean, size_t count, float sigma);
 

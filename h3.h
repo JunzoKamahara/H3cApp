@@ -189,6 +189,20 @@ typedef struct {
      * NULL is off. */
     const char *forced_audio_path;
     double forced_audio_offset;
+    /* Clip continuation. save_latent_path: also write this generation's
+     * final latents (before decoding) to that file. continue_latent_path: a
+     * file written that way by an earlier generation at the same size; the
+     * last continue_frames frames of it (5, 22, 39 or 56) are pinned at the
+     * start of this clip, and the last continue_audio_frames frames' worth
+     * of its sound (0 = continue_frames) end where they end, so this clip
+     * carries on from it. Its first continue_frames frames repeat the
+     * earlier clip's last ones: join the two by cross-fading those. Works
+     * in the default (FL2VA) mode without a first frame; with forced audio
+     * only the picture is pinned. */
+    const char *save_latent_path;
+    const char *continue_latent_path;
+    int continue_frames;
+    int continue_audio_frames;
 } h3_params;
 
 enum {
@@ -200,7 +214,7 @@ enum {
     H3_DEFAULT_WIDTH, H3_DEFAULT_HEIGHT, H3_DEFAULT_FRAMES, H3_DEFAULT_STEPS, \
     UINT64_C(42), NULL, NULL, NULL, NULL, 0, H3_REFERENCE_IMAGE_MATCH, \
     1, H3_DEFAULT_DIT_LAYERS, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, \
-    NULL, 0, 0, H3_SAMPLER_EULER, 0.0f, NULL, 0.0 \
+    NULL, 0, 0, H3_SAMPLER_EULER, 0.0f, NULL, 0.0, NULL, NULL, 0, 0 \
 }
 
 typedef struct {

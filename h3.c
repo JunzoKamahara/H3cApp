@@ -167,18 +167,200 @@ static int h3_key_file(h3_key *key, const char *role, const char *path) {
                          status.st_mtimespec.tv_nsec);
 }
 
+/* Clip latents for continuation: a 9-int32 header (magic, version, video
+ * channels, latent_t, latent_h, latent_w, audio channels, audio_t, pixel
+ * frames) and then the F32 video latent [24,T,H,W] and the normalized
+ * audio latent [32,2,T], as they were before decoding. */
+#define H3_LATENT_FILE_MAGIC 0x544c3348u /* "H3LT" */
+
+static int h3_latent_file_write(const char *path, const float *video,
+                                int latent_t, int latent_h, int latent_w,
+                                const float *audio, int audio_t, int frames,
+                                char *error, size_t error_size) {
+    int32_t header[9] = {(int32_t)H3_LATENT_FILE_MAGIC, 1, 24, latent_t,
+                         latent_h, latent_w, 32, audio_t, frames};
+    size_t video_count = (size_t)24 * latent_t * latent_h * latent_w;
+    size_t audio_count = (size_t)32 * 2 * audio_t;
+    FILE *file = fopen(path, "wb");
+    int ok = file &&
+        fwrite(header, sizeof(header), 1, file) == 1 &&
+        fwrite(video, sizeof(*video), video_count, file) == video_count &&
+        fwrite(audio, sizeof(*audio), audio_count, file) == audio_count;
+    if (file && fclose(file) != 0) ok = 0;
+    if (!ok) {
+        snprintf(error, error_size, "cannot write latents to %s: %s", path,
+                 strerror(errno));
+        remove(path);
+    }
+    return ok;
+}
+
+/* What a continuation pins, worked out from the earlier clip's latent file
+ * header and the params: one condition step per pinned latent step, at its
+ * own pixel frame, and an audio window that ends where those frames end. */
+typedef struct {
+    int active;
+    int steps;              /* pinned latent steps */
+    int keyframes[17];      /* their pixel frames in this clip */
+    int audio_t;            /* pinned audio steps (0: none) */
+    double audio_start;     /* first one's place, in audio steps */
+    int file_t, file_h, file_w, file_audio_t, file_frames;
+} h3_continuation;
+
+static int h3_continuation_plan(const h3_params *params, int latent_h,
+                                int latent_w, h3_temporal_shape temporal,
+                                h3_continuation *plan,
+                                char *error, size_t error_size) {
+    memset(plan, 0, sizeof(*plan));
+    if (!params->continue_latent_path) return 1;
+    int32_t header[9];
+    FILE *file = fopen(params->continue_latent_path, "rb");
+    int read = file && fread(header, sizeof(header), 1, file) == 1;
+    if (file) fclose(file);
+    if (!read || header[0] != (int32_t)H3_LATENT_FILE_MAGIC ||
+        header[1] != 1 || header[2] != 24 || header[6] != 32) {
+        snprintf(error, error_size, "%s is not an H3 clip latent file",
+                 params->continue_latent_path);
+        return 0;
+    }
+    plan->file_t = header[3];
+    plan->file_h = header[4];
+    plan->file_w = header[5];
+    plan->file_audio_t = header[7];
+    plan->file_frames = header[8];
+    if (plan->file_h != latent_h || plan->file_w != latent_w) {
+        snprintf(error, error_size,
+                 "the clip to continue was made at another size "
+                 "(latent %dx%d, this one %dx%d)", plan->file_w,
+                 plan->file_h, latent_w, latent_h);
+        return 0;
+    }
+    int frames = params->continue_frames;
+    plan->steps = h3_video_latent_t(frames);
+    if (plan->steps < 1 || plan->steps > 17 ||
+        h3_video_step_frame(plan->steps) != frames ||
+        plan->steps > plan->file_t || frames >= temporal.frame_count ||
+        plan->file_frames != h3_video_step_frame(plan->file_t)) {
+        snprintf(error, error_size,
+                 "cannot pin %d frames of a %d-frame clip at the start of a "
+                 "%d-frame one", frames, plan->file_frames,
+                 temporal.frame_count);
+        return 0;
+    }
+    for (int step = 0; step < plan->steps; step++)
+        plan->keyframes[step] = h3_video_step_frame(step);
+    if (!params->forced_audio_path) {
+        int audio_frames = params->continue_audio_frames > 0
+            ? params->continue_audio_frames : frames;
+        plan->audio_t = (int)llround((double)audio_frames *
+                                     H3_AUDIO_LATENT_FPS / H3_FPS);
+        if (plan->audio_t < 1 || plan->audio_t > plan->file_audio_t) {
+            snprintf(error, error_size, "cannot pin %d frames of sound",
+                     audio_frames);
+            return 0;
+        }
+        /* The earlier clip's audio step s lies at s - rescale * (its frame
+         * count - pinned frames) on this clip's timeline. Its window ends
+         * with that clip, snapped to this clip's own audio grid. */
+        double shift = (double)H3_AUDIO_LATENT_FPS / H3_FPS *
+                       (double)(plan->file_frames - frames);
+        plan->audio_start = (double)llround((double)plan->file_audio_t - shift) -
+                            plan->audio_t;
+    }
+    plan->active = 1;
+    return 1;
+}
+
+/* Appends the pinned steps and sound of the continued clip to the
+ * condition rows (patchified video steps, then packed audio rows). */
+static int h3_continuation_rows(const h3_params *params,
+                                const h3_continuation *plan,
+                                float **video_rows, size_t *video_elements,
+                                float **audio_rows, size_t *audio_elements,
+                                char *error, size_t error_size) {
+    size_t plane = (size_t)plan->file_h * plan->file_w;
+    size_t video_count = (size_t)24 * plan->file_t * plane;
+    size_t audio_count = (size_t)32 * 2 * plan->file_audio_t;
+    float *video = malloc(video_count * sizeof(*video));
+    float *audio = malloc(audio_count * sizeof(*audio));
+    FILE *file = fopen(params->continue_latent_path, "rb");
+    int ok = video && audio && file &&
+        fseek(file, 9 * sizeof(int32_t), SEEK_SET) == 0 &&
+        fread(video, sizeof(*video), video_count, file) == video_count &&
+        fread(audio, sizeof(*audio), audio_count, file) == audio_count;
+    if (file) fclose(file);
+    if (!ok) {
+        snprintf(error, error_size, "cannot read %s",
+                 params->continue_latent_path);
+        free(video); free(audio);
+        return 0;
+    }
+    size_t step_rows = plane / 4 * 96;
+    float *step = malloc(24 * plane * sizeof(*step));
+    float *grown = realloc(*video_rows, (*video_elements +
+                           (size_t)plan->steps * step_rows) * sizeof(*grown));
+    if (!step || !grown) {
+        snprintf(error, error_size, "out of memory pinning the continued clip");
+        free(step); free(video); free(audio);
+        if (grown) *video_rows = grown;
+        return 0;
+    }
+    *video_rows = grown;
+    for (int index = 0; ok && index < plan->steps; index++) {
+        int time = plan->file_t - plan->steps + index;
+        for (int channel = 0; channel < 24; channel++)
+            memcpy(step + (size_t)channel * plane,
+                   video + ((size_t)channel * plan->file_t + (size_t)time) * plane,
+                   plane * sizeof(*step));
+        ok = h3_dit_patchify_video(step, 24, 1, plan->file_h, plan->file_w,
+                                   *video_rows + *video_elements, step_rows);
+        *video_elements += step_rows;
+    }
+    free(step);
+    if (ok && plan->audio_t) {
+        size_t elements = (size_t)plan->audio_t * 2 * 32;
+        float *more = realloc(*audio_rows,
+                              (*audio_elements + elements) * sizeof(*more));
+        if (!more) {
+            ok = 0;
+        } else {
+            *audio_rows = more;
+            float *rows = more + *audio_elements;
+            int first = plan->file_audio_t - plan->audio_t;
+            for (int stereo = 0; stereo < 2; stereo++)
+                for (int time = 0; time < plan->audio_t; time++)
+                    for (int channel = 0; channel < 32; channel++)
+                        rows[((size_t)stereo * plan->audio_t + time) * 32 +
+                             channel] =
+                            audio[((size_t)channel * 2 + stereo) *
+                                      plan->file_audio_t + first + time];
+            *audio_elements += elements;
+        }
+    }
+    free(video); free(audio);
+    if (!ok) snprintf(error, error_size, "cannot pin the continued clip");
+    return ok;
+}
+
 static char *h3_conditioning_key(const char *prompt, const h3_params *params,
                                  int render_width, int render_height,
                                  int ref2va) {
     h3_key key = {0};
     if (!h3_key_append(&key, "mode=%d|prompt=%zu:%s", ref2va,
                        strlen(prompt), prompt)) goto failed;
-    if (!ref2va && !params->first_frame && !params->last_frame) return key.text;
+    if (!ref2va && !params->first_frame && !params->last_frame &&
+        !params->continue_latent_path) return key.text;
     if (!h3_key_append(&key, "|render=%dx%d|frames=%d|image-size=%d",
                        render_width, render_height, params->frames,
                        params->reference_image_size) ||
         !h3_key_file(&key, "first", params->first_frame) ||
         !h3_key_file(&key, "last", params->last_frame)) goto failed;
+    if (params->continue_latent_path &&
+        (!h3_key_append(&key, "|continue=%d:%d:%d", params->continue_frames,
+                        params->continue_audio_frames,
+                        params->forced_audio_path != NULL) ||
+         !h3_key_file(&key, "continue", params->continue_latent_path)))
+        goto failed;
     for (size_t index = 0; index < params->reference_count; index++) {
         const h3_reference *reference = &params->references[index];
         if (!h3_key_append(&key, "|ref=%d:%d", reference->kind,
@@ -377,24 +559,28 @@ static void h3_augment_span(float *values, size_t count, uint64_t seed) {
 static int h3_augment_conditions(const h3_params *params, int ref2va,
                                  int render_width, int render_height,
                                  const h3_layout_ref *references,
+                                 size_t keyframe_count,
                                  float *video, size_t video_elements,
                                  float *audio, size_t audio_elements) {
     size_t video_offset = 0;
     size_t audio_offset = 0;
     if (!ref2va) {
+        /* One-step keyframes (first/last frame, a continuation's pinned
+         * steps) and a continuation's audio window. */
         int latent_w, latent_h;
         h3_latent_canvas(render_width, render_height, &latent_w, &latent_h);
         size_t span = (size_t)h3_video_encoder_latent_t(1) *
                       (size_t)latent_h * (size_t)latent_w / 4 * 96;
-        size_t count = (size_t)(params->first_frame != NULL) +
-                       (size_t)(params->last_frame != NULL);
+        size_t count = keyframe_count;
         if (count && (span > SIZE_MAX / count || span * count != video_elements))
             return 0;
         for (size_t index = 0; index < count; index++) {
             h3_augment_span(video + video_offset, span, params->seed);
             video_offset += span;
         }
-        return video_offset == video_elements && audio_elements == 0;
+        if (audio_elements)
+            h3_augment_span(audio, audio_elements, params->seed + 1);
+        return video_offset == video_elements;
     }
     for (size_t index = 0; index < params->reference_count; index++) {
         const h3_layout_ref *reference = &references[index];
@@ -671,6 +857,26 @@ static int h3_valid_params(h3_ctx *ctx, const h3_params *params) {
         h3_set_error(ctx, "the re-noise sampler evaluates every step and "
                          "cannot be combined with denoiser reuse");
         return 0;
+    }
+    if (params->save_latent_path && !*params->save_latent_path) {
+        h3_set_error(ctx, "save_latent_path is empty");
+        return 0;
+    }
+    if (params->continue_latent_path) {
+        int frames = params->continue_frames;
+        if (!*params->continue_latent_path ||
+            (frames != 5 && frames != 22 && frames != 39 && frames != 56) ||
+            params->continue_audio_frames < 0 ||
+            params->continue_audio_frames > 240) {
+            h3_set_error(ctx, "continuation needs a latent file, 5, 22, 39 "
+                              "or 56 frames, and 0-240 frames of sound");
+            return 0;
+        }
+        if (params->first_frame || params->reference_count) {
+            h3_set_error(ctx, "a continuation already fixes the start of the "
+                              "clip; it cannot take a first frame or references");
+            return 0;
+        }
     }
     if (params->forced_audio_path &&
         (!*params->forced_audio_path ||
@@ -1170,7 +1376,9 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     h3_reference_presentation *presentations = NULL;
     double **presentation_timestamps = NULL;
     h3_layout_ref *layout_references = NULL;
-    int keyframes[2] = {0, 0};
+    int keyframes[2 + 17] = {0};
+    h3_continuation continuation;
+    memset(&continuation, 0, sizeof(continuation));
     size_t keyframe_count = 0;
     float *condition_video_rows = NULL;
     size_t condition_video_elements = 0;
@@ -1213,6 +1421,12 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     if (!tokenizer_path || !text_path || !dit_path || !vae_path ||
         !audio_vae_path) {
         h3_set_error(ctx, "out of memory resolving generation model paths");
+        goto cleanup;
+    }
+    char plan_error[512];
+    if (!h3_continuation_plan(params, latent_h, latent_w, temporal,
+                              &continuation, plan_error, sizeof(plan_error))) {
+        h3_set_error(ctx, "%s", plan_error);
         goto cleanup;
     }
     conditioning_key = h3_conditioning_key(
@@ -1268,6 +1482,9 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             if (params->first_frame) keyframes[keyframe_count++] = 0;
             if (params->last_frame)
                 keyframes[keyframe_count++] = temporal.frame_count - 1;
+            for (int step = 0; continuation.active &&
+                               step < continuation.steps; step++)
+                keyframes[keyframe_count++] = continuation.keyframes[step];
         }
         fprintf(stderr, "h3: conditioning cache hit\n");
     } else {
@@ -1719,7 +1936,25 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             goto cleanup;
         }
     }
-    conditioned = visual_count != 0 || condition_audio_elements != 0;
+    if (continuation.active) {
+        if (!h3_continuation_rows(params, &continuation,
+                                  &condition_video_rows,
+                                  &condition_video_elements,
+                                  &condition_audio_rows,
+                                  &condition_audio_elements,
+                                  detail, sizeof(detail))) {
+            h3_set_error(ctx, "%s", detail);
+            goto cleanup;
+        }
+        for (int step = 0; step < continuation.steps; step++)
+            keyframes[keyframe_count++] = continuation.keyframes[step];
+        fprintf(stderr, "h3: continuing a %d-frame clip: %d frames pinned "
+                "(%d latent steps), %d audio steps\n",
+                continuation.file_frames, params->continue_frames,
+                continuation.steps, continuation.audio_t);
+    }
+    conditioned = visual_count != 0 || condition_video_elements != 0 ||
+                  condition_audio_elements != 0;
     if (h3_cache_target(ctx, H3_CACHE_CONDITIONING)) {
         if (!h3_conditioning_cache_store(
                 ctx, conditioning_key, &text,
@@ -1740,7 +1975,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                   condition_audio_elements * sizeof(*condition_audio_rows));
     if (conditioned && !h3_augment_conditions(
             params, ref2va, render_width, render_height, layout_references,
-            condition_video_rows, condition_video_elements,
+            keyframe_count, condition_video_rows, condition_video_elements,
             condition_audio_rows, condition_audio_elements)) {
         h3_set_error(ctx, "cannot apply seeded condition augmentation");
         goto cleanup;
@@ -1789,7 +2024,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                            latent_w, temporal.audio_t, temporal.frame_count,
                            keyframes, keyframe_count,
                            layout_references,
-                           ref2va ? params->reference_count : 0};
+                           ref2va ? params->reference_count : 0,
+                           continuation.audio_t, continuation.audio_start};
     if (!h3_layout_build(&spec, &layout, detail, sizeof(detail))) {
         h3_set_error(ctx, "%s", detail);
         goto cleanup;
@@ -1955,6 +2191,14 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     h3_dit_set_forced_audio(dit, NULL, 0, NULL, 0);
     h3_debug_hash("denoised video", video, video_count * sizeof(*video));
     h3_debug_hash("denoised audio", audio, audio_count * sizeof(*audio));
+    if (params->save_latent_path &&
+        !h3_latent_file_write(params->save_latent_path, video,
+                              temporal.video_t, latent_h, latent_w, audio,
+                              temporal.audio_t, temporal.frame_count,
+                              detail, sizeof(detail))) {
+        h3_set_error(ctx, "%s", detail);
+        goto cleanup;
+    }
     uint64_t ccv_calls = h3_gpu_ccv_attention_dispatch_count() -
                          ccv_calls_before;
     uint64_t ccv_direct_calls = h3_gpu_ccv_attention_direct_count() -

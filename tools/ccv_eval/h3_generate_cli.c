@@ -120,6 +120,14 @@ int main(int argc, char **argv) {
     params.forced_audio_path = getenv("H3SPIKE_FORCED_AUDIO");
     if (getenv("H3SPIKE_FORCED_AUDIO_OFFSET"))
         params.forced_audio_offset = atof(getenv("H3SPIKE_FORCED_AUDIO_OFFSET"));
+    /* Clip continuation: H3SPIKE_SAVE_LATENT=<file> keeps this clip's
+     * latents; H3SPIKE_CONTINUE_LATENT=<file> continues one (pinning
+     * H3SPIKE_CONTINUE_FRAMES, default 22, and optionally
+     * H3SPIKE_CONTINUE_AUDIO_FRAMES of sound). */
+    params.save_latent_path = getenv("H3SPIKE_SAVE_LATENT");
+    params.continue_latent_path = getenv("H3SPIKE_CONTINUE_LATENT");
+    params.continue_frames = env_int("H3SPIKE_CONTINUE_FRAMES", 22);
+    params.continue_audio_frames = env_int("H3SPIKE_CONTINUE_AUDIO_FRAMES", 0);
     params.frames = env_int("H3SPIKE_FRAMES", 9);
     params.steps = env_int("H3SPIKE_STEPS", 4);
     params.seed = (uint64_t)env_int("H3SPIKE_SEED", 42);
