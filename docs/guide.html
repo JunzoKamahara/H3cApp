@@ -46,7 +46,7 @@
   <main id="main">
     <div class="page-head">
       <h1>使い方</h1>
-      <p class="lead">最初の1本ができたら、画像を使った生成やプロジェクトでの複数生成に進みましょう。内容はH3cApp v0.4.5に合わせています。</p>
+      <p class="lead">最初の1本ができたら、画像を使った生成やプロジェクトでの複数生成に進みましょう。内容はH3cApp v0.4.7に合わせています。</p>
       <nav class="toc" aria-label="このページの目次">
         <p>このページの内容</p>
         <ol>
@@ -152,7 +152,7 @@
             <tr><th scope="row">横長</th><td class="num">448×256</td><td class="num">672×384</td><td class="num">960×544</td></tr>
             <tr><th scope="row">縦長</th><td class="num">256×448</td><td class="num">384×672</td><td class="num">544×960</td></tr>
           </tbody>
-          <caption>生成するサイズ（v0.4.5）。最初に選ばれているのは正方形・中です。</caption>
+          <caption>生成するサイズ（v0.4.7）。最初に選ばれているのは正方形・中です。</caption>
         </table>
       </div>
       <ul>
@@ -191,8 +191,8 @@
 
       <h3>登録して使う</h3>
       <figure class="shot">
-        <img src="assets/images/app-lora.jpg" width="1100" height="910" loading="lazy" alt="「モデル管理」の「LoRA」タブ。Turbo LoRAが3つ登録され、それぞれにチェックボックス、ファイル名、ファイルの場所、「diffusers・50/50ブロック+refiner・rank 128」という情報、「強さ」と「ステップ」の入力欄がある。右下に「追加…」ボタンがある。">
-        <figcaption>「モデル管理」の「LoRA」タブ（v0.4.4の実画面）。Turbo LoRAを3つ登録した例です。ファイルごとに形式・対象のブロック数・rankが表示され、「強さ」と「ステップ」を設定できます。</figcaption>
+        <img src="assets/images/app-lora.jpg" width="1100" height="900" loading="lazy" alt="「モデル管理」の「LoRA」タブ。Turbo LoRAとDMADの2つが登録され、それぞれにチェックボックス、ファイル名、ファイルの場所、「diffusers・50/50ブロック+refiner・rank 128」という情報、「強さ」と「ステップ」の入力欄がある。その下に「ステップの進め方」のメニュー（Turboは「自動（Euler）」、DMADは「自動（re-noise）」）と「音声シフト」の欄がある。DMADにチェックが入っている。右下に「追加…」ボタンがある。">
+        <figcaption>「モデル管理」の「LoRA」タブ（v0.4.7の実画面）。lightx2vのTurbo LoRAとDMADを登録した例です。ファイルごとに形式・対象のブロック数・rankが表示され、「強さ」「ステップ」と、その下の「ステップの進め方」「音声シフト」を設定できます。</figcaption>
       </figure>
       <ol class="steps">
         <li>
@@ -217,6 +217,21 @@
         <li>ファイル名から読み取れない場合は、モデル管理の「<span class="ui">ステップ</span>」欄に入力します。空欄なら通常のLoRAとして扱われます。</li>
         <li>Turbo LoRAは1つだけオンにしてください。複数重ねると効果が強くなりすぎます。</li>
       </ul>
+
+      <h3 id="lora-sampling">ステップの進め方と音声シフト</h3>
+      <p>少ないステップ向けのLoRAには、学習したときの「ステップの進め方」が決まっているものがあります。モデル管理では、LoRAごとに次の2つを設定できます。ふだんは「自動」と空欄のままで構いません。</p>
+      <ul>
+        <li><strong><span class="ui">ステップの進め方</span></strong>：「<span class="ui">自動</span>」「<span class="ui">Euler</span>」「<span class="ui">re-noise（LCM方式）</span>」から選びます。
+          <ul>
+            <li>Eulerは、H3cAppの標準の進め方です。lightx2vのTurbo LoRAはこちらで学習されています。</li>
+            <li>re-noiseは、ComfyUIの「lcm」サンプラーと同じ計算です。LCMやDMD系のLoRAでよく推奨されます。re-noiseのときは、ノイズ除去の再利用は1になります。</li>
+            <li>自動は、LoRAファイルの説明に書かれた進め方を使います。書かれていなければEulerです。ファイル名からは判断しません。カッコ内に、ファイルから読み取った進め方が表示されます。</li>
+          </ul>
+        </li>
+        <li><strong><span class="ui">音声シフト</span></strong>：音声のノイズの減らし方を決める値です。空欄なら、ファイルの説明に書かれた値（なければ標準の3）を使います。</li>
+      </ul>
+      <p>たとえば<a href="https://github.com/Yzmblog/DMAD">DMAD</a>の4ステップLoRAは、ファイルの説明に「re-noise」「音声シフト2」と書かれているので、「自動」のままで学習時の条件になります。説明が書かれていないLoRAは、配布元の説明を見て設定してください。学習時と違う進め方で動かすと、ぼやけたり残像が出たりします。</p>
+      <p>オンにしたLoRAのうち1つでもre-noiseならre-noiseで生成します。使った進め方と音声シフトは、「<span class="ui">使用した設定…</span>」と動画の記録に残ります。</p>
 
       <h3>知っておくこと</h3>
       <ul>

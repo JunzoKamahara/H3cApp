@@ -45,7 +45,7 @@
   <main id="main">
     <div class="page-head">
       <h1>Guide</h1>
-      <p class="lead">Once your first video works, move on to image-based generation and batches in a project. This page follows H3cApp v0.4.5 with macOS set to English.</p>
+      <p class="lead">Once your first video works, move on to image-based generation and batches in a project. This page follows H3cApp v0.4.7 with macOS set to English.</p>
       <nav class="toc" aria-label="On this page">
         <p>On this page</p>
         <ol>
@@ -151,7 +151,7 @@
             <tr><th scope="row">Landscape</th><td class="num">448×256</td><td class="num">672×384</td><td class="num">960×544</td></tr>
             <tr><th scope="row">Portrait</th><td class="num">256×448</td><td class="num">384×672</td><td class="num">544×960</td></tr>
           </tbody>
-          <caption>Generated sizes (v0.4.5). The default is Square, Medium.</caption>
+          <caption>Generated sizes (v0.4.7). The default is Square, Medium.</caption>
         </table>
       </div>
       <ul>
@@ -190,8 +190,8 @@
 
       <h3>Registering and using one</h3>
       <figure class="shot">
-        <img src="../assets/images/app-lora-en.jpg" width="1100" height="910" loading="lazy" alt="The LoRA tab of the Model Manager. Three Turbo LoRAs are registered, each with a checkbox, the file name, its location, the line “diffusers · 50/50 blocks+refiner · rank 128”, and Strength and Steps fields. An Add… button is at the bottom right.">
-        <figcaption>The “LoRA” tab of the Model Manager (actual v0.4.4 screen), with three Turbo LoRAs registered. Each file shows its format, the blocks it covers and its rank, and has its own Strength and Steps.</figcaption>
+        <img src="../assets/images/app-lora-en.jpg" width="1100" height="900" loading="lazy" alt="The LoRA tab of the Model Manager. Two LoRAs are registered, a Turbo LoRA and DMAD, each with a checkbox, the file name, its location, the line “diffusers · 50/50 blocks+refiner · rank 128”, and Strength and Steps fields. Below each are a Step rule menu (“Auto (Euler)” for Turbo, “Auto (re-noise)” for DMAD) and an Audio shift field. DMAD is checked. An Add… button is at the bottom right.">
+        <figcaption>The “LoRA” tab of the Model Manager (actual v0.4.7 screen), with the lightx2v Turbo LoRA and DMAD registered. Each file shows its format, the blocks it covers and its rank, and has its own Strength and Steps, and below them a Step rule and an Audio shift.</figcaption>
       </figure>
       <ol class="steps">
         <li>
@@ -216,6 +216,21 @@
         <li>If the step count can't be read from the file name, type it in the “<span class="ui">Steps</span>” field in the Model Manager. Leave it blank for a regular LoRA.</li>
         <li>Turn on only one Turbo LoRA. Stacking several makes the effect too strong.</li>
       </ul>
+
+      <h3 id="lora-sampling">Step rule and audio shift</h3>
+      <p>Some few-step LoRAs are trained with a particular way of stepping. In the Model Manager, each LoRA has two settings for this. Normally you can leave them on “Auto” and blank.</p>
+      <ul>
+        <li><strong><span class="ui">Step rule</span></strong>: “<span class="ui">Auto</span>”, “<span class="ui">Euler</span>” or “<span class="ui">re-noise (LCM-style)</span>”.
+          <ul>
+            <li>Euler is H3cApp's standard rule. The lightx2v Turbo LoRAs are trained for it.</li>
+            <li>re-noise is the same rule as ComfyUI's “lcm” sampler, which LCM- and DMD-style LoRAs usually recommend. With re-noise, denoising reuse runs at 1.</li>
+            <li>Auto uses the rule written in the LoRA file's metadata, and Euler if there is none. The file name is never used. The rule read from the file is shown in parentheses.</li>
+          </ul>
+        </li>
+        <li><strong><span class="ui">Audio shift</span></strong>: sets how the audio noise is reduced. Blank uses the value in the file's metadata (or the default 3).</li>
+      </ul>
+      <p>For example, the 4-step <a href="https://github.com/Yzmblog/DMAD">DMAD</a> LoRA says “re-noise” and “audio shift 2” in its metadata, so “Auto” runs it the way it was trained. For a LoRA whose file says nothing, set these from its publisher's instructions. Run with another rule than it was trained with, a LoRA can look blurry or show ghosting.</p>
+      <p>If any LoRA that is on uses re-noise, the generation uses it. The rule and audio shift used are shown in “<span class="ui">Settings Used…</span>” and saved in the video's record.</p>
 
       <h3>Good to know</h3>
       <ul>
