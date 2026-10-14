@@ -47,6 +47,10 @@ struct ProjectMenuItems: View {
             if let url = viewModel.resultURL { viewModel.useVideoAsReference(url) }
         }
         .disabled(viewModel.resultURL == nil)
+        Button("表示中の動画の続きを作る") {
+            if let video = viewModel.continuableDisplayedVideo { viewModel.continueFromProjectVideo(video) }
+        }
+        .disabled(viewModel.continuableDisplayedVideo == nil || viewModel.isGenerating)
         Button("プロジェクトをFinderで表示") {
             if let url = viewModel.project?.url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         }
@@ -350,6 +354,14 @@ struct ProjectVideosSheet: View {
                     .truncationMode(.middle)
                 if let record = video.record {
                     Text(summary(record)).font(.caption).foregroundStyle(.secondary)
+                    if let previous = record.draft.continueFrom {
+                        Label(String(localized: "\(URL(fileURLWithPath: previous).lastPathComponent) の続き"),
+                              systemImage: "arrow.turn.down.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                     Text(record.draft.prompt)
                         .font(.caption)
                         .lineLimit(1)
@@ -369,6 +381,16 @@ struct ProjectVideosSheet: View {
             .disabled(video.record == nil)
             .help("この動画のプロンプトと設定をシード固定でパネルに戻します。そのまま生成すると同じ動画になります")
             Menu("その他") {
+                Button("この動画の続きを作る") {
+                    viewModel.continueFromProjectVideo(video)
+                    isPresented = false
+                }
+                .disabled(!viewModel.canContinue(video) || viewModel.isGenerating)
+                Button("ここまでをつないで書き出す") {
+                    viewModel.exportJoined(endingAt: video)
+                }
+                .disabled(viewModel.continuationChain(endingAt: video) == nil || viewModel.isExportingJoined)
+                Divider()
                 Button("参照に使う") {
                     viewModel.useVideoAsReference(video.url)
                     isPresented = false

@@ -76,6 +76,8 @@ extension GenerationViewModel {
              ("POST", "/api/project/restore"), ("POST", "/api/project/use-as-reference"),
              ("POST", "/api/project/delete-video"):
             return handleProjectRequest(request)
+        case ("POST", "/api/project/join"):
+            return await handleJoinRequest(request)
         case ("GET", "/api/loras"):
             return .json(200, library.loras.map {
                 ["id": $0.id.uuidString, "name": $0.name, "path": $0.path,
@@ -137,10 +139,32 @@ extension GenerationViewModel {
                     item["seed"] = record.seed
                     item["completed_at"] = formatter.string(from: record.completedAt)
                     item["generation_seconds"] = record.generationSeconds
+                    item["continued_from"] = record.draft.continueFrom
+                        .map { URL(fileURLWithPath: $0).lastPathComponent as Any } ?? NSNull()
                 }
+                item["can_continue"] = canContinue(video)
                 return item
             },
         ])
+    }
+
+    /// POST /api/project/join {"video": name}: joins the continuation chain
+    /// ending at that video into joined/<name>_joined.mp4 and waits for it.
+    private func handleJoinRequest(_ request: HTTPRequest) async -> HTTPResponse {
+        let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+        guard project != nil else { return .error(400, "no project is open") }
+        guard let name = json["video"] as? String,
+              let video = projectVideos.first(where: { $0.url.lastPathComponent == name }) else {
+            return .error(400, "\"video\" must name a file listed by GET /api/project")
+        }
+        guard !isExportingJoined else { return .error(409, "a joined video is being exported") }
+        switch await exportJoinedVideo(endingAt: video, reveal: false) {
+        case .success(let url):
+            let chain = continuationChain(endingAt: video) ?? []
+            return .json(200, ["path": url.path, "clips": chain.map { $0.url.lastPathComponent }])
+        case .failure(let error):
+            return .error(400, error.localizedDescription)
+        }
     }
 
     private func handleProjectRequest(_ request: HTTPRequest) -> HTTPResponse {
@@ -341,6 +365,27 @@ extension GenerationViewModel {
             }
         } else {
             creationMethod = .text
+        }
+
+        // "continue_from": a video of the open project to continue (its last
+        // 22 frames carried over); its size must match "size_profile".
+        // Omitted means a fresh clip. Like この動画の続きを作る, but the
+        // request's own prompt and settings are used as given.
+        if let source = json["continue_from"] {
+            guard let name = source as? String,
+                  let video = projectVideos.first(where: { $0.url.lastPathComponent == name }) else {
+                return .error(400, "\"continue_from\" must name a video listed by GET /api/project")
+            }
+            guard canContinue(video), let record = video.record else {
+                return .error(400, "\(name) has no saved latents to continue from")
+            }
+            if creationMethod == .image {
+                return .error(400, "continue_from cannot be combined with first/last frames or references")
+            }
+            continuation = ContinuationSource(videoURL: video.url, latentURL: ProjectFiles.latentURL(for: video.url),
+                                              sizeProfileRaw: record.draft.sizeProfile)
+        } else {
+            continuation = nil
         }
 
         // Lip sync: "forced_audio_path" holds that file's audio as the

@@ -370,6 +370,9 @@ struct ResolvedResult {
     /// Lip sync: the held audio file's name and where in it the video starts.
     var forcedAudio: String? = nil
     var forcedAudioOffset: Double = 0
+    /// The project video this one continues, and the frames carried over.
+    var continuedFrom: String? = nil
+    var continueFrames: Int = continuationFrames
 
     var seedDecimalString: String { String(seed) }
 
@@ -429,6 +432,9 @@ struct ResolvedResult {
         }
         if !references.isEmpty {
             lines.append(String(localized: "参照: \(references.joined(separator: ", "))"))
+        }
+        if let continuedFrom {
+            lines.append(String(localized: "続き: \(continuedFrom)（最後の\(continueFrames)コマを引き継ぎ）"))
         }
         if let forcedAudio {
             let offset = formatAudioOffset(forcedAudioOffset)

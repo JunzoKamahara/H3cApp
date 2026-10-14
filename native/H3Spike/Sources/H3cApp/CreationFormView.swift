@@ -32,6 +32,9 @@ struct CreationFormView: View {
                 if viewModel.creationMethod == .image {
                     imageInputSection
                 }
+                if viewModel.continuation != nil {
+                    continuationSection
+                }
                 lipSyncSection
                 promptSection
             }
@@ -225,6 +228,29 @@ struct CreationFormView: View {
         .padding(H3Spacing.md)
         .background(palette.surfaceMuted)
         .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
+    }
+
+    // MARK: 続きを作る (continuation)
+
+    @ViewBuilder
+    private var continuationSection: some View {
+        if let continuation = viewModel.continuation {
+            VStack(alignment: .leading, spacing: H3Spacing.sm) {
+                Text("この動画の続きをつくります。最後の\(continuation.frames)コマ（約0.9秒）を引き継ぐので、できる動画の最初の部分は元の動画の終わりと同じになります。つなぐときは「プロジェクトの動画」の「ここまでをつないで書き出す」を使います。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+                HStack {
+                    Image(systemName: "arrow.turn.down.right").foregroundStyle(palette.textSecondary)
+                    Text("続き").font(.caption)
+                    FileLink(path: continuation.videoURL.path) { quickLookURL = $0 }
+                    Spacer()
+                    Button("取り除く") { viewModel.continuation = nil }
+                }
+            }
+            .padding(H3Spacing.md)
+            .background(palette.surfaceMuted)
+            .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
+        }
     }
 
     // MARK: 音声に合わせる (lip sync)

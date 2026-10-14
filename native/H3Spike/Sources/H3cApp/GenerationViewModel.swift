@@ -214,6 +214,10 @@ final class GenerationViewModel: ObservableObject {
     /// picture is generated - to match it. Works with every creation method.
     @Published var forcedAudioPath: String?
     @Published var forcedAudioOffset: Double = 0
+    /// この動画の続きを作る (Continuation.swift): the project video the next
+    /// generation carries on from.
+    @Published var continuation: ContinuationSource?
+    @Published var isExportingJoined = false
 
     /// The LoRA stack is chosen from ModelLibrary's registered library
     /// (entries switched on there or in the form) and applies in every
@@ -491,6 +495,7 @@ final class GenerationViewModel: ObservableObject {
     func deleteTemporaryPreview() {
         if let resultURL, isTemporaryResult(resultURL) {
             try? FileManager.default.removeItem(at: resultURL)
+            try? FileManager.default.removeItem(at: ProjectFiles.latentURL(for: resultURL))
         }
     }
 
@@ -623,6 +628,7 @@ final class GenerationViewModel: ObservableObject {
                 }
             }
         }
+        if let continuationValidationMessage { return continuationValidationMessage }
         if let forcedAudioPath, !FileManager.default.fileExists(atPath: forcedAudioPath) {
             return String(localized: "合わせる音声のファイルが見つかりません: \(URL(fileURLWithPath: forcedAudioPath).lastPathComponent)")
         }
@@ -794,12 +800,15 @@ final class GenerationViewModel: ObservableObject {
         params.audioSigmaShift = sampling.audioShift
         params.forcedAudioPath = forcedAudioPath
         params.forcedAudioOffset = max(0, forcedAudioOffset)
+        params.continueLatentPath = continuation?.latentURL.path
+        params.continueFrames = Int32(continuation?.frames ?? continuationFrames)
 
         var draft = currentDraft()
         if let projectURL = project?.url {
             draft.firstFrame = draft.firstFrame.map { ProjectFiles.stored($0, in: projectURL) }
             draft.lastFrame = draft.lastFrame.map { ProjectFiles.stored($0, in: projectURL) }
             draft.forcedAudio = draft.forcedAudio.map { ProjectFiles.stored($0, in: projectURL) }
+            draft.continueFrom = draft.continueFrom.map { ProjectFiles.stored($0, in: projectURL) }
             draft.references = draft.references.map { .init(kind: $0.kind, path: ProjectFiles.stored($0.path, in: projectURL)) }
         }
         draft.fastAttention = params.fastAttention
@@ -855,6 +864,9 @@ final class GenerationViewModel: ObservableObject {
 
         var params = request.params
         params.seed = seed
+        // Every video keeps its latents next to it, so it can be continued.
+        let latentURL = ProjectFiles.latentURL(for: URL(fileURLWithPath: outputPath))
+        params.saveLatentPath = latentURL.path
         let startedAt = Date()
 
         generationTask = Task {
@@ -884,6 +896,7 @@ final class GenerationViewModel: ObservableObject {
                     self.errorMessage = Self.userFacingMessage(for: error)
                 }
             }
+            if !succeeded { try? FileManager.default.removeItem(at: latentURL) }
             self.isGenerating = false
             self.isCancelling = false
             self.stopElapsedTimer()
@@ -966,7 +979,9 @@ final class GenerationViewModel: ObservableObject {
             completedAt: completedAt,
             generationSeconds: generationSeconds,
             forcedAudio: request.params.forcedAudioPath.map { URL(fileURLWithPath: $0).lastPathComponent },
-            forcedAudioOffset: request.params.forcedAudioOffset)
+            forcedAudioOffset: request.params.forcedAudioOffset,
+            continuedFrom: request.draft.continueFrom.map { URL(fileURLWithPath: $0).lastPathComponent },
+            continueFrames: request.draft.continueFrames ?? continuationFrames)
         loadActualDuration(for: url)
     }
 

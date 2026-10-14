@@ -79,6 +79,24 @@ to skip that step and stream the original BF16 weights instead.
   it needs at least one image or video reference alongside it. References
   appear to the model in order as `<Picture N>`/`<Video N>`. All reference
   reads and generated-video writes go through native AVFoundation/ImageIO.
+- **Lip sync** (forced audio): choose a voice or song in the panel (Match
+  a Voice or Song, with a start offset) and the picture is generated to
+  match it - the audio is given to the model clean at every step and the
+  video carries the file's own sound (API: `forced_audio_path`). Best at
+  medium size or larger: at the small 448x256 size it makes colored light
+  blobs more likely.
+- **Continuing a video**: Continue This Video (in Project Videos, or for
+  the video in the preview) makes a new clip that carries on from a
+  project video - its last 22 frames (about 0.9 s) and their sound are
+  held at the start of the new clip, the way ComfyUI's H3 Motion Context
+  node does it - and Join Up to Here and Export cross-fades a chain of
+  them into one file in the project's `joined` folder. With lip sync, each
+  continuation takes the audio on from where the last one ended, for long
+  lip-synced videos. Every generated video keeps its latents next to it
+  (`.h3lt`, about 3.6 MB for 5 s at medium size) for this. A continuation
+  takes about 20% longer than a new clip (446 s vs 364 s for 5 s at medium
+  size on a 24 GB M5); lip sync adds almost nothing, and joining three
+  clips takes under a second.
 - **Memory-aware reference-video sizing**: a large reference video is
   automatically downscaled based on the machine's physical RAM
   (`h3_reference_max_pixels()` in [h3_host.c](h3_host.c)) before it reaches
@@ -522,13 +540,14 @@ plain filesystem paths, not uploads.
 | `GET` | `/api/result/video` | Streams the current result as `video/mp4`; `404` if none, or once the next job's `generate()` call deletes it. |
 | `GET` | `/api/models` | Registered H3 model directories (id, name, path, whether active). |
 | `GET` | `/api/loras` | Registered LoRA files (id, name, path, strength, recommended steps, whether enabled, step rule `sampler` and `audio_shift` as set in the model manager, and `recommended_sampling` from the file's metadata - `null` while the file is still being read). |
-| `GET` | `/api/project` | The open project: name, path, count, and its videos (file, seed, completion time, generation time). |
+| `GET` | `/api/project` | The open project: name, path, count, and its videos (file, seed, completion time, generation time, `continued_from`, `can_continue`). |
 | `POST` | `/api/project/new` | `{"name", "directory"?}` creates a project from the current form (default directory `~/Movies/H3cApp`) and opens it. |
 | `POST` | `/api/project/open` | `{"path"}` opens a project folder; the form takes its saved state. |
 | `POST` | `/api/project/close` | Closes it; results are temp files again. |
 | `POST` | `/api/project/restore` | `{"video"}` puts that video's request into the form with its seed fixed. |
 | `POST` | `/api/project/use-as-reference` | `{"video"}` adds that video to the form as a reference video. |
 | `POST` | `/api/project/delete-video` | `{"video"}` moves the video and its record to the Trash. |
+| `POST` | `/api/project/join` | `{"video"}` joins the chain of continuations ending at that video into `joined/<name>_joined.mp4` (cross-fading each carried-over stretch) and returns `{"path", "clips"}` when done. |
 
 `POST /api/generate` body fields, all optional except `prompt`:
 
@@ -545,6 +564,7 @@ plain filesystem paths, not uploads.
 | `fast_attention` | `false` | `true` for [fast mode](#fast-mode-experimental); `400` where it isn't available. |
 | `seed` | random | 0–18446744073709551615, as a number or a decimal string (a string keeps a large seed exact for clients whose JSON numbers are doubles). |
 | `first_frame_path` / `last_frame_path` | none | FL2VA anchors; cannot combine with `reference_paths`. |
+| `continue_from` | none | A video of the open project (a file name from `GET /api/project`) to continue: its last 22 frames and their sound are carried over. Needs the same size; not with first/last frames or references. |
 | `forced_audio_path` / `forced_audio_offset` | none / `0` | Lip sync: this file's audio (an audio file or a video's soundtrack), from `forced_audio_offset` seconds on, is held as the soundtrack while the picture is generated to match it, and the output carries that audio itself. Works with every creation method. |
 | `reference_paths` | `[]` | Ordered Ref2VA references; image/video/audio is auto-detected per path. At least one image or video is required if any audio path is included. |
 | `loras` | `[]` | The LoRA stack for this job: names from `GET /api/loras`, or `{"name": ..., "strength": 0.8}` objects (strength multiplies the adapter's trained scale; omitted keeps the entry's saved strength). An object may also set `"sampler"` (`"auto"`, `"euler"`, `"renoise"`) and `"audio_shift"` (0 = auto); like strength, these are saved to the entry. Omitting `loras` means no LoRA, even if some are switched on in the window. |

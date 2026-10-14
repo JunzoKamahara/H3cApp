@@ -43,6 +43,10 @@ struct ProjectDraft: Codable, Equatable {
     /// the video starts (seconds). Absent in drafts from before 0.5.
     var forcedAudio: String? = nil
     var forcedAudioOffset: Double? = nil
+    /// The project video this one continues, and how many of its last
+    /// frames were carried over. Absent in drafts from before 0.5.
+    var continueFrom: String? = nil
+    var continueFrames: Int? = nil
 }
 
 /// project.json
@@ -362,7 +366,9 @@ extension GenerationViewModel {
             seed: seedText,
             loras: effectiveLoRAs.map { .init(path: $0.path, strength: $0.strength) },
             forcedAudio: forcedAudioPath,
-            forcedAudioOffset: forcedAudioPath == nil ? nil : forcedAudioOffset)
+            forcedAudioOffset: forcedAudioPath == nil ? nil : forcedAudioOffset,
+            continueFrom: continuation?.videoURL.path,
+            continueFrames: continuation?.frames)
     }
 
     /// Puts a draft into the form. Relative paths resolve against
@@ -380,6 +386,12 @@ extension GenerationViewModel {
         lastFramePath = draft.lastFrame.map(resolve)
         forcedAudioPath = draft.forcedAudio.map(resolve)
         forcedAudioOffset = draft.forcedAudioOffset ?? 0
+        continuation = draft.continueFrom.map { URL(fileURLWithPath: resolve($0)) }.flatMap { video in
+            let latent = ProjectFiles.latentURL(for: video)
+            guard FileManager.default.fileExists(atPath: latent.path) else { return nil }
+            return ContinuationSource(videoURL: video, latentURL: latent, sizeProfileRaw: draft.sizeProfile,
+                                      frames: draft.continueFrames ?? continuationFrames)
+        }
         referenceImages = draft.references.compactMap { reference in
             H3ReferenceKind(storedName: reference.kind).map { H3ReferenceInput(kind: $0, path: resolve(reference.path)) }
         }
@@ -467,6 +479,7 @@ extension GenerationViewModel {
             draft.firstFrame = draft.firstFrame.map(name)
             draft.lastFrame = draft.lastFrame.map(name)
             draft.forcedAudio = draft.forcedAudio.map(name)
+            draft.continueFrom = draft.continueFrom.map(name)
             draft.references = draft.references.map { .init(kind: $0.kind, path: name($0.path)) }
             return draft
         }
@@ -646,6 +659,7 @@ extension GenerationViewModel {
         draft.firstFrame = draft.firstFrame.map { ProjectFiles.stored($0, in: project.url) }
         draft.lastFrame = draft.lastFrame.map { ProjectFiles.stored($0, in: project.url) }
         draft.forcedAudio = draft.forcedAudio.map { ProjectFiles.stored($0, in: project.url) }
+        draft.continueFrom = draft.continueFrom.map { ProjectFiles.stored($0, in: project.url) }
         draft.references = draft.references.map { .init(kind: $0.kind, path: ProjectFiles.stored($0.path, in: project.url)) }
         guard force || draft != file.draft || batchCount != file.batchCount else { return }
         file.draft = draft
@@ -724,6 +738,11 @@ extension GenerationViewModel {
             projectMessage = String(localized: "動画をプロジェクトに保存できませんでした（詳細: \(error.localizedDescription)）")
             return nil
         }
+        // Its latents, for continuing it; a video without them just can't be.
+        let latent = ProjectFiles.latentURL(for: tempURL)
+        if FileManager.default.fileExists(atPath: latent.path) {
+            try? FileManager.default.moveItem(at: latent, to: ProjectFiles.latentURL(for: destination))
+        }
         do {
             var stored = record
             stored.video = destination.lastPathComponent
@@ -775,6 +794,11 @@ extension GenerationViewModel {
             if FileManager.default.fileExists(atPath: record.path) {
                 try FileManager.default.trashItem(at: record, resultingItemURL: nil)
             }
+            let latent = ProjectFiles.latentURL(for: video.url)
+            if FileManager.default.fileExists(atPath: latent.path) {
+                try FileManager.default.trashItem(at: latent, resultingItemURL: nil)
+            }
+            if continuation?.videoURL == video.url { continuation = nil }
             if resultURL == video.url { resultURL = nil; lastResult = nil }
         } catch {
             projectMessage = String(localized: "動画を削除できませんでした（詳細: \(error.localizedDescription)）")
@@ -849,7 +873,9 @@ extension ResolvedResult {
             completedAt: record.completedAt,
             generationSeconds: record.generationSeconds,
             forcedAudio: draft.forcedAudio.map { URL(fileURLWithPath: $0).lastPathComponent },
-            forcedAudioOffset: draft.forcedAudioOffset ?? 0)
+            forcedAudioOffset: draft.forcedAudioOffset ?? 0,
+            continuedFrom: draft.continueFrom.map { URL(fileURLWithPath: $0).lastPathComponent },
+            continueFrames: draft.continueFrames ?? continuationFrames)
     }
 }
 

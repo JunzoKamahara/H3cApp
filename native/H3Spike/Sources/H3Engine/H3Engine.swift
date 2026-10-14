@@ -171,6 +171,13 @@ public struct H3GenerationParams: Sendable {
     // generated, and the output carries that audio itself.
     public var forcedAudioPath: String?
     public var forcedAudioOffset: Double = 0
+    // h3_params.save_latent_path / continue_latent_path / continue_frames:
+    // keep this clip's latents (before decoding) for a later continuation,
+    // and continue an earlier clip from its latent file - its last
+    // continueFrames frames are pinned at the start of this one.
+    public var saveLatentPath: String?
+    public var continueLatentPath: String?
+    public var continueFrames: Int32 = 22
     public init() {}
 }
 
@@ -466,14 +473,16 @@ public final class H3Engine: @unchecked Sendable {
                                                  : Int32(H3_SAMPLER_EULER)
                 cParams.audio_sigma_shift = params.audioSigmaShift
                 cParams.forced_audio_offset = params.forcedAudioOffset
+                cParams.continue_frames = params.continueFrames
                 // The values actually handed to the engine (not the form's
                 // labels), for checking presets and defaults end to end.
-                NSLog("h3: generation params - %dx%d, %d frames, %d steps, dit_layers %d, denoise_reuse %d, core_reuse %d, token_reduction %d, fast_attention %d, ssd_streaming %d, sampler %d, audio_shift %.3g, forced_audio %d (offset %.3f s), seed %llu",
+                NSLog("h3: generation params - %dx%d, %d frames, %d steps, dit_layers %d, denoise_reuse %d, core_reuse %d, token_reduction %d, fast_attention %d, ssd_streaming %d, sampler %d, audio_shift %.3g, forced_audio %d (offset %.3f s), continue %d (%d frames), seed %llu",
                       cParams.width, cParams.height, cParams.frames, cParams.steps,
                       cParams.dit_layers, cParams.denoise_reuse, cParams.core_reuse,
                       cParams.token_reduction, cParams.fast_attention, cParams.ssd_streaming,
                       cParams.sampler, Double(cParams.audio_sigma_shift),
                       params.forcedAudioPath == nil ? 0 : 1, params.forcedAudioOffset,
+                      params.continueLatentPath == nil ? 0 : 1, params.continueFrames,
                       cParams.seed)
                 cParams.on_progress = h3ProgressTrampoline
                 cParams.on_frame = h3FrameTrampoline
@@ -486,8 +495,12 @@ public final class H3Engine: @unchecked Sendable {
                                 withOptionalCString(params.firstFrame) { firstFrameC in
                                     withOptionalCString(params.lastFrame) { lastFrameC in
                                     withOptionalCString(params.forcedAudioPath) { forcedAudioC in
+                                    withOptionalCString(params.saveLatentPath) { saveLatentC in
+                                    withOptionalCString(params.continueLatentPath) { continueLatentC in
                                         cParams.output_path = outputPathC
                                         cParams.forced_audio_path = forcedAudioC
+                                        cParams.save_latent_path = saveLatentC
+                                        cParams.continue_latent_path = continueLatentC
                                         cParams.first_frame = firstFrameC
                                         cParams.last_frame = lastFrameC
                                         cParams.references = refBuffer.baseAddress
@@ -495,6 +508,8 @@ public final class H3Engine: @unchecked Sendable {
                                         cParams.loras = loraBuffer.baseAddress
                                         cParams.lora_count = loraBuffer.count
                                         return h3_generate(ctx, promptC, &cParams)
+                                    }
+                                    }
                                     }
                                     }
                                 }
