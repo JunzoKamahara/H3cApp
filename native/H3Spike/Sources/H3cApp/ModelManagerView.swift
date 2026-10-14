@@ -192,6 +192,21 @@ struct ModelManagerView: View {
     }
 
     private func loraRow(_ entry: LoRAEntry) -> some View {
+        VStack(alignment: .leading, spacing: H3Spacing.xs) {
+            loraMainRow(entry)
+            // Its own line under the name column: inside that column it
+            // widened the row past the sheet and pushed the menu to the edge.
+            loraSamplingControls(entry)
+                .padding(.leading, loraCheckboxIndent)
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// Checkbox width plus the row spacing, so the line below lines up
+    /// with the name.
+    private let loraCheckboxIndent: CGFloat = 16 + H3Spacing.sm
+
+    private func loraMainRow(_ entry: LoRAEntry) -> some View {
         HStack(alignment: .top, spacing: H3Spacing.sm) {
             Toggle("", isOn: Binding(
                 get: { entry.enabled },
@@ -216,7 +231,6 @@ struct ModelManagerView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 loraInfoText(entry)
-                loraSamplingControls(entry)
             }
             Spacer()
             HStack(spacing: 4) {
@@ -249,7 +263,6 @@ struct ModelManagerView: View {
             .menuStyle(.borderlessButton)
             .frame(width: 24)
         }
-        .padding(.vertical, 4)
     }
 
     /// What h3_lora_inspect read from the file's header: layout, how much
