@@ -129,7 +129,8 @@ extension GenerationViewModel {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let clips = chain.enumerated().map { index, video in
                 JoinedVideoExporter.Clip(url: video.url,
-                                         overlapFrames: index == 0 ? 0 : (video.record?.draft.continueFrames ?? continuationFrames))
+                                         overlapFrames: index == 0 ? 0 : (video.record?.draft.continueFrames ?? continuationFrames),
+                                         carriedSound: index > 0 && video.record?.draft.forcedAudio == nil)
             }
             try await JoinedVideoExporter.export(clips, to: output)
             projectMessage = String(localized: "つないだ動画を書き出しました: joined/\(output.lastPathComponent)")
@@ -167,6 +168,21 @@ enum JoinedVideoExporter {
     struct Clip {
         var url: URL
         var overlapFrames: Int
+        /// Whether the engine carried the earlier clip's sound over (no
+        /// forced audio), so this clip's sound runs a little late.
+        var carriedSound = false
+    }
+
+    /// How late a continuation's sound runs: the engine snaps the carried
+    /// sound to the new clip's 40 Hz audio grid (h3_continuation_plan), so
+    /// when the earlier clip's frames past the overlap don't fill whole
+    /// audio steps it sits up to a third of a step (8.3 ms) off - 141 or
+    /// 158 frames, but not 124 or 175.
+    static func soundDelay(previousFrames: Int, overlapFrames: Int, fps: Double) -> Double {
+        let steps = 40.0 / fps
+        let audioT = (Double(previousFrames) * steps).rounded()
+        let end = audioT - steps * Double(previousFrames - overlapFrames)
+        return (end.rounded() - end) / 40.0
     }
 
     static func export(_ clips: [Clip], to output: URL) async throws {
@@ -184,6 +200,7 @@ enum JoinedVideoExporter {
         // Where each clip lies on the joined timeline.
         var ranges: [CMTimeRange] = []
         var renderSize = CGSize.zero
+        var soundDelay = 0.0
         var frameRate: Float = 24
         for (index, clip) in clips.enumerated() {
             let asset = AVURLAsset(url: clip.url)
@@ -208,10 +225,21 @@ enum JoinedVideoExporter {
             try videoTracks[index % 2].insertTimeRange(CMTimeRange(start: videoRange.start, duration: duration),
                                                        of: video, at: start)
             // The sound runs a few milliseconds past the last frame; the
-            // joined file keeps each clip's sound only as long as its picture.
+            // joined file keeps each clip's sound only as long as its picture,
+            // and a continuation's starts early by however late it runs.
+            // The lateness adds up along the chain: each continuation
+            // inherits the earlier clip's and adds its own.
+            if clip.carriedSound, let previous = ranges.last {
+                let previousFrames = Int((previous.duration.seconds * Double(fps)).rounded())
+                soundDelay += Self.soundDelay(previousFrames: previousFrames,
+                                              overlapFrames: clip.overlapFrames, fps: Double(fps))
+            } else if index > 0 {
+                soundDelay = 0
+            }
+            let soundStart = CMTimeSubtract(start, CMTime(seconds: soundDelay, preferredTimescale: 48000))
             try audioTracks[index % 2].insertTimeRange(
                 CMTimeRange(start: audioRange.start, duration: CMTimeMinimum(duration, audioRange.duration)),
-                of: audio, at: start)
+                of: audio, at: soundStart)
             if index > 0 {
                 let fade = CMTimeRange(start: start, end: ranges[index - 1].end)
                 audioParameters[(index - 1) % 2].setVolumeRamp(fromStartVolume: 1, toEndVolume: 0, timeRange: fade)

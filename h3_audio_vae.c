@@ -1282,7 +1282,9 @@ int h3_audio_vae_encode(const char *weight_directory,
     if (output) memset(output, 0, sizeof(*output));
     if (!weight_directory || !*weight_directory || !shader_source_path ||
         !*shader_source_path || !pcm || !output || samples < 1 ||
-        samples > SAMPLE_RATE * 15) {
+        /* 16 s: forced audio is as long as the clip, up to 362 frames
+         * (15.08 s). References keep their own 15 s total in h3.c. */
+        samples > SAMPLE_RATE * 16) {
         fail(error, error_size, "invalid AudioVAE encode arguments");
         return 0;
     }
