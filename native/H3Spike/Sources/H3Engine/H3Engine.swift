@@ -599,6 +599,9 @@ public final class H3Engine: @unchecked Sendable {
     private static func prepareAdaLNCurve(path: String, transformerDirectory: String,
                                           progressOpaque: UnsafeMutableRawPointer) -> Bool {
         if h3_adaln_curve_matches(path, transformerDirectory) != 0 { return true }
+        // A curve-form checkpoint (an imported GGUF) carries its own curve;
+        // the engine uses it whatever H3_ADALN_CURVE says.
+        if h3_adaln_curve_in_dir(transformerDirectory) != 0 { return false }
         try? FileManager.default.createDirectory(
             atPath: (path as NSString).deletingLastPathComponent,
             withIntermediateDirectories: true)

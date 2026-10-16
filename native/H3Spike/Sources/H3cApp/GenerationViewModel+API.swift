@@ -70,6 +70,17 @@ extension GenerationViewModel {
             return .json(200, library.models.map {
                 ["id": $0.id.uuidString, "name": $0.name, "path": $0.path, "active": $0.id == library.activeModelID]
             })
+        case ("POST", "/api/models/import"):
+            return await handleModelImport(request)
+        case ("POST", "/api/models/select"):
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard !isGenerating else { return .error(409, "a generation is running") }
+            guard let text = json["id"] as? String, let id = UUID(uuidString: text),
+                  library.models.contains(where: { $0.id == id }) else {
+                return .error(400, "\"id\" must be a model id from GET /api/models")
+            }
+            switchModel(to: id)
+            return .json(200, ["ok": true])
         case ("GET", "/api/project"):
             return projectResponse()
         case ("POST", "/api/project/new"), ("POST", "/api/project/open"), ("POST", "/api/project/close"),
@@ -87,6 +98,50 @@ extension GenerationViewModel {
             })
         default:
             return .error(404, "no such endpoint: \(request.method) \(request.path)")
+        }
+    }
+
+    /// POST /api/models/import: {"dit": path, "ref2va_dit"?, "text_encoder"?,
+    /// "vision"?, "name"?, "base_model"? (an id; default the active model)}
+    /// - the same import as Model Management's "Import GGUF". Registers the
+    /// new model (not selected) and returns its id and folder.
+    private func handleModelImport(_ request: HTTPRequest) async -> HTTPResponse {
+        let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+        guard !isGenerating else { return .error(409, "a generation is running") }
+        guard let ditPath = json["dit"] as? String else { return .error(400, "\"dit\" (a GGUF path) is required") }
+        let baseID = (json["base_model"] as? String).flatMap(UUID.init(uuidString:)) ?? library.activeModelID
+        guard let base = library.models.first(where: { $0.id == baseID }), isUsableImportBase(base) else {
+            return .error(400, "\"base_model\" must name a registered model with the FL2VA tokenizer and VAEs")
+        }
+        /// A picked file of the expected kind, nil when the key is absent,
+        /// or the reason it cannot be used.
+        func pick(_ key: String, _ role: H3GGUFInfo.Role) -> (ImportPick?, String?) {
+            guard let path = json[key] as? String else { return (nil, nil) }
+            let picked = ImportPick(path: path)
+            guard let info = picked.info else { return (nil, "\(key): \(picked.error ?? "unreadable")") }
+            guard info.role == role else { return (nil, "\(key): \(path) is not that kind of GGUF") }
+            if role == .textEncoder && info.textLayers < 50 { return (nil, "\(key): fewer than 50 layers") }
+            return (picked, nil)
+        }
+        var picks: [String: ImportPick] = [:]
+        for (key, role) in [("dit", H3GGUFInfo.Role.dit), ("ref2va_dit", .dit),
+                            ("text_encoder", .textEncoder), ("vision", .vision)] {
+            let (picked, problem) = pick(key, role)
+            if let problem { return .error(400, problem) }
+            if let picked { picks[key] = picked }
+        }
+        guard let dit = picks["dit"] else { return .error(400, "\"dit\" \(ditPath) cannot be used") }
+        let importer = ModelImporter()
+        do {
+            let path = try await importer.importNow(.init(
+                name: json["name"] as? String ?? "MiniMax-H3 GGUF", dit: dit,
+                ref2vaDit: picks["ref2va_dit"], textEncoder: picks["text_encoder"],
+                vision: picks["vision"], base: base))
+            library.addModel(path: path)
+            let entry = library.models.first { $0.path == path }
+            return .json(200, ["id": entry?.id.uuidString ?? "", "path": path])
+        } catch {
+            return .error(500, error.localizedDescription)
         }
     }
 

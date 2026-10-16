@@ -34,6 +34,7 @@ build_attention_cache
 build_adaln_curve
 h3_adaln_curve_check
 h3_weight_compare
+h3_gguf_tool
 build_lora_cache
 h3_generate_cli
 *.cache

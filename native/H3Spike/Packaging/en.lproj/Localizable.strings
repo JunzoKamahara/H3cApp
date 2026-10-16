@@ -477,3 +477,36 @@
 "計算の準備（初回のみ）" = "Preparing the computation (first time only)";
 "条件の計算を近似で速くする" = "Speed up the condition computation with an approximation";
 "時刻ごとの条件（AdaLN）を小さな近似ファイルから計算し、1本あたり約10秒速くします。どの計算方式でも使えます。初回だけ、モデルごとに約7秒かけて約0.6GBのファイルを作ります。近似の誤差は元の計算の丸め誤差と同じ程度ですが、同じシードでも以前の版とは少し違う動画になります。" = "Computes the per-timestep conditions (AdaLN) from a small approximation file, about 10 seconds faster per video. Works with every compute mode. The first time, it takes about 7 seconds per model to create a file of about 0.6 GB. The approximation error is about the size of the original computation's rounding error, but the same seed gives a slightly different video than earlier versions.";
+
+/* GGUF import */
+"文章" = "Text";
+"取り込めませんでした（詳細: %@）" = "Could not import (details: %@)";
+"基のモデルから共通の部品を複製しています" = "Cloning the shared parts from the base model";
+"DiTを置いています" = "Placing the DiT";
+"文章の部分を50層に切り詰めています" = "Trimming the text encoder to 50 layers";
+"文章の部分を置いています" = "Placing the text encoder";
+"Ref2VAを置いています" = "Placing Ref2VA";
+"GGUFを取り込む" = "Import GGUF";
+"量子化されたモデル（GGUF）から、容量の小さいモデルを作ります。トークナイザーやVAEなど、GGUFに入っていない部品は登録済みのモデルから複製します（同じディスクなら容量は増えません）。" = "Builds a smaller model from quantized (GGUF) files. Parts the GGUF files do not contain, such as the tokenizer and the VAEs, are cloned from a registered model (no extra space on the same disk).";
+"DiT（FL2VA、必須）" = "DiT (FL2VA, required)";
+"DiT（Ref2VA、参照画像を使う場合）" = "DiT (Ref2VA, for reference images)";
+"文章の部分（テキストエンコーダー）" = "Text encoder";
+"画像の部分（mmproj）" = "Vision part (mmproj)";
+"複製元にできるモデル（FL2VAのトークナイザーとVAEを含むもの）が登録されていません。" = "No registered model can serve as the base (one with the FL2VA tokenizer and VAEs).";
+"残りの部品の複製元" = "Clone the other parts from";
+"このDiTはAdaLNが密な形です。この形式での動作はまだ確認していません。" = "This DiT has dense AdaLN. This format has not been verified yet.";
+"文章の部分を選ばない場合は、複製元のモデルのもの（約62GB）を使います。" = "Without a text encoder file, the base model's (about 62 GB) is used.";
+"画像の部分（mmproj）がないと、最初の画像や参照画像を使う生成はできません。" = "Without the vision part (mmproj), generating from a first image or reference images is not possible.";
+"Ref2VAのDiTを選ばない場合、参照画像・動画・音声を使う生成はできません。" = "Without a Ref2VA DiT, generating from reference images, videos or audio is not possible.";
+"取り込む" = "Import";
+"外す" = "Remove";
+"%lld層" = "%lld layers";
+"画像の部分を含む" = "includes the vision part";
+"これはDiTのファイルです" = "This is a DiT file";
+"これは文章の部分（テキストエンコーダー）のファイルです" = "This is a text encoder file";
+"これは画像の部分（mmproj）のファイルです" = "This is a vision part (mmproj) file";
+"MiniMax H3の部品として認識できません" = "Not recognized as a MiniMax H3 part";
+"層が足りません（50層が必要です）" = "Too few layers (50 are needed)";
+"GGUFとして読めません" = "Cannot be read as GGUF";
+"GGUFを取り込む…" = "Import GGUF…";
+"GGUFから取り込み（%@）" = "Imported from GGUF (%@)";

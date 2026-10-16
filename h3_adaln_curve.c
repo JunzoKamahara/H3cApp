@@ -663,3 +663,11 @@ int h3_adaln_curve_matches(const char *curve_path,
     h3_adaln_curve_free(curve);
     return 1;
 }
+
+int h3_adaln_curve_in_dir(const char *transformer_dir) {
+    if (!transformer_dir || !*transformer_dir) return 0;
+    h3_weight_store *store = h3_weight_store_open(transformer_dir, NULL, 0);
+    int in_store = store && h3_adaln_curve_in_store(store);
+    h3_weight_store_free(store);
+    return in_store;
+}

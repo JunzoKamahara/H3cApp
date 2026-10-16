@@ -297,3 +297,225 @@ failed:
     h3_st_free_header(header);
     return 0;
 }
+
+/* --- inspecting and trimming (h3.h) ---------------------------------- */
+
+#include "h3.h"
+
+#include <unistd.h>
+
+static int has_prefix(const char *text, const char *prefix) {
+    return !strncmp(text, prefix, strlen(prefix));
+}
+
+/* The language-layer index of a text-encoder tensor name in any of the
+ * spellings (llama.cpp, transformers, the released checkpoint), or -1. */
+static int text_layer_index(const char *name) {
+    static const char *prefixes[] = {
+        "blk.", "model.layers.", "model.language_model.layers.",
+        "language_model.model.layers.",
+    };
+    for (size_t i = 0; i < sizeof(prefixes) / sizeof(*prefixes); i++) {
+        if (has_prefix(name, prefixes[i])) {
+            const char *at = name + strlen(prefixes[i]);
+            char *end = NULL;
+            long layer = strtol(at, &end, 10);
+            if (end != at && *end == '.') return (int)layer;
+        }
+    }
+    return -1;
+}
+
+static int is_output_head(const char *name) {
+    return !strcmp(name, "output.weight") || !strcmp(name, "output_norm.weight") ||
+           !strcmp(name, "lm_head.weight") || !strcmp(name, "model.norm.weight") ||
+           !strcmp(name, "model.language_model.norm.weight");
+}
+
+int h3_gguf_inspect(const char *path, h3_gguf_info *info,
+                    char *error, size_t error_size) {
+    if (!info) return 0;
+    memset(info, 0, sizeof(*info));
+    h3_st_header header;
+    if (!h3_gguf_read_header(path, &header, error, error_size)) return 0;
+    info->file_bytes = header.file_size;
+    info->tensors = header.tensor_count;
+    const char *arch = h3_st_metadata(&header, "general.architecture");
+    const char *name = h3_st_metadata(&header, "general.name");
+    if (arch) snprintf(info->architecture, sizeof(info->architecture), "%s", arch);
+    if (name) snprintf(info->name, sizeof(info->name), "%s", name);
+    uint64_t by_type[16] = {0};
+    int dit = 0, text = 0, vision = 0, max_layer = -1;
+    for (size_t index = 0; index < header.tensor_count; index++) {
+        const h3_st_tensor *tensor = &header.tensors[index];
+        uint64_t bytes = tensor->data_end - tensor->data_begin;
+        info->tensor_bytes += bytes;
+        if (tensor->quant < 16 && bytes >= (1u << 20)) by_type[tensor->quant] += bytes;
+        const char *n = tensor->name;
+        if (!strcmp(n, "video_patch_proj.weight")) dit = 1;
+        if (!strcmp(n, "adaln_t_table")) info->curve_adaln = 1;
+        if (!strcmp(n, "blocks.0.adaln_proj.linear.weight") &&
+            tensor->ndim == 2 && tensor->shape[1] == 2688)
+            info->dense_adaln = 1;
+        if (has_prefix(n, "v.blk.") || has_prefix(n, "visual.") ||
+            has_prefix(n, "model.visual.") || has_prefix(n, "vision_tower."))
+            vision = 1;
+        int layer = text_layer_index(n);
+        if (layer >= 0) {
+            text = 1;
+            if (layer > max_layer) max_layer = layer;
+        }
+    }
+    if (dit) info->role = H3_GGUF_DIT;
+    else if (text) info->role = H3_GGUF_TEXT_ENCODER;
+    else if (vision) info->role = H3_GGUF_VISION;
+    info->text_layers = text ? max_layer + 1 : 0;
+    info->has_vision = text && vision;
+    uint64_t best = 0;
+    for (int type = 0; type < 16; type++) {
+        if (by_type[type] > best) {
+            best = by_type[type];
+            snprintf(info->main_type, sizeof(info->main_type), "%s",
+                     h3_quant_name((h3_quant_type)type));
+        }
+    }
+    h3_st_free_header(&header);
+    return 1;
+}
+
+static int write_bytes(FILE *out, const void *data, size_t size) {
+    return fwrite(data, 1, size, out) == size;
+}
+
+static int write_u32_le(FILE *out, uint32_t value) {
+    uint8_t b[4] = {(uint8_t)value, (uint8_t)(value >> 8), (uint8_t)(value >> 16),
+                    (uint8_t)(value >> 24)};
+    return write_bytes(out, b, 4);
+}
+
+static int write_u64_le(FILE *out, uint64_t value) {
+    uint8_t b[8];
+    for (int i = 0; i < 8; i++) b[i] = (uint8_t)(value >> (8 * i));
+    return write_bytes(out, b, 8);
+}
+
+static int write_string(FILE *out, const char *text) {
+    size_t length = strlen(text);
+    return write_u64_le(out, length) && write_bytes(out, text, length);
+}
+
+/* ggml type id for an h3_quant_type (the inverse of h3_quant_from_ggml). */
+static uint32_t ggml_type_of(h3_quant_type type) {
+    for (uint32_t id = 0; id < 40; id++)
+        if (h3_quant_from_ggml(id) == type) return id;
+    return UINT32_MAX;
+}
+
+int h3_gguf_trim_text_encoder(const char *source_path, const char *output_path,
+                              int layers, h3_progress_callback on_progress,
+                              void *callback_opaque,
+                              char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (!source_path || !output_path || layers < 1) {
+        if (error && error_size) snprintf(error, error_size, "invalid trim arguments");
+        return 0;
+    }
+    h3_st_header header;
+    if (!h3_gguf_read_header(source_path, &header, error, error_size)) return 0;
+    const uint64_t alignment = 32;
+    size_t kept = 0;
+    uint64_t total = 0;
+    int *keep = calloc(header.tensor_count ? header.tensor_count : 1, sizeof(*keep));
+    for (size_t i = 0; keep && i < header.tensor_count; i++) {
+        const h3_st_tensor *t = &header.tensors[i];
+        int layer = text_layer_index(t->name);
+        keep[i] = !is_output_head(t->name) && layer < layers &&
+                  t->quant != 0 && ggml_type_of((h3_quant_type)t->quant) != UINT32_MAX;
+        if (keep[i]) {
+            kept++;
+            total += t->data_end - t->data_begin;
+        }
+    }
+    size_t partial_length = strlen(output_path) + sizeof(".partial");
+    char *partial = malloc(partial_length);
+    enum { BUFFER = 64 << 20 };
+    uint8_t *buffer = malloc(BUFFER);
+    FILE *in = fopen(source_path, "rb");
+    FILE *out = NULL;
+    int ok = keep && partial && buffer && in;
+    if (!ok && error && error_size)
+        snprintf(error, error_size, "cannot open %s", source_path);
+    if (ok) {
+        snprintf(partial, partial_length, "%s.partial", output_path);
+        out = fopen(partial, "wb");
+        ok = out != NULL;
+        if (!ok && error && error_size)
+            snprintf(error, error_size, "cannot create %s: %s", partial, strerror(errno));
+    }
+    /* Header: string metadata, then tensor infos (dims fastest-first). */
+    if (ok) {
+        uint64_t kv = header.metadata_count + 1;
+        ok = write_bytes(out, "GGUF", 4) && write_u32_le(out, 3) &&
+             write_u64_le(out, kept) && write_u64_le(out, kv);
+        for (size_t i = 0; ok && i < header.metadata_count; i++)
+            ok = write_string(out, header.metadata[i].key) && write_u32_le(out, 8) &&
+                 write_string(out, header.metadata[i].value);
+        char note[64];
+        snprintf(note, sizeof(note), "%d", layers);
+        ok = ok && write_string(out, "h3c.text_layers") && write_u32_le(out, 8) &&
+             write_string(out, note);
+        uint64_t offset = 0;
+        for (size_t i = 0; ok && i < header.tensor_count; i++) {
+            if (!keep[i]) continue;
+            const h3_st_tensor *t = &header.tensors[i];
+            ok = write_string(out, t->name) && write_u32_le(out, (uint32_t)t->ndim);
+            for (int d = t->ndim - 1; ok && d >= 0; d--) ok = write_u64_le(out, t->shape[d]);
+            ok = ok && write_u32_le(out, ggml_type_of((h3_quant_type)t->quant)) &&
+                 write_u64_le(out, offset);
+            offset += (t->data_end - t->data_begin + alignment - 1) / alignment * alignment;
+        }
+        long position = ok ? ftell(out) : 0;
+        for (long pad = position; ok && pad % (long)alignment; pad++) ok = fputc(0, out) != EOF;
+        if (!ok && error && error_size && !error[0])
+            snprintf(error, error_size, "cannot write %s: %s", partial, strerror(errno));
+    }
+    /* Payloads, each padded to the alignment. */
+    uint64_t copied = 0;
+    for (size_t i = 0; ok && i < header.tensor_count; i++) {
+        if (!keep[i]) continue;
+        const h3_st_tensor *t = &header.tensors[i];
+        uint64_t bytes = t->data_end - t->data_begin;
+        ok = fseeko(in, (off_t)t->file_offset, SEEK_SET) == 0;
+        for (uint64_t done = 0; ok && done < bytes;) {
+            size_t chunk = bytes - done < BUFFER ? (size_t)(bytes - done) : BUFFER;
+            ok = fread(buffer, 1, chunk, in) == chunk && write_bytes(out, buffer, chunk);
+            done += chunk;
+        }
+        for (uint64_t pad = bytes; ok && pad % alignment; pad++) ok = fputc(0, out) != EOF;
+        copied += bytes;
+        if (!ok && error && error_size)
+            snprintf(error, error_size, "cannot copy %s: %s", t->name, strerror(errno));
+        if (ok && on_progress &&
+            on_progress("trim text encoder", (int)(copied >> 20), (int)(total >> 20),
+                        callback_opaque)) {
+            if (error && error_size) snprintf(error, error_size, "trimming cancelled");
+            ok = 0;
+        }
+    }
+    if (out && fclose(out) != 0 && ok) {
+        ok = 0;
+        if (error && error_size) snprintf(error, error_size, "cannot finish %s", partial);
+    }
+    if (in) fclose(in);
+    if (ok && rename(partial, output_path) != 0) {
+        ok = 0;
+        if (error && error_size)
+            snprintf(error, error_size, "cannot rename %s: %s", partial, strerror(errno));
+    }
+    if (!ok && partial) unlink(partial);
+    free(partial);
+    free(buffer);
+    free(keep);
+    h3_st_free_header(&header);
+    return ok;
+}

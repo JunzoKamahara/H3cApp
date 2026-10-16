@@ -78,6 +78,11 @@ h3_adaln_curve_check: tests/adaln_curve_check.o $(LIB_OBJ)
 h3_weight_compare: tests/weight_compare.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# Inspect GGUF files as the importer does, or trim a text encoder to the
+# layers the engine reads.
+h3_gguf_tool: tools/gguf_tool.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 # Plain-C generation driver (see tools/ccv_eval/h3_generate_cli.c) - a
 # Swift-free equivalent of native/H3Spike, built to validate
 # H3_ATTENTION_BACKEND=ccv_dense end-to-end without hitting a still-
@@ -279,5 +284,5 @@ clean:
 		h3_real_multimodal_text_test h3_real_ref_video_text_test \
 		h3_real_dit_schedule_test h3_real_dit_test h3_semantic_dit_test \
 		h3_real_video_vae_test h3_semantic_vae_test \
-	h3_dit_bench h3_dit_bench_864 build_adaln_curve h3_adaln_curve_check h3_quant_tests h3_weight_compare \
+	h3_dit_bench h3_dit_bench_864 build_adaln_curve h3_adaln_curve_check h3_quant_tests h3_weight_compare h3_gguf_tool \
 	libh3.a *.o *.d tests/*.o tests/*.d

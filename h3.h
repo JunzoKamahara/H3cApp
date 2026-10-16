@@ -354,6 +354,47 @@ int h3_build_adaln_curve(const char *transformer_dir,
  * H3_ADALN_CURVE can point at it; 0 otherwise (missing, unreadable, or
  * built from other weights - rebuild it then). Reads only headers. */
 int h3_adaln_curve_matches(const char *curve_path, const char *transformer_dir);
+/* 1 when the transformer carries its own curve-form AdaLN (a ComfyUI-
+ * derived checkpoint such as unsloth's GGUFs): the engine reads the curve
+ * from it, and no separate curve file can be built for it. */
+int h3_adaln_curve_in_dir(const char *transformer_dir);
+
+/* What a GGUF file holds, from its tensor table alone (h3_gguf_inspect) -
+ * for an importer to sort files into a model's parts. */
+typedef enum {
+    H3_GGUF_UNKNOWN = 0,
+    H3_GGUF_DIT = 1,           /* a MiniMax H3 DiT (FL2VA or Ref2VA) */
+    H3_GGUF_TEXT_ENCODER = 2,  /* Qwen3-VL language layers (maybe + vision) */
+    H3_GGUF_VISION = 3,        /* a Qwen3-VL vision tower alone (mmproj) */
+} h3_gguf_role;
+
+typedef struct {
+    h3_gguf_role role;
+    int curve_adaln;      /* DiT: carries curve-form AdaLN (ComfyUI-derived) */
+    int dense_adaln;      /* DiT: carries the dense AdaLN projections */
+    int text_layers;      /* text encoder: language layers in the file */
+    int has_vision;       /* text encoder: the vision tower is in it too */
+    uint64_t file_bytes;
+    uint64_t tensor_bytes;
+    size_t tensors;
+    char main_type[16];   /* format of most of the weight bytes, e.g. Q8_0 */
+    char architecture[32];/* general.architecture, if any */
+    char name[96];        /* general.name, if any */
+} h3_gguf_info;
+
+int h3_gguf_inspect(const char *path, h3_gguf_info *info,
+                    char *error, size_t error_size);
+
+/* Writes a copy of a text-encoder GGUF with only its first `layers`
+ * language layers and without the output head (the engine reads 50 of
+ * Qwen3-VL-32B's 64 and no head), through a ".partial" file renamed on
+ * success. Everything else - embeddings, vision tensors - is kept. The
+ * copy keeps the source's string metadata. on_progress gets phase
+ * "trim text encoder" with bytes copied in MiB; non-zero cancels. */
+int h3_gguf_trim_text_encoder(const char *source_path, const char *output_path,
+                              int layers, h3_progress_callback on_progress,
+                              void *callback_opaque,
+                              char *error, size_t error_size);
 
 /* TEMPORARY diagnostic, not for production use: creates a standalone
  * h3_gpu (no model needed) and makes one throwaway call through the

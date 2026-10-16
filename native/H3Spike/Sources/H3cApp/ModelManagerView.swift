@@ -21,6 +21,7 @@ struct ModelManagerView: View {
     @State private var renamingLoRAID: UUID?
     @State private var renameText: String = ""
     @State private var showingDownloadWizard = false
+    @State private var showingImport = false
     /// A LoRA picked from a folder macOS guards, waiting for the choice to
     /// move it into the LoRA folder.
     @State private var pendingProtectedLoRA: PendingLoRA?
@@ -91,10 +92,23 @@ struct ModelManagerView: View {
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
                 Spacer()
+                Button("GGUFを取り込む…") { showingImport = true }
                 Button("ダウンロードして追加…") { showingDownloadWizard = true }
                 Button("フォルダを追加…") { addModel() }
             }
             .padding(H3Spacing.md)
+        }
+        .sheet(isPresented: $showingImport) {
+            ModelImportView(
+                library: library,
+                onImported: { path in
+                    let wasEmpty = library.models.isEmpty
+                    library.addModel(path: path)
+                    if wasEmpty { onActiveModelChange(library.activeModelID) }
+                    showingImport = false
+                },
+                onCancelled: { showingImport = false }
+            )
         }
         .sheet(isPresented: $showingDownloadWizard) {
             ModelDownloadWizardView(
@@ -166,10 +180,14 @@ struct ModelManagerView: View {
         func has(_ subpath: String) -> Bool {
             fm.fileExists(atPath: model.path + subpath, isDirectory: &isDir) && isDir.boolValue
         }
-        return [
+        var parts = [
             has("/FL2VA") ? String(localized: "FL2VAあり") : String(localized: "FL2VAなし"),
             has("/Ref2VA") ? String(localized: "Ref2VAあり") : String(localized: "Ref2VAなし"),
-        ].joined(separator: summarySeparator)
+        ]
+        if let manifest = ModelImportManifest.load(modelPath: model.path) {
+            parts.append(String(localized: "GGUFから取り込み（\(manifest.summary)）"))
+        }
+        return parts.joined(separator: summarySeparator)
     }
 
     private func addModel() {

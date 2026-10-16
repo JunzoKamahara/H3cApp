@@ -15,6 +15,7 @@
 #include "h3_video_vae.h"
 #include "h3_vision_encoder.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <math.h>
 #include <stdarg.h>
@@ -660,6 +661,24 @@ static int h3_inventory(h3_ctx *ctx, const char *relative,
     return ok;
 }
 
+/* An imported (GGUF) Ref2VA transformer has no safetensors index. */
+static int h3_dir_has_gguf(const char *root, const char *component) {
+    char *directory = h3_path(root, component);
+    if (!directory) return 0;
+    DIR *stream = opendir(directory);
+    free(directory);
+    if (!stream) return 0;
+    int found = 0;
+    struct dirent *entry;
+    while (!found && (entry = readdir(stream)) != NULL) {
+        size_t length = strlen(entry->d_name);
+        found = entry->d_name[0] != '.' && length > 5 &&
+                !strcmp(entry->d_name + length - 5, ".gguf");
+    }
+    closedir(stream);
+    return found;
+}
+
 h3_ctx *h3_load_dir(const char *model_dir) {
     h3_global_error[0] = '\0';
     if (!model_dir || !*model_dir) {
@@ -697,7 +716,8 @@ h3_ctx *h3_load_dir(const char *model_dir) {
         h3_free(ctx);
         return NULL;
     }
-    int has_ref2va = h3_is_file(ref_index);
+    int has_ref2va = h3_is_file(ref_index) ||
+                     h3_dir_has_gguf(ctx->model_dir, "Ref2VA/transformer");
     free(ref_index);
     if (has_ref2va && !h3_inventory(
             ctx, "Ref2VA/transformer", &ctx->model.ref2va_transformer)) {
