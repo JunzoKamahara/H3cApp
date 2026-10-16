@@ -5,7 +5,16 @@ where each came from. Update this file first when a new release changes any
 of them, then the pages (see `website-maintenance.md`).
 
 - Checked: 2026-10-14
-- Version described: **v0.4.7** (latest release; published 2026-10-14).
+- Version described: **v0.5.0** (latest release; published 2026-10-16).
+  v0.5.0 added つなげて生成 (length menu: 1-15 s in one generation, つないで15秒,
+  20/30/45/60/90 s, カスタム 1-90 s; 詳細設定 つなげて生成の1本の長さ 約7秒
+  (175 frames, default) / 約5秒 (124); 22-frame overlap; joined video listed
+  as 「つないだ動画（n本・x秒）」 with clips in chains/<name>/), 動画の続きを作る,
+  音声に合わせる（リップシンク）, whole-run progress (全n本中k本目, 全体の残り/完了予定),
+  and the LoRA folder (Application Support/h3c-app/LoRA). The site documents
+  つなげて生成 (guide #chain, settings #chain) but not yet lip sync or 続きを作る
+  as their own sections. Timing: ~105 s per output second at landscape medium
+  on the 24 GB M5 (README). Earlier:
   v0.4.6 (2026-10-14) added the re-noise step rule for few-step LoRAs such as
   DMAD and, in モデル管理, a per-LoRA ステップの進め方 (自動 / Euler /
   re-noise（LCM方式）) and 音声シフト; 自動 follows the file's metadata only.
@@ -13,11 +22,11 @@ of them, then the pages (see `website-maintenance.md`).
   for 書類-folder access). v0.4.7 moved those two controls onto their own line
   (0.4.6 pushed the row's menu to the sheet edge); generation is unchanged.
   Other screens are unchanged, so captions saying "v0.4.4の実画面" stay true.
-- Tag commit: v0.4.7 `3b5a145` (v0.4.6 `5b91b98`)
+- Tag commit: v0.5.0 `920203c` (v0.4.7 `3b5a145`, v0.4.6 `5b91b98`)
 - Repository: renamed from `h3c-app` to `H3cApp` for the site URL
   `https://junzokamahara.github.io/H3cApp/` (decided 2026-10-10); the site
   links to `github.com/JunzoKamahara/H3cApp`. Old URLs redirect on GitHub.
-- `main` at check time: the v0.4.7 tag plus site-only commits; nothing
+- `main` at check time: the v0.5.0 tag plus site-only commits; nothing
   main-only is described.
 
 ## Languages
@@ -38,10 +47,10 @@ reads “×1”. `og-image-en.jpg` is the English share image.
 
 | item | value | source |
 |---|---|---|
-| DMG | `H3cApp-0.4.7.dmg`, 18,996,098 bytes (about 19.0 MB), sha256 19265252…6f609ab7f31d | local build, uploaded to v0.4.7 (digest checked on the release asset) |
-| Direct URL | https://github.com/JunzoKamahara/H3cApp/releases/download/v0.4.7/H3cApp-0.4.7.dmg | same |
+| DMG | `H3cApp-0.5.0.dmg`, 19,144,266 bytes (about 19.1 MB), sha256 c6d30216…3b022e7cad | local build, uploaded to v0.5.0 |
+| Direct URL | https://github.com/JunzoKamahara/H3cApp/releases/download/v0.5.0/H3cApp-0.5.0.dmg | same |
 | Site link target | https://github.com/JunzoKamahara/H3cApp/releases/latest (no version-specific link on the buttons) | |
-| Signing | Developer ID, notarized and stapled; `spctl` reports "Notarized Developer ID" for the DMG and for the app inside it | checked 2026-10-14 (v0.4.7: `stapler validate`, `spctl` on the DMG and the app, CFBundleShortVersionString 0.4.7, minos 15.0) |
+| Signing | Developer ID, notarized and stapled; `spctl` reports "Notarized Developer ID" for the DMG and for the app inside it | checked 2026-10-16 (v0.5.0: `stapler validate`, `spctl` on the DMG and the app, CFBundleShortVersionString 0.5.0 / build 12, minos 15.0) |
 | Install | open the DMG, drag H3cApp to Applications | |
 | Minimum macOS | 15.0 (`LSMinimumSystemVersion` in the v0.4.4 Info.plist). Releases up to 0.4.3 said 13, which was wrong (engine uses macOS 15 MPSGraph SDPA, macOS 14 BF16) | `native/H3Spike/Packaging/Info.plist` at v0.4.4, release notes |
 | CPU | Apple Silicon only (arm64 build) | |
