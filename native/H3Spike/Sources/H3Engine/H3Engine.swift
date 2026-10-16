@@ -275,12 +275,26 @@ private func fixedCString<T>(_ tuple: T) -> String {
 private final class CancelFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var value = false
+    /// Handed to the engine as h3_params.cancel_requested, so the denoising
+    /// loop sees a stop between DiT blocks instead of only at progress
+    /// reports (it never sees on_progress's return value). An aligned
+    /// 32-bit store, read from the engine's thread.
+    let engineFlag: UnsafeMutablePointer<Int32> = {
+        let flag = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
+        flag.initialize(to: 0)
+        return flag
+    }()
     var isCancelled: Bool {
         lock.lock(); defer { lock.unlock() }
         return value
     }
     func cancel() {
         lock.lock(); value = true; lock.unlock()
+        engineFlag.pointee = 1
+    }
+    deinit {
+        engineFlag.deinitialize(count: 1)
+        engineFlag.deallocate()
     }
 }
 
@@ -501,6 +515,7 @@ public final class H3Engine: @unchecked Sendable {
                 cParams.core_reuse = params.coreReuse
                 cParams.token_reduction = params.tokenReduction ? 1 : 0
                 cParams.ssd_streaming = params.ssdStreaming ? 1 : 0
+                cParams.cancel_requested = UnsafePointer(cancelFlag.engineFlag)
                 cParams.fast_attention = params.fastAttention ? 1 : 0
                 cParams.sampler = params.renoise ? Int32(H3_SAMPLER_RENOISE)
                                                  : Int32(H3_SAMPLER_EULER)

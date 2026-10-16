@@ -5,7 +5,8 @@ import SwiftUI
 /// other window does. Closing that window keeps it - its engine, form and
 /// result - so the API keeps working from the menu bar alone, and the next
 /// window opened picks it up again. Other windows get their own model,
-/// released with the window. Closing any window closes its project.
+/// released with the window. Closing any window stops the generation it is
+/// running and closes its project.
 @MainActor
 final class AppModels {
     static let shared = AppModels()
@@ -43,8 +44,11 @@ final class AppModels {
         return (model, fresh)
     }
 
-    /// The window showing `model` is closing.
+    /// The window showing `model` is closing. A generation it is running
+    /// stops with it (and the rest of its batch): closing the window is how
+    /// people expect to stop one, and nothing would show it any more.
     func release(_ model: GenerationViewModel) {
+        model.cancel()
         shown[ObjectIdentifier(model)] = nil
         if model === primary { primaryShown = false }
         // The window's project closes with it (saved first), so another

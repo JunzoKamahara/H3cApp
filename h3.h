@@ -203,6 +203,13 @@ typedef struct {
     const char *continue_latent_path;
     int continue_frames;
     int continue_audio_frames;
+    /* Optional stop request: when non-NULL, the caller may set *flag to
+     * non-zero from any thread, and the generation stops at the next DiT
+     * block or step (after finishing the GPU work already in flight) or the
+     * next progress report, failing with "generation cancelled". Without
+     * it, a stop is only seen at progress reports - the denoising loop
+     * does not see on_progress's return value, so it ran to the end. */
+    const volatile int *cancel_requested;
 } h3_params;
 
 enum {
@@ -214,7 +221,7 @@ enum {
     H3_DEFAULT_WIDTH, H3_DEFAULT_HEIGHT, H3_DEFAULT_FRAMES, H3_DEFAULT_STEPS, \
     UINT64_C(42), NULL, NULL, NULL, NULL, 0, H3_REFERENCE_IMAGE_MATCH, \
     1, H3_DEFAULT_DIT_LAYERS, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, \
-    NULL, 0, 0, H3_SAMPLER_EULER, 0.0f, NULL, 0.0, NULL, NULL, 0, 0 \
+    NULL, 0, 0, H3_SAMPLER_EULER, 0.0f, NULL, 0.0, NULL, NULL, 0, 0, NULL \
 }
 
 typedef struct {

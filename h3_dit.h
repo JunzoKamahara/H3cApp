@@ -122,6 +122,10 @@ void h3_dit_set_sampler(h3_dit *dit, int sampler, uint64_t seed);
  * schedule the audio is the clean latent throughout; otherwise it follows
  * the latent's noise trajectory. The audio passed to the denoise call is
  * its initial noise, as usual. NULL turns it off. */
+/* A stop request the denoising loop checks before every step and DiT
+ * block (h3_params.cancel_requested); NULL turns the check off. */
+void h3_dit_set_cancel(h3_dit *dit, const volatile int *cancel_requested);
+
 int h3_dit_set_forced_audio(h3_dit *dit, const float *clean_latent,
                             size_t elements, char *error, size_t error_size);
 

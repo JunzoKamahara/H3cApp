@@ -232,6 +232,8 @@ struct h3_dit {
      * once as they load; streamed ones (SSD BF16 slots, int8 attention
      * cache slots) every time a block is streamed in. NULL without LoRA. */
     h3_lora_set *loras;
+    /* h3_params.cancel_requested, via h3_dit_set_cancel. */
+    const volatile int *cancel_requested;
     h3_dit_attention_slot attention_slots[2];
     unsigned attn_ready_layer;
     unsigned attn_ready_slot;
@@ -322,6 +324,19 @@ static int gpu_op(h3_dit *dit, int ok, char *error, size_t error_size,
 static void report(h3_dit_progress progress, void *opaque, const char *phase,
                    int completed, int total) {
     if (progress) progress(phase, completed, total, opaque);
+}
+
+void h3_dit_set_cancel(h3_dit *dit, const volatile int *cancel_requested) {
+    if (dit) dit->cancel_requested = cancel_requested;
+}
+
+/* A stop was asked for: let the GPU finish what is already encoded (a
+ * command left open would break the next h3_gpu_begin), then fail. */
+static int stop_if_cancelled(h3_dit *dit, char *error, size_t error_size) {
+    if (!dit->cancel_requested || !*dit->cancel_requested) return 0;
+    if (h3_gpu_command_open(dit->gpu)) (void)h3_gpu_submit(dit->gpu);
+    fail(error, error_size, "generation cancelled");
+    return 1;
 }
 
 static void free_tensor(h3_gpu_tensor **tensor) {
@@ -3367,6 +3382,7 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
         int carried_attention_adaln = 0;
         int carried_attention_input_quantized = 0;
         for (unsigned block = 0; block < H3_DIT_BLOCKS; block++) {
+            if (stop_if_cancelled(dit, error, error_size)) return 0;
             int fused_token_adaln = carried_attention_adaln;
             int fused_attention_input_quantized =
                 carried_attention_input_quantized;
@@ -3971,6 +3987,10 @@ static int denoise_euler_gpu(h3_dit *dit, float *video_latent,
     unsigned pending_evaluations = 0;
     int command_active = 0;
     for (int step = 0; step < dit->sigmas.steps && ok; step++) {
+        if (stop_if_cancelled(dit, error, error_size)) {
+            ok = 0;
+            break;
+        }
         report(progress, progress_opaque, "denoise enqueue", step,
                dit->sigmas.steps);
         if (!command_active) {
@@ -4148,6 +4168,10 @@ int h3_dit_denoise(h3_dit *dit, float *video_latent, float *audio_latent,
     }
     int ok = 1;
     for (int step = 0; step < dit->sigmas.steps && ok; step++) {
+        if (stop_if_cancelled(dit, error, error_size)) {
+            ok = 0;
+            break;
+        }
         report(progress, progress_opaque, "denoise", step, dit->sigmas.steps);
         ok = h3_dit_forward(dit, step, video_latent, audio_latent,
                             video_velocity, audio_velocity,
@@ -4269,6 +4293,10 @@ int h3_dit_denoise_euler_preview(
     int last_evaluated = -1;
     int previous_evaluated = -1;
     for (int step = 0; step < dit->sigmas.steps && ok; step++) {
+        if (stop_if_cancelled(dit, error, error_size)) {
+            ok = 0;
+            break;
+        }
         report(progress, progress_opaque, "denoise", step, dit->sigmas.steps);
         int evaluate = selected[step];
         if (evaluate) {

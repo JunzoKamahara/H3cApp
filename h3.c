@@ -1051,7 +1051,13 @@ static void h3_debug_hash_video_done(const h3_debug_video_hash *state) {
 
 static void h3_progress_emit(h3_generation_progress *state, const char *phase,
                              int completed, int total) {
-    if (!state || state->cancelled || !state->params->on_progress) return;
+    if (!state || state->cancelled) return;
+    if (state->params->cancel_requested && *state->params->cancel_requested) {
+        state->cancelled = 1;
+        h3_set_error(state->ctx, "generation cancelled during %s", phase);
+        return;
+    }
+    if (!state->params->on_progress) return;
     if (state->params->on_progress(phase, completed, total,
                                    state->params->callback_opaque)) {
         state->cancelled = 1;
@@ -2191,6 +2197,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     }
     uint64_t ccv_calls_before = h3_gpu_ccv_attention_dispatch_count();
     uint64_t ccv_direct_before = h3_gpu_ccv_attention_direct_count();
+    h3_dit_set_cancel(dit, params->cancel_requested);
     if (!h3_dit_denoise_euler_preview(
             dit, video, audio, params->denoise_reuse,
             h3_dit_progress_bridge, &progress,
@@ -2198,6 +2205,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             preview_decoder ? &live_preview : NULL,
             detail, sizeof(detail))) {
         if (!live_preview.failed) h3_set_error(ctx, "%s", detail);
+        h3_dit_set_cancel(dit, NULL);
         h3_dit_release_backend_scratch(dit);
         if (dit_is_cached) {
             ctx->dit = NULL;
@@ -2207,6 +2215,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         }
         goto cleanup;
     }
+    h3_dit_set_cancel(dit, NULL);
     h3_dit_release_backend_scratch(dit);
     h3_dit_set_forced_audio(dit, NULL, 0, NULL, 0);
     h3_debug_hash("denoised video", video, video_count * sizeof(*video));
