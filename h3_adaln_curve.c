@@ -35,6 +35,9 @@
 
 struct h3_adaln_curve {
     h3_st_header header;
+    /* Set for a curve read out of a checkpoint's own weight store (a
+     * curve-form GGUF/safetensors checkpoint); header is then unused. */
+    const h3_weight_store *store;
     uint32_t grid;
     uint32_t rank;
     float *table;
@@ -163,6 +166,54 @@ failed:
     return NULL;
 }
 
+int h3_adaln_curve_in_store(const h3_weight_store *store) {
+    return store && h3_weight_find(store, CURVE_TABLE, NULL) &&
+           !h3_weight_find(store, "time_embedder.proj_in.weight", NULL);
+}
+
+h3_adaln_curve *h3_adaln_curve_from_store(const h3_weight_store *store,
+                                          char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    const h3_st_header *header = NULL;
+    const h3_st_tensor *table = store ?
+        h3_weight_find(store, CURVE_TABLE, &header) : NULL;
+    if (!table || !header || table->dtype != H3_DTYPE_F32 || table->ndim != 2 ||
+        table->shape[0] < 2 || table->shape[0] > UINT32_MAX ||
+        !table->shape[1] || table->shape[1] > H3_DIT_TIME_DIM) {
+        fail(error, error_size, "the checkpoint has no usable %s", CURVE_TABLE);
+        return NULL;
+    }
+    h3_adaln_curve *curve = calloc(1, sizeof(*curve));
+    if (!curve) {
+        fail(error, error_size, "out of memory opening the AdaLN curve");
+        return NULL;
+    }
+    curve->store = store;
+    curve->grid = (uint32_t)table->shape[0];
+    curve->rank = (uint32_t)table->shape[1];
+    size_t count = (size_t)curve->grid * curve->rank;
+    char detail[384];
+    curve->table = malloc(count * sizeof(*curve->table));
+    if (!curve->table ||
+        !h3_st_read_data(header, table, curve->table, count * sizeof(float),
+                         detail, sizeof(detail))) {
+        fail(error, error_size, "cannot read %s: %s", CURVE_TABLE,
+             curve->table ? detail : "out of memory");
+        h3_adaln_curve_free(curve);
+        return NULL;
+    }
+    for (size_t index = 0; index < count; index++) {
+        if (!isfinite(curve->table[index])) {
+            fail(error, error_size, "%s has a non-finite value", CURVE_TABLE);
+            h3_adaln_curve_free(curve);
+            return NULL;
+        }
+    }
+    h3_weight_store_fingerprint(store, curve->fingerprint);
+    memcpy(curve->fingerprint + 8, "h3curveS", 8);
+    return curve;
+}
+
 void h3_adaln_curve_free(h3_adaln_curve *curve) {
     if (!curve) return;
     h3_st_free_header(&curve->header);
@@ -209,6 +260,13 @@ static h3_gpu_tensor *load_f32(const h3_adaln_curve *curve, h3_gpu *gpu,
                                const char *name, uint32_t rows,
                                uint32_t columns, char *error,
                                size_t error_size) {
+    if (curve->store) {
+        /* The store expands F16/quantized payloads (ComfyUI and unsloth
+         * keep these projections in F32 or F16). */
+        uint64_t shape[2] = {rows, columns};
+        return h3_weight_load_f32(curve->store, gpu, name, columns ? 2 : 1,
+                                  shape, error, error_size);
+    }
     const h3_st_tensor *tensor = h3_st_find(&curve->header, name);
     int ndim = columns ? 2 : 1;
     if (!tensor || tensor->dtype != H3_DTYPE_F32 || tensor->ndim != ndim ||

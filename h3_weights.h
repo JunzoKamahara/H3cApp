@@ -34,6 +34,26 @@ void h3_weight_store_fingerprint(const h3_weight_store *store, uint8_t out[32]);
 void h3_weight_store_fingerprint_legacy(const h3_weight_store *store,
                                         uint8_t out[32]);
 
+/* Rows per attention head in the H3 DiT and its token refiner. */
+#define H3_QKV_HEAD_DIM 128u
+
+/* 1 when `name` is a fused QKV weight this store keeps in ComfyUI's
+ * [all Q; all K; all V] row order, which loads reorder to the released
+ * per-head [q; k; v] (h3_gpu_dequantize does it on the way); sets the Q
+ * row count and rows per head. */
+int h3_weight_qkv_reorder(const h3_weight_store *store, const char *name,
+                          const h3_st_tensor *tensor, uint32_t *inner,
+                          uint32_t *head_dim);
+
+/* Every tensor in the store, shard by shard (for tools that walk them). */
+size_t h3_weight_store_tensor_count(const h3_weight_store *store);
+const h3_st_tensor *h3_weight_store_tensor(const h3_weight_store *store,
+                                           size_t index,
+                                           const h3_st_header **header);
+
+/* Looks a tensor up by the released checkpoints' name, also under the
+ * spellings quantized re-publications use (llama.cpp's blk.N.attn_q,
+ * mlx-vlm's language_model.model.*, transformers' model.layers.*). */
 const h3_st_tensor *h3_weight_find(const h3_weight_store *store,
                                    const char *name,
                                    const h3_st_header **header);

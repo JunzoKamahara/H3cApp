@@ -4485,3 +4485,258 @@ kernel void h3_silu_mul_bf16(device const ushort *gate [[buffer(0)]],
     float other = h3_bf16_to_f32(up[gid]);
     output[gid] = h3_f32_to_bf16(value / (1.0f + exp(-value)) * other);
 }
+
+// --- Block-quantized weights (GGUF/ggml layouts, see h3_quant.c) ---------
+// One thread expands one block into BF16 (out_f32 == 0) or F32. The layouts
+// and formulas mirror h3_quant.c's reference dequantizers, which the tests
+// compare these against; `quant` is h3_quant.h's h3_quant_type.
+
+struct h3_dequant_args {
+    uint quant;
+    uint blocks;
+    uint out_f32;
+    uint block_elements;
+    // Row reorder for a fused QKV weight stored as [all Q; all K; all V]
+    // (ComfyUI's layout) into the engine's per-head [q; k; v]: columns is
+    // the row length, qkv_inner the Q (= K = V) row count, qkv_head_dim the
+    // rows per head. qkv_inner == 0: no reorder.
+    uint columns;
+    uint qkv_inner;
+    uint qkv_head_dim;
+};
+
+inline ulong h3_q_destination(constant h3_dequant_args &args, ulong element) {
+    if (args.qkv_inner == 0) return element;
+    ulong row = element / args.columns, column = element % args.columns;
+    ulong part = row / args.qkv_inner, within = row % args.qkv_inner;
+    ulong head = within / args.qkv_head_dim, d = within % args.qkv_head_dim;
+    ulong destination = head * 3 * args.qkv_head_dim + part * args.qkv_head_dim + d;
+    return destination * args.columns + column;
+}
+
+inline ushort h3_q_u16(device const uchar *b) {
+    return ushort(b[0]) | (ushort(b[1]) << 8);
+}
+
+inline uint h3_q_u32(device const uchar *b) {
+    return uint(b[0]) | (uint(b[1]) << 8) | (uint(b[2]) << 16) | (uint(b[3]) << 24);
+}
+
+inline float h3_q_half(device const uchar *b) {
+    return float(as_type<half>(h3_q_u16(b)));
+}
+
+inline void h3_q_put(device ushort *bf16, device float *f32, bool to_f32,
+                     ulong index, float value) {
+    if (to_f32) f32[index] = value;
+    else bf16[index] = h3_f32_to_bf16(value);
+}
+
+inline void h3_q_scale_min_k4(int j, device const uchar *q, thread uint &sc,
+                              thread uint &m) {
+    if (j < 4) {
+        sc = q[j] & 63;
+        m = q[j + 4] & 63;
+    } else {
+        sc = (q[j + 4] & 0xF) | ((q[j - 4] >> 6) << 4);
+        m = (q[j + 4] >> 4) | ((q[j] >> 6) << 4);
+    }
+}
+
+kernel void h3_dequantize(device const uchar *raw [[buffer(0)]],
+                          device ushort *out_bf16 [[buffer(1)]],
+                          device float *out_f32 [[buffer(2)]],
+                          constant h3_dequant_args &args [[buffer(3)]],
+                          uint gid [[thread_position_in_grid]]) {
+    if (gid >= args.blocks) return;
+    bool to_f32 = args.out_f32 != 0;
+    ulong block = gid;
+    // Every block lies within one row (rows are whole blocks), so a row
+    // reorder only moves where the block starts.
+    ulong start = h3_q_destination(args, block * args.block_elements);
+    switch (args.quant) {
+    case 1: { // F32 (copied - only to reorder rows)
+        device const uchar *b = raw + block * 4;
+        h3_q_put(out_bf16, out_f32, to_f32, start, as_type<float>(h3_q_u32(b)));
+        break;
+    }
+    case 2: { // F16
+        h3_q_put(out_bf16, out_f32, to_f32, start, h3_q_half(raw + block * 2));
+        break;
+    }
+    case 3: { // BF16 (copied - only to reorder rows)
+        h3_q_put(out_bf16, out_f32, to_f32, start,
+                 h3_bf16_to_f32(h3_q_u16(raw + block * 2)));
+        break;
+    }
+    case 4: { // Q4_0
+        device const uchar *b = raw + block * 18;
+        float d = h3_q_half(b);
+        ulong y = start;
+        for (int j = 0; j < 16; j++) {
+            h3_q_put(out_bf16, out_f32, to_f32, y + j, float(int(b[2 + j] & 0x0F) - 8) * d);
+            h3_q_put(out_bf16, out_f32, to_f32, y + j + 16, float(int(b[2 + j] >> 4) - 8) * d);
+        }
+        break;
+    }
+    case 5: { // Q4_1
+        device const uchar *b = raw + block * 20;
+        float d = h3_q_half(b), m = h3_q_half(b + 2);
+        ulong y = start;
+        for (int j = 0; j < 16; j++) {
+            h3_q_put(out_bf16, out_f32, to_f32, y + j, float(b[4 + j] & 0x0F) * d + m);
+            h3_q_put(out_bf16, out_f32, to_f32, y + j + 16, float(b[4 + j] >> 4) * d + m);
+        }
+        break;
+    }
+    case 6: case 7: { // Q5_0, Q5_1
+        bool one = args.quant == 7;
+        device const uchar *b = raw + block * (one ? 24 : 22);
+        float d = h3_q_half(b), m = one ? h3_q_half(b + 2) : 0.0f;
+        uint qh = h3_q_u32(b + (one ? 4 : 2));
+        device const uchar *qs = b + (one ? 8 : 6);
+        ulong y = start;
+        for (int j = 0; j < 16; j++) {
+            uint h0 = ((qh >> uint(j)) << 4) & 0x10;
+            uint h1 = (qh >> uint(j + 12)) & 0x10;
+            int x0 = int((qs[j] & 0x0F) | h0), x1 = int((qs[j] >> 4) | h1);
+            if (one) {
+                h3_q_put(out_bf16, out_f32, to_f32, y + j, float(x0) * d + m);
+                h3_q_put(out_bf16, out_f32, to_f32, y + j + 16, float(x1) * d + m);
+            } else {
+                h3_q_put(out_bf16, out_f32, to_f32, y + j, float(x0 - 16) * d);
+                h3_q_put(out_bf16, out_f32, to_f32, y + j + 16, float(x1 - 16) * d);
+            }
+        }
+        break;
+    }
+    case 8: { // Q8_0
+        device const uchar *b = raw + block * 34;
+        float d = h3_q_half(b);
+        device const char *qs = (device const char *)(b + 2);
+        ulong y = start;
+        for (int j = 0; j < 32; j++)
+            h3_q_put(out_bf16, out_f32, to_f32, y + j, float(qs[j]) * d);
+        break;
+    }
+    case 9: { // Q2_K
+        device const uchar *b = raw + block * 84;
+        device const uchar *q = b + 16;
+        float d = h3_q_half(b + 80), dmin = h3_q_half(b + 82);
+        ulong y = start;
+        int is = 0;
+        for (int n = 0; n < 256; n += 128) {
+            int shift = 0;
+            for (int j = 0; j < 4; j++) {
+                uint sc = b[is++];
+                float dl = d * float(sc & 0xF), ml = dmin * float(sc >> 4);
+                for (int l = 0; l < 16; l++)
+                    h3_q_put(out_bf16, out_f32, to_f32, y++, dl * float((q[l] >> shift) & 3) - ml);
+                sc = b[is++];
+                dl = d * float(sc & 0xF);
+                ml = dmin * float(sc >> 4);
+                for (int l = 0; l < 16; l++)
+                    h3_q_put(out_bf16, out_f32, to_f32, y++, dl * float((q[l + 16] >> shift) & 3) - ml);
+                shift += 2;
+            }
+            q += 32;
+        }
+        break;
+    }
+    case 10: { // Q3_K
+        device const uchar *b = raw + block * 110;
+        device const uchar *hm = b;
+        device const uchar *q = b + 32;
+        float d_all = h3_q_half(b + 108);
+        uint aux0 = h3_q_u32(b + 96), aux1 = h3_q_u32(b + 100), tmp = h3_q_u32(b + 104);
+        const uint kmask1 = 0x03030303u, kmask2 = 0x0f0f0f0fu;
+        uint a[4];
+        a[2] = ((aux0 >> 4) & kmask2) | (((tmp >> 4) & kmask1) << 4);
+        a[3] = ((aux1 >> 4) & kmask2) | (((tmp >> 6) & kmask1) << 4);
+        a[0] = (aux0 & kmask2) | (((tmp >> 0) & kmask1) << 4);
+        a[1] = (aux1 & kmask2) | (((tmp >> 2) & kmask1) << 4);
+        ulong y = start;
+        int is = 0;
+        uint m = 1;
+        for (int n = 0; n < 256; n += 128) {
+            int shift = 0;
+            for (int j = 0; j < 4; j++) {
+                int s = int(char((a[is / 4] >> (8 * (is % 4))) & 0xFF)); is++;
+                float dl = d_all * float(s - 32);
+                for (int l = 0; l < 16; l++)
+                    h3_q_put(out_bf16, out_f32, to_f32, y++,
+                             dl * float(int((q[l] >> shift) & 3) - ((hm[l] & m) ? 0 : 4)));
+                s = int(char((a[is / 4] >> (8 * (is % 4))) & 0xFF)); is++;
+                dl = d_all * float(s - 32);
+                for (int l = 0; l < 16; l++)
+                    h3_q_put(out_bf16, out_f32, to_f32, y++,
+                             dl * float(int((q[l + 16] >> shift) & 3) - ((hm[l + 16] & m) ? 0 : 4)));
+                shift += 2;
+                m <<= 1;
+            }
+            q += 32;
+        }
+        break;
+    }
+    case 11: case 12: { // Q4_K, Q5_K
+        bool five = args.quant == 12;
+        device const uchar *b = raw + block * (five ? 176 : 144);
+        float d = h3_q_half(b), dmin = h3_q_half(b + 2);
+        device const uchar *scales = b + 4;
+        device const uchar *qh = b + 16;
+        device const uchar *q = b + (five ? 48 : 16);
+        ulong y = start;
+        int is = 0;
+        uint u1 = 1, u2 = 2;
+        for (int j = 0; j < 256; j += 64) {
+            uint sc, mn;
+            h3_q_scale_min_k4(is + 0, scales, sc, mn);
+            float d1 = d * float(sc), m1 = dmin * float(mn);
+            h3_q_scale_min_k4(is + 1, scales, sc, mn);
+            float d2 = d * float(sc), m2 = dmin * float(mn);
+            for (int l = 0; l < 32; l++) {
+                uint v = (q[l] & 0xF) + (five && (qh[l] & u1) ? 16 : 0);
+                h3_q_put(out_bf16, out_f32, to_f32, y + l, d1 * float(v) - m1);
+            }
+            for (int l = 0; l < 32; l++) {
+                uint v = (q[l] >> 4) + (five && (qh[l] & u2) ? 16 : 0);
+                h3_q_put(out_bf16, out_f32, to_f32, y + 32 + l, d2 * float(v) - m2);
+            }
+            y += 64;
+            q += 32;
+            is += 2;
+            u1 <<= 2;
+            u2 <<= 2;
+        }
+        break;
+    }
+    case 13: { // Q6_K
+        device const uchar *b = raw + block * 210;
+        device const uchar *ql = b;
+        device const uchar *qh = b + 128;
+        device const char *sc = (device const char *)(b + 192);
+        float d = h3_q_half(b + 208);
+        ulong y = start;
+        for (int n = 0; n < 256; n += 128) {
+            for (int l = 0; l < 32; l++) {
+                int is = l / 16;
+                int q1 = int((ql[l] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+                int q2 = int((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+                int q3 = int((ql[l] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+                int q4 = int((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
+                h3_q_put(out_bf16, out_f32, to_f32, y + l, d * float(sc[is + 0]) * float(q1));
+                h3_q_put(out_bf16, out_f32, to_f32, y + l + 32, d * float(sc[is + 2]) * float(q2));
+                h3_q_put(out_bf16, out_f32, to_f32, y + l + 64, d * float(sc[is + 4]) * float(q3));
+                h3_q_put(out_bf16, out_f32, to_f32, y + l + 96, d * float(sc[is + 6]) * float(q4));
+            }
+            y += 128;
+            ql += 64;
+            qh += 32;
+            sc += 8;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}

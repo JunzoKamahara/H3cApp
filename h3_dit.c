@@ -3,6 +3,7 @@
 #include "h3_adaln_curve.h"
 #include "h3_dit_schedule.h"
 #include "h3_lora.h"
+#include "h3_quant.h"
 #include "h3_weights.h"
 
 #include <errno.h>
@@ -66,6 +67,15 @@ typedef struct {
     uint64_t file_offset;
     size_t elements;
     unsigned field;
+    /* h3_quant_type of a block-quantized source (a GGUF checkpoint): its
+     * raw bytes stream into the slot's staging buffer and are expanded to
+     * the BF16 slot on the GPU just before the block runs. 0: BF16. */
+    uint32_t quant;
+    uint64_t bytes;
+    /* Set for a QKV weight stored as [Q; K; V] (h3_weight_qkv_reorder): the
+     * expansion also restores the per-head row order. */
+    uint32_t qkv_inner;
+    uint32_t qkv_head_dim;
 } h3_dit_stream_source;
 
 typedef struct {
@@ -205,6 +215,10 @@ struct h3_dit {
     h3_gpu_tensor *audio_patch_b;
     h3_dit_block blocks[H3_DIT_BLOCKS];
     h3_dit_block stream_slots[2];
+    /* Raw quantized bytes per slot and matrix (field order), allocated only
+     * when some streamed source is block-quantized (stream_quantized). */
+    h3_gpu_tensor *stream_raw[2][STREAM_MATRICES];
+    int stream_quantized;
     h3_dit_stream_layer stream_layers[H3_DIT_BLOCKS];
     unsigned stream_ready_layer;
     unsigned stream_ready_slot;
@@ -726,9 +740,25 @@ static int prepare_stream_source(h3_dit *dit,
              name);
         return 0;
     }
-    if (!header || tensor->dtype != H3_DTYPE_BF16 || tensor->ndim != 2 ||
+    h3_quant_type quant = (h3_quant_type)tensor->quant;
+    int quantized = tensor->dtype != H3_DTYPE_BF16 && quant != H3_QUANT_NONE &&
+                    quant != H3_QUANT_F32 && quant != H3_QUANT_BF16;
+    uint32_t qkv_inner = 0, qkv_head_dim = 0;
+    if (h3_weight_qkv_reorder(dit->weights, name, tensor, &qkv_inner,
+                              &qkv_head_dim) &&
+        !quantized && tensor->dtype == H3_DTYPE_BF16) {
+        /* A BF16 [Q; K; V] weight streams through the staging buffer too,
+         * so the expansion can reorder its rows. */
+        quant = H3_QUANT_BF16;
+        quantized = 1;
+    }
+    uint64_t bytes = quantized ? h3_quant_bytes(quant, rows * columns) :
+                                 rows * columns * sizeof(uint16_t);
+    if (!header || (tensor->dtype != H3_DTYPE_BF16 && !quantized) ||
+        tensor->ndim != 2 ||
         tensor->shape[0] != rows || tensor->shape[1] != columns ||
-        rows > SIZE_MAX / columns) {
+        rows > SIZE_MAX / columns || !bytes ||
+        bytes != tensor->data_end - tensor->data_begin) {
         fail(error, error_size, "streaming weight has the wrong schema: %s",
              name);
         return 0;
@@ -737,6 +767,11 @@ static int prepare_stream_source(h3_dit *dit,
     source->file_offset = tensor->file_offset;
     source->elements = (size_t)(rows * columns);
     source->field = field;
+    source->quant = quantized ? (uint32_t)quant : 0;
+    source->bytes = bytes;
+    source->qkv_inner = qkv_inner;
+    source->qkv_head_dim = qkv_head_dim;
+    if (quantized) dit->stream_quantized = 1;
     return 1;
 }
 
@@ -808,6 +843,20 @@ typedef struct {
 static void *read_stream_matrix_thread(void *opaque) {
     h3_dit_matrix_job *job = opaque;
     job->error[0] = '\0';
+    if (job->source->quant) {
+        if (!job->target || !h3_gpu_tensor_stream_file_i8(
+                job->target, job->source->path, job->source->file_offset,
+                (size_t)job->source->bytes, job->error, sizeof(job->error))) {
+            if (!job->error[0])
+                snprintf(job->error, sizeof(job->error),
+                         "invalid quantized streaming destination");
+            job->ok = 0;
+            return NULL;
+        }
+        job->ok = 1;
+        job->bytes = job->source->bytes;
+        return NULL;
+    }
     if (!job->target || !h3_gpu_tensor_stream_file_bf16(
             job->target, job->source->path, job->source->file_offset,
             job->source->elements, job->error, sizeof(job->error))) {
@@ -838,7 +887,8 @@ static int read_stream_layer(h3_dit_stream_job *job) {
 
     for (unsigned index = 0; index < STREAM_MATRICES; index++) {
         matrix_jobs[index].source = &layer->sources[index];
-        matrix_jobs[index].target =
+        matrix_jobs[index].target = layer->sources[index].quant ?
+            job->dit->stream_raw[job->slot][layer->sources[index].field] :
             stream_slot_target(slot, layer->sources[index].field);
         matrix_jobs[index].ok = 0;
         matrix_jobs[index].bytes = 0;
@@ -1727,6 +1777,25 @@ static int load_core(h3_dit *dit, h3_dit_progress progress, void *opaque,
             fail(error, error_size, "SSD stream has no active DiT block");
             return 0;
         }
+        if (dit->stream_quantized) {
+            /* Every block quantizes each matrix the same way, so the first
+             * active block's sizes fit all of them. */
+            const h3_dit_stream_layer *layer = &dit->stream_layers[first];
+            for (unsigned slot = 0; slot < 2; slot++) {
+                for (unsigned index = 0; index < STREAM_MATRICES; index++) {
+                    const h3_dit_stream_source *source = &layer->sources[index];
+                    if (!source->quant) continue;
+                    dit->stream_raw[slot][source->field] =
+                        h3_gpu_tensor_new_i8(dit->gpu, (size_t)source->bytes);
+                    if (!dit->stream_raw[slot][source->field]) {
+                        fail(error, error_size,
+                             "cannot allocate quantized stream staging: %s",
+                             h3_gpu_error(dit->gpu));
+                        return 0;
+                    }
+                }
+            }
+        }
         h3_dit_stream_job job = {
             .dit = dit, .layer = first, .slot = 0
         };
@@ -2412,7 +2481,15 @@ static h3_dit *load_dit(const char *weight_directory,
      * the weight fingerprint), so dense and curve schedules never mix. */
     const char *curve_path = getenv("H3_ADALN_CURVE");
     h3_adaln_curve *curve = NULL;
-    if (curve_path && *curve_path) {
+    if (h3_adaln_curve_in_store(dit->weights)) {
+        /* A curve-form checkpoint has no dense AdaLN to fall back on. */
+        curve_path = "the checkpoint itself";
+        curve = h3_adaln_curve_from_store(dit->weights, error, error_size);
+        if (!curve) goto failed;
+        uint8_t curve_id[32];
+        h3_adaln_curve_fingerprint(curve, curve_id);
+        memcpy(model + 16, curve_id, 16);
+    } else if (curve_path && *curve_path) {
         curve = h3_adaln_curve_open(curve_path, model, error, error_size);
         if (!curve) goto failed;
         uint8_t curve_id[32];
@@ -2685,6 +2762,33 @@ static int leave_token_reduction_adaln(h3_dit *dit, unsigned block,
     dit->hidden = dit->attention_output;
     dit->attention_output = reduced;
     dit->token_reduction_active = 0;
+    return 1;
+}
+
+/* A block-quantized stream (GGUF checkpoint) read raw bytes into the
+ * slot's staging buffers; expand them into the slot's BF16 matrices ahead
+ * of the block's own work, in the same command. */
+static int expand_streamed(h3_dit *dit, unsigned block, unsigned slot_index,
+                           h3_dit_block *slot, char *error,
+                           size_t error_size) {
+    if (!dit->stream_quantized) return 1;
+    const h3_dit_stream_layer *layer = &dit->stream_layers[block];
+    for (unsigned index = 0; index < STREAM_MATRICES; index++) {
+        const h3_dit_stream_source *source = &layer->sources[index];
+        if (!source->quant) continue;
+        h3_quant_type quant = (h3_quant_type)source->quant;
+        uint32_t per_block = h3_quant_block_elements(quant);
+        if (!gpu_op(dit, h3_gpu_dequantize(
+                dit->gpu, stream_slot_target(slot, source->field),
+                dit->stream_raw[slot_index][source->field], source->quant,
+                (uint32_t)(source->elements / per_block), per_block,
+                h3_quant_block_bytes(quant),
+                (uint32_t)(source->elements / (source->qkv_inner ?
+                                              3u * source->qkv_inner : 1u)),
+                source->qkv_inner, source->qkv_head_dim),
+                error, error_size, "expand quantized DiT block"))
+            return 0;
+    }
     return 1;
 }
 
@@ -3319,7 +3423,9 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
                 streamed_weight.fc1 = slot->fc1;
                 streamed_weight.fc2 = slot->fc2;
                 weight = &streamed_weight;
-                if (!patch_streamed_bf16(dit, block, weight, error,
+                if (!expand_streamed(dit, block, dit->stream_ready_slot,
+                                     slot, error, error_size) ||
+                    !patch_streamed_bf16(dit, block, weight, error,
                                          error_size)) return 0;
 
                 unsigned future = next_active_block(dit, block);
@@ -4321,6 +4427,9 @@ void h3_dit_free(h3_dit *dit) {
         free_block(&dit->blocks[block]);
     free_block(&dit->stream_slots[0]);
     free_block(&dit->stream_slots[1]);
+    for (unsigned slot = 0; slot < 2; slot++)
+        for (unsigned index = 0; index < STREAM_MATRICES; index++)
+            h3_gpu_tensor_free(dit->stream_raw[slot][index]);
     free_attention_slot(&dit->attention_slots[0]);
     free_attention_slot(&dit->attention_slots[1]);
     free(dit->attention_cache_path);

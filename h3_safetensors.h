@@ -31,6 +31,11 @@ typedef struct {
     uint64_t data_begin;
     uint64_t data_end;
     uint64_t file_offset;
+    /* h3_quant_type (h3_quant.h) for tensors read from a GGUF file: the
+     * block format of the payload. 0 (H3_QUANT_NONE) for safetensors, whose
+     * dtype says it all; GGUF F32/F16/BF16 tensors also set dtype, so code
+     * that only reads those types needs no change. */
+    uint32_t quant;
 } h3_st_tensor;
 
 typedef struct {
@@ -53,6 +58,12 @@ typedef struct {
 
 int h3_st_read_header(const char *path, h3_st_header *header,
                       char *error, size_t error_size);
+/* A GGUF file's tensor table in the same form (h3_gguf.c): shapes in
+ * row-major order (GGUF lists them fastest-first), file_offset absolute,
+ * data_begin/data_end relative to the aligned data section, quant set,
+ * and the file's string key/values as metadata. */
+int h3_gguf_read_header(const char *path, h3_st_header *header,
+                        char *error, size_t error_size);
 void h3_st_free_header(h3_st_header *header);
 const h3_st_tensor *h3_st_find(const h3_st_header *header, const char *name);
 /* Looks up a string-valued "__metadata__" key (e.g. "alpha"). Returns NULL

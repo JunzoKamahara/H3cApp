@@ -423,6 +423,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_linear_f32_tiled_bf16_map",
             @"h3_cast_f32_to_bf16",
             @"h3_cast_bf16_to_f32",
+            @"h3_dequantize",
             @"h3_cast_bf16_to_f32_bias",
             @"h3_cast_bf16_to_f16_qkv", @"h3_cast_f16_to_bf16_flat",
             @"h3_lora_add_rows_bf16", @"h3_lora_add_int8",
@@ -618,6 +619,11 @@ h3_gpu_tensor *h3_gpu_tensor_from_f32(h3_gpu *gpu, const float *values,
 h3_gpu_tensor *h3_gpu_tensor_from_bf16(h3_gpu *gpu, const uint16_t *values,
                                        size_t elements) {
     return h3_gpu_tensor_new(gpu, values, elements, sizeof(uint16_t), H3_GPU_BF16);
+}
+
+h3_gpu_tensor *h3_gpu_tensor_from_i8(h3_gpu *gpu, const int8_t *values,
+                                     size_t elements) {
+    return h3_gpu_tensor_new(gpu, values, elements, sizeof(int8_t), H3_GPU_I8);
 }
 
 h3_gpu_tensor *h3_gpu_tensor_from_u32(h3_gpu *gpu, const uint32_t *values,
@@ -1333,6 +1339,46 @@ int h3_gpu_cast_f32_to_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
             [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
             [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
             [encoder setBytes:&elements length:sizeof(elements) atIndex:2];
+        });
+}
+
+int h3_gpu_command_open(const h3_gpu *opaque) {
+    if (!opaque) return 0;
+    H3GPU *gpu = GPU((h3_gpu *)(void *)opaque);
+    return gpu.command != nil || gpu.inflightCommands.count != 0;
+}
+
+int h3_gpu_dequantize(h3_gpu *opaque, h3_gpu_tensor *output,
+                      const h3_gpu_tensor *raw, uint32_t quant,
+                      uint32_t blocks, uint32_t block_elements,
+                      uint32_t block_bytes, uint32_t columns,
+                      uint32_t qkv_inner, uint32_t qkv_head_dim) {
+    H3GPU *gpu = GPU(opaque);
+    size_t values = (size_t)blocks * block_elements;
+    if (!h3_gpu_require_elements(gpu, raw, (size_t)blocks * block_bytes,
+                                 @"dequantize input") ||
+        TENSOR(raw).dtype != H3_GPU_I8 ||
+        !h3_gpu_require_elements(gpu, output, values, @"dequantize output") ||
+        (TENSOR(output).dtype != H3_GPU_BF16 &&
+         TENSOR(output).dtype != H3_GPU_F32)) return 0;
+    if (qkv_inner && (!columns || !qkv_head_dim || qkv_inner % qkv_head_dim ||
+                      columns % block_elements ||
+                      values != (size_t)3 * qkv_inner * columns)) {
+        h3_gpu_set_error(gpu, @"invalid QKV row reorder");
+        return 0;
+    }
+    struct {
+        uint32_t quant, blocks, out_f32, block_elements;
+        uint32_t columns, qkv_inner, qkv_head_dim;
+    } args = {
+        quant, blocks, TENSOR(output).dtype == H3_GPU_F32 ? 1u : 0u,
+        block_elements, columns, qkv_inner, qkv_head_dim };
+    return h3_gpu_dispatch_1d(gpu, @"h3_dequantize", blocks,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(raw).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:2];
+            [encoder setBytes:&args length:sizeof(args) atIndex:3];
         });
 }
 

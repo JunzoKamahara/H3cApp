@@ -1,4 +1,5 @@
 #include "h3_text_encoder.h"
+#include "h3_quant.h"
 
 #include "h3_weights.h"
 
@@ -222,9 +223,15 @@ static int read_weight_bf16(const h3_weight_store *store, const char *name,
         fail(error, error_size, "required weight is absent: %s", name);
         return 0;
     }
-    if (tensor->dtype != H3_DTYPE_BF16 || tensor->ndim != ndim) {
+    h3_quant_type quant = (h3_quant_type)tensor->quant;
+    if (quant == H3_QUANT_NONE && tensor->dtype == H3_DTYPE_F32)
+        quant = H3_QUANT_F32; /* converted below like any expansion */
+    int quantized = tensor->dtype != H3_DTYPE_BF16 && quant != H3_QUANT_NONE &&
+                    quant != H3_QUANT_BF16;
+    if ((tensor->dtype != H3_DTYPE_BF16 && !quantized) || tensor->ndim != ndim) {
         fail(error, error_size,
              "weight %s has dtype/rank %s/%d, expected BF16/%d", name,
+             quantized || quant ? h3_quant_name(quant) :
              h3_dtype_name(tensor->dtype), tensor->ndim, ndim);
         return 0;
     }
@@ -241,6 +248,25 @@ static int read_weight_bf16(const h3_weight_store *store, const char *name,
             return 0;
         }
         elements *= shape[dimension];
+    }
+    if (quantized && elements <= SIZE_MAX) {
+        /* A quantized text encoder (GGUF): expanded on this prefetch thread
+         * on the CPU, straight into the BF16 destination. */
+        uint64_t bytes = h3_quant_bytes(quant, elements);
+        void *raw = bytes == tensor->data_end - tensor->data_begin ?
+            malloc((size_t)bytes) : NULL;
+        uint16_t *bf16 = raw ? malloc((size_t)elements * sizeof(*bf16)) : NULL;
+        int ok = bf16 &&
+            h3_st_read_data(header, tensor, raw, (size_t)bytes, error,
+                            error_size) &&
+            h3_quant_dequantize_bf16(quant, raw, elements, bf16) &&
+            h3_gpu_tensor_write_bf16(destination, bf16, (size_t)elements);
+        free(raw);
+        free(bf16);
+        if (!ok && error && error_size && !error[0])
+            fail(error, error_size, "cannot expand %s (%s)", name,
+                 h3_quant_name(quant));
+        return ok;
     }
     if (elements > SIZE_MAX ||
         !h3_gpu_tensor_read_file_bf16(destination, header->path,

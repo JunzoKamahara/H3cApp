@@ -21,7 +21,8 @@ LIB_C := h3.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c \
 	h3_dit_schedule.c h3_dit.c h3_lora.c
 
 LIB_C += h3_video_vae.c h3_video_encoder.c h3_audio_vae.c \
-	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c h3_adaln_curve.c
+	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c h3_adaln_curve.c \
+	h3_quant.c h3_gguf.c
 LIB_M := h3_metal.m h3_gpu.m h3_tokenizer.m h3_av_writer.m h3_av_reader.m
 LIB_OBJ := $(LIB_C:.c=.o) $(LIB_M:.m=.o)
 
@@ -72,6 +73,11 @@ build_adaln_curve: h3_build_adaln_curve.o $(LIB_OBJ)
 h3_adaln_curve_check: tests/adaln_curve_check.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# Tensor-by-tensor comparison of a quantized re-publication (GGUF) against
+# the released weights (needs both; not in `make test`).
+h3_weight_compare: tests/weight_compare.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 # Plain-C generation driver (see tools/ccv_eval/h3_generate_cli.c) - a
 # Swift-free equivalent of native/H3Spike, built to validate
 # H3_ATTENTION_BACKEND=ccv_dense end-to-end without hitting a still-
@@ -100,6 +106,9 @@ h3_text_tests: tests/test_text_metal.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 h3_audio_gpu_tests: tests/test_audio_gpu.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
+h3_quant_tests: tests/test_quant.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 h3_determinism_tests: tests/test_determinism.o $(LIB_OBJ)
@@ -158,13 +167,14 @@ h3_real_video_vae_test: tests/test_real_video_vae.o $(LIB_OBJ)
 h3_semantic_vae_test: tests/test_semantic_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-test: h3_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
+test: h3_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
 	h3_audio_gpu_tests h3_determinism_tests h3_real_audio_vae_test \
 	h3_real_audio_encoder_test h3_real_video_encoder_test \
 	h3_real_qwen_vision_test h3_real_multimodal_text_test \
 	h3_real_ref_video_text_test
 
 	./h3_tests
+	./h3_quant_tests
 	@if test -f misc/fixtures/h3_dit.safetensors && \
 	         test -f misc/fixtures/h3_dit_bf16.safetensors; then \
 		./h3_metal_tests misc/fixtures/h3_dit.safetensors; \
@@ -269,5 +279,5 @@ clean:
 		h3_real_multimodal_text_test h3_real_ref_video_text_test \
 		h3_real_dit_schedule_test h3_real_dit_test h3_semantic_dit_test \
 		h3_real_video_vae_test h3_semantic_vae_test \
-	h3_dit_bench h3_dit_bench_864 build_adaln_curve h3_adaln_curve_check \
+	h3_dit_bench h3_dit_bench_864 build_adaln_curve h3_adaln_curve_check h3_quant_tests h3_weight_compare \
 	libh3.a *.o *.d tests/*.o tests/*.d

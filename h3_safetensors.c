@@ -615,7 +615,9 @@ int h3_st_inventory_dir(const char *directory, h3_component_info *info,
     }
     struct dirent *entry;
     while ((entry = readdir(stream)) != NULL) {
-        if (entry->d_name[0] == '.' || !h3_has_suffix(entry->d_name, ".safetensors")) continue;
+        int gguf = h3_has_suffix(entry->d_name, ".gguf");
+        if (entry->d_name[0] == '.' ||
+            (!gguf && !h3_has_suffix(entry->d_name, ".safetensors"))) continue;
         size_t length = strlen(directory) + strlen(entry->d_name) + 2;
         char *path = malloc(length);
         if (!path) {
@@ -625,7 +627,8 @@ int h3_st_inventory_dir(const char *directory, h3_component_info *info,
         }
         snprintf(path, length, "%s/%s", directory, entry->d_name);
         h3_st_header header;
-        int ok = h3_st_read_header(path, &header, error, error_size);
+        int ok = gguf ? h3_gguf_read_header(path, &header, error, error_size) :
+                        h3_st_read_header(path, &header, error, error_size);
         free(path);
         if (!ok) {
             closedir(stream);
@@ -642,7 +645,7 @@ int h3_st_inventory_dir(const char *directory, h3_component_info *info,
     }
     closedir(stream);
     if (!info->files) {
-        if (error && error_size) snprintf(error, error_size, "%s: no safetensors files", directory);
+        if (error && error_size) snprintf(error, error_size, "%s: no safetensors or GGUF files", directory);
         return 0;
     }
     return 1;

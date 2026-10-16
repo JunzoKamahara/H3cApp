@@ -1,5 +1,7 @@
 #include "h3_weights.h"
 
+#include "h3_quant.h"
+
 #include <dirent.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -10,6 +12,10 @@
 struct h3_weight_store {
     h3_st_header *headers;
     size_t count;
+    /* Fused QKV weights stored as [all Q; all K; all V] (ComfyUI's layout,
+     * and the quantized files made from its checkpoints) rather than the
+     * released per-head [q; k; v]; loads reorder them. */
+    int qkv_split;
 };
 
 static void fail(char *error, size_t error_size, const char *format, ...) {
@@ -20,11 +26,20 @@ static void fail(char *error, size_t error_size, const char *format, ...) {
     va_end(arguments);
 }
 
+static const h3_st_tensor *find_exact(const h3_weight_store *store,
+                                      const char *name,
+                                      const h3_st_header **header);
+
+static int has_suffix(const char *name, const char *suffix) {
+    size_t length = strlen(name), suffix_length = strlen(suffix);
+    return length > suffix_length &&
+           strcmp(name + length - suffix_length, suffix) == 0;
+}
+
+/* A component directory may hold safetensors shards and/or GGUF files
+ * (h3_gguf.c); both read into the same tensor table. */
 static int safetensors_name(const char *name) {
-    static const char suffix[] = ".safetensors";
-    size_t length = strlen(name);
-    return length > sizeof(suffix) - 1 &&
-           strcmp(name + length - (sizeof(suffix) - 1), suffix) == 0;
+    return has_suffix(name, ".safetensors") || has_suffix(name, ".gguf");
 }
 
 static int compare_paths(const void *left, const void *right) {
@@ -81,7 +96,7 @@ h3_weight_store *h3_weight_store_open(const char *directory,
     }
     closedir(stream);
     if (!count) {
-        fail(error, error_size, "no safetensors shards in %s", directory);
+        fail(error, error_size, "no safetensors or GGUF files in %s", directory);
         free(paths);
         return NULL;
     }
@@ -102,8 +117,12 @@ h3_weight_store *h3_weight_store_open(const char *directory,
     store->count = count;
     for (size_t index = 0; index < count; index++) {
         char detail[384];
-        if (!h3_st_read_header(paths[index], &store->headers[index], detail,
-                               sizeof(detail))) {
+        int read = has_suffix(paths[index], ".gguf") ?
+            h3_gguf_read_header(paths[index], &store->headers[index], detail,
+                                sizeof(detail)) :
+            h3_st_read_header(paths[index], &store->headers[index], detail,
+                              sizeof(detail));
+        if (!read) {
             fail(error, error_size, "%s", detail);
             free_paths(paths, count);
             h3_weight_store_free(store);
@@ -111,7 +130,28 @@ h3_weight_store *h3_weight_store_open(const char *directory,
         }
     }
     free_paths(paths, count);
+    /* ComfyUI-derived checkpoints are recognizable by its curve-form AdaLN
+     * (adaln_t_table, no time embedder); H3_QKV_LAYOUT=split|interleaved
+     * overrides the guess. */
+    store->qkv_split = find_exact(store, "adaln_t_table", NULL) &&
+                       !find_exact(store, "time_embedder.proj_in.weight", NULL);
+    const char *layout = getenv("H3_QKV_LAYOUT");
+    if (layout && !strcmp(layout, "split")) store->qkv_split = 1;
+    if (layout && !strcmp(layout, "interleaved")) store->qkv_split = 0;
     return store;
+}
+
+int h3_weight_qkv_reorder(const h3_weight_store *store, const char *name,
+                          const h3_st_tensor *tensor, uint32_t *inner,
+                          uint32_t *head_dim) {
+    static const char suffix[] = "attn.qkv_proj.weight";
+    if (!store || !store->qkv_split || !name || !tensor ||
+        !has_suffix(name, suffix) || tensor->ndim != 2 ||
+        tensor->shape[0] % (3 * H3_QKV_HEAD_DIM) || tensor->shape[0] > UINT32_MAX)
+        return 0;
+    if (inner) *inner = (uint32_t)(tensor->shape[0] / 3);
+    if (head_dim) *head_dim = H3_QKV_HEAD_DIM;
+    return 1;
 }
 
 void h3_weight_store_free(h3_weight_store *store) {
@@ -182,11 +222,9 @@ void h3_weight_store_fingerprint_legacy(const h3_weight_store *store,
     memcpy(out, &hash, sizeof(hash));
 }
 
-const h3_st_tensor *h3_weight_find(const h3_weight_store *store,
-                                   const char *name,
-                                   const h3_st_header **header) {
-    if (header) *header = NULL;
-    if (!store || !name) return NULL;
+static const h3_st_tensor *find_exact(const h3_weight_store *store,
+                                      const char *name,
+                                      const h3_st_header **header) {
     for (size_t index = 0; index < store->count; index++) {
         const h3_st_tensor *tensor = h3_st_find(&store->headers[index], name);
         if (tensor) {
@@ -195,6 +233,192 @@ const h3_st_tensor *h3_weight_find(const h3_weight_store *store,
         }
     }
     return NULL;
+}
+
+/* The engine asks for the released checkpoints' names; quantized
+ * re-publications of the same weights name them differently. Text encoder
+ * (Qwen3-VL) per-layer tensors as llama.cpp writes them. */
+static const struct { const char *hf, *gguf; } llama_layer_names[] = {
+    {"input_layernorm.weight", "attn_norm.weight"},
+    {"self_attn.q_proj.weight", "attn_q.weight"},
+    {"self_attn.k_proj.weight", "attn_k.weight"},
+    {"self_attn.v_proj.weight", "attn_v.weight"},
+    {"self_attn.o_proj.weight", "attn_output.weight"},
+    {"self_attn.q_norm.weight", "attn_q_norm.weight"},
+    {"self_attn.k_norm.weight", "attn_k_norm.weight"},
+    {"post_attention_layernorm.weight", "ffn_norm.weight"},
+    {"mlp.gate_proj.weight", "ffn_gate.weight"},
+    {"mlp.up_proj.weight", "ffn_up.weight"},
+    {"mlp.down_proj.weight", "ffn_down.weight"},
+};
+
+/* Writes the n-th alternative spelling of name to out; 0 when there are
+ * no more. */
+static int alias_name(const char *name, int n, char *out, size_t size) {
+    static const char text_prefix[] = "model.language_model.";
+    static const char visual_prefix[] = "model.visual.";
+    size_t text_length = sizeof(text_prefix) - 1;
+    size_t visual_length = sizeof(visual_prefix) - 1;
+    if (!strncmp(name, text_prefix, text_length)) {
+        const char *rest = name + text_length;
+        switch (n) {
+        case 0: /* unsloth / transformers without the language_model level */
+            snprintf(out, size, "model.%s", rest);
+            return 1;
+        case 1: /* mlx-vlm */
+            snprintf(out, size, "language_model.model.%s", rest);
+            return 1;
+        case 2: { /* llama.cpp */
+            int layer = -1, used = 0;
+            if (!strcmp(rest, "embed_tokens.weight")) {
+                snprintf(out, size, "token_embd.weight");
+                return 1;
+            }
+            if (sscanf(rest, "layers.%d.%n", &layer, &used) == 1 && used > 0) {
+                for (size_t i = 0; i < sizeof(llama_layer_names) /
+                                       sizeof(*llama_layer_names); i++) {
+                    if (!strcmp(rest + used, llama_layer_names[i].hf)) {
+                        snprintf(out, size, "blk.%d.%s", layer,
+                                 llama_layer_names[i].gguf);
+                        return 1;
+                    }
+                }
+            }
+            out[0] = '\0';
+            return 1; /* no llama.cpp spelling; try nothing for this n */
+        }
+        default:
+            return 0;
+        }
+    }
+    if (!strncmp(name, visual_prefix, visual_length)) {
+        const char *rest = name + visual_length;
+        switch (n) {
+        case 0: snprintf(out, size, "visual.%s", rest); return 1;
+        case 1: snprintf(out, size, "vision_tower.%s", rest); return 1;
+        default: return 0;
+        }
+    }
+    return 0;
+}
+
+size_t h3_weight_store_tensor_count(const h3_weight_store *store) {
+    size_t count = 0;
+    for (size_t index = 0; store && index < store->count; index++)
+        count += store->headers[index].tensor_count;
+    return count;
+}
+
+const h3_st_tensor *h3_weight_store_tensor(const h3_weight_store *store,
+                                           size_t index,
+                                           const h3_st_header **header) {
+    for (size_t shard = 0; store && shard < store->count; shard++) {
+        if (index < store->headers[shard].tensor_count) {
+            if (header) *header = &store->headers[shard];
+            return &store->headers[shard].tensors[index];
+        }
+        index -= store->headers[shard].tensor_count;
+    }
+    return NULL;
+}
+
+const h3_st_tensor *h3_weight_find(const h3_weight_store *store,
+                                   const char *name,
+                                   const h3_st_header **header) {
+    if (header) *header = NULL;
+    if (!store || !name) return NULL;
+    const h3_st_tensor *tensor = find_exact(store, name, header);
+    char alias[256];
+    for (int n = 0; !tensor && alias_name(name, n, alias, sizeof(alias)); n++)
+        if (alias[0]) tensor = find_exact(store, alias, header);
+    return tensor;
+}
+
+/* Reads a quantized payload's raw bytes and expands them on the GPU in a
+ * command of its own. When the caller already has a command open, the
+ * expansion runs on the CPU instead (h3_quant.c): freeing the raw buffer
+ * discards its contents at once, which a not yet executed GPU expansion
+ * in the caller's command would then read. */
+static h3_gpu_tensor *expand_tensor(h3_gpu *gpu, const h3_st_header *header,
+                                    const h3_st_tensor *tensor,
+                                    h3_quant_type quant, size_t elements,
+                                    h3_dtype dtype, uint32_t qkv_inner,
+                                    uint32_t qkv_head_dim, char *error,
+                                    size_t error_size) {
+    uint32_t columns = tensor->ndim == 2 ? (uint32_t)tensor->shape[1] : 0;
+    uint32_t block_elements = h3_quant_block_elements(quant);
+    uint32_t block_bytes = h3_quant_block_bytes(quant);
+    uint64_t bytes = h3_quant_bytes(quant, elements);
+    uint64_t blocks = block_elements ? elements / block_elements : 0;
+    if (!bytes || bytes != tensor->data_end - tensor->data_begin ||
+        blocks > UINT32_MAX) {
+        fail(error, error_size, "weight %s: %s payload does not match its shape",
+             tensor->name, h3_quant_name(quant));
+        return NULL;
+    }
+    char detail[256] = "";
+    if (h3_gpu_command_open(gpu)) {
+        void *raw = malloc((size_t)bytes);
+        float *values = malloc(elements * sizeof(*values));
+        uint16_t *bf16 = dtype == H3_DTYPE_BF16 ?
+            malloc(elements * sizeof(*bf16)) : NULL;
+        int ok = raw && values && (dtype != H3_DTYPE_BF16 || bf16) &&
+            h3_st_read_data(header, tensor, raw, (size_t)bytes, detail,
+                            sizeof(detail)) &&
+            h3_quant_dequantize(quant, raw, elements, values);
+        if (ok && qkv_inner) {
+            /* Same reorder as the GPU path: [Q; K; V] -> per-head [q; k; v]. */
+            float *ordered = malloc(elements * sizeof(*ordered));
+            ok = ordered != NULL;
+            for (size_t row = 0; ok && row < (size_t)3 * qkv_inner; row++) {
+                size_t part = row / qkv_inner, within = row % qkv_inner;
+                size_t head = within / qkv_head_dim, d = within % qkv_head_dim;
+                size_t destination = head * 3 * qkv_head_dim + part * qkv_head_dim + d;
+                memcpy(ordered + destination * columns, values + row * columns,
+                       columns * sizeof(float));
+            }
+            free(values);
+            values = ordered;
+        }
+        h3_gpu_tensor *result = NULL;
+        if (ok && bf16) {
+            for (size_t index = 0; index < elements; index++) {
+                uint32_t bits;
+                memcpy(&bits, &values[index], sizeof(bits));
+                bits += 0x7fffu + ((bits >> 16) & 1u); /* round to nearest even */
+                bf16[index] = (uint16_t)(bits >> 16);
+            }
+            result = h3_gpu_tensor_from_bf16(gpu, bf16, elements);
+        } else if (ok) {
+            result = h3_gpu_tensor_from_f32(gpu, values, elements);
+        }
+        free(raw);
+        free(values);
+        free(bf16);
+        if (!result)
+            fail(error, error_size, "cannot expand %s (%s): %s", tensor->name,
+                 h3_quant_name(quant), detail[0] ? detail : "out of memory");
+        return result;
+    }
+    h3_gpu_tensor *raw = h3_gpu_tensor_new_i8(gpu, (size_t)bytes);
+    h3_gpu_tensor *result = dtype == H3_DTYPE_BF16 ?
+        h3_gpu_tensor_new_bf16(gpu, elements) : h3_gpu_tensor_new_f32(gpu, elements);
+    int ok = raw && result &&
+        h3_gpu_tensor_read_file_i8(raw, header->path, tensor->file_offset,
+                                   (size_t)bytes, detail, sizeof(detail)) &&
+        h3_gpu_begin(gpu) &&
+        h3_gpu_dequantize(gpu, result, raw, (uint32_t)quant, (uint32_t)blocks,
+                          block_elements, block_bytes, columns, qkv_inner,
+                          qkv_head_dim) &&
+        h3_gpu_submit(gpu);
+    h3_gpu_tensor_free(raw);
+    if (!ok) {
+        fail(error, error_size, "cannot expand %s (%s): %s", tensor->name,
+             h3_quant_name(quant), detail[0] ? detail : h3_gpu_error(gpu));
+        h3_gpu_tensor_free(result);
+        return NULL;
+    }
+    return result;
 }
 
 static h3_gpu_tensor *load_tensor(const h3_weight_store *store, h3_gpu *gpu,
@@ -207,9 +431,29 @@ static h3_gpu_tensor *load_tensor(const h3_weight_store *store, h3_gpu *gpu,
         fail(error, error_size, "required weight is absent: %s", name);
         return NULL;
     }
-    if (tensor->dtype != dtype || tensor->ndim != ndim) {
+    /* A quantized (GGUF block or F16) payload is expanded on the GPU to
+     * the dtype asked for. */
+    h3_quant_type quant = (h3_quant_type)tensor->quant;
+    /* Quantized and F16 payloads expand to the dtype asked for; F32 and BF16
+     * convert into each other (GGUF files keep norms in F32 where the
+     * released checkpoints have BF16). */
+    if (quant == H3_QUANT_NONE && tensor->dtype != dtype &&
+        (tensor->dtype == H3_DTYPE_F32 || tensor->dtype == H3_DTYPE_BF16))
+        quant = tensor->dtype == H3_DTYPE_F32 ? H3_QUANT_F32 : H3_QUANT_BF16;
+    int expand = tensor->dtype != dtype && quant != H3_QUANT_NONE;
+    uint32_t qkv_inner = 0, qkv_head_dim = 0;
+    if (h3_weight_qkv_reorder(store, name, tensor, &qkv_inner, &qkv_head_dim) &&
+        (expand || tensor->dtype == dtype)) {
+        /* A plain BF16/F32 tensor goes through the expansion kernel as a
+         * copy, just to reorder its rows. */
+        if (!expand)
+            quant = tensor->dtype == H3_DTYPE_BF16 ? H3_QUANT_BF16 : H3_QUANT_F32;
+        expand = 1;
+    }
+    if ((tensor->dtype != dtype && !expand) || tensor->ndim != ndim) {
         fail(error, error_size, "weight %s has dtype/rank %s/%d, expected %s/%d",
-             name, h3_dtype_name(tensor->dtype), tensor->ndim,
+             name, quant != H3_QUANT_NONE ? h3_quant_name(quant) :
+             h3_dtype_name(tensor->dtype), tensor->ndim,
              h3_dtype_name(dtype), ndim);
         return NULL;
     }
@@ -230,6 +474,10 @@ static h3_gpu_tensor *load_tensor(const h3_weight_store *store, h3_gpu *gpu,
         fail(error, error_size, "weight %s is too large for this process", name);
         return NULL;
     }
+    if (expand)
+        return expand_tensor(gpu, header, tensor, quant, (size_t)elements,
+                             dtype, qkv_inner, qkv_head_dim, error,
+                             error_size);
     h3_gpu_tensor *result = dtype == H3_DTYPE_BF16 ?
         h3_gpu_tensor_load_bf16(gpu, header->path, tensor->file_offset,
                                 (size_t)elements) :

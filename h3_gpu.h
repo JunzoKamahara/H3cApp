@@ -59,6 +59,8 @@ h3_gpu_tensor *h3_gpu_tensor_from_f32(h3_gpu *gpu, const float *values,
                                       size_t elements);
 h3_gpu_tensor *h3_gpu_tensor_from_bf16(h3_gpu *gpu, const uint16_t *values,
                                        size_t elements);
+h3_gpu_tensor *h3_gpu_tensor_from_i8(h3_gpu *gpu, const int8_t *values,
+                                     size_t elements);
 h3_gpu_tensor *h3_gpu_tensor_from_u32(h3_gpu *gpu, const uint32_t *values,
                                       size_t elements);
 /* Allocate shared Metal storage and pread BF16 payload directly into it. */
@@ -155,6 +157,20 @@ int h3_gpu_silu_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                     const h3_gpu_tensor *input, uint32_t elements);
 int h3_gpu_cast_f32_to_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                             const h3_gpu_tensor *input, uint32_t elements);
+/* Whether a command buffer is being encoded (between h3_gpu_begin and
+ * h3_gpu_submit) - work issued now joins it instead of starting one. */
+int h3_gpu_command_open(const h3_gpu *gpu);
+/* Expands `blocks` blocks of a block-quantized (or F16/BF16/F32) payload -
+ * raw bytes in an I8 tensor - into a BF16 or F32 output (its dtype
+ * decides), with h3_quant.c's formulas. quant is an h3_quant_type.
+ * qkv_inner != 0 also reorders the rows (of `columns` values) of a fused
+ * QKV weight from [all Q; all K; all V] (qkv_inner rows each) to the
+ * engine's per-head [q; k; v] (qkv_head_dim rows each). */
+int h3_gpu_dequantize(h3_gpu *gpu, h3_gpu_tensor *output,
+                      const h3_gpu_tensor *raw, uint32_t quant,
+                      uint32_t blocks, uint32_t block_elements,
+                      uint32_t block_bytes, uint32_t columns,
+                      uint32_t qkv_inner, uint32_t qkv_head_dim);
 int h3_gpu_cast_bf16_to_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                             const h3_gpu_tensor *input, uint32_t elements);
 /* output[r, c] = F32(input[r, c]) + bias[c]; the epilogue for int8 linears

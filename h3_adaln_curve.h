@@ -37,6 +37,14 @@ typedef struct h3_adaln_curve h3_adaln_curve;
  * have been built from a checkpoint with that fingerprint. */
 h3_adaln_curve *h3_adaln_curve_open(const char *path, const uint8_t model_id[32],
                                     char *error, size_t error_size);
+/* Curve-form checkpoints (ComfyUI's "pruned" files, unsloth's GGUFs) carry
+ * the curve themselves - adaln_t_table and [outputs, k] projections, F32 or
+ * F16 - instead of a time embedder and dense projections. in_store says
+ * whether a transformer's weights are of that form; from_store reads the
+ * curve from them (the store must outlive the curve). */
+int h3_adaln_curve_in_store(const h3_weight_store *store);
+h3_adaln_curve *h3_adaln_curve_from_store(const h3_weight_store *store,
+                                          char *error, size_t error_size);
 void h3_adaln_curve_free(h3_adaln_curve *curve);
 uint32_t h3_adaln_curve_rank(const h3_adaln_curve *curve);
 uint32_t h3_adaln_curve_grid(const h3_adaln_curve *curve);
