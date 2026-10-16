@@ -142,6 +142,16 @@ public struct H3GenerationParams: Sendable {
     // call instead of once at process startup - different generation modes
     // (default/Ref2VA) need different prebuilt caches.
     public var attentionCachePath: String?
+    // H3_ADALN_CURVE (h3_adaln_curve.h): a ~0.6 GiB curve-form stand-in for
+    // the ~24 GiB of dense AdaLN projections, read from the environment like
+    // attentionCachePath. Set to a directory: generate() uses
+    // adaln_fl2va.curve or adaln_ref2va.curve there - whichever transformer
+    // this job runs (Ref2VA exactly when there are references) - building
+    // it first when it is missing or was built from other weights (~7 s,
+    // reported as phase "AdaLN curve"), and falls back to the dense
+    // projections if that fails. Works in every compute mode. nil: the
+    // dense projections, as before.
+    public var adalnCurveDirectory: String?
     // h3_params.loras: adapters added to the DiT weights, stacked in order.
     // Any published H3 LoRA layout (diffusers, ComfyUI, kohya, native) works
     // with every compute mode - the engine patches resident weights once at
@@ -337,6 +347,7 @@ public final class H3Engine: @unchecked Sendable {
     private static let workQueue = DispatchQueue(label: "h3.engine.work", qos: .userInitiated)
 
     private let ctx: OpaquePointer
+    private let modelDirectory: String
     private var currentCancelFlag: CancelFlag?
     private var currentCacheBuildCancelFlag: CancelFlag?
 
@@ -345,6 +356,7 @@ public final class H3Engine: @unchecked Sendable {
             throw H3EngineError.loadFailed("h3_load_dir returned NULL")
         }
         self.ctx = ctx
+        self.modelDirectory = modelDirectory
         h3_cache_set_targets(ctx, Self.cacheTargets(batch: false))
     }
 
@@ -440,6 +452,27 @@ public final class H3Engine: @unchecked Sendable {
                 // depth to 1 (default is 3 on M5) to keep its footprint down.
                 if getenv("H3_QWEN_PREFETCH_DEPTH") == nil {
                     setenv("H3_QWEN_PREFETCH_DEPTH", "1", 1)
+                }
+
+                if let curveDirectory = params.adalnCurveDirectory {
+                    let ref2va = !params.references.isEmpty
+                    let curvePath = curveDirectory +
+                        (ref2va ? "/adaln_ref2va.curve" : "/adaln_fl2va.curve")
+                    let transformerDirectory = self.modelDirectory +
+                        (ref2va ? "/Ref2VA/transformer" : "/FL2VA/transformer")
+                    if Self.prepareAdaLNCurve(path: curvePath,
+                                              transformerDirectory: transformerDirectory,
+                                              progressOpaque: bridgeHandle.toOpaque()) {
+                        setenv("H3_ADALN_CURVE", curvePath, 1)
+                    } else {
+                        unsetenv("H3_ADALN_CURVE")
+                    }
+                    if cancelFlag.isCancelled {
+                        continuation.finish(throwing: H3EngineError.cancelled)
+                        return
+                    }
+                } else {
+                    unsetenv("H3_ADALN_CURVE")
                 }
 
                 // The stream ends only after the pool below has drained, so a
@@ -555,6 +588,32 @@ public final class H3Engine: @unchecked Sendable {
 
     public func cancelCurrentCacheBuild() {
         currentCacheBuildCancelFlag?.cancel()
+    }
+
+    /// Makes sure `path` holds a curve-form AdaLN file built from
+    /// `transformerDirectory`, building it if not. Progress goes to the
+    /// generation's own stream (phase "AdaLN curve"), whose cancel flag
+    /// also stops the build. Returns whether the file is usable; a failed
+    /// build is logged, not fatal - the generation then uses the dense
+    /// projections.
+    private static func prepareAdaLNCurve(path: String, transformerDirectory: String,
+                                          progressOpaque: UnsafeMutableRawPointer) -> Bool {
+        if h3_adaln_curve_matches(path, transformerDirectory) != 0 { return true }
+        try? FileManager.default.createDirectory(
+            atPath: (path as NSString).deletingLastPathComponent,
+            withIntermediateDirectories: true)
+        var errorBuffer = [CChar](repeating: 0, count: 512)
+        let ok = errorBuffer.withUnsafeMutableBufferPointer { errorBuf in
+            h3_build_adaln_curve(transformerDirectory, path, "h3_shaders.metal", 0, 0,
+                                 h3ProgressTrampoline, progressOpaque,
+                                 errorBuf.baseAddress, errorBuf.count)
+        }
+        if ok == 0 {
+            NSLog("h3: AdaLN curve not built, using the dense projections: %@",
+                  String(cString: errorBuffer))
+            return false
+        }
+        return true
     }
 
     /// Builds the int8 attention cache the app is missing (see

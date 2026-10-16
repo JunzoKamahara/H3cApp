@@ -588,3 +588,20 @@ done:
     h3_weight_store_free(store);
     return ok;
 }
+
+int h3_adaln_curve_matches(const char *curve_path,
+                           const char *transformer_dir) {
+    if (!curve_path || !*curve_path || !transformer_dir || !*transformer_dir)
+        return 0;
+    struct stat status;
+    if (stat(curve_path, &status) != 0) return 0;
+    h3_weight_store *store = h3_weight_store_open(transformer_dir, NULL, 0);
+    if (!store) return 0;
+    uint8_t model_id[32];
+    h3_weight_store_fingerprint(store, model_id);
+    h3_weight_store_free(store);
+    h3_adaln_curve *curve = h3_adaln_curve_open(curve_path, model_id, NULL, 0);
+    if (!curve) return 0;
+    h3_adaln_curve_free(curve);
+    return 1;
+}

@@ -190,6 +190,12 @@ struct AdvancedSettingsView: View {
             if viewModel.supportsInt8Cache && viewModel.computeMode == .attentionCache {
                 attentionCacheBuildSection
             }
+            Toggle("条件の計算を近似で速くする", isOn: $viewModel.useAdaLNCurve)
+                .toggleStyle(.checkbox)
+                .padding(.top, 6)
+            Text("時刻ごとの条件（AdaLN）を小さな近似ファイルから計算し、1本あたり約10秒速くします。どの計算方式でも使えます。初回だけ、モデルごとに約7秒かけて約0.6GBのファイルを作ります。近似の誤差は元の計算の丸め誤差と同じ程度ですが、同じシードでも以前の版とは少し違う動画になります。")
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
             if viewModel.isHeavySsdStreamingConfig {
                 Text("最大解像度・長い秒数・SSDストリーミングの組み合わせは、メモリ不足でスワップが発生し非常に遅くなることがあります（数時間かかる場合も）。解像度か秒数を下げることをおすすめします。")
                     .font(.caption)

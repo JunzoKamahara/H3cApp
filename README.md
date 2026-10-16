@@ -373,6 +373,13 @@ each for FL2VA and Ref2VA). For now this saves time, not disk space: the
 dense weights stay in the checkpoint until the planned import packs drop
 them.
 
+The app uses it by default in every compute mode (Advanced settings: "Speed
+up the condition computation with an approximation"). The first generation
+with a model builds `adaln_fl2va.curve` or `adaln_ref2va.curve` next to that
+model's int8 cache (~7 s, shown as "Preparing the computation (first time
+only)"), rebuilds it if the weights change, and falls back to the dense
+projections if it cannot be built.
+
 Both an unbounded generation duration *and* an oversized reference video push
 against the same ceiling here — see the next section.
 

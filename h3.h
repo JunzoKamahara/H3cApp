@@ -349,6 +349,12 @@ int h3_build_adaln_curve(const char *transformer_dir,
                          void *callback_opaque,
                          char *error, size_t error_size);
 
+/* 1 when curve_path is a readable curve-form AdaLN file built from the
+ * transformer in transformer_dir (its weight fingerprint matches), so
+ * H3_ADALN_CURVE can point at it; 0 otherwise (missing, unreadable, or
+ * built from other weights - rebuild it then). Reads only headers. */
+int h3_adaln_curve_matches(const char *curve_path, const char *transformer_dir);
+
 /* TEMPORARY diagnostic, not for production use: creates a standalone
  * h3_gpu (no model needed) and makes one throwaway call through the
  * experimental H3_ATTENTION_BACKEND=ccv_dense path, to isolate whether a

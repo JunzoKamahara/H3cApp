@@ -714,6 +714,7 @@ extension GenerationViewModel {
         var paths = [firstFramePath, lastFramePath, forcedAudioPath].compactMap { $0 } + referenceImages.map(\.path)
         paths = paths.filter {
             !ProjectFiles.isImported($0, in: projectURL) && FileManager.default.fileExists(atPath: $0)
+                && !failedReferenceImports.contains(projectURL.path + "\n" + $0)
         }
         return Array(Set(paths))
     }
@@ -739,6 +740,9 @@ extension GenerationViewModel {
             // Opened another project meanwhile: its own save handles it.
             guard self.project?.url == projectURL else { return }
             var failure: Error?
+            for case let (path, .failure) in results {
+                self.failedReferenceImports.insert(projectURL.path + "\n" + path)
+            }
             func copy(of path: String) -> String {
                 switch results[path] {
                 case .success(let copy)?: return copy
@@ -757,7 +761,8 @@ extension GenerationViewModel {
             if let failure {
                 self.projectMessage = String(localized: "参照ファイルをプロジェクトにコピーできませんでした（詳細: \(failure.localizedDescription)）")
             }
-            // Not importing again: a failed copy would just be retried.
+            // Not importing again: a failed copy would just be retried (and
+            // later autosaves skip it - failedReferenceImports).
             self.saveProjectIfChanged(importingReferences: false)
         }
     }

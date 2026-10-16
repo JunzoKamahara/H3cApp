@@ -92,6 +92,15 @@ final class GenerationViewModel: ObservableObject {
     @Published private(set) var supportsInt8Cache = true
     var defaultComputeMode: ComputeMode { supportsInt8Cache ? .attentionCache : .ssdStreaming }
     @Published var speedMode: SpeedMode = .quality
+    /// Curve-form AdaLN (H3GenerationParams.adalnCurveDirectory): ~10 s
+    /// faster setup per video in every compute mode, values as close to
+    /// exact as the dense path but not bit-identical, so the same seed gives
+    /// a slightly different video than the dense path. An app-wide
+    /// preference, not part of a draft; on by default.
+    @Published var useAdaLNCurve: Bool =
+        UserDefaults.standard.object(forKey: "h3c-app.useAdaLNCurve") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(useAdaLNCurve, forKey: "h3c-app.useAdaLNCurve") }
+    }
     /// Reuse actually sent to the engine: the 高速/最速 presets rely on core
     /// reuse, which the engine won't combine with denoiser reuse, and were
     /// measured at reuse 1 - so they run at 1 whatever denoiseReuse holds.
@@ -442,6 +451,10 @@ final class GenerationViewModel: ObservableObject {
     var lastSavedProjectFile: ProjectFile?
     /// Outside references being copied into the project (startReferenceImport).
     var referenceImportTask: Task<Void, Never>?
+    /// "project path\nfile path" of copies that failed (e.g. a source in a
+    /// folder the app was denied): not retried automatically, since every
+    /// autosave would otherwise retry and re-raise the error once a second.
+    var failedReferenceImports: Set<String> = []
     private var batchState: BatchState?
 
     private var engine: H3Engine?
@@ -836,6 +849,8 @@ final class GenerationViewModel: ObservableObject {
         params.references = effectiveReferences
         params.ssdStreaming = computeMode == .ssdStreaming
         params.attentionCachePath = computeMode == .attentionCache ? currentAttentionCachePath : nil
+        params.adalnCurveDirectory = useAdaLNCurve
+            ? library.activeModel.map { attentionCacheDirectory(for: $0) } : nil
         let loras = effectiveLoRAs
         params.loras = loras.map { H3LoRAInput(path: $0.path, strength: $0.strength) }
         let speed = speedSettings

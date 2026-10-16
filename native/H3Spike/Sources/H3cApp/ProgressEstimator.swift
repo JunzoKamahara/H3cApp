@@ -4,8 +4,8 @@ import Foundation
 // mapping from event names to stages comes from a timestamped trace of a
 // real run (see h3_progress_emit / report() in h3.c and h3_dit.c):
 //
-//   tokenizer, text encoder, refine text, precompute AdaLN,
-//   load transformer core                 -> setup
+//   [AdaLN curve, first use only], tokenizer, text encoder, refine text,
+//   precompute AdaLN, load transformer core -> setup
 //   denoise enqueue k/N, denoise N/N      -> denoise (k = steps finished)
 //   audio VAE 0..7, video VAE load 1..36  -> decode. NOT a usable progress
 //                                            counter: for a small clip it is
@@ -46,7 +46,8 @@ enum JobStage: Int, Comparable {
             return .decode
         case "encode":
             return .encode
-        case "tokenizer", "text encoder", "refine text", "precompute AdaLN", "load transformer core",
+        case "AdaLN curve", "tokenizer", "text encoder", "refine text", "precompute AdaLN",
+             "load transformer core",
              "audio VAE encoder", "video VAE encoder":
             return .setup
         default:
@@ -56,6 +57,7 @@ enum JobStage: Int, Comparable {
 }
 
 private let phaseLabels: [String: String] = [
+    "AdaLN curve": String(localized: "計算の準備（初回のみ）"),
     "tokenizer": String(localized: "文章を解析"),
     "text encoder": String(localized: "文章を理解"),
     "refine text": String(localized: "文章を調整"),

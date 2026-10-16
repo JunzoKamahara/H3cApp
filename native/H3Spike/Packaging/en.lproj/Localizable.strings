@@ -472,3 +472,8 @@
 "選んだファイルは「%@」にあります。macOSが保護しているフォルダなので、このまま登録すると、アプリを起動するたびにアクセスの許可を求められることがあります。LoRAフォルダ（%@）へ移すと、求められなくなります。" = "The file you picked is in %1$@. macOS protects that folder, so if you add it from there you may be asked for access permission every time the app starts. Moving it to the LoRA folder (%2$@) avoids that.";
 "LoRAフォルダへ移す" = "Move to LoRA Folder";
 "LoRAフォルダへ移せませんでした: %@" = "Couldn’t move it to the LoRA folder: %@";
+
+/* Curve-form AdaLN */
+"計算の準備（初回のみ）" = "Preparing the computation (first time only)";
+"条件の計算を近似で速くする" = "Speed up the condition computation with an approximation";
+"時刻ごとの条件（AdaLN）を小さな近似ファイルから計算し、1本あたり約10秒速くします。どの計算方式でも使えます。初回だけ、モデルごとに約7秒かけて約0.6GBのファイルを作ります。近似の誤差は元の計算の丸め誤差と同じ程度ですが、同じシードでも以前の版とは少し違う動画になります。" = "Computes the per-timestep conditions (AdaLN) from a small approximation file, about 10 seconds faster per video. Works with every compute mode. The first time, it takes about 7 seconds per model to create a file of about 0.6 GB. The approximation error is about the size of the original computation's rounding error, but the same seed gives a slightly different video than earlier versions.";
