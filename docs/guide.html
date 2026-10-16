@@ -51,9 +51,11 @@
         <p>このページの内容</p>
         <ol>
           <li><a href="#images">画像から動画をつくる</a></li>
+          <li><a href="#lipsync">音声に合わせる（リップシンク）</a></li>
           <li><a href="#projects">プロジェクトと複数生成</a></li>
           <li><a href="#speed">速度に関わる3つの設定</a></li>
           <li><a href="#size">サイズと2倍拡大</a></li>
+          <li><a href="#continue">動画の続きを作る</a></li>
           <li><a href="#chain">長い動画をつくる（つなげて生成）</a></li>
           <li><a href="#prompts">プロンプトの書き方</a></li>
           <li><a href="#lora">追加モデル（LoRA）を使う（任意）</a></li>
@@ -85,6 +87,26 @@
       <p class="small">プロンプト欄のファイル名をクリックすると、使っている画像や動画の中身を確認できます。生成した動画も、プレビューの「<span class="ui">参照に使う</span>」で参照に追加できます。</p>
     </section>
 
+    <section class="section section-narrow" id="lipsync" aria-labelledby="lipsync-title">
+      <h2 id="lipsync-title">音声に合わせる（リップシンク）</h2>
+      <p>声や歌の音声ファイルを選ぶと、その音声に合わせて、口の動きなどの映像をつくります。動画の音は、選んだ音声そのものになります。</p>
+      <ol class="steps">
+        <li><strong>音声を選びます。</strong>入力パネルの「<span class="ui">音声に合わせる（リップシンク）…</span>」を押し、音声ファイル（音の入った動画ファイルも使えます）を選びます。</li>
+        <li><strong>開始位置を決めます。</strong>音声の何秒目から使うかを「<span class="ui">秒から</span>」の欄に入れます。そこから、動画の長さの分だけ使われます。</li>
+        <li><strong>プロンプトを書いて生成します。</strong>誰が、どこで、どのように話したり歌ったりしているかを書きます。「<span class="ui">文章から</span>」でも、「<span class="ui">画像から</span>」の最初の画像（話す人の写真など）と組み合わせても使えます。</li>
+      </ol>
+      <ul>
+        <li><strong>大きさ</strong>：中サイズ以上がおすすめです。横長・小（448×256）では、色のついた光の玉が出やすくなります。</li>
+        <li><strong>長さ</strong>：音声が動画より短いと、残りは無音になります。開始位置が音声の終わりより後だと生成できません。</li>
+        <li><strong>長い音声</strong>：<a href="#continue">続きを作る</a>や<a href="#chain">つなげて生成</a>では、1本ごとに音声の開始位置が自動で進むので、長い音声に合わせた動画をつくれます。</li>
+        <li><strong>時間</strong>：生成時間は、音声を使わない場合とほとんど変わりません。</li>
+        <li>やめるときは「<span class="ui">取り除く</span>」を押します。</li>
+      </ul>
+      <div class="warn">
+        <p>他人の声や歌、人物の写真を使うときは、著作権や肖像権に注意し、本人の同意を得てください。実在の人物になりすますような動画はつくらないでください。</p>
+      </div>
+    </section>
+
     <section class="section section-narrow" id="projects" aria-labelledby="projects-title">
       <h2 id="projects-title">プロジェクトと複数生成</h2>
       <p>プロジェクトは、プロンプトと設定、参照ファイルのコピー、生成した動画をまとめて保存するフォルダです。既定の保存先は <code>~/Movies/H3cApp/&lt;名前&gt;</code> です。プロジェクトを開いていないときにできた動画は一時ファイルで、次の生成で消えます。</p>
@@ -108,6 +130,7 @@
         <li>「<span class="ui">表示</span>」（またはプレビュー画像をクリック）：プレビューに表示し、その動画のプロンプトと設定もシードを固定してパネルに戻します。</li>
         <li>「<span class="ui">設定を戻す</span>」：その動画のプロンプトと設定を、シードを固定してパネルに戻します。そのまま生成すると同じ動画をつくり直せます。</li>
         <li>「<span class="ui">参照に使う</span>」：その動画を参照動画として追加します（Ref2VAが必要）。</li>
+        <li>「<span class="ui">その他</span>」→「<span class="ui">この動画の続きを作る</span>」「<span class="ui">ここまでをつないで書き出す</span>」：<a href="#continue">動画の続きを作る</a>を参照。</li>
         <li>「<span class="ui">削除…</span>」：動画と設定の記録をゴミ箱に移動します。</li>
       </ul>
       <p class="small">プレビュー上部の「<span class="ui">使用した設定…</span>」では、表示中の動画の設定を確認したり、「<span class="ui">フォームに戻す</span>」でパネルに戻したりできます。</p>
@@ -161,6 +184,23 @@
         <li><strong>カスタムサイズ</strong>：「<span class="ui">詳細設定</span>」の「<span class="ui">サイズ</span>」で「<span class="ui">カスタムサイズを使う</span>」をオンにすると、完成サイズを幅と高さで指定できます。生成するサイズは60万ピクセル以下という上限があります。</li>
         <li><strong>長さ</strong>：1回の生成では1〜15秒です。モデルの仕組み上、実際の長さは少し長めになります（例：5秒を選ぶと約5.2秒）。15秒より長い動画は、<a href="#chain">つなげて生成</a>でつくります（90秒まで）。</li>
       </ul>
+    </section>
+
+    <section class="section section-narrow" id="continue" aria-labelledby="continue-title">
+      <h2 id="continue-title">動画の続きを作る</h2>
+      <p>できた動画の続きを、もう1本つくれます。元の動画の最後の約0.9秒とその音を引き継ぐので、新しい動画は、元の動画の終わりと同じ場面から始まります。</p>
+      <ol class="steps">
+        <li><strong>続きを作る動画を選びます。</strong>プレビューに動画を表示しているときは、パネルの「<span class="ui">続きを生成</span>」を押します。一覧からは、「<span class="ui">プロジェクトの動画…</span>」で動画の「<span class="ui">その他</span>」→「<span class="ui">この動画の続きを作る</span>」を選びます。プロジェクトに入っていない動画は、先にプロジェクトとして保存します。</li>
+        <li><strong>プロンプトを直して生成します。</strong>元の動画のプロンプトと設定がパネルに戻り、「<span class="ui">続き</span>」の欄に元の動画が表示されます。次に起きることに合わせてプロンプトを書き換え、生成します。</li>
+        <li><strong>つなぎます。</strong>続きの動画を表示しているときに、パネルの「<span class="ui">つないで書き出す</span>」を押すと、最初の元の動画からその動画までを重なりでつないだ1本の動画が、プロジェクトに書き出されます。一覧の「<span class="ui">その他</span>」→「<span class="ui">ここまでをつないで書き出す</span>」でも同じです。続きの続きを重ねてから、最後にまとめてつなぐこともできます。</li>
+      </ol>
+      <ul>
+        <li><strong>使える条件</strong>：続きは「<span class="ui">文章から</span>」でつくります（最初の画像や参照は使えません）。大きさは元の動画と同じにします。</li>
+        <li><strong>シード</strong>：続きを作るときは、シードは固定されず、毎回変わります。</li>
+        <li><strong>古い動画</strong>：v0.5.0より前に作った動画には、続きを作るためのデータがないので、続きは作れません。v0.5.0からは、動画ごとに小さなデータファイル（<code>.h3lt</code>、横長・中の5秒で約3.6MB）を並べて保存します。</li>
+        <li><strong>時間</strong>：続きは、新しく作るより約2割長くかかります（M5・24GB、横長・中の5秒で364秒に対して446秒）。</li>
+      </ul>
+      <p>長さを決めて一度に長い動画をつくるなら、次の<a href="#chain">つなげて生成</a>が便利です。</p>
     </section>
 
     <section class="section section-narrow" id="chain" aria-labelledby="chain-title">

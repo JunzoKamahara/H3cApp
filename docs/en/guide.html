@@ -50,9 +50,11 @@
         <p>On this page</p>
         <ol>
           <li><a href="#images">Making video from images</a></li>
+          <li><a href="#lipsync">Matching a voice or song (lip sync)</a></li>
           <li><a href="#projects">Projects and batches</a></li>
           <li><a href="#speed">The three speed settings</a></li>
           <li><a href="#size">Sizes and 2x upscaling</a></li>
+          <li><a href="#continue">Continuing a video</a></li>
           <li><a href="#chain">Making longer videos (joined generation)</a></li>
           <li><a href="#prompts">Writing prompts</a></li>
           <li><a href="#lora">Using add-on models (LoRA, optional)</a></li>
@@ -84,6 +86,26 @@
       <p class="small">Click a file name in the prompt panel to see the image or video in use. A generated video can also be added as a reference with “<span class="ui">Use as Reference</span>” in the preview.</p>
     </section>
 
+    <section class="section section-narrow" id="lipsync" aria-labelledby="lipsync-title">
+      <h2 id="lipsync-title">Matching a voice or song (lip sync)</h2>
+      <p>Pick an audio file of a voice or a song, and the picture, such as mouth movements, is made to match it. The video's sound is that audio itself.</p>
+      <ol class="steps">
+        <li><strong>Pick the audio.</strong> Click “<span class="ui">Match a Voice or Song (Lip Sync)…</span>” in the panel and choose an audio file (a video file with sound works too).</li>
+        <li><strong>Set where it starts.</strong> Enter the second to start from in the “<span class="ui">s onward</span>” field. As much audio as the video's length is used from there.</li>
+        <li><strong>Write the prompt and generate.</strong> Describe who is speaking or singing, where and how. It works with “<span class="ui">From text</span>” and with a first image under “<span class="ui">From images</span>” (such as a photo of the speaker).</li>
+      </ol>
+      <ul>
+        <li><strong>Size</strong>: medium or larger is recommended. At landscape small (448×256), colored glowing spots appear more often.</li>
+        <li><strong>Length</strong>: if the audio is shorter than the video, the rest is silent. A start past the end of the audio can't be generated.</li>
+        <li><strong>Long audio</strong>: with <a href="#continue">continuing a video</a> or <a href="#chain">joined generation</a>, the audio's start moves on by itself for each clip, so you can follow a long recording.</li>
+        <li><strong>Time</strong>: it takes about as long as generating without audio.</li>
+        <li>To stop using it, click “<span class="ui">Remove</span>”.</li>
+      </ul>
+      <div class="warn">
+        <p>When you use someone else's voice, song or photo, mind copyright and portrait rights and get the person's consent. Don't make videos that pass themselves off as a real person.</p>
+      </div>
+    </section>
+
     <section class="section section-narrow" id="projects" aria-labelledby="projects-title">
       <h2 id="projects-title">Projects and batches</h2>
       <p>A project is a folder that keeps the prompt and settings, copies of the reference files, and the generated videos together. It defaults to <code>~/Movies/H3cApp/&lt;name&gt;</code>. Without an open project, each video is a temporary file that the next generation deletes.</p>
@@ -107,6 +129,7 @@
         <li>“<span class="ui">Show</span>” (or click the thumbnail): shows it in the preview and puts its prompt and settings back in the panel with the seed fixed.</li>
         <li>“<span class="ui">Restore Settings</span>”: puts that video's prompt and settings back in the panel with its seed fixed, so generating makes the same video again.</li>
         <li>“<span class="ui">Use as Reference</span>”: adds that video as a reference video (needs Ref2VA).</li>
+        <li>“<span class="ui">More</span>” → “<span class="ui">Continue This Video</span>” / “<span class="ui">Join Up to Here and Export</span>”: see <a href="#continue">Continuing a video</a>.</li>
         <li>“<span class="ui">Delete…</span>”: moves the video and its settings record to the Trash.</li>
       </ul>
       <p class="small">“<span class="ui">Settings Used…</span>” above the preview shows the settings of the video on screen, and “<span class="ui">Back to the Form</span>” puts them back in the panel.</p>
@@ -160,6 +183,23 @@
         <li><strong>Custom size</strong>: turn on “<span class="ui">Use a custom size</span>” under “<span class="ui">Size</span>” in the advanced settings to enter the finished width and height. The generated size is limited to 600,000 pixels.</li>
         <li><strong>Length</strong>: 1 to 15 seconds in one generation. Because of how the model works, the actual length comes out a little longer (choosing 5 s gives about 5.2 s). Longer videos, up to 90 seconds, come from <a href="#chain">joined generation</a>.</li>
       </ul>
+    </section>
+
+    <section class="section section-narrow" id="continue" aria-labelledby="continue-title">
+      <h2 id="continue-title">Continuing a video</h2>
+      <p>You can make one more clip that carries on from a finished video. The original's last 0.9 seconds or so and its sound carry over, so the new clip starts where the original ends.</p>
+      <ol class="steps">
+        <li><strong>Pick the video.</strong> With a video in the preview, click “<span class="ui">Continue</span>” in the panel. From the list, choose “<span class="ui">More</span>” → “<span class="ui">Continue This Video</span>” in “<span class="ui">Project Videos…</span>”. A video outside any project is saved as a project first.</li>
+        <li><strong>Edit the prompt and generate.</strong> The original's prompt and settings come back into the panel, with the original shown under “<span class="ui">Continues</span>”. Rewrite the prompt for what happens next, then generate.</li>
+        <li><strong>Join them.</strong> With the continuation shown, “<span class="ui">Join and Export</span>” in the panel joins everything from the first original up to that clip into one video, saved in the project. “<span class="ui">More</span>” → “<span class="ui">Join Up to Here and Export</span>” in the list does the same. You can stack continuations of continuations and join them all at the end.</li>
+      </ol>
+      <ul>
+        <li><strong>Conditions</strong>: a continuation is made “<span class="ui">From text</span>” (no first image or references) at the same size as the original.</li>
+        <li><strong>Seed</strong>: a continuation's seed isn't fixed; it changes each time.</li>
+        <li><strong>Older videos</strong>: videos made before v0.5.0 don't have the data needed and can't be continued. From v0.5.0 on, each video keeps a small data file next to it (<code>.h3lt</code>, about 3.6 MB for 5 s at landscape medium).</li>
+        <li><strong>Time</strong>: a continuation takes about 20% longer than a new clip (on a 24 GB M5, 5 s at landscape medium: 446 s against 364 s).</li>
+      </ul>
+      <p>To make a long video of a set length in one go, <a href="#chain">joined generation</a> below is easier.</p>
     </section>
 
     <section class="section section-narrow" id="chain" aria-labelledby="chain-title">

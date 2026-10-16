@@ -12,8 +12,11 @@ of them, then the pages (see `website-maintenance.md`).
   as 「つないだ動画（n本・x秒）」 with clips in chains/<name>/), 動画の続きを作る,
   音声に合わせる（リップシンク）, whole-run progress (全n本中k本目, 全体の残り/完了予定),
   and the LoRA folder (Application Support/h3c-app/LoRA). The site documents
-  つなげて生成 (guide #chain, settings #chain) but not yet lip sync or 続きを作る
-  as their own sections. Timing: ~105 s per output second at landscape medium
+  them in the guide: #lipsync (音声に合わせる…; 秒から; audio shorter than the
+  video -> silence, start past the end -> error; medium+ recommended),
+  #continue (続きを生成 / その他 → この動画の続きを作る / つないで書き出す /
+  ここまでをつないで書き出す; text mode, same size, seed not pinned, +~20%:
+  364 vs 446 s), #chain; settings #chain; top page features 6 items. Timing: ~105 s per output second at landscape medium
   on the 24 GB M5 (README). Earlier:
   v0.4.6 (2026-10-14) added the re-noise step rule for few-step LoRAs such as
   DMAD and, in モデル管理, a per-LoRA ステップの進め方 (自動 / Euler /
