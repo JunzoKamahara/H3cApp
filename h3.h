@@ -403,6 +403,18 @@ int h3_gguf_trim_text_encoder(const char *source_path, const char *output_path,
                               void *callback_opaque,
                               char *error, size_t error_size);
 
+/* Copies the tensors whose names start with `prefix` out of a component
+ * directory (safetensors and/or GGUF shards) into one safetensors file,
+ * payloads unchanged - e.g. "model.visual." from a released text encoder,
+ * to give an imported (GGUF) text encoder without a vision tower one.
+ * Only F32/F16/BF16 tensors are copied (a quantized match fails the call).
+ * Writes through a ".partial" file renamed on success; on_progress gets
+ * phase "extract" with MiB copied; non-zero cancels. */
+int h3_extract_tensors(const char *component_dir, const char *prefix,
+                       const char *output_path,
+                       h3_progress_callback on_progress, void *callback_opaque,
+                       char *error, size_t error_size);
+
 /* TEMPORARY diagnostic, not for production use: creates a standalone
  * h3_gpu (no model needed) and makes one throwaway call through the
  * experimental H3_ATTENTION_BACKEND=ccv_dense path, to isolate whether a

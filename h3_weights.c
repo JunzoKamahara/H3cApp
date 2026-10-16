@@ -639,3 +639,119 @@ h3_gpu_tensor *h3_weight_load_f32(const h3_weight_store *store, h3_gpu *gpu,
     return load_tensor(store, gpu, name, ndim, shape, H3_DTYPE_F32,
                        error, error_size);
 }
+
+/* --- extracting a tensor subset (h3.h) ------------------------------- */
+
+#include "h3.h"
+
+#include <errno.h>
+#include <unistd.h>
+
+int h3_extract_tensors(const char *component_dir, const char *prefix,
+                       const char *output_path,
+                       h3_progress_callback on_progress, void *callback_opaque,
+                       char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (!component_dir || !prefix || !*prefix || !output_path) {
+        fail(error, error_size, "invalid extract arguments");
+        return 0;
+    }
+    h3_weight_store *store = h3_weight_store_open(component_dir, error, error_size);
+    if (!store) return 0;
+    size_t total = h3_weight_store_tensor_count(store), kept = 0;
+    uint64_t bytes_total = 0;
+    size_t prefix_length = strlen(prefix);
+    for (size_t i = 0; i < total; i++) {
+        const h3_st_tensor *t = h3_weight_store_tensor(store, i, NULL);
+        if (strncmp(t->name, prefix, prefix_length)) continue;
+        if (t->dtype != H3_DTYPE_F32 && t->dtype != H3_DTYPE_F16 &&
+            t->dtype != H3_DTYPE_BF16) {
+            fail(error, error_size, "%s is quantized; only F32/F16/BF16 can be extracted",
+                 t->name);
+            h3_weight_store_free(store);
+            return 0;
+        }
+        kept++;
+        bytes_total += t->data_end - t->data_begin;
+    }
+    if (!kept) {
+        fail(error, error_size, "no tensors named %s* in %s", prefix, component_dir);
+        h3_weight_store_free(store);
+        return 0;
+    }
+    /* Header JSON: each name with dtype, shape and its range. */
+    size_t capacity = 4096 + kept * 256, used = 0;
+    char *json = malloc(capacity);
+    int ok = json != NULL;
+    if (ok) used += (size_t)snprintf(json, capacity, "{\"__metadata__\":{\"format\":\"pt\"}");
+    uint64_t offset = 0;
+    for (size_t i = 0; ok && i < total; i++) {
+        const h3_st_tensor *t = h3_weight_store_tensor(store, i, NULL);
+        if (strncmp(t->name, prefix, prefix_length)) continue;
+        uint64_t size = t->data_end - t->data_begin;
+        char shape[160] = "";
+        size_t shape_used = 0;
+        for (int d = 0; d < t->ndim; d++)
+            shape_used += (size_t)snprintf(shape + shape_used, sizeof(shape) - shape_used,
+                                           "%s%llu", d ? "," : "",
+                                           (unsigned long long)t->shape[d]);
+        int written = snprintf(json + used, capacity - used,
+            ",\"%s\":{\"dtype\":\"%s\",\"shape\":[%s],\"data_offsets\":[%llu,%llu]}",
+            t->name, h3_dtype_name(t->dtype), shape, (unsigned long long)offset,
+            (unsigned long long)(offset + size));
+        ok = written > 0 && (size_t)written < capacity - used;
+        used += ok ? (size_t)written : 0;
+        offset += size;
+    }
+    if (ok) {
+        json[used++] = '}';
+        while (used % 8) json[used++] = ' ';
+    }
+    size_t partial_length = strlen(output_path) + sizeof(".partial");
+    char *partial = malloc(partial_length);
+    enum { BUFFER = 64 << 20 };
+    uint8_t *buffer = malloc(BUFFER);
+    FILE *out = NULL;
+    ok = ok && partial && buffer;
+    if (ok) {
+        snprintf(partial, partial_length, "%s.partial", output_path);
+        out = fopen(partial, "wb");
+        ok = out != NULL;
+    }
+    uint64_t header_length = used;
+    ok = ok && fwrite(&header_length, sizeof(header_length), 1, out) == 1 &&
+         fwrite(json, 1, used, out) == used;
+    uint64_t copied = 0;
+    for (size_t i = 0; ok && i < total; i++) {
+        const h3_st_header *header = NULL;
+        const h3_st_tensor *t = h3_weight_store_tensor(store, i, &header);
+        if (strncmp(t->name, prefix, prefix_length)) continue;
+        uint64_t size = t->data_end - t->data_begin;
+        FILE *in = fopen(header->path, "rb");
+        ok = in && fseeko(in, (off_t)t->file_offset, SEEK_SET) == 0;
+        for (uint64_t done = 0; ok && done < size;) {
+            size_t chunk = size - done < BUFFER ? (size_t)(size - done) : BUFFER;
+            ok = fread(buffer, 1, chunk, in) == chunk &&
+                 fwrite(buffer, 1, chunk, out) == chunk;
+            done += chunk;
+        }
+        if (in) fclose(in);
+        copied += size;
+        if (ok && on_progress &&
+            on_progress("extract", (int)(copied >> 20), (int)(bytes_total >> 20),
+                        callback_opaque)) {
+            fail(error, error_size, "extraction cancelled");
+            ok = 0;
+        }
+    }
+    if (out && fclose(out) != 0) ok = 0;
+    if (ok && rename(partial, output_path) != 0) ok = 0;
+    if (!ok && error && error_size && !error[0])
+        fail(error, error_size, "cannot write %s: %s", output_path, strerror(errno));
+    if (!ok && partial) unlink(partial);
+    free(partial);
+    free(buffer);
+    free(json);
+    h3_weight_store_free(store);
+    return ok;
+}

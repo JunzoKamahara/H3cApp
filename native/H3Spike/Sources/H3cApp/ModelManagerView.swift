@@ -101,10 +101,14 @@ struct ModelManagerView: View {
         .sheet(isPresented: $showingImport) {
             ModelImportView(
                 library: library,
-                onImported: { path in
+                onImported: { path, use in
                     let wasEmpty = library.models.isEmpty
                     library.addModel(path: path)
-                    if wasEmpty { onActiveModelChange(library.activeModelID) }
+                    if use, let entry = library.models.first(where: { $0.path == path }) {
+                        onActiveModelChange(entry.id)
+                    } else if wasEmpty {
+                        onActiveModelChange(library.activeModelID)
+                    }
                     showingImport = false
                 },
                 onCancelled: { showingImport = false }

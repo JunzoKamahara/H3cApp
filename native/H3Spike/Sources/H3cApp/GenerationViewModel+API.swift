@@ -72,6 +72,23 @@ extension GenerationViewModel {
             })
         case ("POST", "/api/models/import"):
             return await handleModelImport(request)
+        case ("POST", "/api/models/remove"):
+            // Unregisters a model and, for one this app imported, moves its
+            // folder to the Trash; other folders are left where they are.
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard !isGenerating else { return .error(409, "a generation is running") }
+            guard let text = json["id"] as? String, let id = UUID(uuidString: text),
+                  let entry = library.models.first(where: { $0.id == id }) else {
+                return .error(400, "\"id\" must be a model id from GET /api/models")
+            }
+            guard id != library.activeModelID else { return .error(409, "that model is in use") }
+            library.removeModel(id: id)
+            var trashed = false
+            if entry.path.hasPrefix(importedModelsDirectory + "/") {
+                trashed = (try? FileManager.default.trashItem(
+                    at: URL(fileURLWithPath: entry.path), resultingItemURL: nil)) != nil
+            }
+            return .json(200, ["ok": true, "trashed": trashed])
         case ("POST", "/api/models/select"):
             let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
             guard !isGenerating else { return .error(409, "a generation is running") }
@@ -101,45 +118,52 @@ extension GenerationViewModel {
         }
     }
 
-    /// POST /api/models/import: {"dit": path, "ref2va_dit"?, "text_encoder"?,
-    /// "vision"?, "name"?, "base_model"? (an id; default the active model)}
-    /// - the same import as Model Management's "Import GGUF". Registers the
-    /// new model (not selected) and returns its id and folder.
+    /// POST /api/models/import: {"files": [GGUF paths], "ref2va": [paths
+    /// among them that are the Ref2VA DiT]?, "name"?, "base_model"? (an id;
+    /// default the active model)} - the same import as Model Management's
+    /// wizard: files are sorted by what they hold (of several for one part,
+    /// the first is used and "notes" says so), a text encoder without a
+    /// vision tower gets the base model's. "dry_run": true returns the plan
+    /// (parts, duplicates, problems) without importing. Returns the plan's problems as a
+    /// 400, else registers the new model (not selected) and returns its id.
     private func handleModelImport(_ request: HTTPRequest) async -> HTTPResponse {
         let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
         guard !isGenerating else { return .error(409, "a generation is running") }
-        guard let ditPath = json["dit"] as? String else { return .error(400, "\"dit\" (a GGUF path) is required") }
-        let baseID = (json["base_model"] as? String).flatMap(UUID.init(uuidString:)) ?? library.activeModelID
-        guard let base = library.models.first(where: { $0.id == baseID }), isUsableImportBase(base) else {
-            return .error(400, "\"base_model\" must name a registered model with the FL2VA tokenizer and VAEs")
+        guard let paths = json["files"] as? [String], !paths.isEmpty else {
+            return .error(400, "\"files\" (GGUF paths) is required")
         }
-        /// A picked file of the expected kind, nil when the key is absent,
-        /// or the reason it cannot be used.
-        func pick(_ key: String, _ role: H3GGUFInfo.Role) -> (ImportPick?, String?) {
-            guard let path = json[key] as? String else { return (nil, nil) }
-            let picked = ImportPick(path: path)
-            guard let info = picked.info else { return (nil, "\(key): \(picked.error ?? "unreadable")") }
-            guard info.role == role else { return (nil, "\(key): \(path) is not that kind of GGUF") }
-            if role == .textEncoder && info.textLayers < 50 { return (nil, "\(key): fewer than 50 layers") }
-            return (picked, nil)
+        let bases = preferredImportBases(library.models)
+        let base = (json["base_model"] as? String).flatMap(UUID.init(uuidString:))
+            .map { id in bases.first { $0.id == id } } ?? bases.first
+        let plan = ImportPlan(files: paths.map(ImportPick.init(path:)),
+                              ref2vaPaths: Set(json["ref2va"] as? [String] ?? []), base: base)
+        if json["dry_run"] as? Bool == true {
+            // What the wizard's review page would show, nothing written.
+            return .json(200, [
+                "can_import": plan.canImport,
+                "items": plan.items.map { item in
+                    ["part": item.title, "detail": item.detail,
+                     "candidates": item.candidates.map(\.fileName)] as [String: Any]
+                },
+                "problems": plan.problems, "notes": plan.notes,
+                "unused": plan.unused.map { ["file": ($0.key as NSString).lastPathComponent, "reason": $0.value] },
+                "bytes_written": plan.bytesWritten])
         }
-        var picks: [String: ImportPick] = [:]
-        for (key, role) in [("dit", H3GGUFInfo.Role.dit), ("ref2va_dit", .dit),
-                            ("text_encoder", .textEncoder), ("vision", .vision)] {
-            let (picked, problem) = pick(key, role)
-            if let problem { return .error(400, problem) }
-            if let picked { picks[key] = picked }
+        guard let dit = plan.dit, let base, plan.canImport else {
+            let missing = plan.items.filter { $0.status == .missing }.map(\.title)
+            return .error(400, (plan.problems + missing.map { "missing: \($0)" }).joined(separator: "; "))
         }
-        guard let dit = picks["dit"] else { return .error(400, "\"dit\" \(ditPath) cannot be used") }
         let importer = ModelImporter()
         do {
             let path = try await importer.importNow(.init(
                 name: json["name"] as? String ?? "MiniMax-H3 GGUF", dit: dit,
-                ref2vaDit: picks["ref2va_dit"], textEncoder: picks["text_encoder"],
-                vision: picks["vision"], base: base))
+                ref2vaDit: plan.ref2vaDit, textEncoder: plan.textEncoder,
+                vision: plan.vision, base: base))
             library.addModel(path: path)
             let entry = library.models.first { $0.path == path }
-            return .json(200, ["id": entry?.id.uuidString ?? "", "path": path])
+            return .json(200, ["id": entry?.id.uuidString ?? "", "path": path,
+                               "items": plan.items.map { ["part": $0.title, "detail": $0.detail] },
+                               "notes": plan.notes])
         } catch {
             return .error(500, error.localizedDescription)
         }

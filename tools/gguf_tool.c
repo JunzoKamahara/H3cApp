@@ -1,6 +1,7 @@
 /* Inspect GGUF files the way the importer does, or trim a text encoder.
  *   h3_gguf_tool inspect <file.gguf>...
- *   h3_gguf_tool trim <text encoder.gguf> <output.gguf> [layers=50] */
+ *   h3_gguf_tool trim <text encoder.gguf> <output.gguf> [layers=50]
+ *   h3_gguf_tool extract <component dir> <name prefix> <out.safetensors> */
 #include "../h3.h"
 
 #include <stdio.h>
@@ -54,6 +55,16 @@ int main(int argc, char **argv) {
         fprintf(stderr, "\nwrote %s\n", argv[3]);
         return 0;
     }
-    fprintf(stderr, "usage: %s inspect <file.gguf>... | trim <in.gguf> <out.gguf> [layers]\n", argv[0]);
+    if (argc == 5 && !strcmp(argv[1], "extract")) {
+        if (!h3_extract_tensors(argv[2], argv[3], argv[4], progress, NULL, error,
+                                sizeof(error))) {
+            fprintf(stderr, "\n%s\n", error);
+            return 1;
+        }
+        fprintf(stderr, "\nwrote %s\n", argv[4]);
+        return 0;
+    }
+    fprintf(stderr, "usage: %s inspect <file.gguf>... | trim <in.gguf> <out.gguf> [layers]"
+                    " | extract <component dir> <name prefix> <out.safetensors>\n", argv[0]);
     return 2;
 }

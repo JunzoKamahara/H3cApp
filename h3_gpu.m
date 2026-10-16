@@ -364,6 +364,19 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
         const char *source_path = shader_source_path ? shader_source_path :
                                                        "h3_shaders.metal";
         NSString *path = [NSString stringWithUTF8String:source_path];
+        /* Callers pass the shader relative to the working directory, which
+         * the app sets to its Resources folder at launch - but an open/save
+         * panel can move the working directory (picking files in the GGUF
+         * import made the next generation fail with the shader "not
+         * found"). A relative path that does not resolve falls back to the
+         * same file in the app bundle's Resources. */
+        if (!path.isAbsolutePath &&
+            ![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            NSString *bundled = [NSBundle.mainBundle.resourcePath
+                stringByAppendingPathComponent:path.lastPathComponent];
+            if (bundled && [[NSFileManager defaultManager] fileExistsAtPath:bundled])
+                path = bundled;
+        }
         NSError *libraryError = nil;
         NSString *source = [NSString stringWithContentsOfFile:path
                                                      encoding:NSUTF8StringEncoding

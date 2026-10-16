@@ -67,6 +67,29 @@ private let h3TrimProgressTrampoline: h3_progress_callback = { _, completed, tot
 }
 
 public enum H3GGUFTools {
+    /// Copies the tensors named `prefix`* out of a component directory into
+    /// one safetensors file (h3_extract_tensors) - e.g. the vision tower
+    /// ("model.visual.") of a released text encoder - off the caller's thread.
+    public static func extractTensors(componentDirectory: String, prefix: String, output: String,
+                                      progress: @escaping @Sendable (Double) -> Void,
+                                      isCancelled: @escaping @Sendable () -> Bool) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            let bridge = TrimBridge(progress: progress, isCancelled: isCancelled)
+            let handle = Unmanaged.passRetained(bridge)
+            defer { handle.release() }
+            var errorBuffer = [CChar](repeating: 0, count: 512)
+            let ok = errorBuffer.withUnsafeMutableBufferPointer { errorBuf in
+                h3_extract_tensors(componentDirectory, prefix, output,
+                                   h3TrimProgressTrampoline, handle.toOpaque(),
+                                   errorBuf.baseAddress, errorBuf.count)
+            }
+            if ok == 0 {
+                if isCancelled() { throw CancellationError() }
+                throw H3EngineError.loadFailed(String(cString: errorBuffer))
+            }
+        }.value
+    }
+
     /// Writes a copy of a text-encoder GGUF holding only its first `layers`
     /// language layers (and no output head), off the caller's thread.
     public static func trimTextEncoder(source: String, output: String, layers: Int = 50,
