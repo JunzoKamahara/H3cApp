@@ -252,6 +252,65 @@ static const struct { const char *hf, *gguf; } llama_layer_names[] = {
     {"mlp.down_proj.weight", "ffn_down.weight"},
 };
 
+/* Qwen3-VL vision tensors as llama.cpp's mmproj files name them; `rest` is
+ * the name after "model.visual.". Deepstack mergers are numbered by the
+ * vision layer they tap (8, 16, 24) instead of 0..2. The temporal patch
+ * embedding is split into two tensors there (load_tensor reassembles it),
+ * so it has no single alias. */
+static int clip_name(const char *rest, char *out, size_t size) {
+    static const struct { const char *hf, *clip; } block_names[] = {
+        {"norm1.", "ln1."}, {"norm2.", "ln2."}, {"attn.qkv.", "attn_qkv."},
+        {"attn.proj.", "attn_out."}, {"mlp.linear_fc1.", "ffn_up."},
+        {"mlp.linear_fc2.", "ffn_down."},
+    };
+    static const struct { const char *hf, *clip; } merger_names[] = {
+        {"norm.", "norm."}, {"linear_fc1.", "fc1."}, {"linear_fc2.", "fc2."},
+    };
+    static const int deepstack_layers[] = {8, 16, 24};
+    int index = -1, used = 0;
+    if (sscanf(rest, "blocks.%d.%n", &index, &used) == 1 && used > 0) {
+        for (size_t i = 0; i < sizeof(block_names) / sizeof(*block_names); i++) {
+            size_t length = strlen(block_names[i].hf);
+            if (!strncmp(rest + used, block_names[i].hf, length)) {
+                snprintf(out, size, "v.blk.%d.%s%s", index, block_names[i].clip,
+                         rest + used + length);
+                return 1;
+            }
+        }
+        return 0;
+    }
+    if (sscanf(rest, "deepstack_merger_list.%d.%n", &index, &used) == 1 &&
+        used > 0 && index >= 0 && index < 3) {
+        for (size_t i = 0; i < sizeof(merger_names) / sizeof(*merger_names); i++) {
+            size_t length = strlen(merger_names[i].hf);
+            if (!strncmp(rest + used, merger_names[i].hf, length)) {
+                snprintf(out, size, "v.deepstack.%d.%s%s",
+                         deepstack_layers[index], merger_names[i].clip,
+                         rest + used + length);
+                return 1;
+            }
+        }
+        return 0;
+    }
+    static const struct { const char *hf, *clip; } fixed[] = {
+        {"merger.norm.weight", "v.post_ln.weight"},
+        {"merger.norm.bias", "v.post_ln.bias"},
+        {"merger.linear_fc1.weight", "mm.0.weight"},
+        {"merger.linear_fc1.bias", "mm.0.bias"},
+        {"merger.linear_fc2.weight", "mm.2.weight"},
+        {"merger.linear_fc2.bias", "mm.2.bias"},
+        {"pos_embed.weight", "v.position_embd.weight"},
+        {"patch_embed.proj.bias", "v.patch_embd.bias"},
+    };
+    for (size_t i = 0; i < sizeof(fixed) / sizeof(*fixed); i++) {
+        if (!strcmp(rest, fixed[i].hf)) {
+            snprintf(out, size, "%s", fixed[i].clip);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* Writes the n-th alternative spelling of name to out; 0 when there are
  * no more. */
 static int alias_name(const char *name, int n, char *out, size_t size) {
@@ -296,6 +355,9 @@ static int alias_name(const char *name, int n, char *out, size_t size) {
         switch (n) {
         case 0: snprintf(out, size, "visual.%s", rest); return 1;
         case 1: snprintf(out, size, "vision_tower.%s", rest); return 1;
+        case 2: /* llama.cpp's mmproj (clip) file */
+            if (!clip_name(rest, out, size)) out[0] = '\0';
+            return 1;
         default: return 0;
         }
     }
@@ -421,12 +483,85 @@ static h3_gpu_tensor *expand_tensor(h3_gpu *gpu, const h3_st_header *header,
     return result;
 }
 
+/* llama.cpp's mmproj stores the [out, 3, 2, 16, 16] temporal patch
+ * embedding as two [out, 3, 16, 16] tensors, one per frame of the pair
+ * (v.patch_embd.weight and .weight.1). Reassembled on the CPU - 2 MB. */
+static h3_gpu_tensor *load_split_patch_embed(const h3_weight_store *store,
+                                             h3_gpu *gpu, int ndim,
+                                             const uint64_t *shape,
+                                             h3_dtype dtype, char *error,
+                                             size_t error_size) {
+    const h3_st_header *headers[2] = {NULL, NULL};
+    const h3_st_tensor *parts[2] = {
+        find_exact(store, "v.patch_embd.weight", &headers[0]),
+        find_exact(store, "v.patch_embd.weight.1", &headers[1]),
+    };
+    if (!parts[0] || !parts[1] || ndim != 5 || shape[2] != 2) {
+        fail(error, error_size,
+             "required weight is absent: model.visual.patch_embed.proj.weight");
+        return NULL;
+    }
+    size_t per_frame_inner = (size_t)(shape[3] * shape[4]);
+    size_t channels = (size_t)(shape[0] * shape[1]);
+    size_t half = channels * per_frame_inner, elements = 2 * half;
+    float *frames[2] = {NULL, NULL};
+    float *joined = malloc(elements * sizeof(float));
+    int ok = joined != NULL;
+    for (int t = 0; ok && t < 2; t++) {
+        const h3_st_tensor *part = parts[t];
+        h3_quant_type quant = part->quant ? (h3_quant_type)part->quant :
+            part->dtype == H3_DTYPE_F32 ? H3_QUANT_F32 :
+            part->dtype == H3_DTYPE_F16 ? H3_QUANT_F16 :
+            part->dtype == H3_DTYPE_BF16 ? H3_QUANT_BF16 : H3_QUANT_NONE;
+        uint64_t bytes = h3_quant_bytes(quant, half);
+        void *raw = bytes && bytes == part->data_end - part->data_begin ?
+            malloc((size_t)bytes) : NULL;
+        frames[t] = malloc(half * sizeof(float));
+        char detail[256];
+        ok = raw && frames[t] && part->ndim == 4 && part->shape[0] == shape[0] &&
+             part->shape[1] == shape[1] && part->shape[2] == shape[3] &&
+             part->shape[3] == shape[4] &&
+             h3_st_read_data(headers[t], part, raw, (size_t)bytes, detail,
+                             sizeof(detail)) &&
+             h3_quant_dequantize(quant, raw, half, frames[t]);
+        free(raw);
+    }
+    for (size_t c = 0; ok && c < channels; c++)
+        for (int t = 0; t < 2; t++)
+            memcpy(joined + (c * 2 + (size_t)t) * per_frame_inner,
+                   frames[t] + c * per_frame_inner,
+                   per_frame_inner * sizeof(float));
+    h3_gpu_tensor *result = NULL;
+    if (ok && dtype == H3_DTYPE_F32) {
+        result = h3_gpu_tensor_from_f32(gpu, joined, elements);
+    } else if (ok) {
+        uint16_t *bf16 = malloc(elements * sizeof(*bf16));
+        for (size_t i = 0; bf16 && i < elements; i++) {
+            uint32_t bits;
+            memcpy(&bits, &joined[i], sizeof(bits));
+            bits += 0x7fffu + ((bits >> 16) & 1u);
+            bf16[i] = (uint16_t)(bits >> 16);
+        }
+        result = bf16 ? h3_gpu_tensor_from_bf16(gpu, bf16, elements) : NULL;
+        free(bf16);
+    }
+    free(frames[0]);
+    free(frames[1]);
+    free(joined);
+    if (!result)
+        fail(error, error_size, "cannot reassemble the split patch embedding");
+    return result;
+}
+
 static h3_gpu_tensor *load_tensor(const h3_weight_store *store, h3_gpu *gpu,
                                   const char *name, int ndim,
                                   const uint64_t *shape, h3_dtype dtype,
                                   char *error, size_t error_size) {
     const h3_st_header *header = NULL;
     const h3_st_tensor *tensor = h3_weight_find(store, name, &header);
+    if (!tensor && !strcmp(name, "model.visual.patch_embed.proj.weight"))
+        return load_split_patch_embed(store, gpu, ndim, shape, dtype, error,
+                                      error_size);
     if (!tensor) {
         fail(error, error_size, "required weight is absent: %s", name);
         return NULL;

@@ -90,12 +90,15 @@ int main(int argc, char **argv) {
         const h3_st_tensor *ref = h3_weight_store_tensor(reference, index, NULL);
         if (argc > 3 && !strstr(ref->name, argv[3])) continue;
         const h3_st_tensor *cand = h3_weight_find(candidate, ref->name, NULL);
-        if (!cand) {
+        /* A tensor the store assembles from parts (the split patch
+         * embedding) has no single entry: compare it if it loads. */
+        int assembled = !cand && !strcmp(ref->name, "model.visual.patch_embed.proj.weight");
+        if (!cand && !assembled) {
             missing++;
             continue;
         }
-        int same_shape = cand->ndim == ref->ndim;
-        for (int d = 0; same_shape && d < ref->ndim; d++)
+        int same_shape = assembled || cand->ndim == ref->ndim;
+        for (int d = 0; !assembled && same_shape && d < ref->ndim; d++)
             same_shape = cand->shape[d] == ref->shape[d];
         if (!same_shape) {
             printf("SHAPE %s\n", ref->name);
@@ -137,7 +140,8 @@ int main(int argc, char **argv) {
             groups[g].count = 0;
             groups[g].worst_l2 = groups[g].worst_max = 0;
             snprintf(groups[g].type, sizeof(groups[g].type), "%s",
-                     cand->quant ? h3_quant_name((h3_quant_type)cand->quant) : "safetensors");
+                     !cand ? "parts" : cand->quant ?
+                     h3_quant_name((h3_quant_type)cand->quant) : "safetensors");
             group_count++;
         }
         if (g < group_count) {
