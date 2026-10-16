@@ -89,7 +89,7 @@ to skip that step and stream the original BF16 weights instead.
   the video in the preview) makes a new clip that carries on from a
   project video - its last 22 frames (about 0.9 s) and their sound are
   held at the start of the new clip, the way ComfyUI's H3 Motion Context
-  node does it - and Join Up to Here and Export cross-fades a chain of
+  node does it (see [How joined generation works](#how-joined-generation-works)) - and Join Up to Here and Export cross-fades a chain of
   them into one video in the project, listed with its clips folded under
   it. With lip sync, each
   continuation takes the audio on from where the last one ended, for long
@@ -252,6 +252,82 @@ Good to know:
 
 Through the API, use `seconds` / `chained` / `chain_clip_seconds` on
 `POST /api/generate` (see [API](#api)).
+
+### How joined generation works
+
+Joined generation repeats "continue the previous video" and joins the
+results at their overlaps. Continuing is in the engine ([h3.c](h3.c)); the
+chain and the joining are in the app
+([Continuation.swift](native/H3Spike/Sources/H3cApp/Continuation.swift),
+[ChainGeneration.swift](native/H3Spike/Sources/H3cApp/ChainGeneration.swift)).
+
+1. **Keep the latents.** Every generation saves its latents, as they were
+   before decoding, to a `.h3lt` file (`h3_params.save_latent_path`): a
+   9-int32 header (`H3LT`, version, sizes, frame count) followed by the F32
+   video latent `[24,T,H,W]` and the normalized audio latent `[32,2,T]`
+   (about 3.6 MB for 5 s at landscape medium). Nothing is re-read from a
+   rendered video, so joining doesn't cost picture quality.
+2. **Pin the last 22 frames.** A continuation takes the previous clip's last
+   22 frames (7 latent steps, about 0.9 s) and places them, one latent step
+   at a time, as conditions at the first 22 frames of the new clip, held for
+   the whole generation (`continue_latent_path` / `continue_frames`,
+   `h3_continuation_plan`). This extends FL2VA's first/last-frame
+   conditioning to frames in between: each step sits at its own frame's time
+   (text length + frame x 5/3). The last frame keeps its original formula, so
+   generations without a continuation are unchanged (a first-image video was
+   checked bit-identical, picture and sound). A continuation is an FL2VA
+   generation, so it needs FL2VA and its cache only, not Ref2VA (unless the
+   first clip uses references).
+3. **Carry the sound.** The previous clip's sound for those 22 frames (37
+   audio latent steps, about 0.92 s) is placed on the new clip's timeline so
+   that it ends where the pinned frames end, snapped to the new clip's 40 Hz
+   audio grid. With lip sync, the sound is the audio file itself, so no sound
+   is pinned.
+4. **Join at the overlap.** A continuation's first 22 frames come out nearly
+   the same as the previous clip's last 22. Joining lays the clips on two
+   alternating video and audio tracks in AVFoundation and, over those 22
+   frames, ramps the picture's opacity and the volume from one to the next
+   (`JoinedVideoExporter`). Clips sit on a whole-frame grid, and the shift
+   from snapping the carried sound to the audio grid (up to 8.3 ms, depending
+   on the previous clip's length) is compensated; the joined-generation clip
+   lengths (175 and 124 frames) are ones with no shift.
+5. **Run the chain.** Joined generation picks the number of clips for the
+   length (each adds its length minus 22 frames; the last is shortened to fit
+   what is left) and repeats steps 2-4 with the seed going up by one per clip.
+   With lip sync, the audio's start moves on by (frames - 22) / 24 s per clip.
+
+Measured on a 24 GB M5 at landscape medium:
+
+- Over the 22-frame overlaps the pictures differed by about 3/255 on
+  average; the overlapping sound correlated at 0.86-0.93 for generated sound
+  and above 0.99 with lip sync.
+- A continuation takes about 20% longer than a new clip (446 s against 364 s
+  for 5 s), for the pinned conditions.
+- 15 s from three clips took 23-25% less time than one 362-frame
+  generation.
+- Each clip only sees the last 0.9 s or so before it, so over many clips the
+  scene can drift slowly (for example, a sunset gradually coming into view).
+
+#### Implementations this follows
+
+The way of continuing and joining follows the ideas of these ComfyUI
+implementations. None of their code is used: the ideas were implemented
+independently in this repository's engine (C) and app (Swift).
+
+- [ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context)
+  (NikoDemon80, GPL-3.0): pin the previous clip's last frames, one per
+  condition, at the head of the next clip, and place its tail sound at the
+  same time. Its author reports that placing the sound on the timeline
+  turned a similar-but-not-continuing sound into one that carries on.
+- The "H3 Motion Context Clip Stitcher" in
+  [ComfyUI-noEmbryo](https://github.com/noembryo/ComfyUI-noEmbryo)
+  (noembryo, MIT): decode saved latents one clip at a time and crossfade the
+  overlap (22 frames or another whole number of latent steps), picture and
+  sound.
+- The workflow combining them,
+  [Endless MiniMax H3 (with Endless LipSync)](https://civitai.com/models/2909076)
+  (NikoDemon80, Civitai): long videos together with lip sync.
+
 
 ## Compute modes
 
