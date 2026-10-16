@@ -373,6 +373,12 @@ struct ResolvedResult {
     /// The project video this one continues, and the frames carried over.
     var continuedFrom: String? = nil
     var continueFrames: Int = continuationFrames
+    /// つなげて生成: how many clips were joined (of how many planned), and
+    /// the clip length asked for.
+    var chained = false
+    var joinedClipCount: Int? = nil
+    var plannedClipCount: Int? = nil
+    var chainClipFrames: Int? = nil
 
     var seedDecimalString: String { String(seed) }
 
@@ -432,6 +438,15 @@ struct ResolvedResult {
         }
         if !references.isEmpty {
             lines.append(String(localized: "参照: \(references.joined(separator: ", "))"))
+        }
+        if let joinedClipCount {
+            let clip = chainClipFrames.flatMap(ChainClipLength.init(rawValue:))?.label
+            var line = String(localized: "つないだ動画: \(joinedClipCount)本を、重なり\(continueFrames)コマでつないだもの")
+            if let clip { line += String(localized: "（1本\(clip)）") }
+            if let plannedClipCount, plannedClipCount > joinedClipCount {
+                line += String(localized: "（\(plannedClipCount)本の予定を途中で止めたもの）")
+            }
+            lines.append(line)
         }
         if let continuedFrom {
             lines.append(String(localized: "続き: \(continuedFrom)（最後の\(continueFrames)コマを引き継ぎ）"))

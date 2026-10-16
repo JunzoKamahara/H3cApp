@@ -28,7 +28,10 @@ struct ProjectMenuItems: View {
     var body: some View {
         Button("新規プロジェクト…") { viewModel.showingNewProject = true }
             .keyboardShortcut(inMenuBar ? KeyboardShortcut("n", modifiers: [.command, .shift]) : nil)
-        Button("プロジェクトとして保存…") { viewModel.showingSaveAsProject = true }
+        Button("プロジェクトとして保存…") {
+            viewModel.continueAfterSavingAsProject = false
+            viewModel.showingSaveAsProject = true
+        }
             .disabled(viewModel.project != nil)
             .help("今のプロンプトと設定、プレビューの動画を、名前を付けてプロジェクトとして保存します")
         Button("プロジェクトを開く…") { viewModel.chooseAndOpenProject() }
@@ -184,7 +187,9 @@ struct BatchProjectSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: H3Spacing.md) {
             Text("プロジェクトを選んで生成").font(.headline)
-            Text("複数本（\(viewModel.batchCount)本）を生成するには、できた動画を保存するプロジェクトが必要です。新しいプロジェクトを作るか、既存のプロジェクトを選んでください。今のプロンプトと設定、参照ファイルはそのプロジェクトに保存されます。")
+            Text(viewModel.isChained
+                 ? String(localized: "つなげて生成するには、つなぐ前の動画とつないだ動画を保存するプロジェクトが必要です。新しいプロジェクトを作るか、既存のプロジェクトを選んでください。今のプロンプトと設定、参照ファイルはそのプロジェクトに保存されます。")
+                 : String(localized: "複数本（\(viewModel.batchCount)本）を生成するには、できた動画を保存するプロジェクトが必要です。新しいプロジェクトを作るか、既存のプロジェクトを選んでください。今のプロンプトと設定、参照ファイルはそのプロジェクトに保存されます。"))
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
             Picker("", selection: $mode) {
@@ -307,6 +312,7 @@ struct ProjectVideosSheet: View {
     @ObservedObject var viewModel: GenerationViewModel
     @Binding var isPresented: Bool
     @State private var pendingDelete: ProjectVideo?
+    @State private var tree: [VideoNode] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: H3Spacing.md) {
@@ -322,32 +328,67 @@ struct ProjectVideosSheet: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(viewModel.projectVideos) { video in
-                    row(video)
+                // Joined videos lead; the clips they were joined from fold
+                // under them (a joined video can itself be a clip of another).
+                List(tree, children: \.children) { node in
+                    if let video = node.video {
+                        row(video, clipIndex: node.clipIndex)
+                    } else {
+                        missingRow(node)
+                    }
                 }
             }
         }
         .padding(H3Spacing.lg)
         .frame(width: 720, height: 520)
-        .onAppear { viewModel.reloadProjectVideos() }
+        .onAppear {
+            viewModel.reloadProjectVideos()
+            tree = buildTree()
+        }
+        .onChange(of: viewModel.projectVideos) { _, _ in tree = buildTree() }
         .confirmationDialog("この動画を削除しますか？", isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
         ), presenting: pendingDelete) { video in
             Button("ゴミ箱に移動", role: .destructive) { viewModel.deleteProjectVideo(video) }
-        } message: { _ in
-            Text("動画と設定の記録をゴミ箱に移動します。")
+        } message: { video in
+            if let clips = video.record?.joinedClips, viewModel.chainFolder(of: video) != nil {
+                Text("つないだ動画と、そのもとの\(clips.count)本の動画をゴミ箱に移動します。")
+            } else {
+                Text("動画と設定の記録をゴミ箱に移動します。")
+            }
         }
     }
 
-    private func row(_ video: ProjectVideo) -> some View {
+    private func row(_ video: ProjectVideo, clipIndex: Int?) -> some View {
         HStack(spacing: H3Spacing.md) {
             Button { show(video) } label: {
-                VideoThumbnail(url: video.url)
+                VideoThumbnail(url: video.url, size: clipIndex == nil ? 72 : 56)
+                    .overlay(alignment: .bottomTrailing) {
+                        // A joined video is marked so it isn't mistaken for
+                        // the continuation it ends with.
+                        if video.record?.joinedClips != nil {
+                            Image(systemName: "film.stack")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(4)
+                                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 4))
+                                .padding(3)
+                        }
+                    }
             }
             .buttonStyle(.plain)
             .disabled(viewModel.isGenerating)
             .help(showHelp(video))
             VStack(alignment: .leading, spacing: 2) {
+                if let record = video.record, let clips = record.joinedClips {
+                    Label(String(localized: "つないだ動画（\(clips.count)本・\(actualLength(record))）"),
+                          systemImage: "film.stack")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                if let clipIndex {
+                    Text("\(clipIndex)本目").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }
                 Text(video.url.lastPathComponent)
                     .font(.callout.monospaced())
                     .lineLimit(1)
@@ -404,6 +445,42 @@ struct ProjectVideosSheet: View {
         .padding(.vertical, 2)
     }
 
+    /// The list as a tree: videos no joined video includes, newest first,
+    /// with each joined video's clips under it in order.
+    private func buildTree() -> [VideoNode] {
+        guard let project = viewModel.project else { return [] }
+        let included = Set(viewModel.projectVideos.flatMap { $0.record?.joinedClips ?? [] })
+        return viewModel.projectVideos
+            .filter { !included.contains(ProjectFiles.stored($0.url.path, in: project.url)) }
+            .map { node(for: $0, path: $0.id, parentID: "", clipIndex: nil, depth: 0) }
+    }
+
+    private func node(for video: ProjectVideo?, path: String, parentID: String,
+                      clipIndex: Int?, depth: Int) -> VideoNode {
+        let id = parentID + "/" + path
+        // depth guards against a record that (wrongly) includes itself.
+        let children = depth < 8 ? video?.record?.joinedClips?.enumerated().map { index, clip in
+            node(for: viewModel.projectVideo(atStoredPath: clip), path: clip, parentID: id,
+                 clipIndex: index + 1, depth: depth + 1)
+        } : nil
+        return VideoNode(id: id, path: path, video: video, clipIndex: clipIndex, children: children)
+    }
+
+    /// A clip a joined video lists but the project no longer has.
+    private func missingRow(_ node: VideoNode) -> some View {
+        HStack(spacing: H3Spacing.md) {
+            if let clipIndex = node.clipIndex {
+                Text("\(clipIndex)本目").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            Text(URL(fileURLWithPath: node.path).lastPathComponent)
+                .font(.caption.monospaced())
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+            Text("見つかりません").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
     /// Shows the video and puts its settings (seed pinned) into the form,
     /// so the window and the panel describe the same video.
     private func show(_ video: ProjectVideo) {
@@ -418,15 +495,25 @@ struct ProjectVideosSheet: View {
             : String(localized: "この動画をプレビューに表示し、プロンプトと設定もシード固定でパネルに戻します")
     }
 
+    /// The length a video really has, from its frames ("19.3秒").
+    private func actualLength(_ record: ProjectVideoRecord) -> String {
+        guard record.actualFrameCount > 0 else { return String(localized: "\(record.draft.seconds)秒") }
+        return formatPlaybackSeconds(Double(record.actualFrameCount) / Double(max(record.fps, 1)))
+    }
+
     private func summary(_ record: ProjectVideoRecord) -> String {
         let draft = record.draft
         var parts: [String] = []
         if let profile = SizeProfile(rawValue: draft.sizeProfile) { parts.append(profile.label) }
-        parts.append(String(localized: "\(draft.seconds)秒"))
+        // How long the video plays (from its frames: a 5秒 request plays
+        // 5.2秒, and a joined video's draft is only its last clip's).
+        parts.append(String(localized: "再生時間 \(actualLength(record))"))
         if let speed = SpeedMode(rawValue: draft.speedMode) { parts.append(speed.summaryLabel) }
         if draft.fastAttention { parts.append(String(localized: "高速モード（試験的）")) }
         parts.append(String(localized: "シード \(record.seed)"))
-        parts.append(String(localized: "生成時間 \(formatElapsed(record.generationSeconds))"))
+        parts.append(record.joinedClips != nil
+                     ? String(localized: "生成時間 合計\(formatElapsed(record.generationSeconds))")
+                     : String(localized: "生成時間 \(formatElapsed(record.generationSeconds))"))
         return parts.joined(separator: summarySeparator)
     }
 }
@@ -434,7 +521,9 @@ struct ProjectVideosSheet: View {
 /// A still from one second into the video.
 struct VideoThumbnail: View {
     let url: URL
+    var size: CGFloat = 72
     @State private var image: NSImage?
+    @State private var duration: Double?
 
     var body: some View {
         ZStack {
@@ -443,9 +532,24 @@ struct VideoThumbnail: View {
                 Image(nsImage: image).resizable().scaledToFit()
             }
         }
-        .frame(width: 72, height: 72)
+        .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .task(id: url) { image = await Self.thumbnail(for: url) }
+        .overlay(alignment: .bottomLeading) {
+            // The playback length, read from the file itself.
+            if let duration {
+                Text(formatPlaybackSeconds(duration))
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 1)
+                    .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 3))
+                    .padding(3)
+            }
+        }
+        .task(id: url) {
+            duration = try? await AVURLAsset(url: url).load(.duration).seconds
+            image = await Self.thumbnail(for: url)
+        }
     }
 
     private static func thumbnail(for url: URL) async -> NSImage? {
@@ -457,4 +561,21 @@ struct VideoThumbnail: View {
         }
         return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
     }
+}
+
+/// One row of the project's video tree; a missing clip has no video.
+struct VideoNode: Identifiable {
+    let id: String
+    let path: String
+    let video: ProjectVideo?
+    let clipIndex: Int?
+    let children: [VideoNode]?
+}
+
+/// "5.2秒", "1分30.5秒".
+func formatPlaybackSeconds(_ seconds: Double) -> String {
+    let tenths = (seconds * 10).rounded() / 10
+    guard tenths >= 60 else { return String(format: String(localized: "%.1f秒"), tenths) }
+    let minutes = Int(tenths / 60)
+    return String(format: String(localized: "%lld分%.1f秒"), minutes, tenths - Double(minutes * 60))
 }

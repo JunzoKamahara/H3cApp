@@ -55,6 +55,59 @@ extension GenerationViewModel {
                                           sizeProfileRaw: draft.sizeProfile)
     }
 
+    /// Whether the panel offers 続きを生成 for the video in the preview: a
+    /// project video with latents, or a temp result (saved as a project
+    /// first).
+    var canContinueDisplayedVideo: Bool {
+        guard !isGenerating, continuation == nil, let resultURL else { return false }
+        if continuableDisplayedVideo != nil { return true }
+        return savableTemporaryResult != nil
+            && FileManager.default.fileExists(atPath: ProjectFiles.latentURL(for: resultURL).path)
+    }
+
+    /// 続きを生成 (the panel): continue the video in the preview. One outside
+    /// any project goes into a new one first (プロジェクトとして保存), and is
+    /// continued once it's there.
+    func continueDisplayedVideo() {
+        if let video = continuableDisplayedVideo {
+            continueFromProjectVideo(video)
+        } else if savableTemporaryResult != nil {
+            continueAfterSavingAsProject = true
+            showingSaveAsProject = true
+        }
+    }
+
+    /// The video in the preview, when it continues another and so can be
+    /// joined with what it continues (つないで書き出す in the panel).
+    var joinableDisplayedVideo: ProjectVideo? {
+        guard !isGenerating, !isExportingJoined, let resultURL,
+              let video = projectVideos.first(where: { $0.url == resultURL }),
+              video.record?.joinedClips == nil, video.record?.draft.continueFrom != nil else { return nil }
+        return video
+    }
+
+    /// A clip or other video by its path in the project's records.
+    func projectVideo(atStoredPath path: String) -> ProjectVideo? {
+        guard let project else { return nil }
+        let url = URL(fileURLWithPath: ProjectFiles.resolved(path, in: project.url))
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let recordURL = url.deletingPathExtension().appendingPathExtension("json")
+        let record = (try? Data(contentsOf: recordURL))
+            .flatMap { try? ProjectFiles.decoder.decode(ProjectVideoRecord.self, from: $0) }
+        return ProjectVideo(url: url, record: record)
+    }
+
+    /// The folder a つなげて生成's clips live in (chains/<name>), if all of a
+    /// joined video's clips are in one - deleting the video takes it along.
+    func chainFolder(of video: ProjectVideo) -> URL? {
+        guard let project, let clips = video.record?.joinedClips, !clips.isEmpty else { return nil }
+        let folders = Set(clips.map { URL(fileURLWithPath: ProjectFiles.resolved($0, in: project.url))
+            .deletingLastPathComponent().standardizedFileURL })
+        guard folders.count == 1, let folder = folders.first,
+              folder.deletingLastPathComponent().lastPathComponent == "chains" else { return nil }
+        return folder
+    }
+
     /// The project video in the preview, if it can be continued.
     var continuableDisplayedVideo: ProjectVideo? {
         guard let resultURL, let video = projectVideos.first(where: { $0.url == resultURL }),
@@ -101,45 +154,50 @@ extension GenerationViewModel {
         return chain.count > 1 ? chain : nil
     }
 
-    /// ここまでをつないで書き出す: joins the chain ending at `video` into
-    /// one file in the project's "joined" folder, cross-fading each
-    /// continuation's carried-over frames and sound, then shows it in Finder.
+    /// ここまでをつないで書き出す / つないで書き出す: joins the chain ending at
+    /// `video` into one video in the project, cross-fading each
+    /// continuation's carried-over frames and sound, and shows it in the
+    /// preview.
     func exportJoined(endingAt video: ProjectVideo) {
-        Task { _ = await exportJoinedVideo(endingAt: video, reveal: true) }
+        Task {
+            guard case .success(let url) = await exportJoinedVideo(endingAt: video, reveal: false),
+                  let joined = projectVideos.first(where: { $0.url == url }) else { return }
+            showProjectVideo(joined)
+        }
     }
 
     func exportJoinedVideo(endingAt video: ProjectVideo, reveal: Bool) async -> Result<URL, Error> {
-        guard let project, let chain = continuationChain(endingAt: video) else {
+        guard let project, let chain = continuationChain(endingAt: video), let lastRecord = video.record else {
             let error = JoinError.noChain
             projectMessage = error.localizedDescription
             return .failure(error)
         }
-        let folder = project.url.appendingPathComponent("joined", isDirectory: true)
-        let base = video.url.deletingPathExtension().lastPathComponent + "_joined"
-        var output = folder.appendingPathComponent(base + ".mp4")
-        var counter = 2
-        while FileManager.default.fileExists(atPath: output.path) {
-            output = folder.appendingPathComponent("\(base)-\(counter).mp4")
-            counter += 1
-        }
-        isExportingJoined = true
         projectMessage = String(localized: "\(chain.count)本の動画をつないで書き出しています…")
-        defer { isExportingJoined = false }
-        do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let clips = chain.enumerated().map { index, video in
-                JoinedVideoExporter.Clip(url: video.url,
-                                         overlapFrames: index == 0 ? 0 : (video.record?.draft.continueFrames ?? continuationFrames),
-                                         carriedSound: index > 0 && video.record?.draft.forcedAudio == nil)
-            }
-            try await JoinedVideoExporter.export(clips, to: output)
-            projectMessage = String(localized: "つないだ動画を書き出しました: joined/\(output.lastPathComponent)")
+        // The joined video joins the list as a video of its own; its record
+        // is the last clip's settings with the whole chain's length.
+        var record = lastRecord
+        record.completedAt = Date()
+        record.generationSeconds = chain.reduce(0) { $0 + ($1.record?.generationSeconds ?? 0) }
+        record.actualFrameCount = chainTotalFrames(chain.map { $0.record?.actualFrameCount ?? 0 },
+                                                   overlap: lastRecord.draft.continueFrames ?? continuationFrames)
+        record.draft.continueFrom = chain[0].record?.draft.continueFrom
+        record.draft.seconds = Int((Double(record.actualFrameCount) / Double(max(record.fps, 1))).rounded())
+        record.soundLateness = 0
+        record.latentSoundLateness = lastRecord.soundLateness ?? soundLeads(chain.map { ($0.url, $0.record) }).last ?? 0
+        record.joinedClips = chain.map { ProjectFiles.stored($0.url.path, in: project.url) }
+        record.chainPlannedClips = nil
+        let result = await writeJoinedVideo(clips: chain.map { ($0.url, $0.record) }, record: record,
+                                            baseName: video.url.deletingPathExtension().lastPathComponent,
+                                            projectURL: project.url)
+        switch result {
+        case .success(let output):
+            projectMessage = String(localized: "つないだ動画を書き出しました: \(output.lastPathComponent)")
+            reloadProjectVideos()
             if reveal { NSWorkspace.shared.activateFileViewerSelecting([output]) }
-            return .success(output)
-        } catch {
+        case .failure(let error):
             projectMessage = String(localized: "つないだ動画を書き出せませんでした（詳細: \(error.localizedDescription)）")
-            return .failure(error)
         }
+        return result
     }
 }
 
@@ -168,9 +226,9 @@ enum JoinedVideoExporter {
     struct Clip {
         var url: URL
         var overlapFrames: Int
-        /// Whether the engine carried the earlier clip's sound over (no
-        /// forced audio), so this clip's sound runs a little late.
-        var carriedSound = false
+        /// How much earlier the clip's sound goes: the lateness it was made
+        /// with (ProjectVideoRecord.soundLateness).
+        var soundLead = 0.0
     }
 
     /// How late a continuation's sound runs: the engine snaps the carried
@@ -200,7 +258,6 @@ enum JoinedVideoExporter {
         // Where each clip lies on the joined timeline.
         var ranges: [CMTimeRange] = []
         var renderSize = CGSize.zero
-        var soundDelay = 0.0
         var frameRate: Float = 24
         for (index, clip) in clips.enumerated() {
             let asset = AVURLAsset(url: clip.url)
@@ -227,19 +284,16 @@ enum JoinedVideoExporter {
             // The sound runs a few milliseconds past the last frame; the
             // joined file keeps each clip's sound only as long as its picture,
             // and a continuation's starts early by however late it runs.
-            // The lateness adds up along the chain: each continuation
-            // inherits the earlier clip's and adds its own.
-            if clip.carriedSound, let previous = ranges.last {
-                let previousFrames = Int((previous.duration.seconds * Double(fps)).rounded())
-                soundDelay += Self.soundDelay(previousFrames: previousFrames,
-                                              overlapFrames: clip.overlapFrames, fps: Double(fps))
-            } else if index > 0 {
-                soundDelay = 0
-            }
-            let soundStart = CMTimeSubtract(start, CMTime(seconds: soundDelay, preferredTimescale: 48000))
+            // A late sound starts that much further into its track (an
+            // early one, that much later on the timeline), so nothing lands
+            // before the clip.
+            let lead = CMTime(seconds: abs(clip.soundLead), preferredTimescale: 48000)
+            let soundSource = clip.soundLead >= 0 ? CMTimeAdd(audioRange.start, lead) : audioRange.start
+            let soundAt = clip.soundLead >= 0 ? start : CMTimeAdd(start, lead)
+            let available = CMTimeSubtract(audioRange.end, soundSource)
+            let soundLength = CMTimeMinimum(CMTimeSubtract(CMTimeAdd(start, duration), soundAt), available)
             try audioTracks[index % 2].insertTimeRange(
-                CMTimeRange(start: audioRange.start, duration: CMTimeMinimum(duration, audioRange.duration)),
-                of: audio, at: soundStart)
+                CMTimeRange(start: soundSource, duration: soundLength), of: audio, at: soundAt)
             if index > 0 {
                 let fade = CMTimeRange(start: start, end: ranges[index - 1].end)
                 audioParameters[(index - 1) % 2].setVolumeRamp(fromStartVolume: 1, toEndVolume: 0, timeRange: fade)

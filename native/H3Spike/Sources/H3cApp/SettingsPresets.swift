@@ -22,6 +22,11 @@ struct SettingsPreset: Codable, Identifiable, Equatable {
     var seedFixed: Bool
     var seed: String
     var loras: [LoRA]
+    /// つなげて生成 and its clip length; nil for the defaults (one
+    /// generation, ChainClipLength.seven), so presets saved before 0.5 still
+    /// match a form that uses them.
+    var chained: Bool? = nil
+    var chainClipFrames: Int? = nil
 }
 
 /// Presets are shared by every window: saving in one shows up in the
@@ -110,7 +115,9 @@ extension GenerationViewModel {
             steps: steps, denoiseReuse: denoiseReuse, computeMode: computeMode.rawValue,
             speedMode: speedMode.rawValue, fastAttention: fastAttention, ditLayers: ditLayers,
             seedFixed: seedFixed, seed: seedText,
-            loras: effectiveLoRAs.map { .init(path: $0.path, strength: $0.strength) })
+            loras: effectiveLoRAs.map { .init(path: $0.path, strength: $0.strength) },
+            chained: isChained ? true : nil,
+            chainClipFrames: chainClipLength == defaultChainClipLength ? nil : chainClipLength.frames)
     }
 
     /// The settings a finished generation actually used.
@@ -121,7 +128,9 @@ extension GenerationViewModel {
             computeMode: result.computeMode.rawValue, speedMode: result.speedMode.rawValue,
             fastAttention: result.fastAttention, ditLayers: result.ditLayers,
             seedFixed: !result.seedWasRandom, seed: result.seedDecimalString,
-            loras: result.loras.map { .init(path: $0.path, strength: $0.strength) })
+            loras: result.loras.map { .init(path: $0.path, strength: $0.strength) },
+            chained: result.chained ? true : nil,
+            chainClipFrames: result.chainClipFrames.flatMap { $0 == defaultChainClipLength.frames ? nil : $0 })
     }
 
     /// Saves under the given name, replacing a preset of the same name;
@@ -150,7 +159,9 @@ extension GenerationViewModel {
         activePresetID = preset.id
         PresetStore.shared.markUsed(preset)
         if let profile = SizeProfile(rawValue: preset.sizeProfile) { sizeProfile = profile }
-        seconds = preset.seconds.clamped(to: secondsRange)
+        chained = preset.chained ?? false
+        chainClipLength = preset.chainClipFrames.flatMap(ChainClipLength.init(rawValue:)) ?? defaultChainClipLength
+        seconds = preset.seconds.clamped(to: currentSecondsRange)
         if let speed = SpeedMode(rawValue: preset.speedMode) { speedMode = speed }
         denoiseReuse = preset.denoiseReuse.clamped(to: reuseRange)
         ditLayers = preset.ditLayers.clamped(to: ditLayersRange)

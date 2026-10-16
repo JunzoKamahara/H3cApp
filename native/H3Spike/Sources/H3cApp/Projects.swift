@@ -47,6 +47,10 @@ struct ProjectDraft: Codable, Equatable {
     /// frames were carried over. Absent in drafts from before 0.5.
     var continueFrom: String? = nil
     var continueFrames: Int? = nil
+    /// つなげて生成: the length is made by joining clips of
+    /// chainClipFrames frames (ChainGeneration.swift).
+    var chained: Bool? = nil
+    var chainClipFrames: Int? = nil
 }
 
 /// project.json
@@ -80,6 +84,18 @@ struct ProjectVideoRecord: Codable {
     /// shift 3): "renoise" and the audio shift a LoRA's metadata asked for.
     var sampler: String? = nil
     var audioSigmaShift: Double? = nil
+    /// How many seconds this video's sound runs behind its picture: a
+    /// continuation that carried the earlier clip's sound over inherits that
+    /// clip's lateness and adds the engine's snapping to the audio grid
+    /// (JoinedVideoExporter.soundDelay). Joining moves each clip's sound
+    /// earlier by it. latentSoundLateness is the lateness of the sound in the
+    /// video's .h3lt, which a joined video takes from its last clip.
+    var soundLateness: Double? = nil
+    var latentSoundLateness: Double? = nil
+    /// A joined video: its clips (paths in the project, oldest first), and
+    /// how many a つなげて生成 planned (more than joined if it was stopped).
+    var joinedClips: [String]? = nil
+    var chainPlannedClips: Int? = nil
 }
 
 struct OpenProject: Equatable {
@@ -101,6 +117,17 @@ struct ProjectVideo: Identifiable, Equatable {
 struct BatchProgress: Equatable {
     var index: Int
     var total: Int
+    /// The clips of a つなげて生成, rather than separate videos.
+    var chained = false
+}
+
+/// The whole batch's (or chain's) time while it runs: the current video's
+/// live estimate plus the ones still to come.
+struct BatchTiming: Equatable {
+    var elapsed: Double
+    var remaining: Double?
+    var finishDate: Date?
+    var fraction: Double?
 }
 
 let batchCountRange = 1 ... 20
@@ -368,7 +395,9 @@ extension GenerationViewModel {
             forcedAudio: forcedAudioPath,
             forcedAudioOffset: forcedAudioPath == nil ? nil : forcedAudioOffset,
             continueFrom: continuation?.videoURL.path,
-            continueFrames: continuation?.frames)
+            continueFrames: continuation?.frames,
+            chained: isChained ? true : nil,
+            chainClipFrames: chainClipLength == defaultChainClipLength ? nil : chainClipLength.frames)
     }
 
     /// Puts a draft into the form. Relative paths resolve against
@@ -396,7 +425,9 @@ extension GenerationViewModel {
             H3ReferenceKind(storedName: reference.kind).map { H3ReferenceInput(kind: $0, path: resolve(reference.path)) }
         }
         if let profile = SizeProfile(rawValue: draft.sizeProfile) { sizeProfile = profile }
-        seconds = draft.seconds.clamped(to: secondsRange)
+        chained = draft.chained ?? false
+        chainClipLength = draft.chainClipFrames.flatMap(ChainClipLength.init(rawValue:)) ?? defaultChainClipLength
+        seconds = draft.seconds.clamped(to: currentSecondsRange)
         if let speed = SpeedMode(rawValue: draft.speedMode) { speedMode = speed }
         denoiseReuse = draft.denoiseReuse.clamped(to: reuseRange)
         ditLayers = draft.ditLayers.clamped(to: ditLayersRange)
@@ -406,7 +437,7 @@ extension GenerationViewModel {
         fastAttention = draft.fastAttention && fastAttentionAvailable
         seedText = draft.seed
         seedFixed = draft.seedFixed
-        let missing = draft.loras.filter { lora in !library.loras.contains { $0.path == lora.path } }.map(\.path)
+        let missing = draft.loras.filter { library.loraEntry(forPath: $0.path) == nil }.map(\.path)
         applyLoRAs(draft.loras.map { ($0.path, $0.strength) })
         // After the LoRAs: a Turbo LoRA moves steps to its own count, and
         // the draft's value should win.
@@ -453,7 +484,7 @@ extension GenerationViewModel {
     /// which generates once the project is set - or not at all if cancelled.
     func requestGenerate() {
         guard canGenerate else { return }
-        if project == nil && batchCount > 1 {
+        if project == nil && (batchCount > 1 || isChained) {
             projectMessage = nil
             showingBatchProject = true
         } else {
@@ -536,6 +567,11 @@ extension GenerationViewModel {
         resultURL = stored
         importRecordReferences(
             at: stored.deletingPathExtension().appendingPathExtension("json"), projectURL: project.url)
+        if continueAfterSavingAsProject {
+            continueAfterSavingAsProject = false
+            reloadProjectVideos()
+            if let video = projectVideos.first(where: { $0.url == stored }) { continueFromProjectVideo(video) }
+        }
     }
 
     /// A record made outside a project points at its input files where they
@@ -729,10 +765,14 @@ extension GenerationViewModel {
     /// Moves a finished temp video into the project under its date/seed
     /// name and writes its record next to it. Returns the new location.
     func storeInProject(videoAt tempURL: URL, projectURL: URL, record: ProjectVideoRecord,
-                        completedAt: Date, seed: UInt64) -> URL? {
-        let base = ProjectFiles.videoBaseName(completedAt: completedAt, seed: seed, in: projectURL)
-        let destination = projectURL.appendingPathComponent(base + ".mp4")
+                        completedAt: Date, seed: UInt64, folder: URL? = nil) -> URL? {
+        // A つなげて生成's clips go in their own folder; the joined video is
+        // the one in the project's list.
+        let folder = folder ?? projectURL
+        let base = ProjectFiles.videoBaseName(completedAt: completedAt, seed: seed, in: folder)
+        let destination = folder.appendingPathComponent(base + ".mp4")
         do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try FileManager.default.moveItem(at: tempURL, to: destination)
         } catch {
             projectMessage = String(localized: "動画をプロジェクトに保存できませんでした（詳細: \(error.localizedDescription)）")
@@ -747,7 +787,7 @@ extension GenerationViewModel {
             var stored = record
             stored.video = destination.lastPathComponent
             try ProjectFiles.encoder.encode(stored)
-                .write(to: projectURL.appendingPathComponent(base + ".json"), options: .atomic)
+                .write(to: folder.appendingPathComponent(base + ".json"), options: .atomic)
         } catch {
             projectMessage = String(localized: "動画をプロジェクトに保存できませんでした（詳細: \(error.localizedDescription)）")
             // Put the video back where the preview expects it; if even that
@@ -789,7 +829,9 @@ extension GenerationViewModel {
     /// Moves the video and its record to the Trash (recoverable).
     func deleteProjectVideo(_ video: ProjectVideo) {
         let record = video.url.deletingPathExtension().appendingPathExtension("json")
+        let clips = chainFolder(of: video)
         do {
+            if let clips { try FileManager.default.trashItem(at: clips, resultingItemURL: nil) }
             try FileManager.default.trashItem(at: video.url, resultingItemURL: nil)
             if FileManager.default.fileExists(atPath: record.path) {
                 try FileManager.default.trashItem(at: record, resultingItemURL: nil)
@@ -875,7 +917,11 @@ extension ResolvedResult {
             forcedAudio: draft.forcedAudio.map { URL(fileURLWithPath: $0).lastPathComponent },
             forcedAudioOffset: draft.forcedAudioOffset ?? 0,
             continuedFrom: draft.continueFrom.map { URL(fileURLWithPath: $0).lastPathComponent },
-            continueFrames: draft.continueFrames ?? continuationFrames)
+            continueFrames: draft.continueFrames ?? continuationFrames,
+            chained: draft.chained ?? false,
+            joinedClipCount: record.joinedClips?.count,
+            plannedClipCount: record.chainPlannedClips,
+            chainClipFrames: (draft.chained ?? false) ? (draft.chainClipFrames ?? defaultChainClipLength.frames) : nil)
     }
 }
 

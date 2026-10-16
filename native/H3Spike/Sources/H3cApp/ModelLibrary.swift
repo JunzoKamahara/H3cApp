@@ -19,6 +19,28 @@ let legacyDefaultH3ModelPath = NSHomeDirectory() + "/models/MiniMax-H3"
 /// app was renamed.
 let defaultH3ModelDownloadPath = h3AppSupportDirectory + "/MiniMax-H3"
 
+/// Where LoRA files are kept by default: beside the default model folder,
+/// outside the folders macOS asks permission for (protectedFolderName).
+let defaultLoRADirectory = h3AppSupportDirectory + "/LoRA"
+
+/// The folder macOS guards a path with, for the message - Desktop,
+/// Documents, Downloads, iCloud Drive or another volume - or nil. An app
+/// reading a file there (outside the open panel that picked it) is asked
+/// for permission, as a registered LoRA is at every launch.
+func protectedFolderName(for path: String) -> String? {
+    let resolved = (path as NSString).resolvingSymlinksInPath
+    let home = (NSHomeDirectory() as NSString).resolvingSymlinksInPath
+    let folders = [
+        ("/Desktop/", String(localized: "デスクトップ")),
+        ("/Documents/", String(localized: "書類")),
+        ("/Downloads/", String(localized: "ダウンロード")),
+        ("/Library/Mobile Documents/", "iCloud Drive"),
+    ]
+    for (folder, name) in folders where resolved.hasPrefix(home + folder) { return name }
+    if resolved.hasPrefix("/Volumes/") { return String(localized: "外部のディスク") }
+    return nil
+}
+
 struct H3ModelEntry: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
@@ -58,6 +80,9 @@ struct LoRAEntry: Identifiable, Codable, Equatable {
     /// auto / empty text follow the metadata (see ModelLibrary.sampling(for:)).
     var sampler: LoRASampler
     var audioShiftText: String
+    /// Where the file was before being moved into the LoRA folder, so
+    /// projects, videos and presets that name the old path still find it.
+    var formerPaths: [String] = []
 
     init(id: UUID = UUID(), name: String, path: String, scaleText: String = "",
          recommendedSteps: Int? = nil, enabled: Bool = false,
@@ -82,6 +107,7 @@ struct LoRAEntry: Identifiable, Codable, Equatable {
         enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         sampler = try container.decodeIfPresent(LoRASampler.self, forKey: .sampler) ?? .auto
         audioShiftText = try container.decodeIfPresent(String.self, forKey: .audioShiftText) ?? ""
+        formerPaths = try container.decodeIfPresent([String].self, forKey: .formerPaths) ?? []
     }
 
     var strength: Float {
@@ -275,6 +301,44 @@ final class ModelLibrary: ObservableObject {
         let filtered = scaleText.filter { $0.isNumber || $0 == "." || $0 == "-" }
         loras[index].scaleText = filtered
         persistLoRAs()
+    }
+
+    /// The registered LoRA a saved path means: its current file, or one it
+    /// was moved from.
+    func loraEntry(forPath path: String) -> LoRAEntry? {
+        loras.first { $0.path == path } ?? loras.first { $0.formerPaths.contains(path) }
+    }
+
+    /// Points an entry at the file's new place after moving it.
+    func relocateLoRA(id: UUID, to newPath: String) {
+        guard let index = loras.firstIndex(where: { $0.id == id }), loras[index].path != newPath else { return }
+        let old = loras[index].path
+        if !loras[index].formerPaths.contains(old) { loras[index].formerPaths.append(old) }
+        loras[index].formerPaths.removeAll { $0 == newPath }
+        loras[index].path = newPath
+        if let info = loraInfoCache[old] { loraInfoCache[newPath] = info }
+        persistLoRAs()
+        requestLoRAInfo(path: newPath)
+    }
+
+    /// Moves (or copies) a LoRA file into defaultLoRADirectory, under a
+    /// free name, and returns its new path. Off the main actor: a copy to
+    /// another volume takes a while for a 1.4 GB file.
+    nonisolated static func moveLoRAFileToFolder(_ path: String, copy: Bool) throws -> String {
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: defaultLoRADirectory, withIntermediateDirectories: true)
+        let source = URL(fileURLWithPath: path)
+        let base = source.deletingPathExtension().lastPathComponent
+        let ext = source.pathExtension
+        var target = URL(fileURLWithPath: defaultLoRADirectory).appendingPathComponent(source.lastPathComponent)
+        var number = 2
+        while fm.fileExists(atPath: target.path) {
+            target = URL(fileURLWithPath: defaultLoRADirectory)
+                .appendingPathComponent("\(base) \(number)").appendingPathExtension(ext)
+            number += 1
+        }
+        if copy { try fm.copyItem(at: source, to: target) } else { try fm.moveItem(at: source, to: target) }
+        return target.path
     }
 
     func removeLoRA(id: UUID) {

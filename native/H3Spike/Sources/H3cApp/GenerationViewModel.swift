@@ -218,6 +218,16 @@ final class GenerationViewModel: ObservableObject {
     /// generation carries on from.
     @Published var continuation: ContinuationSource?
     @Published var isExportingJoined = false
+    /// つなげて生成 (ChainGeneration.swift): a length of 15-90 s made by
+    /// joining clips of chainClipLength.
+    @Published var chained = false
+    @Published var chainClipLength: ChainClipLength = defaultChainClipLength
+    /// The つなげて生成 running now: kept past a cancel, so the clips made so
+    /// far are still joined.
+    var chainRun: ChainRun?
+    /// 続きを生成 on a video outside any project: continue it once
+    /// プロジェクトとして保存 has moved it into the new project.
+    var continueAfterSavingAsProject = false
 
     /// The LoRA stack is chosen from ModelLibrary's registered library
     /// (entries switched on there or in the form) and applies in every
@@ -245,8 +255,11 @@ final class GenerationViewModel: ObservableObject {
     /// runs the Ref2VA (reference image) transformer, and on the active
     /// model's own cache directory.
     var currentAttentionCachePath: String {
+        attentionCachePath(usesReferences: creationMethod == .image && imageInputMode == .referenceImage)
+    }
+
+    func attentionCachePath(usesReferences: Bool) -> String {
         guard let model = library.activeModel else { return "" }
-        let usesReferences = creationMethod == .image && imageInputMode == .referenceImage
         let directory = attentionCacheDirectory(for: model)
         return directory + (usesReferences ? "/dit_int8_v2_ref2va.cache" : "/dit_int8_v2.cache")
     }
@@ -272,6 +285,7 @@ final class GenerationViewModel: ObservableObject {
             || computeMode != defaultComputeMode || speedMode != .quality || fastAttention
             || seedFixed
             || !library.enabledLoRAs.isEmpty
+            || chainClipLength != defaultChainClipLength
     }
 
     /// Max-resolution + long duration + SSD streaming measured as
@@ -294,6 +308,7 @@ final class GenerationViewModel: ObservableObject {
     /// The whole generation as the progress estimator would predict it
     /// before starting, from this Mac's past runs (TimingCalibration).
     var draftEstimatedSeconds: Double? {
+        if isChained { return chainEstimatedSeconds }
         let frames = Int(h3AlignedFrameCount(seconds: Double(seconds.clamped(to: secondsRange))))
         let calibration = TimingCalibration.load(for: computeMode, speed: speedMode,
                                                  fastAttention: useFastAttention,
@@ -409,6 +424,7 @@ final class GenerationViewModel: ObservableObject {
     /// them in; without one, generating asks for it (BatchProjectSheet).
     @Published var batchCount: Int = 1
     @Published var batchProgress: BatchProgress?
+    @Published private(set) var batchTiming: BatchTiming?
     @Published var projectMessage: String?
     // The new-project dialog and the video list, opened from the toolbar
     // menu and from the menu bar's プロジェクト menu.
@@ -585,6 +601,7 @@ final class GenerationViewModel: ObservableObject {
         speedMode = .quality
         fastAttention = false
         seedFixed = false
+        chainClipLength = defaultChainClipLength
         library.setEnabledLoRAs([])
     }
 
@@ -658,7 +675,10 @@ final class GenerationViewModel: ObservableObject {
     // MARK: Summary text shown above the primary button, and in "設定を見る"
 
     var draftSummaryText: String {
-        var parts = [sizeProfile.label, String(localized: "\(seconds)秒")]
+        var parts = [sizeProfile.label, durationLabel]
+        if isChained {
+            parts.append(String(localized: "\(currentChainPlan.count)本をつなぐ（1本\(chainClipLength.label)）"))
+        }
         if hasAdvancedChanges {
             // Clamped like the engine params, so this shows what will run.
             parts.append("Steps \(steps.clamped(to: stepsRange))")
@@ -705,6 +725,11 @@ final class GenerationViewModel: ObservableObject {
         var projectURL: URL?
         /// The form for the video records (paths relative to the project).
         var draft: ProjectDraft
+        /// Where in the project the video goes (a つなげて生成's clip folder),
+        /// nil for the project's own folder.
+        var storeFolder: URL? = nil
+        /// How late the video's sound will run (ProjectVideoRecord.soundLateness).
+        var soundLateness: Double = 0
     }
 
     private struct BatchState {
@@ -714,6 +739,11 @@ final class GenerationViewModel: ObservableObject {
         /// seed (e.g. from 設定を戻す) doesn't repeat or crowd one region.
         var firstSeed: UInt64?
         var request: GenerationRequest
+        let startedAt = Date()
+        /// Each video's estimate before the batch started (nil: no timings
+        /// on this Mac yet), and how long the finished ones really took.
+        var planned: [Double]?
+        var actual: [Double] = []
     }
 
     /// Starts generating. With a project open, `count` videos (default: the
@@ -751,9 +781,28 @@ final class GenerationViewModel: ObservableObject {
     private func startGenerating(count: Int?) {
         guard engine != nil, canGenerate else { return }
         saveProjectIfChanged(importingReferences: false)
-        let total = project == nil ? 1 : (count ?? batchCount).clamped(to: batchCountRange)
+        var total = project == nil ? 1 : (count ?? batchCount).clamped(to: batchCountRange)
+        let request = makeRequest()
+        chainRun = nil
+        if isChained, let project {
+            let run = ChainRun(plan: currentChainPlan, projectURL: project.url,
+                               fixedSeed: seedFixed ? UInt64(seedText) : nil, request: request)
+            chainRun = run
+            total = run.plan.count
+        }
+        var planned: [Double]?
+        if let chain = chainRun {
+            planned = chainClipEstimates(plan: chain.plan)
+        } else if total > 1 {
+            let now = Date()
+            let calibration = TimingCalibration.load(for: request.computeMode, speed: request.speedMode,
+                                                     fastAttention: request.params.fastAttention,
+                                                     ditLayers: request.ditLayers)
+            planned = ProgressEstimator(shape: request.shape, calibration: calibration, start: now)
+                .snapshot(now: now).remaining.map { Array(repeating: $0, count: total) }
+        }
         batchState = BatchState(total: total, firstSeed: seedFixed ? UInt64(seedText) : nil,
-                                request: makeRequest())
+                                request: request, planned: planned)
         samplingOverride = nil
         // Items after the first reuse the AdaLN schedule (released below
         // when the batch ends).
@@ -763,8 +812,9 @@ final class GenerationViewModel: ObservableObject {
 
     private func makeRequest() -> GenerationRequest {
         let dimensions = sizeProfile.dimensions
-        let requestedSeconds = seconds.clamped(to: secondsRange)
-        let requestedFrames = Int(h3AlignedFrameCount(seconds: Double(requestedSeconds)))
+        let requestedSeconds = seconds.clamped(to: currentSecondsRange)
+        // A chain's clips set their own frame counts (chainClipRequest).
+        let requestedFrames = Int(h3AlignedFrameCount(seconds: Double(min(requestedSeconds, secondsRange.upperBound))))
 
         // Design spec invariant #4: only the image state matching the
         // *current* mode reaches the engine - the rest stays in the draft,
@@ -803,6 +853,15 @@ final class GenerationViewModel: ObservableObject {
         params.continueLatentPath = continuation?.latentURL.path
         params.continueFrames = Int32(continuation?.frames ?? continuationFrames)
 
+        var lateness = 0.0
+        if let continuation {
+            let recordURL = continuation.videoURL.deletingPathExtension().appendingPathExtension("json")
+            let source = (try? Data(contentsOf: recordURL))
+                .flatMap { try? ProjectFiles.decoder.decode(ProjectVideoRecord.self, from: $0) }
+            lateness = continuationSoundLateness(source: source, latentURL: continuation.latentURL,
+                                                 forced: forcedAudioPath != nil)
+        }
+
         var draft = currentDraft()
         if let projectURL = project?.url {
             draft.firstFrame = draft.firstFrame.map { ProjectFiles.stored($0, in: projectURL) }
@@ -834,16 +893,25 @@ final class GenerationViewModel: ObservableObject {
             shape: progressShape(sizeProfile: sizeProfile, frames: requestedFrames,
                                  steps: steps.clamped(to: stepsRange), reuse: effectiveDenoiseReuse),
             projectURL: project?.url,
-            draft: draft)
+            draft: draft,
+            soundLateness: lateness)
     }
 
     private func runBatchItem(index: Int) {
         guard let engine, let batch = batchState else { return }
-        let request = batch.request
+        var request = batch.request
         let fixedSeed = index == 1 ? batch.firstSeed : nil
-        let seed = fixedSeed ?? UInt64.random(in: UInt64.min ... UInt64.max)
-        let seedWasRandom = fixedSeed == nil
-        batchProgress = batch.total > 1 ? BatchProgress(index: index, total: batch.total) : nil
+        var seed = fixedSeed ?? UInt64.random(in: UInt64.min ... UInt64.max)
+        var seedWasRandom = fixedSeed == nil
+        if let chain = chainRun {
+            // A chain's clips: the base seed and the next ones after it, so
+            // pinning the base seed makes the same chain again.
+            request = chainClipRequest(chain, index: index - 1)
+            seed = chain.baseSeed &+ UInt64(index - 1)
+            seedWasRandom = chain.seedWasRandom
+        }
+        batchProgress = batch.total > 1
+            ? BatchProgress(index: index, total: batch.total, chained: chainRun != nil) : nil
 
         deleteTemporaryPreview()
         isGenerating = true
@@ -897,6 +965,7 @@ final class GenerationViewModel: ObservableObject {
                 }
             }
             if !succeeded { try? FileManager.default.removeItem(at: latentURL) }
+            if succeeded { self.batchState?.actual.append(Date().timeIntervalSince(startedAt)) }
             self.isGenerating = false
             self.isCancelling = false
             self.stopElapsedTimer()
@@ -908,6 +977,12 @@ final class GenerationViewModel: ObservableObject {
                 if batch.total > 1 { engine.setBatchReuse(false) }
                 self.batchState = nil
                 self.batchProgress = nil
+                self.batchTiming = nil
+                // A つなげて生成 joins what it made, also when stopped early.
+                if let chain = self.chainRun {
+                    self.chainRun = nil
+                    Task { await self.finishChain(chain) }
+                }
             }
         }
     }
@@ -937,11 +1012,19 @@ final class GenerationViewModel: ObservableObject {
             ccvAttentionDirectCalls: result.ccvAttentionDirectCalls,
             deviceLine: request.deviceLine, appVersion: Self.appVersion, draft: draft,
             sampler: request.sampling.renoise ? "renoise" : nil,
-            audioSigmaShift: request.sampling.audioShift > 0 ? Double(request.sampling.audioShift) : nil)
+            audioSigmaShift: request.sampling.audioShift > 0 ? Double(request.sampling.audioShift) : nil,
+            soundLateness: request.soundLateness,
+            latentSoundLateness: request.soundLateness)
         if let projectURL = request.projectURL {
             if let stored = storeInProject(videoAt: url, projectURL: projectURL, record: record,
-                                           completedAt: completedAt, seed: result.seed) {
+                                           completedAt: completedAt, seed: result.seed,
+                                           folder: request.storeFolder) {
                 url = stored
+                if request.storeFolder != nil, let chain = chainRun {
+                    var storedRecord = record
+                    storedRecord.video = stored.lastPathComponent
+                    chain.clips.append((stored, storedRecord))
+                }
             }
             temporaryResultRecord = nil
         } else {
@@ -1044,6 +1127,35 @@ final class GenerationViewModel: ObservableObject {
         progressBarFraction = snapshot.fraction
         stageTitle = snapshot.stageTitle
         stageDetail = snapshot.detail
+        batchTiming = batchTiming(current: snapshot, now: now)
+    }
+
+    /// The current video's remaining time plus the estimates of the ones
+    /// after it. Those estimates come from this Mac's earlier timings and
+    /// can be far off for a size it rarely makes, so they are scaled by the
+    /// pace actually seen: the finished videos, and the current one's own
+    /// projection once its steps have started.
+    private func batchTiming(current: ProgressEstimator.Snapshot, now: Date) -> BatchTiming? {
+        guard let batch = batchState, batch.total > 1, let progress = batchProgress else { return nil }
+        let elapsed = now.timeIntervalSince(batch.startedAt)
+        guard let planned = batch.planned, planned.count == batch.total,
+              let currentRemaining = current.remaining else {
+            return BatchTiming(elapsed: elapsed, remaining: nil, finishDate: nil, fraction: nil)
+        }
+        let index = min(progress.index - 1, planned.count - 1)
+        let done = min(batch.actual.count, index)
+        var seen = batch.actual[..<done].reduce(0, +)
+        var expected = planned[..<done].reduce(0, +)
+        if let stage = estimator?.stage, stage > .setup {
+            seen += current.elapsed + currentRemaining
+            expected += planned[index]
+        }
+        let ratio = seen > 0 && expected > 0 ? (seen / expected).clamped(to: 0.1 ... 10) : 1
+        let later = planned[(index + 1)...].reduce(0, +) * ratio
+        let remaining = currentRemaining + later
+        return BatchTiming(elapsed: elapsed, remaining: remaining,
+                           finishDate: now.addingTimeInterval(remaining),
+                           fraction: elapsed / max(elapsed + remaining, 1))
     }
 
     // MARK: Reuse
@@ -1078,7 +1190,7 @@ final class GenerationViewModel: ObservableObject {
     func applyLoRAs(_ used: [(path: String, strength: Float)]) {
         var ids = Set<UUID>()
         for item in used {
-            guard let match = library.loras.first(where: { $0.path == item.path }) else { continue }
+            guard let match = library.loraEntry(forPath: item.path) else { continue }
             ids.insert(match.id)
             library.setLoRAScale(id: match.id, scaleText: item.strength == 1 ? "" : "\(item.strength)")
         }

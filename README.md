@@ -90,13 +90,27 @@ to skip that step and stream the original BF16 weights instead.
   project video - its last 22 frames (about 0.9 s) and their sound are
   held at the start of the new clip, the way ComfyUI's H3 Motion Context
   node does it - and Join Up to Here and Export cross-fades a chain of
-  them into one file in the project's `joined` folder. With lip sync, each
+  them into one video in the project, listed with its clips folded under
+  it. With lip sync, each
   continuation takes the audio on from where the last one ended, for long
   lip-synced videos. Every generated video keeps its latents next to it
   (`.h3lt`, about 3.6 MB for 5 s at medium size) for this. A continuation
   takes about 20% longer than a new clip (446 s vs 364 s for 5 s at medium
   size on a 24 GB M5); lip sync adds almost nothing, and joining three
-  clips takes under a second.
+  clips takes under a second. The panel offers Continue once a video is
+  in the preview (a video outside any project is saved as one first), and
+  Join and Export when that video continues another.
+- **Joined generation, up to 90 s**: the length menu has 1-15 s in one
+  generation, then 15 s Joined, 20 / 30 / 45 / 60 / 90 s and Custom (1-90
+  s). These lengths are made as clips of about 7 s (or 5 s, in Advanced
+  Settings), each continuing the one before, joined automatically over
+  their overlaps; the joined video is the one in the project's list, with
+  its clips folded under it (kept in `chains/<name>/`), and it can be
+  continued like any other. With lip sync the audio moves on clip by clip;
+  clips that start past its end make their own sound. 15 s this way took
+  about 23-25% less time than one 362-frame generation (the longest one
+  generation can make) at medium size; a joined length costs about 105 s
+  per second of video at medium size on a 24 GB M5.
 - **Memory-aware reference-video sizing**: a large reference video is
   automatically downscaled based on the machine's physical RAM
   (`h3_reference_max_pixels()` in [h3_host.c](h3_host.c)) before it reaches
@@ -535,19 +549,19 @@ plain filesystem paths, not uploads.
 | Method | Path | Does |
 |---|---|---|
 | `POST` | `/api/generate` | Starts a job. JSON body fully replaces the current draft (see below); `202` once started, `400` on a bad request, `409` if a job is already running. |
-| `GET` | `/api/status` | Engine/job state, progress fraction, phase/stage text, error message, and whether a result is ready. |
+| `GET` | `/api/status` | Engine/job state, progress fraction, phase/stage text, error message, and whether a result is ready. While several videos or a joined generation run, `batch` gives `index`/`total`/`chained` and the whole run's `elapsed_seconds` and `estimated_remaining_seconds` (the current video's live estimate plus the later ones, scaled by the pace seen so far); the top-level `estimated_remaining_seconds` stays the current video's. |
 | `POST` | `/api/cancel` | Cancels the running job, if any. |
 | `GET` | `/api/result/video` | Streams the current result as `video/mp4`; `404` if none, or once the next job's `generate()` call deletes it. |
 | `GET` | `/api/models` | Registered H3 model directories (id, name, path, whether active). |
 | `GET` | `/api/loras` | Registered LoRA files (id, name, path, strength, recommended steps, whether enabled, step rule `sampler` and `audio_shift` as set in the model manager, and `recommended_sampling` from the file's metadata - `null` while the file is still being read). |
-| `GET` | `/api/project` | The open project: name, path, count, and its videos (file, seed, completion time, generation time, `continued_from`, `can_continue`). |
+| `GET` | `/api/project` | The open project: name, path, count, and its videos (file, seed, completion time, generation time, `continued_from`, `can_continue`, and for a joined video `joined_clips` / `planned_clips`). |
 | `POST` | `/api/project/new` | `{"name", "directory"?}` creates a project from the current form (default directory `~/Movies/H3cApp`) and opens it. |
 | `POST` | `/api/project/open` | `{"path"}` opens a project folder; the form takes its saved state. |
 | `POST` | `/api/project/close` | Closes it; results are temp files again. |
 | `POST` | `/api/project/restore` | `{"video"}` puts that video's request into the form with its seed fixed. |
 | `POST` | `/api/project/use-as-reference` | `{"video"}` adds that video to the form as a reference video. |
 | `POST` | `/api/project/delete-video` | `{"video"}` moves the video and its record to the Trash. |
-| `POST` | `/api/project/join` | `{"video"}` joins the chain of continuations ending at that video into `joined/<name>_joined.mp4` (cross-fading each carried-over stretch) and returns `{"path", "clips"}` when done. |
+| `POST` | `/api/project/join` | `{"video"}` joins the chain of continuations ending at that video into `<name>_joined.mp4` in the project, with a record, (cross-fading each carried-over stretch) and returns `{"path", "clips"}` when done. |
 
 `POST /api/generate` body fields, all optional except `prompt`:
 
@@ -564,6 +578,7 @@ plain filesystem paths, not uploads.
 | `fast_attention` | `false` | `true` for [fast mode](#fast-mode-experimental); `400` where it isn't available. |
 | `seed` | random | 0–18446744073709551615, as a number or a decimal string (a string keeps a large seed exact for clients whose JSON numbers are doubles). |
 | `first_frame_path` / `last_frame_path` | none | FL2VA anchors; cannot combine with `reference_paths`. |
+| `seconds` / `chained` / `chain_clip_seconds` | `5` / `false` / `7` | 1-15 s are made in one generation; 16-90 s (or 15 with `"chained": true`) by joined generation, from clips of 5 or 7 s, into one joined video. A joined length needs an open project and `count` 1. |
 | `continue_from` | none | A video of the open project (a file name from `GET /api/project`) to continue: its last 22 frames and their sound are carried over. Needs the same size; not with first/last frames or references. |
 | `forced_audio_path` / `forced_audio_offset` | none / `0` | Lip sync: this file's audio (an audio file or a video's soundtrack), from `forced_audio_offset` seconds on, is held as the soundtrack while the picture is generated to match it, and the output carries that audio itself. Works with every creation method. |
 | `reference_paths` | `[]` | Ordered Ref2VA references; image/video/audio is auto-detected per path. At least one image or video is required if any audio path is included. |

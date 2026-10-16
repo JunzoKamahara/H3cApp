@@ -43,7 +43,9 @@ struct PreviewPane: View {
         if viewModel.isCancelling { return String(localized: "中止しています") }
         if viewModel.isGenerating {
             if let batch = viewModel.batchProgress {
-                return String(localized: "動画を生成しています（\(batch.index)/\(batch.total)本目）")
+                return batch.chained
+                    ? String(localized: "つなげて生成しています（\(batch.index)/\(batch.total)本目）")
+                    : String(localized: "動画を生成しています（\(batch.index)/\(batch.total)本目）")
             }
             return String(localized: "動画を生成しています")
         }
@@ -105,6 +107,9 @@ struct PreviewPane: View {
 
     private var generatingView: some View {
         VStack(spacing: H3Spacing.md) {
+            if let batch = viewModel.batchProgress, let timing = viewModel.batchTiming {
+                batchTimingView(batch, timing)
+            }
             ProgressView(value: viewModel.progressBarFraction)
                 .frame(maxWidth: 260)
 
@@ -117,12 +122,16 @@ struct PreviewPane: View {
             }
 
             VStack(spacing: 2) {
-                Text("経過 \(formatElapsed(viewModel.elapsedSeconds))")
+                Text(viewModel.batchProgress == nil
+                     ? String(localized: "経過 \(formatElapsed(viewModel.elapsedSeconds))")
+                     : String(localized: "この1本の経過 \(formatElapsed(viewModel.elapsedSeconds))"))
                     .font(.caption)
                     .monospacedDigit()
                 if let remaining = viewModel.estimatedRemainingSeconds,
                    let finishDate = viewModel.estimatedFinishDate {
-                    Text("残り約 \(formatElapsed(remaining))（完了予定 \(formatClockTime(finishDate))）")
+                    Text(viewModel.batchProgress == nil
+                         ? String(localized: "残り約 \(formatElapsed(remaining))（完了予定 \(formatClockTime(finishDate))）")
+                         : String(localized: "この1本の残り約 \(formatElapsed(remaining))（完了予定 \(formatClockTime(finishDate))）"))
                         .font(.caption)
                         .monospacedDigit()
                         .foregroundStyle(palette.textSecondary)
@@ -137,6 +146,32 @@ struct PreviewPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(palette.stage)
         .clipShape(RoundedRectangle(cornerRadius: H3Radius.stage))
+    }
+
+    /// Several videos or a つなげて生成: which one this is and when the whole
+    /// run should end, above the current video's own progress.
+    private func batchTimingView(_ batch: BatchProgress, _ timing: BatchTiming) -> some View {
+        VStack(spacing: 4) {
+            Text(batch.chained
+                 ? String(localized: "つなげて生成：全\(batch.total)本中\(batch.index)本目を生成しています")
+                 : String(localized: "全\(batch.total)本中\(batch.index)本目を生成しています"))
+                .font(.callout.weight(.semibold))
+            ProgressView(value: timing.fraction)
+                .frame(maxWidth: 260)
+            Text("全体の経過 \(formatElapsed(timing.elapsed))")
+                .font(.caption)
+                .monospacedDigit()
+            if let remaining = timing.remaining, let finishDate = timing.finishDate {
+                Text("全体の残り約 \(formatElapsed(remaining))（全体の完了予定 \(formatClockTime(finishDate))）")
+                    .font(.caption)
+                    .monospacedDigit()
+            } else {
+                Text("全体の残り時間を見積り中…")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+            }
+            Divider().frame(maxWidth: 260).padding(.top, H3Spacing.sm)
+        }
     }
 }
 

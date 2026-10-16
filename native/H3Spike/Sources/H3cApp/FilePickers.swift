@@ -14,12 +14,13 @@ let forcedAudioTypes: [UTType] = [.audio, .movie]
 // one from the extension - still filters the open panel correctly.
 let safetensorsTypes: [UTType] = [UTType(filenameExtension: "safetensors") ?? .data]
 
-func chooseFile(allowedContentTypes: [UTType]) -> String? {
+func chooseFile(allowedContentTypes: [UTType], startingIn directory: String? = nil) -> String? {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = false
     panel.canChooseFiles = true
     panel.allowedContentTypes = allowedContentTypes
+    if let directory { panel.directoryURL = URL(fileURLWithPath: directory, isDirectory: true) }
     return panel.runModal() == .OK ? panel.url?.path : nil
 }
 

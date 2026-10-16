@@ -4,6 +4,8 @@ func formatElapsed(_ seconds: Double) -> String {
     let total = max(Int(seconds.rounded()), 0)
     let minutes = total / 60
     let secs = total % 60
+    // A long つなげて生成 runs past an hour: h:mm:ss rather than 95:30.
+    if minutes >= 60 { return String(format: "%d:%02d:%02d", minutes / 60, minutes % 60, secs) }
     return minutes > 0 ? String(format: "%d:%02d", minutes, secs) : String(localized: "\(secs)秒")
 }
 
@@ -17,8 +19,18 @@ private let clockFormatter: DateFormatter = {
     return formatter
 }()
 
+private let dayAndClockFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.timeStyle = .short
+    formatter.dateStyle = .short
+    formatter.doesRelativeDateFormatting = true
+    return formatter
+}()
+
+/// A finish time: the clock alone today, with the day ("明日 1:20") after.
 func formatClockTime(_ date: Date) -> String {
-    clockFormatter.string(from: date)
+    Calendar.current.isDateInToday(date)
+        ? clockFormatter.string(from: date) : dayAndClockFormatter.string(from: date)
 }
 
 /// A lip-sync start offset in seconds, without trailing zeros ("12.5", "3").

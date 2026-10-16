@@ -180,7 +180,11 @@ private func predictAffine(_ samples: [TimingSample], units: Double) -> Double? 
     let meanX = samples.reduce(0) { $0 + $1.units } / n
     let meanY = samples.reduce(0) { $0 + $1.seconds } / n
     let sxx = samples.reduce(0) { $0 + ($1.units - meanX) * ($1.units - meanX) }
-    guard sxx > 1e-9 * max(meanX * meanX, 1) else { return meanY }
+    // All samples one size (the seeds aged out after many runs of the same
+    // setting): no slope to fit, so scale with size rather than predict
+    // that size's time for every other - a 256x256 clip after a run of
+    // 672x384 ones was otherwise estimated about 6x too long.
+    guard sxx > 1e-9 * max(meanX * meanX, 1) else { return meanX > 0 ? meanY / meanX * units : meanY }
     let sxy = samples.reduce(0) { $0 + ($1.units - meanX) * ($1.seconds - meanY) }
     let slope = sxy / sxx
     guard slope >= 0 else { return meanY }

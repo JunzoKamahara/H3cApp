@@ -43,6 +43,7 @@ struct AdvancedSettingsView: View {
                     speedSection
                     reuseSection
                     layersSection
+                    chainSection
                     seedSection
                     loraSection
                 }
@@ -327,6 +328,24 @@ struct AdvancedSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(palette.errorColor)
             }
+        }
+    }
+
+    private var chainSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("つなげて生成の1本の長さ").font(.caption).foregroundStyle(palette.textSecondary)
+            Picker("つなげて生成の1本の長さ", selection: $viewModel.chainClipLength) {
+                ForEach(ChainClipLength.allCases) { length in
+                    Text(length == defaultChainClipLength
+                         ? String(localized: "\(length.label)（標準）") : length.label).tag(length)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 220)
+            Text("15秒を超える長さ（と「つないで15秒」）は、この長さの動画を前の動画の続きとして順につくり、重なり（約0.9秒）でつないで1本にします。長いほど、つなぎ目が少なくなります。")
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
         }
     }
 

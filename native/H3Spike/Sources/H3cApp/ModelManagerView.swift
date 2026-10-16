@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The dialog behind the toolbar's "モデル管理" button and the engine-status
@@ -20,6 +21,17 @@ struct ModelManagerView: View {
     @State private var renamingLoRAID: UUID?
     @State private var renameText: String = ""
     @State private var showingDownloadWizard = false
+    /// A LoRA picked from a folder macOS guards, waiting for the choice to
+    /// move it into the LoRA folder.
+    @State private var pendingProtectedLoRA: PendingLoRA?
+    @State private var movingLoRA = false
+    @State private var loraMoveError: String?
+
+    private struct PendingLoRA: Identifiable {
+        let id = UUID()
+        let path: String
+        let folderName: String
+    }
 
     private var palette: H3Palette { H3Palette(colorScheme) }
 
@@ -181,13 +193,38 @@ struct ModelManagerView: View {
                 .listStyle(.inset)
             }
             HStack {
-                Text("チェックしたLoRAを重ねて適用します（最大\(maxStackedLoRAs)個、ドラッグで並べ替え）。")
-                    .font(.caption)
-                    .foregroundStyle(palette.textSecondary)
+                if movingLoRA {
+                    ProgressView().controlSize(.small)
+                    Text("LoRAフォルダへ移しています…")
+                        .font(.caption)
+                        .foregroundStyle(palette.textSecondary)
+                } else if let loraMoveError {
+                    Text(loraMoveError)
+                        .font(.caption)
+                        .foregroundStyle(palette.errorColor)
+                        .lineLimit(2)
+                } else {
+                    Text("チェックしたLoRAを重ねて適用します（最大\(maxStackedLoRAs)個、ドラッグで並べ替え）。")
+                        .font(.caption)
+                        .foregroundStyle(palette.textSecondary)
+                }
                 Spacer()
+                Button("フォルダを開く") { openLoRAFolder() }
+                    .help("LoRAフォルダ（\(defaultLoRADirectory)）をFinderで開きます。ここにファイルを入れてから「追加…」で選べます。")
                 Button("追加…") { addLoRA() }
+                    .disabled(movingLoRA)
             }
             .padding(H3Spacing.md)
+        }
+        .confirmationDialog("LoRAフォルダへ移しますか？", isPresented: Binding(
+            get: { pendingProtectedLoRA != nil }, set: { if !$0 { pendingProtectedLoRA = nil } }
+        ), presenting: pendingProtectedLoRA) { pending in
+            Button("移して登録") { addLoRA(pending.path, moving: true, copying: false) }
+            Button("コピーして登録") { addLoRA(pending.path, moving: true, copying: true) }
+            Button("このまま登録") { addLoRA(pending.path, moving: false, copying: false) }
+            Button("キャンセル", role: .cancel) {}
+        } message: { pending in
+            Text("選んだファイルは「\(pending.folderName)」にあります。macOSが保護しているフォルダなので、このまま登録すると、アプリを起動するたびにアクセスの許可を求められることがあります。LoRAフォルダ（\(defaultLoRADirectory)）へ移すと、求められなくなります。")
         }
     }
 
@@ -255,6 +292,10 @@ struct ModelManagerView: View {
                 Button("名前を変更") {
                     renameText = entry.name
                     renamingLoRAID = entry.id
+                }
+                if protectedFolderName(for: entry.path) != nil {
+                    Button("LoRAフォルダへ移す") { moveRegisteredLoRA(entry) }
+                        .disabled(movingLoRA)
                 }
                 Button("削除", role: .destructive) { library.removeLoRA(id: entry.id) }
             } label: {
@@ -328,8 +369,46 @@ struct ModelManagerView: View {
     }
 
     private func addLoRA() {
-        guard let path = chooseFile(allowedContentTypes: safetensorsTypes) else { return }
-        library.addLoRA(path: path)
+        try? FileManager.default.createDirectory(atPath: defaultLoRADirectory, withIntermediateDirectories: true)
+        guard let path = chooseFile(allowedContentTypes: safetensorsTypes, startingIn: defaultLoRADirectory) else { return }
+        loraMoveError = nil
+        if let folder = protectedFolderName(for: path) {
+            pendingProtectedLoRA = PendingLoRA(path: path, folderName: folder)
+        } else {
+            library.addLoRA(path: path)
+        }
+    }
+
+    private func addLoRA(_ path: String, moving: Bool, copying: Bool) {
+        guard moving else { library.addLoRA(path: path); return }
+        relocate(path, copying: copying) { library.addLoRA(path: $0) }
+    }
+
+    /// 「LoRAフォルダへ移す」 for an entry already registered from a guarded
+    /// folder: the entry keeps its old path so older records still match.
+    private func moveRegisteredLoRA(_ entry: LoRAEntry) {
+        relocate(entry.path, copying: false) { library.relocateLoRA(id: entry.id, to: $0) }
+    }
+
+    private func relocate(_ path: String, copying: Bool, then done: @escaping (String) -> Void) {
+        movingLoRA = true
+        loraMoveError = nil
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try ModelLibrary.moveLoRAFileToFolder(path, copy: copying) }
+            }.value
+            movingLoRA = false
+            switch result {
+            case .success(let newPath): done(newPath)
+            case .failure(let error):
+                loraMoveError = String(localized: "LoRAフォルダへ移せませんでした: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func openLoRAFolder() {
+        try? FileManager.default.createDirectory(atPath: defaultLoRADirectory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(URL(fileURLWithPath: defaultLoRADirectory, isDirectory: true))
     }
 
     private func emptyState(_ text: String) -> some View {

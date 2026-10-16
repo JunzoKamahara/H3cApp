@@ -19,6 +19,7 @@ struct CreationFormView: View {
     @State private var dragBase: CGSize?
     /// The input file shown in Quick Look (clicking its name).
     @State private var quickLookURL: URL?
+    @State private var showingCustomDuration = false
 
     private var palette: H3Palette { H3Palette(colorScheme) }
 
@@ -48,6 +49,9 @@ struct CreationFormView: View {
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(palette.border, lineWidth: 1))
         .shadow(color: .black.opacity(0.25), radius: 18, y: 6)
         .quickLookPreview($quickLookURL)
+        .sheet(isPresented: $showingCustomDuration) {
+            CustomDurationSheet(viewModel: viewModel, isPresented: $showingCustomDuration)
+        }
     }
 
     // MARK: 移動・折りたたみ
@@ -337,6 +341,7 @@ struct CreationFormView: View {
                     // generating asks for it (BatchProjectSheet).
                     batchMenu
                     Spacer(minLength: 0)
+                    continueButtons
                     generateButton
                 }
                 .padding(.horizontal, 8)
@@ -424,22 +429,69 @@ struct CreationFormView: View {
         return profile.upscaled ? String(localized: "\(name) ×2") : name
     }
 
+    /// 1-15 s in one generation, つなげて生成 for 15-90 s, and カスタム.
     private var durationMenu: some View {
         Menu {
-            Picker("長さ", selection: $viewModel.seconds) {
+            Picker("1回で生成", selection: durationSelection) {
                 ForEach(secondsRange, id: \.self) { value in
-                    Text("\(value) 秒").tag(value)
+                    Text("\(value) 秒").tag("single-\(value)")
                 }
             }
             .pickerStyle(.inline)
+            Picker("つなげて生成", selection: durationSelection) {
+                Text("つないで15秒").tag("chain-\(chainedSecondsRange.lowerBound)")
+                ForEach(chainedSecondsChoices, id: \.self) { value in
+                    Text("\(value) 秒").tag("chain-\(value)")
+                }
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Button("カスタム…") { showingCustomDuration = true }
         } label: {
-            composerChip(systemImage: "clock", text: String(localized: "\(viewModel.seconds)秒"))
+            composerChip(systemImage: viewModel.isChained ? "film.stack" : "clock",
+                         text: viewModel.durationLabel)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
         .help("長さ")
+    }
+
+    /// After a generation: carry on from the video in the preview, or join
+    /// a continuation with what it continues.
+    @ViewBuilder
+    private var continueButtons: some View {
+        if let video = viewModel.joinableDisplayedVideo {
+            Button {
+                viewModel.exportJoined(endingAt: video)
+            } label: {
+                composerChip(systemImage: "film.stack", text: String(localized: "つないで書き出す"), menu: false)
+            }
+            .buttonStyle(.plain)
+            .help("この動画と、その前の動画（続きの元）を、重なりでつないで1本にします")
+        }
+        if viewModel.canContinueDisplayedVideo {
+            Button {
+                viewModel.continueDisplayedVideo()
+            } label: {
+                composerChip(systemImage: "arrow.turn.down.right", text: String(localized: "続きを生成"), menu: false)
+            }
+            .buttonStyle(.plain)
+            .help(viewModel.project == nil
+                  ? String(localized: "表示中の動画の続きをつくります。先に、この動画を入れるプロジェクトを作ります")
+                  : String(localized: "表示中の動画の続きをつくります（最後の約0.9秒を引き継ぎます）"))
+        }
+    }
+
+    private var durationSelection: Binding<String> {
+        Binding(
+            get: { (viewModel.isChained ? "chain-" : "single-") + String(viewModel.seconds) },
+            set: { tag in
+                let parts = tag.split(separator: "-")
+                guard parts.count == 2, let value = Int(parts[1]) else { return }
+                viewModel.setDuration(seconds: value, chained: parts[0] == "chain")
+            })
     }
 
     private var batchMenu: some View {
@@ -458,14 +510,19 @@ struct CreationFormView: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("同じプロンプトと設定で、シードを変えて続けて生成し、プロジェクトに保存します（シード固定のときは1本目だけ固定し、2本目以降はランダム）。プロジェクトがないときは、生成するときに作成または選択します")
+        .disabled(viewModel.isChained)
+        .help(viewModel.isChained
+              ? String(localized: "つなげて生成では1本ずつ作ります")
+              : String(localized: "同じプロンプトと設定で、シードを変えて続けて生成し、プロジェクトに保存します（シード固定のときは1本目だけ固定し、2本目以降はランダム）。プロジェクトがないときは、生成するときに作成または選択します"))
     }
 
-    private func composerChip(systemImage: String, text: String) -> some View {
+    private func composerChip(systemImage: String, text: String, menu: Bool = true) -> some View {
         HStack(spacing: 5) {
             Image(systemName: systemImage)
             Text(text)
-            Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+            if menu {
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+            }
         }
         .font(.callout)
         .foregroundStyle(palette.textPrimary)
@@ -501,7 +558,9 @@ struct CreationFormView: View {
                 .buttonStyle(.plain)
                 .help("クリックでパネルを広げる")
 
-                // The prompt box (and its button) is hidden while collapsed.
+                // The prompt box (and its buttons) is hidden while collapsed;
+                // 続きを生成 shows here too, as a finished video collapses it.
+                continueButtons
                 generateButton
             } else {
                 statusText
@@ -608,3 +667,63 @@ private struct FileLink: View {
         .help("クリックで内容を確認")
     }
 }
+
+/// カスタム: any length up to 90 s. Past 15 s it is made by つなげて生成;
+/// up to 15 s either way.
+private struct CustomDurationSheet: View {
+    @ObservedObject var viewModel: GenerationViewModel
+    @Binding var isPresented: Bool
+    @State private var value = 30
+    @State private var chained = true
+
+    private var needsChain: Bool { value > secondsRange.upperBound }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: H3Spacing.md) {
+            Text("動画の長さ").font(.headline)
+            HStack {
+                TextField("秒", value: $value, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 70)
+                    .multilineTextAlignment(.trailing)
+                Stepper("", value: $value, in: 1 ... chainedSecondsRange.upperBound)
+                    .labelsHidden()
+                Text("秒（1〜\(chainedSecondsRange.upperBound)秒）")
+            }
+            Toggle("つなげて生成", isOn: Binding(get: { chained || needsChain }, set: { chained = $0 }))
+                .disabled(needsChain || value < chainedSecondsRange.lowerBound)
+            Text(explanation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("キャンセル") { isPresented = false }
+                    .keyboardShortcut(.cancelAction)
+                Button("決定") {
+                    let clamped = value.clamped(to: 1 ... chainedSecondsRange.upperBound)
+                    viewModel.setDuration(seconds: clamped,
+                                          chained: (chained || needsChain) && clamped >= chainedSecondsRange.lowerBound)
+                    isPresented = false
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(H3Spacing.lg)
+        .frame(width: 420)
+        .onAppear {
+            value = viewModel.seconds
+            chained = viewModel.isChained
+        }
+    }
+
+    private var explanation: String {
+        let clamped = value.clamped(to: 1 ... chainedSecondsRange.upperBound)
+        guard (chained || needsChain) && clamped >= chainedSecondsRange.lowerBound else {
+            return String(localized: "1回の生成でつくります（15秒まで）。")
+        }
+        let plan = chainPlan(seconds: clamped, clip: viewModel.chainClipLength)
+        return String(localized: "\(viewModel.chainClipLength.label)の動画を\(plan.count)本、前の動画の続きとして順につくり、重なり（約0.9秒）でつないで1本にします。15秒より長い動画は、この方法でつくります。1本の長さは詳細設定で変えられます。")
+    }
+}
+

@@ -119,7 +119,15 @@ extension GenerationViewModel {
         if let progressBarFraction { body["progress_fraction"] = progressBarFraction }
         if let errorMessage { body["error_message"] = errorMessage }
         if let project { body["project"] = project.name }
-        if let batchProgress { body["batch"] = ["index": batchProgress.index, "total": batchProgress.total] }
+        if let batchProgress {
+            var batch: [String: Any] = ["index": batchProgress.index, "total": batchProgress.total,
+                                        "chained": batchProgress.chained]
+            if let batchTiming {
+                batch["elapsed_seconds"] = batchTiming.elapsed
+                if let remaining = batchTiming.remaining { batch["estimated_remaining_seconds"] = remaining }
+            }
+            body["batch"] = batch
+        }
         return .json(200, body)
     }
 
@@ -141,6 +149,10 @@ extension GenerationViewModel {
                     item["generation_seconds"] = record.generationSeconds
                     item["continued_from"] = record.draft.continueFrom
                         .map { URL(fileURLWithPath: $0).lastPathComponent as Any } ?? NSNull()
+                    if let clips = record.joinedClips {
+                        item["joined_clips"] = clips
+                        item["planned_clips"] = record.chainPlannedClips as Any? ?? NSNull()
+                    }
                 }
                 item["can_continue"] = canContinue(video)
                 return item
@@ -237,6 +249,9 @@ extension GenerationViewModel {
                 guard canGenerate else {
                     return .error(409, validationMessage ?? "a generation is already running")
                 }
+                guard !isChained || project != nil else {
+                    return .error(400, "a chained length needs an open project (POST /api/project/new or /api/project/open)")
+                }
                 generate(count: count)
                 return .json(202, ["ok": true])
             }
@@ -272,13 +287,32 @@ extension GenerationViewModel {
             sizeProfile = .square
         }
 
+        // 1-15 s in one generation; 16-90 s (or "chained": true from 15 s)
+        // by つなげて生成, joining clips of "chain_clip_seconds" (5 or 7).
+        var wantsChain = false
+        if let chainedValue = json["chained"] {
+            guard let flag = chainedValue as? Bool else { return .error(400, "\"chained\" must be true or false") }
+            wantsChain = flag
+        }
         if let secondsValue = json["seconds"] {
-            guard let value = jsonInteger(secondsValue), secondsRange.contains(value) else {
-                return .error(400, "\"seconds\" must be an integer from \(secondsRange.lowerBound) to \(secondsRange.upperBound)")
+            guard let value = jsonInteger(secondsValue), (1 ... chainedSecondsRange.upperBound).contains(value) else {
+                return .error(400, "\"seconds\" must be an integer from 1 to \(chainedSecondsRange.upperBound)")
             }
-            seconds = value
+            if wantsChain && value < chainedSecondsRange.lowerBound {
+                return .error(400, "\"chained\" needs \"seconds\" of \(chainedSecondsRange.lowerBound) or more")
+            }
+            setDuration(seconds: value, chained: wantsChain)
         } else {
-            seconds = 5
+            setDuration(seconds: 5, chained: false)
+        }
+        if let clipValue = json["chain_clip_seconds"] {
+            switch jsonInteger(clipValue) {
+            case 5: chainClipLength = .five
+            case 7: chainClipLength = .seven
+            default: return .error(400, "\"chain_clip_seconds\" must be 5 or 7")
+            }
+        } else {
+            chainClipLength = defaultChainClipLength
         }
 
         if let modeRaw = json["compute_mode"] as? String {
@@ -501,6 +535,12 @@ extension GenerationViewModel {
 
         guard canGenerate else {
             return .error(409, validationMessage ?? "a generation is already running")
+        }
+        guard !isChained || project != nil else {
+            return .error(400, "a chained length needs an open project (POST /api/project/new or /api/project/open)")
+        }
+        guard !isChained || count == 1 else {
+            return .error(400, "a chained length makes one video; \"count\" must be 1")
         }
         samplingOverride = override.renoise == nil && override.audioShift == nil ? nil : override
         generate(count: count)
