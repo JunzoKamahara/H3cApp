@@ -53,6 +53,7 @@
           <li><a href="#projects">Projects and batches</a></li>
           <li><a href="#speed">The three speed settings</a></li>
           <li><a href="#size">Sizes and 2x upscaling</a></li>
+          <li><a href="#chain">Making longer videos (joined generation)</a></li>
           <li><a href="#prompts">Writing prompts</a></li>
           <li><a href="#lora">Using add-on models (LoRA, optional)</a></li>
           <li><a href="#advanced">For advanced users</a></li>
@@ -157,8 +158,30 @@
       <ul>
         <li><strong>2x upscale</strong>: turn on “<span class="ui">Upscale 2x</span>” in the Size menu to enlarge the generated video 2x in each direction with high-quality resampling. It is not AI super-resolution that draws in detail. The upscale itself takes very little time. Example: Landscape, Large upscaled 2x is 1920×1088 (not exactly 1920×1080).</li>
         <li><strong>Custom size</strong>: turn on “<span class="ui">Use a custom size</span>” under “<span class="ui">Size</span>” in the advanced settings to enter the finished width and height. The generated size is limited to 600,000 pixels.</li>
-        <li><strong>Length</strong>: choose 1 to 15 seconds. Because of how the model works, the actual length comes out a little longer (choosing 5 s gives about 5.2 s).</li>
+        <li><strong>Length</strong>: 1 to 15 seconds in one generation. Because of how the model works, the actual length comes out a little longer (choosing 5 s gives about 5.2 s). Longer videos, up to 90 seconds, come from <a href="#chain">joined generation</a>.</li>
       </ul>
+    </section>
+
+    <section class="section section-narrow" id="chain" aria-labelledby="chain-title">
+      <h2 id="chain-title">Making longer videos (joined generation)</h2>
+      <p>One generation makes at most 15 seconds. Longer videos, up to 90 seconds, come from joined generation: short videos are made one after another, each continuing the one before, and joined into one at their overlaps.</p>
+      <ol class="steps">
+        <li><strong>Open a project.</strong> It keeps the clips and the joined video. With none open, pressing generate asks you to create one or pick an existing one.</li>
+        <li><strong>Pick the length.</strong> In the length menu under the prompt, pick “<span class="ui">15 s Joined</span>” or 20 / 30 / 45 / 60 / 90 s from the “<span class="ui">Joined Generation</span>” section. For other lengths, enter 1 to 90 seconds with “<span class="ui">Custom…</span>” (16 s and longer are always joined). The summary under the panel shows how many clips, such as “5 clips joined (about 7 s each)”.</li>
+        <li><strong>Generate.</strong> From the second clip on, each one carries over the previous clip's last 0.9 seconds or so and its sound. While it runs, the preview shows which clip of how many is being made, with the whole run's elapsed time, time left and finish time.</li>
+        <li><strong>Done.</strong> The clips are joined smoothly at their overlaps into one video, shown in the preview. In “<span class="ui">Project Videos…</span>” it is one row, “Joined video (5 clips, 30.7 s)”, with its clips grouped under it.</li>
+      </ol>
+      <ul>
+        <li><strong>Clip length</strong>: “<span class="ui">Clip length for joined generation</span>” in “<span class="ui">Advanced Settings</span>” is about 7 s (standard) or about 5 s. Longer clips mean fewer seams.</li>
+        <li><strong>Make it longer</strong>: with the joined video shown, “<span class="ui">Continue</span>” in the panel makes one more clip. Then “<span class="ui">Join and Export</span>” joins the whole run into one again.</li>
+        <li><strong>If you stop partway</strong>: when two or more clips are done, those are joined.</li>
+        <li><strong>Make the same video again</strong>: with “<span class="ui">Randomness</span>” set to “<span class="ui">Fixed</span>”, the same settings make the same run (later clips use the next seeds up).</li>
+        <li><strong>First image and references</strong>: only the first clip uses them.</li>
+        <li><strong>Deleting</strong>: deleting the joined video moves its clips to the Trash too.</li>
+      </ul>
+      <div class="note">
+        <p><strong>It takes a while.</strong> On an M5 Mac with 24 GB at landscape medium (672×384), each second of finished video took about 105 seconds (about 50 minutes for 30 s, about 2.5 hours for 90 s). “Estimate on this Mac” in Advanced Settings shows roughly how long the current settings will take. Start with “15 s Joined” or a small size.</p>
+      </div>
     </section>
 
     <section class="section section-narrow" id="prompts" aria-labelledby="prompts-title">

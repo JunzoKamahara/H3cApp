@@ -56,6 +56,7 @@
           <li><a href="#speed">Speed and fast mode (experimental)</a></li>
           <li><a href="#reuse">Denoiser reuse (reuse)</a></li>
           <li><a href="#layers">Layer count (DiT blocks)</a></li>
+          <li><a href="#chain">Clip length for joined generation</a></li>
           <li><a href="#seed">Randomness (seed)</a></li>
           <li><a href="#lora">Add-on models (LoRA)</a></li>
           <li><a href="#presets">Restore Defaults and presets</a></li>
@@ -82,6 +83,7 @@
             <tr><th scope="row"><a href="#speed">Fast mode (experimental)</a></th><td>Off</td><td>On / off (shown only where supported)</td><td>Faster, more so for long videos</td></tr>
             <tr><th scope="row"><a href="#reuse">Denoiser reuse</a></th><td class="num">2</td><td class="num">1–3</td><td>Higher is faster; quality may drop</td></tr>
             <tr><th scope="row"><a href="#layers">Layer count</a></th><td class="num">50 (all)</td><td class="num">35–50</td><td>Fewer is faster, but can break the audio</td></tr>
+            <tr><th scope="row"><a href="#chain">Clip length for joined generation</a></th><td>About 7 s</td><td>About 7 s / About 5 s</td><td>Longer means fewer seams</td></tr>
             <tr><th scope="row"><a href="#seed">Randomness</a></th><td>Random each time</td><td>Random each time / Fixed</td><td>Whether a result can be reproduced</td></tr>
             <tr><th scope="row"><a href="#lora">Add-on models (LoRA)</a></th><td>None</td><td>Up to 8</td><td>Changes the look or the steps needed</td></tr>
           </tbody>
@@ -179,6 +181,17 @@
       <div class="warn">
         <p><strong>Fewer layers can break the audio.</strong> At 45 layers the audio was confirmed to turn into heavy noise, and the video changes too. Leave it at 50 until you're comfortable.</p>
       </div>
+    </section>
+
+    <section class="section section-narrow" id="chain" aria-labelledby="chain-title">
+      <h2 id="chain-title">Clip length for joined generation</h2>
+      <p>Lengths over 15 seconds (and “15 s Joined”) are made from short videos, each continuing the one before, joined at an overlap of about 0.9 seconds. This picks how long each of those videos is: about 7 s (the default) or about 5 s.</p>
+      <ul>
+        <li>Longer clips mean fewer seams.</li>
+        <li>The last clip is shorter, to fit what is left.</li>
+        <li>It doesn't affect lengths made in one generation (1 to 15 seconds).</li>
+      </ul>
+      <p>See <a href="guide.html#chain">Making longer videos (joined generation)</a> in the guide for how to use it.</p>
     </section>
 
     <section class="section section-narrow" id="seed" aria-labelledby="seed-title">

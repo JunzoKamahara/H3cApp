@@ -57,6 +57,7 @@
           <li><a href="#speed">速度と高速モード（試験的）</a></li>
           <li><a href="#reuse">ノイズ除去の再利用（reuse）</a></li>
           <li><a href="#layers">使用する層数（DiTブロック）</a></li>
+          <li><a href="#chain">つなげて生成の1本の長さ</a></li>
           <li><a href="#seed">ランダムさ（シード）</a></li>
           <li><a href="#lora">追加モデル（LoRA）</a></li>
           <li><a href="#presets">既定に戻す・プリセット</a></li>
@@ -83,6 +84,7 @@
             <tr><th scope="row"><a href="#speed">高速モード（試験的）</a></th><td>オフ</td><td>オン／オフ（対応環境のみ表示）</td><td>長い動画ほど速くなる</td></tr>
             <tr><th scope="row"><a href="#reuse">ノイズ除去の再利用</a></th><td class="num">2</td><td class="num">1〜3</td><td>大きいほど速く、品質は下がることがある</td></tr>
             <tr><th scope="row"><a href="#layers">使用する層数</a></th><td class="num">50（全層）</td><td class="num">35〜50</td><td>減らすと速いが、音声が壊れることがある</td></tr>
+            <tr><th scope="row"><a href="#chain">つなげて生成の1本の長さ</a></th><td>約7秒</td><td>約7秒／約5秒</td><td>長いほどつなぎ目が少ない</td></tr>
             <tr><th scope="row"><a href="#seed">ランダムさ</a></th><td>毎回変える</td><td>毎回変える／固定する</td><td>同じ結果を再現するかどうか</td></tr>
             <tr><th scope="row"><a href="#lora">追加モデル（LoRA）</a></th><td>なし</td><td>最大8個</td><td>見た目や必要なステップ数が変わる</td></tr>
           </tbody>
@@ -180,6 +182,17 @@
       <div class="warn">
         <p><strong>層を減らすと音声が壊れることがあります。</strong>45層で音声が強い雑音に変わることを確認しています。映像も変わります。慣れるまでは50のままにしてください。</p>
       </div>
+    </section>
+
+    <section class="section section-narrow" id="chain" aria-labelledby="chain-title">
+      <h2 id="chain-title">つなげて生成の1本の長さ</h2>
+      <p>15秒より長い動画（と「つないで15秒」）は、短い動画を前の動画の続きとして順につくり、重なり（約0.9秒）でつないで1本にします。ここでは、その1本の長さを選びます。既定は約7秒で、約5秒も選べます。</p>
+      <ul>
+        <li>長いほど、つなぎ目の数が少なくなります。</li>
+        <li>最後の1本は、残りの長さに合わせて短くなります。</li>
+        <li>1回で生成する長さ（1〜15秒）には関係しません。</li>
+      </ul>
+      <p>使い方は、使い方ページの<a href="guide.html#chain">長い動画をつくる（つなげて生成）</a>をご覧ください。</p>
     </section>
 
     <section class="section section-narrow" id="seed" aria-labelledby="seed-title">
