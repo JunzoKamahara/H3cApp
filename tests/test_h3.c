@@ -1,3 +1,4 @@
+#include "h3_adaln_curve.h"
 #include "h3_host.h"
 #include "h3_dit.h"
 #include "h3_lora.h"
@@ -5,6 +6,7 @@
 #include "h3_safetensors.h"
 #include "h3_weights.h"
 
+#include <fcntl.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -594,6 +596,91 @@ static void test_metal_probe(void) {
     CHECK(info.apple_gpu_family > 0);
 }
 
+static void write_curve_file(const char *path, const char *metadata,
+                             const float *table, size_t values) {
+    char header_json[512];
+    int length = snprintf(header_json, sizeof(header_json),
+        "{\"__metadata__\":{%s},\"adaln_t_table\":{\"dtype\":\"F32\","
+        "\"shape\":[3,2],\"data_offsets\":[0,%zu]}}", metadata,
+        values * sizeof(float));
+    int descriptor = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    CHECK(descriptor >= 0 && length > 0);
+    uint64_t size = (uint64_t)length;
+    unsigned char prefix[8];
+    for (unsigned index = 0; index < 8; index++)
+        prefix[index] = (unsigned char)(size >> (8 * index));
+    write_all(descriptor, prefix, sizeof(prefix));
+    write_all(descriptor, header_json, (size_t)length);
+    write_all(descriptor, table, values * sizeof(float));
+    CHECK(close(descriptor) == 0);
+}
+
+static void test_adaln_curve(void) {
+    /* ComfyUI's interpolation on a 3-point, rank-2 table. */
+    const float table[] = {0.0f, 10.0f, 2.0f, 20.0f, 6.0f, 60.0f};
+    float out[2];
+    h3_adaln_curve_lerp(table, 3, 2, 0.0f, out);
+    CHECK(out[0] == 0.0f && out[1] == 10.0f);
+    h3_adaln_curve_lerp(table, 3, 2, 0.25f, out);
+    CHECK(fabsf(out[0] - 1.0f) < 1e-6f && fabsf(out[1] - 15.0f) < 1e-5f);
+    h3_adaln_curve_lerp(table, 3, 2, 0.5f, out);
+    CHECK(out[0] == 2.0f && out[1] == 20.0f);
+    h3_adaln_curve_lerp(table, 3, 2, 0.75f, out);
+    CHECK(fabsf(out[0] - 4.0f) < 1e-6f && fabsf(out[1] - 40.0f) < 1e-5f);
+    h3_adaln_curve_lerp(table, 3, 2, 1.0f, out);   /* last interval, fraction 1 */
+    CHECK(out[0] == 6.0f && out[1] == 60.0f);
+    h3_adaln_curve_lerp(table, 3, 2, 1.5f, out);   /* clamped */
+    CHECK(out[0] == 6.0f && out[1] == 60.0f);
+    h3_adaln_curve_lerp(table, 3, 2, -1.0f, out);
+    CHECK(out[0] == 0.0f && out[1] == 10.0f);
+    h3_adaln_curve_lerp(table, 3, 2, NAN, out);
+    CHECK(out[0] == 0.0f && out[1] == 10.0f);
+
+    char path[] = "/tmp/h3_adaln_curve_XXXXXX";
+    int descriptor = mkstemp(path);
+    CHECK(descriptor >= 0);
+    CHECK(close(descriptor) == 0);
+    uint8_t model[32] = {0};
+    model[0] = 0xab;
+    model[31] = 0x01;
+    const char *good =
+        "\"format\":\"h3-adaln-curve\",\"version\":\"1\",\"grid\":\"3\","
+        "\"rank\":\"2\",\"model_id\":"
+        "\"ab00000000000000000000000000000000000000000000000000000000000001\"";
+    write_curve_file(path, good, table, 6);
+    char error[256];
+    h3_adaln_curve *curve = h3_adaln_curve_open(path, model, error,
+                                                sizeof(error));
+    CHECK(curve != NULL);
+    if (curve) {
+        CHECK(h3_adaln_curve_rank(curve) == 2 && h3_adaln_curve_grid(curve) == 3);
+        const float times[] = {0.25f, 1.0f};
+        float coordinates[4];
+        h3_adaln_curve_coordinates(curve, times, 2, coordinates);
+        CHECK(fabsf(coordinates[0] - 1.0f) < 1e-6f &&
+              coordinates[2] == 6.0f && coordinates[3] == 60.0f);
+        uint8_t id[32];
+        h3_adaln_curve_fingerprint(curve, id);
+        CHECK(!memcmp(id + 8, "h3curve1", 8));
+        h3_adaln_curve_free(curve);
+    }
+    /* Any other checkpoint is refused; no expected id skips the check. */
+    model[31] = 0x02;
+    CHECK(h3_adaln_curve_open(path, model, error, sizeof(error)) == NULL);
+    CHECK(strstr(error, "different transformer") != NULL);
+    curve = h3_adaln_curve_open(path, NULL, error, sizeof(error));
+    CHECK(curve != NULL);
+    h3_adaln_curve_free(curve);
+    /* Wrong format tag, or a table that disagrees with grid/rank. */
+    write_curve_file(path, "\"format\":\"other\",\"version\":\"1\","
+                     "\"grid\":\"3\",\"rank\":\"2\"", table, 6);
+    CHECK(h3_adaln_curve_open(path, NULL, error, sizeof(error)) == NULL);
+    write_curve_file(path, "\"format\":\"h3-adaln-curve\",\"version\":\"1\","
+                     "\"grid\":\"4\",\"rank\":\"2\"", table, 6);
+    CHECK(h3_adaln_curve_open(path, NULL, error, sizeof(error)) == NULL);
+    CHECK(unlink(path) == 0);
+}
+
 int main(void) {
     test_temporal_and_canvas();
     test_schedule();
@@ -604,6 +691,7 @@ int main(void) {
     test_layout_ref2va();
     test_safetensors();
     test_weight_fingerprint();
+    test_adaln_curve();
     test_rng_and_solver();
     test_rgb_resize();
     test_dit_row_conversions();

@@ -332,6 +332,23 @@ int h3_build_attention_cache(const char *transformer_dir,
                              void *callback_opaque,
                              char *error, size_t error_size);
 
+/* Builds a curve-form AdaLN file (see h3_adaln_curve.h) for one DiT
+ * transformer directory: a ~0.6 GiB stand-in for its ~24 GiB of dense
+ * AdaLN projections that h3_generate reads via the H3_ADALN_CURVE
+ * environment variable. grid/rank of 0 select the defaults (4097 / 32).
+ * Like h3_build_attention_cache it opens its own GPU device (only for the
+ * engine's own time embedding) and weight store, but works on any Apple
+ * GPU, and writes through a ".partial" file renamed on success.
+ * on_progress gets phase "AdaLN curve", completed/total = projections
+ * done/51; non-zero cancels. */
+int h3_build_adaln_curve(const char *transformer_dir,
+                         const char *output_path,
+                         const char *shader_source_path,
+                         unsigned grid, unsigned rank,
+                         h3_progress_callback on_progress,
+                         void *callback_opaque,
+                         char *error, size_t error_size);
+
 /* TEMPORARY diagnostic, not for production use: creates a standalone
  * h3_gpu (no model needed) and makes one throwaway call through the
  * experimental H3_ATTENTION_BACKEND=ccv_dense path, to isolate whether a

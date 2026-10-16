@@ -343,6 +343,27 @@ DiTの約37GiBのBF16重みは、生成のたびに何らかの形でGPUに供�
 ルートディレクトリを指定すればFL2VA/Ref2VA両方のキャッシュを一度に
 作成できます。
 
+#### 曲線形のAdaLN（試験的、`H3_ADALN_CURVE`）
+
+DiTのチェックポイントのうち約24GiBはAdaLNです。ブロックごとに、
+`silu(時刻の埋め込み(t))` を[96768, 2688]で射影します。入力はスカラーの
+時刻だけなので、入力は1本の滑らかな曲線の上にあります。
+`build_adaln_curve <transformer dir> <output file>`
+（`make build_adaln_curve`、約7秒）は、その曲線を32次元の基底へ移し、
+各射影を[96768, 32]と、曲線の座標の表（4097点）として保存します。
+ファイルは611MiBで、ComfyUIの曲線形（「pruned」）チェックポイントと
+同じ並びです。`H3_ADALN_CURVE=<file>` を指定すると、エンジンは密な射影を
+読む代わりにこのファイルからAdaLNの表を作ります（約8.5秒が約0.01秒に）。
+
+公開版のFL2VAで、51個の射影すべてとアプリが使う進め方について、曲線形の
+値は、密なBF16の計算と同じだけ、float64で厳密に計算した値に近いことを
+確かめました（どちらも相対L2で1.5〜1.7e-3。BF16に丸める誤差そのもの）。
+1ビット同じではないので、同じシードでも動画は少し変わります。曲線形の
+ファイルには作成元のtransformerの識別値が入っていて、ほかのチェック
+ポイントには使えません（FL2VAとRef2VAで別々に作ります）。いまの段階で
+減るのは時間で、ディスク容量ではありません。密な重みはチェックポイントに
+残ったままで、取り込み用のパック（計画中）で省く予定です。
+
 生成時間が無制限であることと、参照動画が大きすぎることは、どちらも同じ
 制約に突き当たります — 次節を参照してください。
 
@@ -512,6 +533,7 @@ h3.c, h3_dit.c, h3_gpu.m, ...   コア推論エンジン（C + Objective-C/Metal
 h3.h                            公開C API（h3_load_dir、h3_generate、h3_build_attention_cache、...）
 h3_shaders.metal                すべてのMetalコンピュートカーネル
 h3_build_attention_cache.c      h3_build_attention_cache()のCLIラッパー -> build_attention_cache
+h3_adaln_curve.c                曲線形AdaLNファイル（読み込みと作成）。h3_build_adaln_curve.c -> build_adaln_curve
 h3_lora.c                       LoRAの読み込み（形式の正規化）とGPU上での重みへの適用
 tests/                          Cテストスイート（make test / make parity）
 native/H3Spike/                 ネイティブmacOSアプリ（SwiftPM）
@@ -535,8 +557,9 @@ make test             # 決定論的なホストテスト一式（+ フィクス
 make parity            # Metal/MLXの数値比較チェックのみ
 ```
 
-`make build_attention_cache`は、上記の独立したキャッシュ準備ツールを
-ビルドします。デフォルトの`make`ターゲットには含まれません。
+`make build_attention_cache`は上記の独立したキャッシュ準備ツールを、
+`make build_adaln_curve`は曲線形AdaLNのツールをビルドします。
+どちらもデフォルトの`make`ターゲットには含まれません。
 
 ### ネイティブアプリ
 

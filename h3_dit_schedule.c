@@ -1,5 +1,7 @@
 #include "h3_dit_schedule.h"
 
+#include "h3_adaln_curve.h"
+
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -78,7 +80,7 @@ static void free_tensor(h3_gpu_tensor **tensor) {
 static int prepare_rows(h3_dit_schedule *schedule,
                         const h3_sigma_schedule *sigmas,
                         int visual_condition, int audio_condition,
-                        float **features_out, char *error,
+                        float **times_out, char *error,
                         size_t error_size) {
     schedule->steps = sigmas->steps;
     schedule->video_rows = calloc((size_t)sigmas->steps,
@@ -132,11 +134,8 @@ static int prepare_rows(h3_dit_schedule *schedule,
         return 0;
     }
     float *times = calloc(count, sizeof(*times));
-    float *features = malloc((size_t)count * TIME_INPUT * sizeof(*features));
-    if (!times || !features) {
-        free(times);
-        free(features);
-        fail(error, error_size, "out of memory allocating timestep features");
+    if (!times) {
+        fail(error, error_size, "out of memory allocating timestep rows");
         return 0;
     }
     for (int step = 0; step < sigmas->steps; step++) {
@@ -145,6 +144,18 @@ static int prepare_rows(h3_dit_schedule *schedule,
     }
     if (visual_condition) times[visual_condition_row] = 0.999f;
     if (audio_condition) times[audio_condition_row] = 1.0f;
+    *times_out = times;
+    return 1;
+}
+
+/* Sinusoidal timestep features, [count, TIME_INPUT]. */
+static float *time_features(const float *times, uint32_t count,
+                            char *error, size_t error_size) {
+    float *features = malloc((size_t)count * TIME_INPUT * sizeof(*features));
+    if (!features) {
+        fail(error, error_size, "out of memory allocating timestep features");
+        return NULL;
+    }
     for (uint32_t row = 0; row < count; row++) {
         for (uint32_t index = 0; index < TIME_INPUT / 2; index++) {
             float frequency = expf(-logf(10000.0f) *
@@ -155,9 +166,7 @@ static int prepare_rows(h3_dit_schedule *schedule,
                 sinf(angle);
         }
     }
-    free(times);
-    *features_out = features;
-    return 1;
+    return features;
 }
 
 static h3_gpu_tensor *time_embeddings(const h3_weight_store *weights,
@@ -234,6 +243,47 @@ cleanup:
     return result;
 }
 
+/* H3_ADALN_F32_REFERENCE=1 (diagnostic): the dense projections in F32
+ * (BF16 weights and inputs widened, F32 accumulation, one rounding to BF16
+ * at the end) instead of h3_gpu_linear_bf16. Both are equally close to the
+ * exact values; comparing videos made either way shows how far a
+ * rounding-sized change to the AdaLN schedule moves a generation, which is
+ * the yardstick for the curve form's differences. */
+static int dense_linear(h3_gpu *gpu, h3_gpu_tensor *output,
+                        const h3_gpu_tensor *input,
+                        const h3_gpu_tensor *weight,
+                        const h3_gpu_tensor *bias, uint32_t rows,
+                        uint32_t outputs) {
+    static int reference = -1;
+    if (reference < 0) {
+        const char *value = getenv("H3_ADALN_F32_REFERENCE");
+        reference = value && *value && strcmp(value, "0") != 0;
+    }
+    if (!reference)
+        return h3_gpu_linear_bf16(gpu, output, input, weight, bias, rows,
+                                  H3_DIT_TIME_DIM, outputs);
+    h3_gpu_tensor *input32 = h3_gpu_tensor_new_f32(
+        gpu, (size_t)rows * H3_DIT_TIME_DIM);
+    h3_gpu_tensor *weight32 = h3_gpu_tensor_new_f32(
+        gpu, (size_t)outputs * H3_DIT_TIME_DIM);
+    h3_gpu_tensor *bias32 = h3_gpu_tensor_new_f32(gpu, outputs);
+    h3_gpu_tensor *output32 = h3_gpu_tensor_new_f32(gpu, (size_t)rows * outputs);
+    int ok = input32 && weight32 && bias32 && output32 &&
+        h3_gpu_cast_bf16_to_f32(gpu, input32, input, rows * H3_DIT_TIME_DIM) &&
+        h3_gpu_cast_bf16_to_f32(gpu, weight32, weight,
+                                outputs * H3_DIT_TIME_DIM) &&
+        h3_gpu_cast_bf16_to_f32(gpu, bias32, bias, outputs) &&
+        h3_gpu_linear_f32(gpu, output32, input32, weight32, bias32, rows,
+                          H3_DIT_TIME_DIM, outputs) &&
+        h3_gpu_cast_f32_to_bf16(gpu, output, output32, rows * outputs) &&
+        h3_gpu_submit(gpu) && h3_gpu_begin(gpu);
+    h3_gpu_tensor_free(input32);
+    h3_gpu_tensor_free(weight32);
+    h3_gpu_tensor_free(bias32);
+    h3_gpu_tensor_free(output32);
+    return ok;
+}
+
 h3_dit_schedule *h3_dit_schedule_precompute(
     const h3_weight_store *weights, h3_gpu *gpu,
     const h3_sigma_schedule *sigmas, int visual_condition,
@@ -253,8 +303,12 @@ h3_dit_schedule *h3_dit_schedule_precompute(
     }
     schedule->gpu = gpu;
     float *features = NULL;
+    float *times = NULL;
     if (!prepare_rows(schedule, sigmas, visual_condition, audio_condition,
-                      &features, error, error_size)) goto failed;
+                      &times, error, error_size)) goto failed;
+    features = time_features(times, schedule->time_rows, error, error_size);
+    free(times);
+    if (!features) goto failed;
     h3_gpu_tensor *time = time_embeddings(weights, gpu, schedule->time_rows,
                                            features, error, error_size);
     free(features);
@@ -285,9 +339,9 @@ h3_dit_schedule *h3_dit_schedule_precompute(
         }
         snprintf(operation, sizeof(operation), "AdaLN block %u", block);
         int ok = gpu_op(gpu, h3_gpu_begin(gpu), error, error_size, operation) &&
-            gpu_op(gpu, h3_gpu_linear_bf16(
+            gpu_op(gpu, dense_linear(
                 gpu, schedule->blocks[block], time, weight, bias,
-                schedule->time_rows, H3_DIT_TIME_DIM, BLOCK_OUTPUT),
+                schedule->time_rows, BLOCK_OUTPUT),
                 error, error_size, operation) &&
             gpu_op(gpu, h3_gpu_submit(gpu), error, error_size, operation);
         free_tensor(&weight);
@@ -311,9 +365,9 @@ h3_dit_schedule *h3_dit_schedule_precompute(
     if (!final_w || !final_b || !schedule->final ||
         !gpu_op(gpu, h3_gpu_begin(gpu), error, error_size,
                 "begin final AdaLN") ||
-        !gpu_op(gpu, h3_gpu_linear_bf16(
+        !gpu_op(gpu, dense_linear(
             gpu, schedule->final, time, final_w, final_b, schedule->time_rows,
-            H3_DIT_TIME_DIM, FINAL_OUTPUT), error, error_size,
+            FINAL_OUTPUT), error, error_size,
             "final AdaLN projection") ||
         !gpu_op(gpu, h3_gpu_submit(gpu), error, error_size,
                 "submit final AdaLN")) {
@@ -334,6 +388,180 @@ failed:
     free(features);
     h3_dit_schedule_free(schedule);
     return NULL;
+}
+
+/* One curve-form projection: coordinates [rows, rank] times the projected
+ * weight [outputs, rank]^T plus bias, in F32, then rounded to the BF16 the
+ * dense path produces. */
+static h3_gpu_tensor *curve_projection(const h3_adaln_curve *curve,
+                                       h3_gpu *gpu, const char *prefix,
+                                       const h3_gpu_tensor *coordinates,
+                                       uint32_t rows, uint32_t outputs,
+                                       char *error, size_t error_size) {
+    uint32_t rank = h3_adaln_curve_rank(curve);
+    h3_gpu_tensor *weight = h3_adaln_curve_load_weight(
+        curve, gpu, prefix, outputs, error, error_size);
+    h3_gpu_tensor *bias = weight ? h3_adaln_curve_load_bias(
+        curve, gpu, prefix, outputs, error, error_size) : NULL;
+    h3_gpu_tensor *wide = h3_gpu_tensor_new_f32(gpu, (size_t)rows * outputs);
+    h3_gpu_tensor *result = h3_gpu_tensor_new_bf16(gpu, (size_t)rows * outputs);
+    if (!weight || !bias || !wide || !result) {
+        if (!error || !*error)
+            fail(error, error_size, "cannot allocate %s: %s", prefix,
+                 h3_gpu_error(gpu));
+        goto failed;
+    }
+    if (!gpu_op(gpu, h3_gpu_begin(gpu), error, error_size, prefix) ||
+        !gpu_op(gpu, h3_gpu_linear_f32(gpu, wide, coordinates, weight, bias,
+                                       rows, rank, outputs),
+                error, error_size, prefix) ||
+        !gpu_op(gpu, h3_gpu_cast_f32_to_bf16(gpu, result, wide,
+                                             rows * outputs),
+                error, error_size, prefix) ||
+        !gpu_op(gpu, h3_gpu_submit(gpu), error, error_size, prefix))
+        goto failed;
+    free_tensor(&weight);
+    free_tensor(&bias);
+    free_tensor(&wide);
+    return result;
+failed:
+    free_tensor(&weight);
+    free_tensor(&bias);
+    free_tensor(&wide);
+    free_tensor(&result);
+    return NULL;
+}
+
+h3_dit_schedule *h3_dit_schedule_precompute_curve(
+    const h3_adaln_curve *curve, h3_gpu *gpu,
+    const h3_sigma_schedule *sigmas, int visual_condition,
+    int audio_condition,
+    h3_dit_schedule_progress progress, void *progress_opaque,
+    char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (!curve || !gpu || !sigmas || sigmas->steps < 1 ||
+        sigmas->steps > H3_MAX_STEPS) {
+        fail(error, error_size, "invalid AdaLN curve schedule arguments");
+        return NULL;
+    }
+    h3_dit_schedule *schedule = calloc(1, sizeof(*schedule));
+    if (!schedule) {
+        fail(error, error_size, "out of memory creating AdaLN schedule");
+        return NULL;
+    }
+    schedule->gpu = gpu;
+    float *times = NULL;
+    float *coordinates = NULL;
+    h3_gpu_tensor *coordinate_tensor = NULL;
+    if (!prepare_rows(schedule, sigmas, visual_condition, audio_condition,
+                      &times, error, error_size)) goto failed;
+    uint32_t rank = h3_adaln_curve_rank(curve);
+    coordinates = malloc((size_t)schedule->time_rows * rank *
+                         sizeof(*coordinates));
+    if (!coordinates) {
+        fail(error, error_size, "out of memory for AdaLN curve coordinates");
+        goto failed;
+    }
+    h3_adaln_curve_coordinates(curve, times, schedule->time_rows, coordinates);
+    coordinate_tensor = h3_gpu_tensor_from_f32(
+        gpu, coordinates, (size_t)schedule->time_rows * rank);
+    if (!coordinate_tensor) {
+        fail(error, error_size, "cannot upload AdaLN curve coordinates: %s",
+             h3_gpu_error(gpu));
+        goto failed;
+    }
+    for (unsigned block = 0; block < H3_DIT_BLOCKS; block++) {
+        char prefix[96];
+        snprintf(prefix, sizeof(prefix), "blocks.%u.adaln_proj.linear", block);
+        schedule->blocks[block] = curve_projection(
+            curve, gpu, prefix, coordinate_tensor, schedule->time_rows,
+            BLOCK_OUTPUT, error, error_size);
+        if (!schedule->blocks[block]) goto failed;
+        if (progress) progress((int)block + 1, (int)H3_DIT_BLOCKS,
+                               progress_opaque);
+    }
+    schedule->final = curve_projection(
+        curve, gpu, "final_layer.adaln_proj.linear", coordinate_tensor,
+        schedule->time_rows, FINAL_OUTPUT, error, error_size);
+    if (!schedule->final) goto failed;
+    free(times);
+    free(coordinates);
+    h3_gpu_tensor_free(coordinate_tensor);
+    return schedule;
+failed:
+    free(times);
+    free(coordinates);
+    h3_gpu_tensor_free(coordinate_tensor);
+    h3_dit_schedule_free(schedule);
+    return NULL;
+}
+
+int h3_dit_schedule_perturb_ulps(h3_dit_schedule *schedule, double fraction,
+                                 uint64_t seed) {
+    if (!schedule || !(fraction > 0.0)) return 1;
+    uint64_t state = seed ? seed : 0x9e3779b97f4a7c15ull;
+    for (unsigned index = 0; index <= H3_DIT_BLOCKS; index++) {
+        h3_gpu_tensor *tensor = index < H3_DIT_BLOCKS ?
+            schedule->blocks[index] : schedule->final;
+        if (!tensor) continue; /* pruned */
+        size_t count = (size_t)schedule->time_rows *
+            (index < H3_DIT_BLOCKS ? BLOCK_OUTPUT : FINAL_OUTPUT);
+        uint16_t *values = malloc(count * sizeof(*values));
+        if (!values || !h3_gpu_tensor_read_bf16(tensor, values, count)) {
+            free(values);
+            return 0;
+        }
+        for (size_t item = 0; item < count; item++) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            double draw = (double)(state >> 11) * (1.0 / 9007199254740992.0);
+            uint16_t bits = values[item];
+            /* Skip zeros, infinities and NaNs; move one BF16 step up or
+             * down in magnitude otherwise. */
+            if (draw >= fraction || (bits & 0x7fffu) == 0 ||
+                (bits & 0x7f80u) == 0x7f80u)
+                continue;
+            values[item] = (state & (1ull << 3)) ? (uint16_t)(bits + 1u)
+                                                 : (uint16_t)(bits - 1u);
+        }
+        int ok = h3_gpu_tensor_write_bf16(tensor, values, count);
+        free(values);
+        if (!ok) return 0;
+    }
+    return 1;
+}
+
+int h3_dit_time_silu(const h3_weight_store *weights, h3_gpu *gpu,
+                     const float *times, uint32_t count, float *out,
+                     char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (!weights || !gpu || !times || !out || !count ||
+        count > UINT32_MAX / TIME_INPUT) {
+        fail(error, error_size, "invalid time embedding arguments");
+        return 0;
+    }
+    float *features = time_features(times, count, error, error_size);
+    if (!features) return 0;
+    h3_gpu_tensor *silu = time_embeddings(weights, gpu, count, features,
+                                          error, error_size);
+    free(features);
+    if (!silu) return 0;
+    size_t elements = (size_t)count * H3_DIT_TIME_DIM;
+    uint16_t *bits = malloc(elements * sizeof(*bits));
+    int ok = bits && h3_gpu_tensor_read_bf16(silu, bits, elements);
+    h3_gpu_tensor_free(silu);
+    if (!ok) {
+        free(bits);
+        fail(error, error_size, "cannot read the time embedding back");
+        return 0;
+    }
+    for (size_t index = 0; index < elements; index++) {
+        uint32_t widened = (uint32_t)bits[index] << 16;
+        memcpy(&out[index], &widened, sizeof(widened));
+    }
+    free(bits);
+    return 1;
 }
 
 void h3_dit_schedule_free(h3_dit_schedule *schedule) {

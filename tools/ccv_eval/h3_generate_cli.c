@@ -138,6 +138,25 @@ int main(int argc, char **argv) {
     params.token_reduction = env_int("H3SPIKE_TOKEN_REDUCTION", 0);
     params.fast_attention = env_int("H3SPIKE_FAST_ATTENTION", 0);
     params.use_int8_row_fc2 = env_int("H3SPIKE_INT8_ROW_FC2", 0);
+    /* Ref2VA with one reference image: H3SPIKE_REF_IMAGE=<file>. */
+    h3_reference reference = {H3_REFERENCE_IMAGE, getenv("H3SPIKE_REF_IMAGE"),
+                              NULL, 0};
+    if (reference.path && *reference.path) {
+        params.references = &reference;
+        params.reference_count = 1;
+    }
+    /* One LoRA: H3SPIKE_LORA=<file>, H3SPIKE_LORA_STRENGTH (default 1);
+     * H3SPIKE_SAMPLER=1 for the re-noise step rule, H3SPIKE_AUDIO_SHIFT. */
+    h3_lora lora = {getenv("H3SPIKE_LORA"),
+                    getenv("H3SPIKE_LORA_STRENGTH") ?
+                        (float)atof(getenv("H3SPIKE_LORA_STRENGTH")) : 1.0f};
+    if (lora.path && *lora.path) {
+        params.loras = &lora;
+        params.lora_count = 1;
+    }
+    params.sampler = env_int("H3SPIKE_SAMPLER", params.sampler);
+    if (getenv("H3SPIKE_AUDIO_SHIFT"))
+        params.audio_sigma_shift = (float)atof(getenv("H3SPIKE_AUDIO_SHIFT"));
     params.reference_image_size = H3_REFERENCE_IMAGE_MATCH;
     params.on_progress = on_progress;
     params.on_frame = on_frame;

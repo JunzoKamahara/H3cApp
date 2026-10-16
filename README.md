@@ -351,6 +351,28 @@ cache can also be built as a standalone step with
 build_attention_cache`), or pointed at a model root to build both FL2VA and
 Ref2VA caches in one pass.
 
+#### Curve-form AdaLN (experimental, `H3_ADALN_CURVE`)
+
+About 24 GiB of each DiT checkpoint is AdaLN: per block, a [96768, 2688]
+projection of `silu(time embedding(t))`. Its only input is the scalar
+timestep, so the inputs lie on one smooth curve. `build_adaln_curve
+<transformer dir> <output file>` (`make build_adaln_curve`, ~7 s) projects
+that curve onto a 32-dimensional basis and stores each projection as
+[96768, 32] plus a 4097-point table of the curve's coordinates — a 611 MiB
+file, the same layout as ComfyUI's curve-form ("pruned") checkpoints. With
+`H3_ADALN_CURVE=<file>` the engine builds the AdaLN schedule from it in
+~0.01 s instead of reading the dense projections (~8.5 s).
+
+On the released FL2VA checkpoint, across all 51 projections and the
+schedules the app uses, the curve-form values are as close to an exact
+float64 computation as the dense BF16 path is (relative L2 1.5–1.7e-3 for
+both, which is BF16 rounding). They are not bit-identical, so the same seed
+gives a slightly different video. A curve file records the fingerprint of
+the transformer it was built from and is refused for any other (build one
+each for FL2VA and Ref2VA). For now this saves time, not disk space: the
+dense weights stay in the checkpoint until the planned import packs drop
+them.
+
 Both an unbounded generation duration *and* an oversized reference video push
 against the same ceiling here — see the next section.
 
@@ -523,6 +545,7 @@ h3.c, h3_dit.c, h3_gpu.m, ...   Core inference engine (C + Objective-C/Metal), b
 h3.h                            Public C API surface (h3_load_dir, h3_generate, h3_build_attention_cache, ...)
 h3_shaders.metal                All Metal compute kernels
 h3_build_attention_cache.c      CLI wrapper around h3_build_attention_cache() -> build_attention_cache
+h3_adaln_curve.c                Curve-form AdaLN files (reader + builder); h3_build_adaln_curve.c -> build_adaln_curve
 h3_lora.c                       LoRA loading (format normalization) and GPU weight patching
 tests/                          C test suite (make test / make parity)
 native/H3Spike/                 Native macOS app (SwiftPM)
@@ -547,7 +570,8 @@ make parity            # just the Metal/MLX numerical checks
 ```
 
 `make build_attention_cache` builds the standalone cache-preparation tool
-mentioned above; it isn't part of the default `make` target.
+mentioned above, and `make build_adaln_curve` the curve-form AdaLN tool;
+neither is part of the default `make` target.
 
 ### Native app
 

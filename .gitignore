@@ -31,6 +31,8 @@ h3_semantic_vae_test
 libh3.a
 h3_baseline
 build_attention_cache
+build_adaln_curve
+h3_adaln_curve_check
 build_lora_cache
 h3_generate_cli
 *.cache

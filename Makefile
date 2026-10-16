@@ -21,7 +21,7 @@ LIB_C := h3.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c \
 	h3_dit_schedule.c h3_dit.c h3_lora.c
 
 LIB_C += h3_video_vae.c h3_video_encoder.c h3_audio_vae.c \
-	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c
+	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c h3_adaln_curve.c
 LIB_M := h3_metal.m h3_gpu.m h3_tokenizer.m h3_av_writer.m h3_av_reader.m
 LIB_OBJ := $(LIB_C:.c=.o) $(LIB_M:.m=.o)
 
@@ -60,6 +60,16 @@ libh3.a: $(LIB_OBJ) $(CCV_EXTRA_OBJ)
 # One-time tool: quantizes QKV/attention-output to int8 and writes the cache
 # that H3_ATTENTION_CACHE points the runtime at. See h3_build_attention_cache.c.
 build_attention_cache: h3_build_attention_cache.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
+# One-time tool: builds the curve-form AdaLN file that H3_ADALN_CURVE points
+# the runtime at. See h3_adaln_curve.h.
+build_adaln_curve: h3_build_adaln_curve.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
+# Same-schedule comparison of curve-form against dense AdaLN (needs the
+# released weights; not in `make test`).
+h3_adaln_curve_check: tests/adaln_curve_check.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Plain-C generation driver (see tools/ccv_eval/h3_generate_cli.c) - a
@@ -259,5 +269,5 @@ clean:
 		h3_real_multimodal_text_test h3_real_ref_video_text_test \
 		h3_real_dit_schedule_test h3_real_dit_test h3_semantic_dit_test \
 		h3_real_video_vae_test h3_semantic_vae_test \
-	h3_dit_bench h3_dit_bench_864 \
+	h3_dit_bench h3_dit_bench_864 build_adaln_curve h3_adaln_curve_check \
 	libh3.a *.o *.d tests/*.o tests/*.d

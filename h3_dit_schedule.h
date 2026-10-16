@@ -28,7 +28,31 @@ h3_dit_schedule *h3_dit_schedule_precompute(
     int audio_condition,
     h3_dit_schedule_progress progress, void *progress_opaque,
     char *error, size_t error_size);
+/* The same schedule from a curve-form AdaLN file (h3_adaln_curve.h)
+ * instead of the dense projections: reads ~0.6 GiB instead of ~24 GiB, and
+ * matches the dense values to well below their own BF16 rounding (not bit
+ * for bit). */
+typedef struct h3_adaln_curve h3_adaln_curve;
+h3_dit_schedule *h3_dit_schedule_precompute_curve(
+    const h3_adaln_curve *curve, h3_gpu *gpu,
+    const h3_sigma_schedule *sigmas, int visual_condition,
+    int audio_condition,
+    h3_dit_schedule_progress progress, void *progress_opaque,
+    char *error, size_t error_size);
 void h3_dit_schedule_free(h3_dit_schedule *schedule);
+
+/* Diagnostic: moves a random `fraction` of the schedule's BF16 values one
+ * BF16 step up or down (deterministic for a seed) - a rounding-sized
+ * perturbation to compare other schedule changes against. */
+int h3_dit_schedule_perturb_ulps(h3_dit_schedule *schedule, double fraction,
+                                 uint64_t seed);
+
+/* silu(time embedding(t)) exactly as the dense AdaLN path feeds it to the
+ * projections (BF16, widened to F32 here), for count times; out is
+ * [count, H3_DIT_TIME_DIM]. Used to build curve-form AdaLN files. */
+int h3_dit_time_silu(const h3_weight_store *weights, h3_gpu *gpu,
+                     const float *times, uint32_t count, float *out,
+                     char *error, size_t error_size);
 
 /* A host copy of a whole (unpruned) schedule, for rebuilding it on another
  * GPU context without the 50 AdaLN projections: the values depend only on

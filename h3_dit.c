@@ -1,5 +1,6 @@
 #include "h3_dit.h"
 
+#include "h3_adaln_curve.h"
 #include "h3_dit_schedule.h"
 #include "h3_lora.h"
 #include "h3_weights.h"
@@ -2404,6 +2405,20 @@ static h3_dit *load_dit(const char *weight_directory,
     int audio_condition = dit->audio_condition_rows != 0;
     uint8_t model[32];
     h3_weight_store_fingerprint(dit->weights, model);
+    /* H3_ADALN_CURVE: the AdaLN schedule from a curve-form file
+     * (h3_adaln_curve.h, built by build_adaln_curve) instead of the ~24 GiB
+     * of dense projections. It must have been built from this transformer.
+     * Its identity goes into the schedule-cache key (bytes 16..31, unused by
+     * the weight fingerprint), so dense and curve schedules never mix. */
+    const char *curve_path = getenv("H3_ADALN_CURVE");
+    h3_adaln_curve *curve = NULL;
+    if (curve_path && *curve_path) {
+        curve = h3_adaln_curve_open(curve_path, model, error, error_size);
+        if (!curve) goto failed;
+        uint8_t curve_id[32];
+        h3_adaln_curve_fingerprint(curve, curve_id);
+        memcpy(model + 16, curve_id, 16);
+    }
     if (prep && prep->keep_adaln && prep->adaln &&
         same_text(prep->adaln_directory, weight_directory) &&
         !memcmp(prep->adaln_model, model, sizeof(model)) &&
@@ -2417,10 +2432,19 @@ static h3_dit *load_dit(const char *weight_directory,
         if (dit->schedule) fprintf(stderr, "h3: AdaLN schedule cache hit\n");
     } else {
         if (prep) prep_clear_adaln(prep);
-        dit->schedule = h3_dit_schedule_precompute(
-            dit->weights, dit->gpu, sigmas, visual_condition,
-            audio_condition, schedule_report, &schedule_state,
-            error, error_size);
+        if (curve) {
+            fprintf(stderr, "h3: AdaLN from curve %s (rank %u, grid %u)\n",
+                    curve_path, h3_adaln_curve_rank(curve),
+                    h3_adaln_curve_grid(curve));
+            dit->schedule = h3_dit_schedule_precompute_curve(
+                curve, dit->gpu, sigmas, visual_condition, audio_condition,
+                schedule_report, &schedule_state, error, error_size);
+        } else {
+            dit->schedule = h3_dit_schedule_precompute(
+                dit->weights, dit->gpu, sigmas, visual_condition,
+                audio_condition, schedule_report, &schedule_state,
+                error, error_size);
+        }
         if (dit->schedule && prep && prep->keep_adaln) {
             prep->adaln = h3_dit_schedule_export(dit->schedule);
             prep->adaln_directory = strdup(weight_directory);
@@ -2435,6 +2459,19 @@ static h3_dit *load_dit(const char *weight_directory,
                 fprintf(stderr, "h3: AdaLN schedule cache miss; stored %.1f MiB\n",
                         (double)h3_dit_prep_bytes(prep, 1) / (1024.0 * 1024.0));
             }
+        }
+    }
+    h3_adaln_curve_free(curve);
+    /* H3_ADALN_ULP_NOISE=<fraction> (diagnostic): a rounding-sized random
+     * change to the schedule, as a yardstick for H3_ADALN_CURVE's. Applied
+     * to this generation only (after the schedule cache stored its copy). */
+    const char *ulp_noise = getenv("H3_ADALN_ULP_NOISE");
+    if (dit->schedule && ulp_noise && atof(ulp_noise) > 0.0) {
+        fprintf(stderr, "h3: perturbing %.1f%% of AdaLN values by one BF16 step\n",
+                100.0 * atof(ulp_noise));
+        if (!h3_dit_schedule_perturb_ulps(dit->schedule, atof(ulp_noise), 1)) {
+            fail(error, error_size, "cannot perturb the AdaLN schedule");
+            goto failed;
         }
     }
     if (dit->schedule) {
