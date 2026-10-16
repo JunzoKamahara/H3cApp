@@ -70,6 +70,10 @@ void h3_video_vae_decoder_free(h3_video_vae_decoder *decoder);
 /* Decode aligned H3 temporal chunks, using the released overlap/blend rules in
  * time and 256-pixel overlapping tiles in space. The two-token mode remains
  * available only for the diagnostic MLX fixture. */
+/* A stop request (h3_params.cancel_requested) the decoders on the calling
+ * thread check between chunks and tiles; NULL turns it off. */
+void h3_video_vae_set_cancel(const volatile int *cancel_requested);
+
 int h3_video_vae_decode(const char *weight_directory,
                         const char *shader_source_path,
                         const float *normalized_latent, int latent_time,

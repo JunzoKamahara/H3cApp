@@ -562,6 +562,21 @@ static int run_block(vae_context *vae, int index, char *error,
     return 1;
 }
 
+/* h3_video_vae_set_cancel's flag for this thread: decoding checks it
+ * between chunks, tiles and (untiled) blocks - each one GPU command, so
+ * nothing is left encoded when it stops. */
+static _Thread_local const volatile int *decode_cancel;
+
+void h3_video_vae_set_cancel(const volatile int *cancel_requested) {
+    decode_cancel = cancel_requested;
+}
+
+static int stop_requested(char *error, size_t error_size) {
+    if (!decode_cancel || !*decode_cancel) return 0;
+    fail(error, error_size, "generation cancelled");
+    return 1;
+}
+
 static int run_decoder(vae_context *vae, h3_video_vae_progress progress,
                        void *progress_opaque, char *error,
                        size_t error_size) {
@@ -600,6 +615,7 @@ static int run_decoder(vae_context *vae, h3_video_vae_progress progress,
     free_tensor(&vae->registers);
 
     for (int index = 0; index < LAYERS; index++) {
+        if (stop_requested(error, error_size)) return 0;
         if (!load_block(vae, index, error, error_size)) return 0;
         OP(h3_gpu_begin(vae->gpu), "begin video VAE transformer block");
         if (!run_block(vae, index, error, error_size)) return 0;
@@ -1111,6 +1127,10 @@ int h3_video_vae_decoder_decode(h3_video_vae_decoder *decoder,
     }
     int ok = 1;
     for (int chunk = 0; chunk < chunks && ok; chunk++) {
+        if (stop_requested(error, error_size)) {
+            ok = 0;
+            break;
+        }
         h3_video_frames decoded;
         memset(&decoded, 0, sizeof(decoded));
         ok = decoder_decode_chunk(decoder, normalized_latent, latent_time,
@@ -1174,6 +1194,10 @@ int h3_video_vae_decoder_decode_streamed(h3_video_vae_decoder *decoder,
     }
     int ok = 1;
     for (int chunk = 0; chunk < chunks && ok; chunk++) {
+        if (stop_requested(error, error_size)) {
+            ok = 0;
+            break;
+        }
         h3_video_frames decoded;
         memset(&decoded, 0, sizeof(decoded));
         ok = decoder_decode_chunk(decoder, normalized_latent, latent_time,
@@ -1274,6 +1298,10 @@ static int decode_chunked(const char *weight_directory,
         ok = 0;
     }
     for (int chunk = 0; chunk < chunks && ok; chunk++) {
+        if (stop_requested(error, error_size)) {
+            ok = 0;
+            break;
+        }
         float **tiles = calloc((size_t)tile_count, sizeof(*tiles));
         if (!tiles) {
             fail(error, error_size, "out of memory retaining video VAE tiles");
@@ -1282,6 +1310,10 @@ static int decode_chunked(const char *weight_directory,
         }
         for (int tile_y = 0; tile_y < y_axis.count && ok; tile_y++)
             for (int tile_x = 0; tile_x < x_axis.count && ok; tile_x++) {
+                if (stop_requested(error, error_size)) {
+                    ok = 0;
+                    break;
+                }
                 float *input = extract_latent_tile(normalized_latent,
                     latent_time, latent_height, latent_width, chunk * 5,
                     y_axis.starts[tile_y] / SPATIAL_RATIO,

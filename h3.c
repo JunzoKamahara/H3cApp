@@ -2235,6 +2235,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     if (!dit_is_cached) h3_dit_free(dit);
     dit = NULL;
     if (progress.cancelled) goto cleanup;
+    h3_video_vae_set_cancel(params->cancel_requested);
     const char *decode_forced = getenv("H3_FORCED_AUDIO_DECODE");
     if (forced_pcm && !(decode_forced && *decode_forced &&
                         strcmp(decode_forced, "0"))) {
@@ -2421,6 +2422,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     }
 
 cleanup:
+    h3_video_vae_set_cancel(NULL);
     free(forced_pcm);
     free(forced_latent);
     free(conditioning_key);
