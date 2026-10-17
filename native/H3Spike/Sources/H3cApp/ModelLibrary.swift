@@ -151,6 +151,7 @@ final class ModelLibrary: ObservableObject {
     private var loraInfoTasks: [String: Task<Result<H3LoRAInfo, Error>, Never>] = [:]
 
     private let defaults = UserDefaults.standard
+    private var listsObserver: NSObjectProtocol?
     private static let modelsKey = "H3ModelLibrary.models"
     private static let activeModelKey = "H3ModelLibrary.activeModelID"
     private static let lorasKey = "H3ModelLibrary.loras"
@@ -165,6 +166,14 @@ final class ModelLibrary: ObservableObject {
         models = Self.decodeArray(H3ModelEntry.self, key: Self.modelsKey)
         loras = Self.decodeArray(LoRAEntry.self, key: Self.lorasKey)
         activeModelID = UUID(uuidString: defaults.string(forKey: Self.activeModelKey) ?? "")
+        listsObserver = NotificationCenter.default.addObserver(
+            forName: Self.listsChanged, object: nil, queue: .main
+        ) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, (note.object as AnyObject?) !== self else { return }
+                self.reloadLists()
+            }
+        }
         // Read the registered LoRAs' headers in the background right away,
         // so their info is usually ready before anything asks for it.
         for entry in loras { requestLoRAInfo(path: entry.path) }
@@ -428,8 +437,33 @@ final class ModelLibrary: ObservableObject {
 
     // MARK: Persistence
 
-    private func persistModels() { Self.encodeArray(models, key: Self.modelsKey) }
-    private func persistLoRAs() { Self.encodeArray(loras, key: Self.lorasKey) }
+    /// Every window has its own library (each runs its own model), but the
+    /// lists are one set in UserDefaults: after writing them, tell the other
+    /// libraries to reload, so none writes back a list it read earlier and
+    /// undoes another window's add or remove.
+    static let listsChanged = Notification.Name("H3ModelLibrary.listsChanged")
+
+    private func persistModels() {
+        Self.encodeArray(models, key: Self.modelsKey)
+        NotificationCenter.default.post(name: Self.listsChanged, object: self)
+    }
+
+    private func persistLoRAs() {
+        Self.encodeArray(loras, key: Self.lorasKey)
+        NotificationCenter.default.post(name: Self.listsChanged, object: self)
+    }
+
+    private func reloadLists() {
+        models = Self.decodeArray(H3ModelEntry.self, key: Self.modelsKey)
+        loras = Self.decodeArray(LoRAEntry.self, key: Self.lorasKey)
+        // Each window keeps its own selection, unless it has none (or its
+        // model was removed elsewhere): then it takes the one last chosen.
+        if activeModel == nil {
+            let stored = UUID(uuidString: defaults.string(forKey: Self.activeModelKey) ?? "")
+            activeModelID = models.first { $0.id == stored }?.id ?? models.first?.id
+        }
+        for entry in loras where loraInfoCache[entry.path] == nil { requestLoRAInfo(path: entry.path) }
+    }
 
     private func persistActiveModel() {
         defaults.set(activeModelID?.uuidString, forKey: Self.activeModelKey)

@@ -128,7 +128,16 @@ struct ContentView: View {
                     }
                     showingDownloadWizard = false
                 },
-                onCancelled: { showingDownloadWizard = false }
+                onCancelled: { showingDownloadWizard = false },
+                library: viewModel.library,
+                onImported: { path, use in
+                    viewModel.library.addModel(path: path)
+                    if use || viewModel.library.models.count == 1,
+                       let entry = viewModel.library.models.first(where: { $0.path == path }) {
+                        viewModel.switchModel(to: entry.id)
+                    }
+                    showingDownloadWizard = false
+                }
             )
         }
         .focusedSceneObject(viewModel)
@@ -151,7 +160,9 @@ struct ContentView: View {
                 viewModel.applyLastUsedPreset()
             }
         }
-        .onChange(of: viewModel.engineState) { newValue in
+        // initial: the engine can already have failed (no model registered)
+        // before this window's first frame.
+        .onChange(of: viewModel.engineState, initial: true) { _, newValue in
             if case .failed = newValue, !hasOfferedDownloadWizard {
                 hasOfferedDownloadWizard = true
                 showingDownloadWizard = true

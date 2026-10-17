@@ -123,7 +123,18 @@ struct ModelManagerView: View {
                     if wasEmpty { onActiveModelChange(library.activeModelID) }
                     showingDownloadWizard = false
                 },
-                onCancelled: { showingDownloadWizard = false }
+                onCancelled: { showingDownloadWizard = false },
+                library: library,
+                onImported: { path, use in
+                    let wasEmpty = library.models.isEmpty
+                    library.addModel(path: path)
+                    if use, let entry = library.models.first(where: { $0.path == path }) {
+                        onActiveModelChange(entry.id)
+                    } else if wasEmpty {
+                        onActiveModelChange(library.activeModelID)
+                    }
+                    showingDownloadWizard = false
+                }
             )
         }
     }

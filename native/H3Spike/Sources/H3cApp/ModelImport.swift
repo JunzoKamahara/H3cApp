@@ -128,6 +128,7 @@ final class ModelImporter: ObservableObject {
             } catch is CancellationError {
                 // the user stopped it - the partial folder is already gone
             } catch {
+                NSLog("H3cApp: GGUF import failed: %@", error.localizedDescription)
                 errorMessage = String(localized: "取り込めませんでした（詳細: \(error.localizedDescription)）")
             }
             isRunning = false
@@ -252,11 +253,14 @@ final class ModelImporter: ObservableObject {
             step = String(localized: "Ref2VAを置いています")
             let ref2va = root + "/Ref2VA"
             try fm.createDirectory(atPath: ref2va + "/transformer", withIntermediateDirectories: true)
-            let refBase = fm.fileExists(atPath: base + "/Ref2VA") ? base + "/Ref2VA" : base + "/FL2VA"
-            for item in ["tokenizer", "processor", "video_vae", "audio_vae", "model_index.json"] {
-                try Self.cloneIfPresent(refBase + "/" + item, to: ref2va + "/" + item)
+            // The shared-parts download has only Ref2VA's two own files.
+            func refSource(_ item: String) -> String {
+                fm.fileExists(atPath: base + "/Ref2VA/" + item) ? base + "/Ref2VA/" + item : base + "/FL2VA/" + item
             }
-            try fm.copyItem(atPath: refBase + "/transformer/config.json",
+            for item in ["tokenizer", "processor", "video_vae", "audio_vae", "model_index.json"] {
+                try Self.cloneIfPresent(refSource(item), to: ref2va + "/" + item)
+            }
+            try fm.copyItem(atPath: refSource("transformer/config.json"),
                             toPath: ref2va + "/transformer/config.json")
             try fm.copyItem(atPath: ref.path, toPath: ref2va + "/transformer/model.gguf")
             try fm.copyItem(atPath: textEncoder, toPath: ref2va + "/text_encoder")
@@ -329,6 +333,67 @@ func preferredImportBases(_ models: [H3ModelEntry]) -> [H3ModelEntry] {
         usable.filter { ModelImportManifest.load(modelPath: $0.path) != nil }
 }
 
+/// A folder the user picked as the base without registering it (removing
+/// a model from the app leaves its folder, which still has the shared
+/// parts). Nothing is searched for: only registered models and folders
+/// picked this way are offered. The id is derived from the path so the same
+/// folder keeps one id.
+func unregisteredImportBase(path: String, registered: [H3ModelEntry]) -> H3ModelEntry? {
+    let fm = FileManager.default
+    var folder = path
+    // A Hugging Face snapshot nests the model one level down
+    // (MiniMax-H3/MiniMax-H3/FL2VA).
+    if !fm.fileExists(atPath: folder + "/FL2VA"),
+       let children = try? fm.contentsOfDirectory(atPath: folder),
+       let nested = children.first(where: { fm.fileExists(atPath: folder + "/" + $0 + "/FL2VA") }) {
+        folder += "/" + nested
+    }
+    if registered.contains(where: { $0.path == folder }) { return nil }
+    let probe = H3ModelEntry(name: "", path: folder)
+    guard isUsableImportBase(probe) else { return nil }
+    var hasher = Hasher()
+    hasher.combine(folder)
+    let seed = UInt64(bitPattern: Int64(hasher.finalize()))
+    let id = UUID(uuid: (UInt8(seed & 0xff), UInt8((seed >> 8) & 0xff), UInt8((seed >> 16) & 0xff),
+                         UInt8((seed >> 24) & 0xff), UInt8((seed >> 32) & 0xff), UInt8((seed >> 40) & 0xff),
+                         0x40, UInt8((seed >> 48) & 0xff), 0x80, UInt8((seed >> 56) & 0xff),
+                         0, 0, 0, 0, 0, 1))
+    let label = String(localized: "\((folder as NSString).lastPathComponent)（選んだフォルダ）")
+    return H3ModelEntry(id: id, name: label, path: folder)
+}
+
+/// The GGUF files in a folder the user picked (and its subfolders, a few
+/// levels down) that are MiniMax H3 parts, and the names of the ones that
+/// are not (unreadable, other models, split shards).
+func importableGGUFs(in folder: String) -> (picks: [ImportPick], skipped: [String]) {
+    let root = URL(fileURLWithPath: folder)
+    guard let enumerator = FileManager.default.enumerator(
+        at: root, includingPropertiesForKeys: [.isRegularFileKey],
+        options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return ([], []) }
+    var paths: [String] = []
+    for case let url as URL in enumerator {
+        if enumerator.level > 3 { enumerator.skipDescendants(); continue }
+        if url.pathExtension.lowercased() == "gguf" { paths.append(url.path) }
+    }
+    var picks: [ImportPick] = [], skipped: [String] = []
+    for path in paths.sorted() {
+        let pick = ImportPick(path: path)
+        if pick.info.map({ $0.role != .unknown }) == true {
+            picks.append(pick)
+        } else {
+            skipped.append(String(path.dropFirst(min(path.count, folder.count + 1))))
+        }
+    }
+    return (picks, skipped)
+}
+
+/// Free space on the volume a path is on (the import writes there).
+func availableBytes(at path: String) -> Int64? {
+    let url = URL(fileURLWithPath: FileManager.default.fileExists(atPath: path) ? path : NSHomeDirectory())
+    return (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+        .volumeAvailableCapacityForImportantUsage ?? nil
+}
+
 // MARK: - What the picked files add up to
 
 /// Sorts picked files into a model's parts, says what is missing, and
@@ -349,6 +414,9 @@ struct ImportPlan {
         let detail: String
         /// Where to get the part, when it is missing.
         let hint: String?
+        var hintURL: URL? = nil
+        /// What the wizard can download for it.
+        var download: ImportDownloadKind? = nil
         /// Files that could fill this part; more than one is a duplicate the
         /// wizard asks to resolve by choosing one.
         var candidates: [ImportPick] = []
@@ -372,6 +440,12 @@ struct ImportPlan {
     var bytesWritten: UInt64 = 0
 
     var canImport: Bool { dit != nil && problems.isEmpty }
+    /// Parts with no file, required ones first: what the file page lists
+    /// with where to get them.
+    var absent: [Item] {
+        items.filter { $0.hint != nil && $0.status == .missing } +
+            items.filter { $0.hint != nil && $0.status != .missing }
+    }
 
     static func part(of file: ImportPick, ref2vaPaths: Set<String>) -> Part? {
         switch file.info?.role {
@@ -396,7 +470,17 @@ struct ImportPlan {
     }
 
     init(files: [ImportPick], ref2vaPaths: Set<String>, base: H3ModelEntry?,
-         chosen: [Part: String] = [:]) {
+         chosen: [Part: String] = [:], availableBytes: Int64? = nil) {
+        defer {
+            // Clones cost nothing; what the import writes must fit, with
+            // room to spare for the system.
+            let margin: Int64 = 2 << 30
+            if let availableBytes, Int64(bytesWritten) + margin > availableBytes {
+                let need = ByteCountFormatter.string(fromByteCount: Int64(bytesWritten), countStyle: .file)
+                let have = ByteCountFormatter.string(fromByteCount: availableBytes, countStyle: .file)
+                problems.append(String(localized: "空き容量が足りません：新しく約\(need)を書き出しますが、空きは\(have)です（余裕として2GBを残します）。"))
+            }
+        }
         let labels = Self.labels(for: files)
         func label(_ file: ImportPick) -> String { labels[file.path] ?? file.fileName }
         var candidates: [Part: [ImportPick]] = [:]
@@ -415,7 +499,15 @@ struct ImportPlan {
         }
         func pick(_ part: Part) -> ImportPick? {
             let list = candidates[part] ?? []
-            return list.first { $0.path == chosen[part] } ?? list.first
+            if let file = list.first(where: { $0.path == chosen[part] }) { return file }
+            // Of text encoders in the same format, one already cut to the
+            // 50 layers the engine reads needs nothing written.
+            if part == .textEncoder, let first = list.first,
+               let ready = list.first(where: {
+                   $0.info?.textLayers == 50 && $0.info?.mainType == first.info?.mainType }) {
+                return ready
+            }
+            return list.first
         }
         dit = pick(.dit)
         ref2vaDit = pick(.ref2va)
@@ -450,7 +542,7 @@ struct ImportPlan {
             problems.append(String(localized: "\(label(textEncoder!))：文章の部分の層が足りません（50層が必要です）"))
         }
         if base == nil {
-            problems.append(String(localized: "複製元にできるモデル（FL2VAのトークナイザーとVAEを含むもの）が登録されていません。"))
+            problems.append(String(localized: "複製元にできるモデルがありません。公式のモデルか取り込み済みのモデルのフォルダを登録するか、共通部品をダウンロードしてください。"))
         }
 
         func size(_ bytes: UInt64) -> String {
@@ -467,13 +559,15 @@ struct ImportPlan {
             return String(localized: "同じ部品のファイルが\(list.count)つあります（\(list.map(label).joined(separator: "、"))）。使うものを1つ選んでください。")
         }
         func item(_ id: String, _ title: String, _ status: Status, _ detail: String,
-                  hint: String? = nil, part: Part? = nil, chosen file: ImportPick? = nil) -> Item {
+                  hint: String? = nil, url: String? = nil, download: ImportDownloadKind? = nil,
+                  part: Part? = nil, chosen file: ImportPick? = nil) -> Item {
             var status = status, detail = detail
             if let part, let duplicate = duplicateText(part) {
                 status = status == .missing ? .missing : .warning
                 detail = duplicate + "\n" + detail
             }
             return Item(id: id, title: title, status: status, detail: detail, hint: hint,
+                        hintURL: url.flatMap(URL.init(string:)), download: download,
                         candidates: part.map { candidates[$0] ?? [] } ?? [], part: part,
                         chosenPath: file?.path)
         }
@@ -489,7 +583,8 @@ struct ImportPlan {
         } else {
             items.append(item("dit", String(localized: "DiT（FL2VA）"), .missing,
                               String(localized: "必須です。文章からの生成と最初の画像からの生成に使います。"),
-                              hint: String(localized: "例：Hugging Face の unsloth/MiniMax-H3-GGUF にある minimax_h3_fl2va_pruned-Q8_0.gguf（動作を確認済み）")))
+                              hint: String(localized: "例：Hugging Face の unsloth/MiniMax-H3-GGUF にある minimax_h3_fl2va_pruned-Q8_0.gguf（動作を確認済み）"),
+                              url: "https://huggingface.co/unsloth/MiniMax-H3-GGUF", download: .dit))
         }
 
         // Text encoder
@@ -502,10 +597,22 @@ struct ImportPlan {
                 : String(localized: "\(info.textLayers)層をそのまま使います"))
             items.append(item("text", String(localized: "文章の部分（テキストエンコーダー）"), .ok, detail,
                               part: .textEncoder, chosen: te))
+        } else if let base, !baseHasTextEncoderWeights(base) {
+            problems.append(String(localized: "文章の部分のGGUFが必要です（「\(base.name)」には文章の部分の重みがありません）"))
+            items.append(item("text", String(localized: "文章の部分（テキストエンコーダー）"), .missing,
+                              String(localized: "必須です。複製元に文章の部分の重みがないので、GGUFで用意してください。"),
+                              hint: String(localized: "例：Hugging Face の Qwen/Qwen3-VL-32B-Instruct-GGUF にある Qwen3VL-32B-Instruct-Q8_0.gguf（動作を確認済み。H3の文章の部分はQwen3-VL-32B-Instructと同じ重みです）"),
+                              url: "https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF", download: .textEncoder))
+        } else if base == nil {
+            items.append(item("text", String(localized: "文章の部分（テキストエンコーダー）"), .warning,
+                              String(localized: "複製元が決まっていません。公式のモデルを複製元にするならなくても取り込めますが、共通部品だけをダウンロードして使う場合は必要です。"),
+                              hint: String(localized: "例：Hugging Face の Qwen/Qwen3-VL-32B-Instruct-GGUF にある Qwen3VL-32B-Instruct-Q8_0.gguf（動作を確認済み。H3の文章の部分はQwen3-VL-32B-Instructと同じ重みです）"),
+                              url: "https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF", download: .textEncoder))
         } else {
             items.append(item("text", String(localized: "文章の部分（テキストエンコーダー）"), .info,
                               String(localized: "GGUFがないので、複製元のモデルのもの（約62GB）を使います。同じディスクなら容量は増えませんが、複製元を消すとその分の容量が残ります。"),
-                              hint: String(localized: "例：Hugging Face の Qwen/Qwen3-VL-32B-Instruct-GGUF にある Qwen3VL-32B-Instruct-Q8_0.gguf（動作を確認済み。H3の文章の部分はQwen3-VL-32B-Instructと同じ重みです）")))
+                              hint: String(localized: "例：Hugging Face の Qwen/Qwen3-VL-32B-Instruct-GGUF にある Qwen3VL-32B-Instruct-Q8_0.gguf（動作を確認済み。H3の文章の部分はQwen3-VL-32B-Instructと同じ重みです）"),
+                              url: "https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF", download: .textEncoder))
         }
 
         // Vision
@@ -533,13 +640,25 @@ struct ImportPlan {
                 bytesWritten += 1_190_572_912
                 items.append(item("vision", visionTitle, .info,
                                   String(localized: "GGUFがないので、複製元のモデルから取り出します（約1.1GB）"),
-                                  hint: String(localized: "GGUFで用意するなら：Qwen/Qwen3-VL-32B-Instruct-GGUF にある mmproj-Qwen3VL-32B-Instruct-F16.gguf")))
+                                  hint: String(localized: "GGUFで用意するなら：Qwen/Qwen3-VL-32B-Instruct-GGUF にある mmproj-Qwen3VL-32B-Instruct-F16.gguf"),
+                                  url: "https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF", download: .vision))
             } else {
                 vision = .none
                 items.append(item("vision", visionTitle, .warning,
                                   String(localized: "ありません。最初の画像や参照画像を使う生成はできません。"),
-                                  hint: String(localized: "例：Qwen/Qwen3-VL-32B-Instruct-GGUF にある mmproj-Qwen3VL-32B-Instruct-F16.gguf")))
+                                  hint: String(localized: "例：Qwen/Qwen3-VL-32B-Instruct-GGUF にある mmproj-Qwen3VL-32B-Instruct-F16.gguf"),
+                                  url: "https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF", download: .vision))
             }
+        } else if base.map(baseHasTextEncoderWeights) != true {
+            // No text encoder yet: which vision tower is used depends on it.
+            vision = .none
+            items.append(item("vision", visionTitle, .info,
+                              String(localized: "文章の部分が決まると決まります。画像の部分を含まない文章の部分のGGUFなら、mmprojのGGUFも必要です。"),
+                              hint: chosenVision == nil
+                                  ? String(localized: "例：Qwen/Qwen3-VL-32B-Instruct-GGUF にある mmproj-Qwen3VL-32B-Instruct-F16.gguf") : nil,
+                              url: chosenVision == nil ? "https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF" : nil,
+                              download: chosenVision == nil ? .vision : nil,
+                              part: .vision, chosen: chosenVision))
         } else {
             vision = .baseTextEncoder
             if let file = chosenVision {
@@ -559,7 +678,8 @@ struct ImportPlan {
         } else {
             items.append(item("ref2va", String(localized: "DiT（Ref2VA）"), .info,
                               String(localized: "ありません。参照画像・動画・音声を使う生成はできません（文章から・最初の画像からは使えます）。"),
-                              hint: String(localized: "例：unsloth/MiniMax-H3-GGUF にある minimax_h3_ref2va_pruned-Q8_0.gguf（DiTのファイルは、名前に ref2va を含むものをRef2VAとみなします）")))
+                              hint: String(localized: "例：unsloth/MiniMax-H3-GGUF にある minimax_h3_ref2va_pruned-Q8_0.gguf（DiTのファイルは、名前に ref2va を含むものをRef2VAとみなします）"),
+                              url: "https://huggingface.co/unsloth/MiniMax-H3-GGUF", download: .ref2va))
         }
 
         // Shared parts
@@ -568,7 +688,9 @@ struct ImportPlan {
                               String(localized: "「\(base.name)」から複製します（容量は増えません）")))
         } else {
             items.append(item("shared", String(localized: "トークナイザー・VAE・設定"), .missing,
-                              String(localized: "GGUFには入っていません。公式のモデル（FL2VA）を一度ダウンロードして登録してください。")))
+                              String(localized: "GGUFには入っていません（トークナイザーとVAEはGGUFの形では配布されていません）。モデル管理に登録したモデルか、ダウンロードした共通部品から複製します。"),
+                              hint: String(localized: "公式のモデルか取り込み済みのモデルがあれば、そのフォルダを登録してください。ない場合は、公式のモデルから共通部品だけ（約11GB）をダウンロードできます（GGUFの形のものはありません）。"),
+                              url: "https://huggingface.co/MiniMaxAI/MiniMax-H3", download: .shared))
         }
     }
 }
@@ -590,12 +712,27 @@ struct ModelImportView: View {
     @State private var baseID: UUID?
     @State private var importedPath: String?
     @State private var useImported = true
+    /// Base folders picked with Register Folder that are not models of
+    /// their own (no DiT weights), so were not registered.
+    @State private var extraBases: [H3ModelEntry] = []
+    @State private var baseFolderError: String?
+    @State private var baseFolderMessage: String?
+    @State private var downloading: ImportDownloadKind?
+    /// Downloaded GGUF files the finished import used (the import keeps its
+    /// own copies, so these can go).
+    @State private var downloadedSources: [String] = []
+    /// What the last Add Folder found.
+    @State private var folderMessage: String?
 
     private var palette: H3Palette { H3Palette(colorScheme) }
-    private var bases: [H3ModelEntry] { preferredImportBases(library.models) }
+    private var bases: [H3ModelEntry] {
+        preferredImportBases(library.models) + preferredImportBases(extraBases) +
+            (downloadedImportBase().map { [$0] } ?? [])
+    }
     private var base: H3ModelEntry? { bases.first { $0.id == baseID } ?? bases.first }
     private var plan: ImportPlan {
-        ImportPlan(files: files, ref2vaPaths: ref2vaPaths, base: base, chosen: chosen)
+        ImportPlan(files: files, ref2vaPaths: ref2vaPaths, base: base, chosen: chosen,
+                   availableBytes: availableBytes(at: importedModelsDirectory))
     }
 
     var body: some View {
@@ -613,6 +750,51 @@ struct ModelImportView: View {
         .padding(H3Spacing.lg)
         .frame(width: 640, height: 640)
         .background(palette.canvas)
+        .sheet(item: $downloading) { kind in
+            ImportDownloadView(kind: kind, onFinished: { path in
+                downloading = nil
+                downloaded(kind, path: path)
+            }, onCancelled: { downloading = nil })
+        }
+    }
+
+    /// A finished download: a GGUF joins the files, the shared parts become
+    /// the base.
+    private func downloaded(_ kind: ImportDownloadKind, path: String) {
+        if kind == .shared {
+            baseID = downloadedImportBase()?.id
+            return
+        }
+        guard !files.contains(where: { $0.path == path }) else { return }
+        files.append(ImportPick(path: path))
+        if kind == .ref2va { ref2vaPaths.insert(path) }
+    }
+
+    /// Registers a model folder (official or imported) in Model Management
+    /// and makes it the base. A folder with the shared parts but no DiT is
+    /// only used as the base.
+    private func registerBaseFolder() {
+        guard let path = chooseDirectory() else { return }
+        baseFolderError = nil
+        baseFolderMessage = nil
+        if let entry = (library.models + extraBases).first(where: {
+            $0.path == path || $0.path.hasPrefix(path + "/") }), isUsableImportBase(entry) {
+            baseID = entry.id
+            return
+        }
+        guard let entry = unregisteredImportBase(path: path, registered: library.models) else {
+            baseFolderError = String(localized: "このフォルダにはFL2VAのトークナイザー・VAE・設定がそろっていません。")
+            return
+        }
+        let transformer = (try? FileManager.default.contentsOfDirectory(atPath: entry.path + "/FL2VA/transformer")) ?? []
+        if transformer.contains(where: { $0.hasSuffix(".safetensors") || $0.hasSuffix(".gguf") }) {
+            library.addModel(path: entry.path)
+            baseID = library.models.first { $0.path == entry.path }?.id
+            baseFolderMessage = String(localized: "「\((entry.path as NSString).lastPathComponent)」をモデル管理に登録しました。")
+        } else {
+            extraBases.append(entry)
+            baseID = entry.id
+        }
     }
 
     private var header: some View {
@@ -636,7 +818,7 @@ struct ModelImportView: View {
     // Page 1: pick files; each is identified from its tensor table.
     private var filesPage: some View {
         VStack(alignment: .leading, spacing: H3Spacing.sm) {
-            Text("量子化されたモデル（GGUF）のファイルをまとめて選んでください。1つ1つの中身（DiT・文章の部分・画像の部分）を調べ、次の画面で、そろっている部品と足りない部品を示します。GGUFにない部品は、登録済みのモデルから複製します。")
+            Text("量子化されたモデル（GGUF）のファイルをまとめて選ぶか、GGUFを置いたフォルダを選んでください。1つ1つの中身（DiT・文章の部分・画像の部分）を調べ、そろっている部品と足りない部品を示します。GGUFにない部品は、登録済みのモデルから複製します。")
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -650,7 +832,7 @@ struct ModelImportView: View {
                     ForEach(files) { file in fileRow(file, unused: unused[file.path]) }
                 }
                 .listStyle(.inset)
-                .frame(minHeight: 240)
+                .frame(minHeight: 200)
                 if !unused.isEmpty {
                     Text("使われないファイルがあります。そのままでも取り込めますが、不要なら外してください。")
                         .font(.caption).foregroundStyle(.orange)
@@ -658,8 +840,79 @@ struct ModelImportView: View {
             }
             HStack {
                 Button("GGUFファイルを追加…") { addFiles() }
+                Button("フォルダから追加…") { addFolder() }
                 Spacer()
             }
+            if let folderMessage {
+                Text(folderMessage).font(.caption).foregroundStyle(palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            absentParts
+        }
+    }
+
+    /// What the picked files leave out and where to get it.
+    @ViewBuilder private var absentParts: some View {
+        let plan = self.plan
+        let absent = plan.absent.filter { $0.id != "shared" || $0.status == .missing }
+        if !absent.isEmpty {
+            Divider()
+            Text(files.isEmpty ? String(localized: "必要な部品") : String(localized: "足りない部品"))
+                .font(.callout.weight(.semibold))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(absent) { item in
+                        HStack(alignment: .top, spacing: H3Spacing.sm) {
+                            Image(systemName: icon(item.status)).foregroundStyle(color(item.status))
+                                .frame(width: 18)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.status == .missing ? String(localized: "\(item.title)（必須）")
+                                                             : String(localized: "\(item.title)（なくても取り込めます）"))
+                                    .font(.caption.weight(.semibold))
+                                hintText(item)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    @ViewBuilder private func hintText(_ item: ImportPlan.Item) -> some View {
+        if let hint = item.hint {
+            Text(hint).font(.caption2).foregroundStyle(palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        if let url = item.hintURL {
+            Link(url.absoluteString.replacingOccurrences(of: "https://", with: ""), destination: url)
+                .font(.caption2)
+        }
+        let needsBase = item.id == "shared" && item.status == .missing
+        if item.download != nil || needsBase {
+            HStack {
+                if let kind = item.download {
+                    Button(kind == .shared ? String(localized: "共通部品をダウンロード…")
+                                           : String(localized: "ダウンロード…")) { downloading = kind }
+                }
+                if needsBase {
+                    Button("フォルダを登録…") { registerBaseFolder() }
+                }
+            }
+            .controlSize(.small)
+            if needsBase {
+                baseFolderStatus
+            }
+        }
+    }
+
+    @ViewBuilder private var baseFolderStatus: some View {
+        if let baseFolderMessage {
+            Text(baseFolderMessage).font(.caption).foregroundStyle(palette.textSecondary)
+        }
+        if let baseFolderError {
+            Text(baseFolderError).font(.caption).foregroundStyle(palette.errorColor)
         }
     }
 
@@ -733,6 +986,26 @@ struct ModelImportView: View {
         }
     }
 
+    /// Adds every MiniMax H3 part among the GGUF files in a folder.
+    private func addFolder() {
+        guard let folder = chooseDirectory() else { return }
+        let found = importableGGUFs(in: folder)
+        var added = 0
+        for file in found.picks where !files.contains(where: { $0.path == file.path }) {
+            files.append(file)
+            if file.info?.role == .dit && file.looksLikeRef2VA { ref2vaPaths.insert(file.path) }
+            added += 1
+        }
+        let name = (folder as NSString).lastPathComponent
+        var message = found.picks.isEmpty && found.skipped.isEmpty
+            ? String(localized: "「\(name)」にGGUFファイルはありませんでした。")
+            : String(localized: "「\(name)」から\(added)個のファイルを追加しました。")
+        if !found.skipped.isEmpty {
+            message += String(localized: "MiniMax H3の部品ではないので除いたもの：\(found.skipped.joined(separator: "、"))")
+        }
+        folderMessage = message
+    }
+
     private func remove(_ file: ImportPick) {
         files.removeAll { $0.path == file.path }
         ref2vaPaths.remove(file.path)
@@ -754,7 +1027,12 @@ struct ModelImportView: View {
                 }
                 HStack {
                     Button("GGUFファイルを追加…") { addFiles() }
+                    Button("フォルダから追加…") { addFolder() }
                     Spacer()
+                }
+                if let folderMessage {
+                    Text(folderMessage).font(.caption).foregroundStyle(palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Divider()
                 Text("部品").font(.callout.weight(.semibold))
@@ -774,8 +1052,14 @@ struct ModelImportView: View {
                         ForEach(bases) { model in Text(model.name).tag(Optional(model.id)) }
                     }
                     .labelsHidden()
-                    .frame(maxWidth: 260)
+                    .frame(maxWidth: 300)
+                    Button("フォルダを登録…") { registerBaseFolder() }
                 }
+                if let base {
+                    Text(base.path).font(.caption2).foregroundStyle(palette.textSecondary)
+                        .lineLimit(1).truncationMode(.middle)
+                }
+                baseFolderStatus
                 HStack {
                     Text("名前").font(.caption)
                     TextField("名前", text: $name).textFieldStyle(.roundedBorder).frame(maxWidth: 260)
@@ -806,11 +1090,7 @@ struct ModelImportView: View {
                     .pickerStyle(.radioGroup)
                     .font(.caption)
                 }
-                if let hint = item.hint {
-                    Text(hint).font(.caption2).foregroundStyle(palette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
+                hintText(item)
             }
         }
     }
@@ -860,6 +1140,14 @@ struct ModelImportView: View {
                 Text(path).font(.caption).foregroundStyle(palette.textSecondary)
                     .lineLimit(2).truncationMode(.middle)
                 Toggle("このモデルに切り替える", isOn: $useImported).toggleStyle(.checkbox)
+                if !downloadedSources.isEmpty {
+                    HStack {
+                        Text("ダウンロードした元のGGUF（\(downloadedSources.count)個）は、取り込んだモデルとは別に残っています。")
+                            .font(.caption).foregroundStyle(palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("ゴミ箱に入れる") { trashDownloadedSources() }.controlSize(.small)
+                    }
+                }
                 Text("M5の高速モードで使うときは、切り替えたあと詳細設定の「キャッシュを作成…」でint8キャッシュを作ってください。")
                     .font(.caption).foregroundStyle(palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -899,6 +1187,13 @@ struct ModelImportView: View {
         }
     }
 
+    private func trashDownloadedSources() {
+        for path in downloadedSources {
+            try? FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+        }
+        downloadedSources = []
+    }
+
     private func startImport() {
         let plan = self.plan
         guard let dit = plan.dit, let base else { return }
@@ -906,6 +1201,9 @@ struct ModelImportView: View {
         importer.start(.init(name: name, dit: dit, ref2vaDit: plan.ref2vaDit,
                              textEncoder: plan.textEncoder, vision: plan.vision, base: base)) { path in
             importedPath = path
+            downloadedSources = [plan.dit, plan.ref2vaDit, plan.textEncoder, {
+                if case .file(let file) = plan.vision { return file } else { return nil }
+            }()].compactMap { $0?.path }.filter { $0.hasPrefix(importDownloadsDirectory + "/") }
         }
     }
 }

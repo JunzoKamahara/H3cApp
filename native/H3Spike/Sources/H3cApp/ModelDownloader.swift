@@ -8,7 +8,22 @@ import Foundation
 struct HFFileEntry: Equatable {
     let path: String
     let size: Int64
+    /// The repository it is in (the GGUF import downloads from others).
+    var repo: String = officialModelRepo
+    /// Where it goes under the destination, when not at its repo path
+    /// (e.g. unsloth's VAE files put where the engine looks for them).
+    var localPath: String? = nil
+    var local: String { localPath ?? path }
+
+    /// The same file placed under a subfolder of the destination.
+    func placed(under folder: String) -> HFFileEntry {
+        var entry = self
+        entry.localPath = folder + "/" + local
+        return entry
+    }
 }
+
+let officialModelRepo = "MiniMaxAI/MiniMax-H3"
 
 enum ModelDownloadError: LocalizedError {
     case listingFailed(String)
@@ -64,7 +79,6 @@ final class ModelDownloader: ObservableObject {
     private var speedTask: Task<Void, Never>?
     private var lastSpeedSample: (bytes: Int64, date: Date)?
 
-    private static let repo = "MiniMaxAI/MiniMax-H3"
     private static let maxConcurrentDownloads = 3
     private static let maxAttemptsPerFile = 5
     /// Headroom beyond the exact byte total - safetensors/index files aside,
@@ -77,9 +91,9 @@ final class ModelDownloader: ObservableObject {
         state = .listing
         task = Task {
             do {
-                var entries = try await Self.fetchEntries(subpath: "FL2VA")
+                var entries = try await Self.fetchEntries(repo: officialModelRepo, subpath: "FL2VA")
                 if includeRef2VA {
-                    entries += try await Self.fetchEntries(subpath: "Ref2VA")
+                    entries += try await Self.fetchEntries(repo: officialModelRepo, subpath: "Ref2VA")
                 }
                 guard !Task.isCancelled else { return }
                 self.files = entries
@@ -92,8 +106,31 @@ final class ModelDownloader: ObservableObject {
         }
     }
 
-    private static func fetchEntries(subpath: String) async throws -> [HFFileEntry] {
-        guard let url = URL(string: "https://huggingface.co/api/models/\(repo)/tree/main/\(subpath)?recursive=true") else {
+    /// Back to nothing listed (switching what to download).
+    func reset() {
+        task?.cancel()
+        files = []
+        totalBytes = 0
+        totalFiles = 0
+        downloadedBytes = 0
+        filesCompleted = 0
+        state = .idle
+    }
+
+    /// Downloads exactly these files (already listed by the caller).
+    func use(_ entries: [HFFileEntry]) {
+        files = entries
+        totalBytes = entries.reduce(0) { $0 + $1.size }
+        totalFiles = entries.count
+        downloadedBytes = 0
+        filesCompleted = 0
+        state = .ready
+    }
+
+    /// A repository's files under subpath ("" for all of them).
+    static func fetchEntries(repo: String, subpath: String) async throws -> [HFFileEntry] {
+        let tree = subpath.isEmpty ? "" : "/" + subpath
+        guard let url = URL(string: "https://huggingface.co/api/models/\(repo)/tree/main\(tree)?recursive=true") else {
             throw ModelDownloadError.listingFailed("invalid URL")
         }
         let (data, response) = try await URLSession.shared.data(from: url)
@@ -102,7 +139,7 @@ final class ModelDownloader: ObservableObject {
         }
         struct RawEntry: Decodable { let type: String; let path: String; let size: Int64 }
         let raw = try JSONDecoder().decode([RawEntry].self, from: data)
-        return raw.filter { $0.type == "file" }.map { HFFileEntry(path: $0.path, size: $0.size) }
+        return raw.filter { $0.type == "file" }.map { HFFileEntry(path: $0.path, size: $0.size, repo: repo) }
     }
 
     // MARK: Downloading
@@ -112,7 +149,7 @@ final class ModelDownloader: ObservableObject {
     /// against only what's actually still missing.
     private func alreadyDownloadedBytes() -> Int64 {
         files.reduce(into: Int64(0)) { total, entry in
-            let size = (try? FileManager.default.attributesOfItem(atPath: destination + "/" + entry.path)[.size] as? Int64) ?? 0
+            let size = (try? FileManager.default.attributesOfItem(atPath: destination + "/" + entry.local)[.size] as? Int64) ?? 0
             total += min(size, entry.size)
         }
     }
@@ -130,7 +167,7 @@ final class ModelDownloader: ObservableObject {
         }
         downloadedBytes = already
         filesCompleted = files.filter { entry in
-            let size = (try? FileManager.default.attributesOfItem(atPath: destination + "/" + entry.path)[.size] as? Int64) ?? 0
+            let size = (try? FileManager.default.attributesOfItem(atPath: destination + "/" + entry.local)[.size] as? Int64) ?? 0
             return size == entry.size
         }.count
         state = .downloading
@@ -193,7 +230,7 @@ final class ModelDownloader: ObservableObject {
     }
 
     private static func downloadFile(_ entry: HFFileEntry, destination: String, onProgress: @escaping (Int64) -> Void) async throws {
-        let finalPath = destination + "/" + entry.path
+        let finalPath = destination + "/" + entry.local
         let directory = (finalPath as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
 
@@ -229,7 +266,7 @@ final class ModelDownloader: ObservableObject {
         guard let encodedPath = entry.path.addingPercentEncoding(withAllowedCharacters: .urlHFPath) else {
             throw ModelDownloadError.httpStatus(path: entry.path, status: -1)
         }
-        guard let url = URL(string: "https://huggingface.co/\(repo)/resolve/main/\(encodedPath)") else {
+        guard let url = URL(string: "https://huggingface.co/\(entry.repo)/resolve/main/\(encodedPath)") else {
             throw ModelDownloadError.httpStatus(path: entry.path, status: -1)
         }
         var request = URLRequest(url: url)

@@ -483,9 +483,27 @@ final class GenerationViewModel: ObservableObject {
             }
         }
         followTurboLoRASteps()
+        loadWhenFirstModelArrives()
     }
 
     private var turboStepsSubscription: AnyCancellable?
+    private var firstModelSubscription: AnyCancellable?
+
+    /// With no model loaded (none was registered), the first one to appear
+    /// - added in this window, another window, the import wizard or the
+    /// API - is loaded right away, so the window does not keep saying that
+    /// no model is registered while the list shows one in use.
+    private func loadWhenFirstModelArrives() {
+        firstModelSubscription = library.$activeModelID
+            .combineLatest(library.$models)
+            .dropFirst() // launch loads the model itself
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _, _ in
+                guard let self, self.modelDirectory.isEmpty, !self.isGenerating,
+                      self.library.activeModel != nil else { return }
+                self.loadModel()
+            }
+    }
 
     /// A distilled Turbo LoRA only works at the step count it was trained
     /// for, and base-model quality collapses at that count once the LoRA is

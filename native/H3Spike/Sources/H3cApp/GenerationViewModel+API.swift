@@ -72,6 +72,22 @@ extension GenerationViewModel {
             })
         case ("POST", "/api/models/import"):
             return await handleModelImport(request)
+        case ("GET", "/api/models/import/downloads"):
+            // What the import wizard would offer to download for a part
+            // (?kind=dit|ref2va|textEncoder|vision|shared); lists only.
+            guard let kind = request.query["kind"].flatMap(ImportDownloadKind.init(rawValue:)) else {
+                return .error(400, "\"kind\" must be one of dit, ref2va, textEncoder, vision, shared")
+            }
+            do {
+                let choices = try await ImportDownloadChoice.list(kind)
+                return .json(200, ["repo": kind.repo, "destination": kind.destination,
+                                   "choices": choices.map {
+                                       ["title": $0.title, "files": $0.entries.count, "bytes": $0.bytes,
+                                        "verified": $0.verified] as [String: Any]
+                                   }])
+            } catch {
+                return .error(502, error.localizedDescription)
+            }
         case ("POST", "/api/models/remove"):
             // Unregisters a model and, for one this app imported, moves its
             // folder to the Trash; other folders are left where they are.
@@ -118,9 +134,11 @@ extension GenerationViewModel {
         }
     }
 
-    /// POST /api/models/import: {"files": [GGUF paths], "ref2va": [paths
-    /// among them that are the Ref2VA DiT]?, "name"?, "base_model"? (an id;
-    /// default the active model)} - the same import as Model Management's
+    /// POST /api/models/import: {"files": [GGUF paths]?, "folder"? (every H3
+    /// GGUF in it is added), "ref2va": [paths that are the Ref2VA DiT]?
+    /// (default: DiT files named ref2va), "name"?, "base_model"? (a
+    /// registered model's id), "base_path"? (a folder, registered or not)} -
+    /// the same import as Model Management's
     /// wizard: files are sorted by what they hold (of several for one part,
     /// the first is used and "notes" says so), a text encoder without a
     /// vision tower gets the base model's. "dry_run": true returns the plan
@@ -129,21 +147,42 @@ extension GenerationViewModel {
     private func handleModelImport(_ request: HTTPRequest) async -> HTTPResponse {
         let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
         guard !isGenerating else { return .error(409, "a generation is running") }
-        guard let paths = json["files"] as? [String], !paths.isEmpty else {
-            return .error(400, "\"files\" (GGUF paths) is required")
+        var picks = (json["files"] as? [String] ?? []).map(ImportPick.init(path:))
+        var skipped: [String] = []
+        if let folder = json["folder"] as? String {
+            let found = importableGGUFs(in: folder)
+            picks += found.picks.filter { pick in !picks.contains { $0.path == pick.path } }
+            skipped = found.skipped
         }
-        let bases = preferredImportBases(library.models)
+        guard !picks.isEmpty else {
+            return .error(400, "\"files\" (GGUF paths) or \"folder\" (holding H3 GGUFs) is required")
+        }
+        var bases = preferredImportBases(library.models) + (downloadedImportBase().map { [$0] } ?? [])
+        if let folder = json["base_path"] as? String {
+            guard let entry = unregisteredImportBase(path: folder, registered: library.models) ??
+                    library.models.first(where: { $0.path == folder }) else {
+                return .error(400, "\"base_path\" has no FL2VA tokenizer, VAEs and configs")
+            }
+            bases.insert(entry, at: 0)
+        }
         let base = (json["base_model"] as? String).flatMap(UUID.init(uuidString:))
             .map { id in bases.first { $0.id == id } } ?? bases.first
-        let plan = ImportPlan(files: paths.map(ImportPick.init(path:)),
-                              ref2vaPaths: Set(json["ref2va"] as? [String] ?? []), base: base)
+        let ref2va = json["ref2va"] as? [String] ??
+            picks.filter { $0.info?.role == .dit && $0.looksLikeRef2VA }.map(\.path)
+        let plan = ImportPlan(files: picks, ref2vaPaths: Set(ref2va), base: base,
+                              availableBytes: availableBytes(at: importedModelsDirectory))
         if json["dry_run"] as? Bool == true {
             // What the wizard's review page would show, nothing written.
             return .json(200, [
                 "can_import": plan.canImport,
+                "files": picks.map(\.path), "skipped": skipped,
+                "base": base.map { ["name": $0.name, "path": $0.path] } ?? NSNull(),
                 "items": plan.items.map { item in
                     ["part": item.title, "detail": item.detail,
-                     "candidates": item.candidates.map(\.fileName)] as [String: Any]
+                     "candidates": item.candidates.map(\.fileName),
+                     "hint": item.hint ?? NSNull(),
+                     "hint_url": item.hintURL?.absoluteString ?? NSNull(),
+                     "download": item.download?.rawValue ?? NSNull()] as [String: Any]
                 },
                 "problems": plan.problems, "notes": plan.notes,
                 "unused": plan.unused.map { ["file": ($0.key as NSString).lastPathComponent, "reason": $0.value] },
