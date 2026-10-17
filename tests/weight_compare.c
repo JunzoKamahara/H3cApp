@@ -100,6 +100,14 @@ int main(int argc, char **argv) {
         int same_shape = assembled || cand->ndim == ref->ndim;
         for (int d = 0; !assembled && same_shape && d < ref->ndim; d++)
             same_shape = cand->shape[d] == ref->shape[d];
+        /* The store also takes a folded patch embedding (same values, fewer
+         * dimensions - ComfyUI's [3456, 2, 16, 16]). */
+        if (!same_shape && !assembled && !strcmp(ref->name, "model.visual.patch_embed.proj.weight")) {
+            uint64_t have = 1, want = 1;
+            for (int d = 0; d < cand->ndim; d++) have *= cand->shape[d];
+            for (int d = 0; d < ref->ndim; d++) want *= ref->shape[d];
+            same_shape = have == want;
+        }
         if (!same_shape) {
             printf("SHAPE %s\n", ref->name);
             failures++;

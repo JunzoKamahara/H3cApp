@@ -193,6 +193,19 @@ static int load_normalized_conv(audio_context *audio, audio_conv *conv,
     conv->dilation = dilation;
     conv->stride = stride;
     conv->transpose = transpose;
+    /* ComfyUI-derived files (unsloth's, Comfy-Org's) store the normalized
+     * weight itself, already folded from weight_g and weight_v. */
+    snprintf(name, sizeof(name), "%s.weight", prefix);
+    if (h3_weight_find(audio->weights, name, NULL)) {
+        conv->weight = f3(audio, name, outer, inner_channels, kernel, error, error_size);
+        if (!conv->weight) return 0;
+        if (has_bias) {
+            snprintf(name, sizeof(name), "%s.bias", prefix);
+            conv->bias = f1(audio, name, output_channels, error, error_size);
+            if (!conv->bias) return 0;
+        }
+        return 1;
+    }
     snprintf(name, sizeof(name), "%s.weight_v", prefix);
     conv->vector = f3(audio, name, outer, inner_channels, kernel,
                       error, error_size);
@@ -217,6 +230,7 @@ static int load_normalized_conv(audio_context *audio, audio_conv *conv,
 
 static int normalize_conv(audio_context *audio, audio_conv *conv,
                           char *error, size_t error_size) {
+    if (!conv->vector) return 1; /* stored already folded */
     uint32_t outer = conv->transpose ? conv->input_channels :
                                       conv->output_channels;
     uint32_t inner_channels = conv->transpose ? conv->output_channels :

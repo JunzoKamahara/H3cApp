@@ -575,6 +575,10 @@ static h3_gpu_tensor *load_tensor(const h3_weight_store *store, h3_gpu *gpu,
     if (quant == H3_QUANT_NONE && tensor->dtype != dtype &&
         (tensor->dtype == H3_DTYPE_F32 || tensor->dtype == H3_DTYPE_BF16))
         quant = tensor->dtype == H3_DTYPE_F32 ? H3_QUANT_F32 : H3_QUANT_BF16;
+    /* An F16 safetensors file (ComfyUI's FP16 video VAE) expands the same
+     * way as a GGUF F16 tensor. */
+    if (quant == H3_QUANT_NONE && tensor->dtype == H3_DTYPE_F16 && dtype != H3_DTYPE_F16)
+        quant = H3_QUANT_F16;
     int expand = tensor->dtype != dtype && quant != H3_QUANT_NONE;
     uint32_t qkv_inner = 0, qkv_head_dim = 0;
     if (h3_weight_qkv_reorder(store, name, tensor, &qkv_inner, &qkv_head_dim) &&
@@ -584,6 +588,17 @@ static h3_gpu_tensor *load_tensor(const h3_weight_store *store, h3_gpu *gpu,
         if (!expand)
             quant = tensor->dtype == H3_DTYPE_BF16 ? H3_QUANT_BF16 : H3_QUANT_F32;
         expand = 1;
+    }
+    /* ComfyUI-derived files fold the vision patch embedding's [1152, 3, 2,
+     * 16, 16] into [3456, 2, 16, 16]: the same values in the same order. */
+    if (tensor->ndim != ndim && !strcmp(name, "model.visual.patch_embed.proj.weight")) {
+        uint64_t have = 1, want = 1;
+        for (int d = 0; d < tensor->ndim; d++) have *= tensor->shape[d];
+        for (int d = 0; d < ndim; d++) want *= shape[d];
+        if (have == want) {
+            ndim = tensor->ndim;
+            shape = tensor->shape;
+        }
     }
     if ((tensor->dtype != dtype && !expand) || tensor->ndim != ndim) {
         fail(error, error_size, "weight %s has dtype/rank %s/%d, expected %s/%d",
