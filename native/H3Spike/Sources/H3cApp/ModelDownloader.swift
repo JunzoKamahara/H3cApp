@@ -148,11 +148,24 @@ final class ModelDownloader: ObservableObject {
     /// both to preload the progress bar and to size the disk-space check
     /// against only what's actually still missing.
     private func alreadyDownloadedBytes() -> Int64 {
-        files.reduce(into: Int64(0)) { total, entry in
+        Self.presentBytes(files, at: destination)
+    }
+
+    nonisolated static func presentBytes(_ entries: [HFFileEntry], at destination: String) -> Int64 {
+        entries.reduce(into: Int64(0)) { total, entry in
             let size = (try? FileManager.default.attributesOfItem(atPath: destination + "/" + entry.local)[.size] as? Int64) ?? 0
             total += min(size, entry.size)
         }
     }
+
+    /// What is still to download into `destination` (a resumed download
+    /// counts only the rest), for checking the space before starting.
+    func remainingBytes(at destination: String) -> Int64 {
+        totalBytes - Self.presentBytes(files, at: destination)
+    }
+
+    /// Headroom the space checks keep free.
+    nonisolated static var spaceMargin: Int64 { 2 * 1024 * 1024 * 1024 }
 
     func startDownload(destination: String) {
         guard state == .ready || isFailedOrIdleWithFiles else { return }
@@ -310,7 +323,9 @@ final class ModelDownloader: ObservableObject {
         }
     }
 
-    private static func freeDiskSpace(near path: String) -> Int64? {
+    /// Free space on the volume `path` would be on (its nearest existing
+    /// parent folder).
+    nonisolated static func freeDiskSpace(near path: String) -> Int64? {
         var candidate = path
         let fm = FileManager.default
         while !fm.fileExists(atPath: candidate) {

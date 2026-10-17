@@ -582,8 +582,6 @@
 "公式モデルの共通部品（ダウンロード済み）" = "Official model's shared parts (downloaded)";
 "%@をダウンロード" = "Download %@";
 "Hugging Face：%@" = "Hugging Face: %@";
-"保存先：%@" = "Saved to: %@";
-"空き容量：%@" = "Free space: %@";
 "ファイル" = "File";
 "（動作確認済み）" = " (tested)";
 "小さいものほど容量は減りますが、画質が落ちます。Q8_0以外は、読み込めることは確認していますが、画質はまだ確かめていません。" = "Smaller files save space but lower the quality. Types other than Q8_0 load, but their quality has not been checked yet.";
@@ -599,7 +597,6 @@
 "GGUF（量子化）と必要な部品" = "GGUF (quantized) and needed parts";
 "公式のモデル（BF16）" = "Official model (BF16)";
 "量子化されたDiTと文章の部分（GGUF）に、公式のモデルからトークナイザー・VAE・設定だけを加えてダウンロードし、モデルとして取り込みます。公式のモデルより大幅に小さくなります。" = "Downloads the quantized DiT and text part (GGUF) plus only the tokenizer, VAEs and configs of the official model, and imports them as a model. Much smaller than the official model.";
-"取り込んだあと、ダウンロードしたGGUFをゴミ箱に入れる（取り込んだモデルは自分のコピーを持っています）" = "Move the downloaded GGUF files to the Trash after importing (the imported model has its own copies)";
 "合計 %@（%lldファイル）。" = "%1$@ in total (%2$lld files).";
 "M5の高速モードで使うときは、詳細設定の「キャッシュを作成…」でint8キャッシュを作ってください。" = "To use the fast M5 mode, build the int8 cache with “Build Cache…” in Advanced Settings.";
 "ダウンロードして取り込みました" = "Downloaded and imported";
@@ -613,8 +610,6 @@
 "「動作確認済み」以外も読み込めることは確かめていますが、画質はまだ確かめていません。小さい形式ほど容量は減り、画質は落ちます。Qwen公式の文章の部分は、取り込むときに使う50層だけに切り詰めて書き出します。" = "Files not marked “tested” load, but their quality has not been checked yet. Smaller types save space and lower the quality. Qwen's own text part is cut to the 50 layers used when imported.";
 "ダウンロード：約%@" = "Download: about %@";
 "・取り込みで書き出す量：約%@" = " · written by the import: about %@";
-"・空き容量：%@" = " · free space: %@";
-"空き容量が足りません（余裕として2GBを残します）。小さい形式を選ぶか、ディスクを空けてください。" = "Not enough free space (2 GB is kept in reserve). Choose smaller types or free up disk space.";
 "ダウンロード開始（%@）" = "Start Download (%@)";
 "続きからダウンロード" = "Resume Download";
 "ダウンロードして取り込む（%@）" = "Download and Import (%@)";
@@ -623,3 +618,18 @@
 "unslothのVAE（映像はFP16）" = "unsloth's VAEs (video in FP16)";
 "公式のモデルから、DiTと文章の部分の重みを除いた部品（トークナイザー・VAE・設定）だけをダウンロードします。これらはGGUFの形では配布されていません。VAEは、unslothが配っている小さいもの（映像のVAEをFP16にしたもの）も選べます。DiTと文章の部分はGGUFで用意してください。" = "Downloads only the parts of the official model other than the DiT and text-part weights (tokenizer, VAEs and configs). These are not distributed as GGUF. For the VAEs you can also choose unsloth's smaller ones (the video VAE in FP16). Provide the DiT and text part as GGUF files.";
 "VAE" = "VAE";
+"このMacでの目安は、いまの設定とこれまでの生成実績から計算しています" = "The estimate for this Mac comes from the current settings and past generations";
+"目安 約%lld分" = "about %lld min";
+"目安 約%lld時間" = "about %lld h";
+"目安 約%lld時間%lld分" = "about %1$lld h %2$lld min";
+"保存先（取り込んだモデルのフォルダ。ダウンロードしたファイルもこの中に置きます）" = "Destination (the imported model's folder; the downloaded files go inside it too)";
+"同じ名前のフォルダが既にあります。フォルダ名を変えてください。" = "A folder with that name already exists. Change the folder name.";
+"取り込んだあと、ダウンロードした元のファイルをゴミ箱に入れる（取り込んだモデルは自分のコピーを持っています）" = "Move the downloaded files to the Trash after importing (the imported model has its own copies)";
+"ダウンロードした共通部品" = "Downloaded shared parts";
+"フォルダ名を入れてください（「/」は使えません）。" = "Enter a folder name (“/” can't be used).";
+"保存する場所を「参照…」で選ぶか、「/」で始まるパスで入れてください。" = "Choose the location with “Browse…” or enter a path starting with “/”.";
+"必要な容量：約%@・空き容量：%@" = "Space needed: about %1$@ · free: %2$@";
+"保存先のディスクの空き容量が足りません（余裕として2GBを残します）。保存する場所を変えるか、ディスクを空けてください。" = "Not enough free space on the destination disk (2 GB is kept in reserve). Choose another location or free up disk space.";
+"保存する場所" = "Location";
+"参照…" = "Browse…";
+"フォルダ名" = "Folder name";

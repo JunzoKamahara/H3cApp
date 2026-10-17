@@ -329,6 +329,17 @@ final class GenerationViewModel: ObservableObject {
             .snapshot(now: now).remaining
     }
 
+    /// "目安 約25分" for the summary under the prompt: how long the current
+    /// settings should take on this Mac, once there is a prompt to run.
+    var draftEstimateText: String? {
+        guard !promptIsEmpty, !isGenerating, let seconds = draftEstimatedSeconds else { return nil }
+        let minutes = max(Int((seconds / 60).rounded(.up)), 1)
+        if minutes < 60 { return String(localized: "目安 約\(minutes)分") }
+        let hours = minutes / 60, rest = minutes % 60
+        return rest == 0 ? String(localized: "目安 約\(hours)時間")
+                         : String(localized: "目安 約\(hours)時間\(rest)分")
+    }
+
     /// Estimates past this are flagged in 詳細設定.
     static let longGenerationSeconds = 60.0 * 60
 

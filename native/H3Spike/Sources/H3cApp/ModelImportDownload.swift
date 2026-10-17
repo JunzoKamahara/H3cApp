@@ -158,6 +158,26 @@ struct ImportDownloadView: View {
     @State private var choices: [ImportDownloadChoice] = []
     @State private var choiceID: String?
     @State private var listError: String?
+    @State private var parent: String
+    @State private var folderName: String
+
+    init(kind: ImportDownloadKind, onFinished: @escaping (String) -> Void, onCancelled: @escaping () -> Void) {
+        self.kind = kind
+        self.onFinished = onFinished
+        self.onCancelled = onCancelled
+        _parent = State(initialValue: (kind.destination as NSString).deletingLastPathComponent)
+        _folderName = State(initialValue: (kind.destination as NSString).lastPathComponent)
+    }
+
+    private var destination: Result<String, DestinationError> {
+        DownloadDestinationFields.path(parent: parent, name: folderName)
+    }
+
+    private var space: (text: String, fits: Bool)? {
+        guard let choice, case .success(let path) = destination else { return nil }
+        return downloadSpaceCheck(needed: choice.bytes - ModelDownloader.presentBytes(choice.entries, at: path),
+                                  destination: path)
+    }
 
     private var palette: H3Palette { H3Palette(colorScheme) }
     private var choice: ImportDownloadChoice? {
@@ -201,16 +221,21 @@ struct ImportDownloadView: View {
                 Text(kindNote).font(.caption).foregroundStyle(palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("保存先：\(kind.destination)").font(.caption2).foregroundStyle(palette.textSecondary)
-                .lineLimit(1).truncationMode(.middle)
-            Text("空き容量：\(gigabytes(availableBytes(at: h3AppSupportDirectory) ?? 0))")
-                .font(.caption2).foregroundStyle(palette.textSecondary)
+            DownloadDestinationFields(parent: $parent, name: $folderName,
+                                      disabled: downloader.state == .downloading)
+            if case .failure(let error) = destination {
+                Text(error.message).font(.caption).foregroundStyle(palette.errorColor)
+            } else if let space {
+                Text(space.text).font(.caption)
+                    .foregroundStyle(space.fits ? palette.textSecondary : palette.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             status
             Spacer(minLength: 0)
             footer
         }
         .padding(H3Spacing.lg)
-        .frame(width: 520, height: 440)
+        .frame(width: 560, height: 520)
         .background(palette.canvas)
         .task { await loadChoices() }
         .onDisappear { downloader.cancel() }
@@ -261,10 +286,11 @@ struct ImportDownloadView: View {
                 Button("中止") { downloader.cancel() }
             case .failed:
                 Button("再開") { start() }.buttonStyle(.borderedProminent)
+                    .disabled(space?.fits == false)
             default:
                 Button("ダウンロード") { start() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(choice == nil)
+                    .disabled(choice == nil || space?.fits != true)
             }
         }
     }
@@ -279,26 +305,103 @@ struct ImportDownloadView: View {
     }
 
     private func start() {
-        guard let choice else { return }
+        guard let choice, case .success(let path) = destination else { return }
         if kind == .shared {
-            try? FileManager.default.removeItem(atPath: importBaseDirectory + "/" + importBaseCompleteMarker)
+            try? FileManager.default.removeItem(atPath: path + "/" + importBaseCompleteMarker)
         }
         downloader.use(choice.entries)
-        downloader.startDownload(destination: kind.destination)
+        downloader.startDownload(destination: path)
     }
 
     private func finish() {
-        guard let choice else { return }
+        guard let choice, case .success(let path) = destination else { return }
         if kind == .shared {
-            FileManager.default.createFile(atPath: importBaseDirectory + "/" + importBaseCompleteMarker,
-                                           contents: Data())
-            onFinished(importBaseDirectory)
+            FileManager.default.createFile(atPath: path + "/" + importBaseCompleteMarker, contents: Data())
+            onFinished(path)
         } else {
-            onFinished(importDownloadsDirectory + "/" + (choice.entries.first?.path ?? ""))
+            onFinished(path + "/" + (choice.entries.first?.local ?? ""))
         }
     }
 
     private func gigabytes(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
+}
+
+/// Inside a model folder being made by the download wizard: the downloaded
+/// GGUF files and shared parts, on the same disk as the model so the import
+/// clones them instead of copying.
+let importDownloadFolderName = ".downloads"
+
+/// "保存先": where a download goes - a folder chosen with 参照… (or typed),
+/// and the name of the folder made in it.
+struct DownloadDestinationFields: View {
+    @Binding var parent: String
+    @Binding var name: String
+    var disabled = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var palette: H3Palette { H3Palette(colorScheme) }
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: H3Spacing.sm, verticalSpacing: 6) {
+            GridRow {
+                Text("保存する場所").font(.caption).foregroundStyle(palette.textSecondary)
+                HStack {
+                    TextField("保存する場所", text: $parent)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+                        .labelsHidden()
+                    Button("参照…") {
+                        if let path = chooseDirectory() { parent = path }
+                    }
+                }
+            }
+            GridRow {
+                Text("フォルダ名").font(.caption).foregroundStyle(palette.textSecondary)
+                TextField("フォルダ名", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.caption)
+                    .labelsHidden()
+                    .frame(maxWidth: 260)
+            }
+        }
+        .disabled(disabled)
+    }
+
+    /// The folder the download makes, or nil with the reason it can't be
+    /// used.
+    static func path(parent: String, name: String) -> Result<String, DestinationError> {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        let place = (parent as NSString).expandingTildeInPath
+        guard !trimmed.isEmpty, !trimmed.contains("/"), trimmed != ".", trimmed != ".." else {
+            return .failure(.badName)
+        }
+        guard place.hasPrefix("/") else { return .failure(.badParent) }
+        return .success(place + "/" + trimmed)
+    }
+}
+
+enum DestinationError: Error {
+    case badName, badParent
+
+    var message: String {
+        switch self {
+        case .badName: return String(localized: "フォルダ名を入れてください（「/」は使えません）。")
+        case .badParent: return String(localized: "保存する場所を「参照…」で選ぶか、「/」で始まるパスで入れてください。")
+        }
+    }
+}
+
+/// "必要な容量 … ・空き容量 …" for a download into `destination`, and
+/// whether it fits (with the downloader's margin).
+@MainActor func downloadSpaceCheck(needed: Int64, destination: String) -> (text: String, fits: Bool) {
+    let free = ModelDownloader.freeDiskSpace(near: destination)
+    let fits = free.map { $0 >= needed + ModelDownloader.spaceMargin } ?? true
+    let format = { (bytes: Int64) in ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
+    var text = String(localized: "必要な容量：約\(format(max(needed, 0)))・空き容量：\(free.map(format) ?? "?")")
+    if !fits {
+        text += "\n" + String(localized: "保存先のディスクの空き容量が足りません（余裕として2GBを残します）。保存する場所を変えるか、ディスクを空けてください。")
+    }
+    return (text, fits)
 }

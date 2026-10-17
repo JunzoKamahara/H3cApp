@@ -24,7 +24,12 @@ struct ModelDownloadWizardView: View {
     @StateObject private var downloader = ModelDownloader()
     @StateObject private var importer = ModelImporter()
     @Environment(\.colorScheme) private var colorScheme
-    @State private var destination: String
+    // Where the official model goes: a place and a folder name.
+    @State private var officialParent: String
+    @State private var officialName: String
+    // Where the GGUF model is made (its downloads go inside it).
+    @State private var ggufParent = importedModelsDirectory
+    @State private var ggufName = (ModelImporter.suggestedFolder(name: "MiniMax-H3 GGUF") as NSString).lastPathComponent
     @State private var includeRef2VA = false
     @State private var source: Source
     @State private var showingImport = false
@@ -43,7 +48,8 @@ struct ModelDownloadWizardView: View {
         self.onCancelled = onCancelled
         self.library = library
         self.onImported = onImported
-        _destination = State(initialValue: suggestedDestination)
+        _officialParent = State(initialValue: (suggestedDestination as NSString).deletingLastPathComponent)
+        _officialName = State(initialValue: (suggestedDestination as NSString).lastPathComponent)
         _source = State(initialValue: library != nil ? .gguf : .official)
     }
 
@@ -144,23 +150,40 @@ struct ModelDownloadWizardView: View {
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("保存先").font(.caption).foregroundStyle(palette.textSecondary)
-                HStack {
-                    Text(destination)
-                        .font(.caption)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Button("変更…") {
-                        if let path = chooseDirectory() { destination = path + "/MiniMax-H3" }
-                    }
-                    .disabled(isBusy)
-                }
-            }
+            DownloadDestinationFields(parent: $officialParent, name: $officialName, disabled: isBusy)
             Toggle("Ref2VA も含める（参照画像・動画機能。おおよそ倍のサイズになります）", isOn: $includeRef2VA)
                 .disabled(isBusy)
+            if case .failure(let error) = officialDestination {
+                Text(error.message).font(.caption).foregroundStyle(palette.errorColor)
+            } else if let space = officialSpace {
+                Text(space.text).font(.caption)
+                    .foregroundStyle(space.fits ? palette.textSecondary : palette.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+    }
+
+    private var officialDestination: Result<String, DestinationError> {
+        DownloadDestinationFields.path(parent: officialParent, name: officialName)
+    }
+
+    /// The official download's space, checked as soon as the size is known
+    /// (a resumed download counts only what is left).
+    private var officialSpace: (text: String, fits: Bool)? {
+        guard downloader.state == .ready || isFailed, case .success(let path) = officialDestination else { return nil }
+        return downloadSpaceCheck(needed: downloader.remainingBytes(at: path), destination: path)
+    }
+
+    private var ggufDestination: Result<String, DestinationError> {
+        DownloadDestinationFields.path(parent: ggufParent, name: ggufName)
+    }
+
+    /// A GGUF model folder must be new, or hold only an earlier try's
+    /// downloads.
+    private var ggufFolderTaken: Bool {
+        guard case .success(let path) = ggufDestination,
+              let names = try? FileManager.default.contentsOfDirectory(atPath: path) else { return false }
+        return names.contains { $0 != importDownloadFolderName && $0 != ".DS_Store" }
     }
 
     // MARK: GGUF
@@ -221,7 +244,16 @@ struct ModelDownloadWizardView: View {
             }
             Text(ggufNote).font(.caption2).foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Toggle("取り込んだあと、ダウンロードしたGGUFをゴミ箱に入れる（取り込んだモデルは自分のコピーを持っています）",
+            Text("保存先（取り込んだモデルのフォルダ。ダウンロードしたファイルもこの中に置きます）")
+                .font(.caption).foregroundStyle(palette.textSecondary)
+            DownloadDestinationFields(parent: $ggufParent, name: $ggufName, disabled: isBusy)
+            if case .failure(let error) = ggufDestination {
+                Text(error.message).font(.caption).foregroundStyle(palette.errorColor)
+            } else if ggufFolderTaken {
+                Text("同じ名前のフォルダが既にあります。フォルダ名を変えてください。")
+                    .font(.caption).foregroundStyle(palette.errorColor)
+            }
+            Toggle("取り込んだあと、ダウンロードした元のファイルをゴミ箱に入れる（取り込んだモデルは自分のコピーを持っています）",
                    isOn: $trashDownloads)
                 .font(.caption)
                 .disabled(isBusy)
@@ -255,19 +287,29 @@ struct ModelDownloadWizardView: View {
         String(localized: "「動作確認済み」以外も読み込めることは確かめていますが、画質はまだ確かめていません。小さい形式ほど容量は減り、画質は落ちます。Qwen公式の文章の部分は、取り込むときに使う50層だけに切り詰めて書き出します。")
     }
 
-    private var freeBytes: Int64 { availableBytes(at: h3AppSupportDirectory) ?? 0 }
-    private var neededBytes: Int64 { ggufBytes + ggufWrites + (2 << 30) }
-    private var hasRoom: Bool { freeBytes >= neededBytes }
+    /// The download as placed in the model folder.
+    private var ggufEntries: [HFFileEntry] {
+        ggufDownloads.flatMap { kind, choice in
+            choice.entries.map {
+                $0.placed(under: kind == .shared ? importDownloadFolderName + "/base" : importDownloadFolderName)
+            }
+        }
+    }
+
+    private var ggufSpace: (text: String, fits: Bool)? {
+        guard case .success(let path) = ggufDestination else { return nil }
+        let remaining = ggufBytes - ModelDownloader.presentBytes(ggufEntries, at: path)
+        return downloadSpaceCheck(needed: remaining + ggufWrites, destination: path)
+    }
+
+    private var hasRoom: Bool { ggufSpace?.fits ?? false }
 
     private var spaceLine: String {
         var text = String(localized: "ダウンロード：約\(size(ggufBytes))")
         if ggufWrites > 0 {
             text += String(localized: "・取り込みで書き出す量：約\(size(ggufWrites))")
         }
-        text += String(localized: "・空き容量：\(size(freeBytes))")
-        if !hasRoom {
-            text += "\n" + String(localized: "空き容量が足りません（余裕として2GBを残します）。小さい形式を選ぶか、ディスクを空けてください。")
-        }
+        if let space = ggufSpace { text += "\n" + space.text }
         return text
     }
 
@@ -298,26 +340,23 @@ struct ModelDownloadWizardView: View {
     }
 
     private func startGGUFDownload() {
+        guard case .success(let path) = ggufDestination, !ggufFolderTaken else { return }
         importError = nil
-        try? FileManager.default.removeItem(atPath: importBaseDirectory + "/.h3c-download-complete")
-        let entries = ggufDownloads.flatMap { kind, choice in
-            choice.entries.map {
-                $0.placed(under: kind == .shared ? "ImportBase/MiniMax-H3" : "Downloads")
-            }
-        }
-        downloader.use(entries)
-        downloader.startDownload(destination: h3AppSupportDirectory)
+        downloader.use(ggufEntries)
+        downloader.startDownload(destination: path)
     }
 
     /// The downloads are in place: mark the shared parts complete and import.
     private func importDownloaded() {
-        FileManager.default.createFile(atPath: importBaseDirectory + "/.h3c-download-complete", contents: Data())
-        guard let base = downloadedImportBase() else {
+        guard case .success(let root) = ggufDestination else { return }
+        let downloads = root + "/" + importDownloadFolderName
+        let base = H3ModelEntry(name: String(localized: "ダウンロードした共通部品"), path: downloads + "/base")
+        guard isUsableImportBase(base) else {
             importError = String(localized: "ダウンロードした共通部品がそろっていません。")
             return
         }
         func file(_ kind: ImportDownloadKind) -> String? {
-            choice(kind)?.entries.first.map { importDownloadsDirectory + "/" + $0.local }
+            choice(kind)?.entries.first.map { downloads + "/" + $0.local }
         }
         var paths = [file(.dit), file(.textEncoder)].compactMap { $0 }
         if needsVision, let vision = file(.vision) { paths.append(vision) }
@@ -327,7 +366,7 @@ struct ModelDownloadWizardView: View {
             ref2va.insert(ref)
         }
         let plan = ImportPlan(files: paths.map(ImportPick.init(path:)), ref2vaPaths: ref2va, base: base,
-                              availableBytes: availableBytes(at: importedModelsDirectory))
+                              availableBytes: ModelDownloader.freeDiskSpace(near: root))
         guard let dit = plan.dit, plan.canImport else {
             importError = (plan.problems + plan.items.filter { $0.status == .missing }.map(\.title))
                 .joined(separator: "\n")
@@ -335,12 +374,11 @@ struct ModelDownloadWizardView: View {
             return
         }
         let trash = trashDownloads
-        importer.start(.init(name: "MiniMax-H3 GGUF", dit: dit, ref2vaDit: plan.ref2vaDit,
-                             textEncoder: plan.textEncoder, vision: plan.vision, base: base)) { path in
+        importer.start(.init(name: ggufName, dit: dit, ref2vaDit: plan.ref2vaDit,
+                             textEncoder: plan.textEncoder, vision: plan.vision, base: base,
+                             outputPath: root)) { path in
             if trash {
-                for source in paths {
-                    try? FileManager.default.trashItem(at: URL(fileURLWithPath: source), resultingItemURL: nil)
-                }
+                try? FileManager.default.trashItem(at: URL(fileURLWithPath: downloads), resultingItemURL: nil)
             }
             importedPath = path
         }
@@ -434,19 +472,22 @@ struct ModelDownloadWizardView: View {
     @ViewBuilder private var officialButton: some View {
         switch downloader.state {
         case .completed:
-            Button("完了") { onCompleted(destination) }
-                .buttonStyle(.borderedProminent)
+            Button("完了") {
+                if case .success(let path) = officialDestination { onCompleted(path) }
+            }
+            .buttonStyle(.borderedProminent)
         case .failed:
-            Button("続きからダウンロード") { downloader.startDownload(destination: destination) }
+            Button("続きからダウンロード") { startOfficialDownload() }
                 .buttonStyle(.borderedProminent)
+                .disabled(officialSpace?.fits == false)
         default:
             Button(downloader.state == .ready
                    ? String(localized: "ダウンロード開始（\(formatGB(downloader.totalBytes))）")
                    : String(localized: "ダウンロード開始")) {
-                downloader.startDownload(destination: destination)
+                startOfficialDownload()
             }
             .buttonStyle(.borderedProminent)
-            .disabled(downloader.state != .ready)
+            .disabled(downloader.state != .ready || officialSpace?.fits != true)
         }
     }
 
@@ -464,8 +505,13 @@ struct ModelDownloadWizardView: View {
                 startGGUFDownload()
             }
             .buttonStyle(.borderedProminent)
-            .disabled(choices.count < ImportDownloadKind.allCases.count || !hasRoom)
+            .disabled(choices.count < ImportDownloadKind.allCases.count || !hasRoom || ggufFolderTaken)
         }
+    }
+
+    private func startOfficialDownload() {
+        guard case .success(let path) = officialDestination else { return }
+        downloader.startDownload(destination: path)
     }
 
     private var isFailed: Bool {
@@ -473,8 +519,9 @@ struct ModelDownloadWizardView: View {
         return false
     }
 
+    /// The same units as the space check ("144.05 GB"), not GiB.
     private func formatGB(_ bytes: Int64) -> String {
-        String(format: "%.1fGB", Double(bytes) / 1_073_741_824)
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     private func formatSpeed(_ bytesPerSecond: Double) -> String {

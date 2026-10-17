@@ -114,6 +114,10 @@ final class ModelImporter: ObservableObject {
         var textEncoder: ImportPick?
         var vision: ImportVisionSource
         var base: H3ModelEntry
+        /// The model folder to fill; default a new one under Imported. It
+        /// may exist already holding only the downloads (see
+        /// importDownloadFolderName), which are left in place.
+        var outputPath: String? = nil
     }
 
     func start(_ request: Request, onFinished: @escaping (String) -> Void) {
@@ -153,16 +157,28 @@ final class ModelImporter: ObservableObject {
 
     private func run(_ request: Request) async throws -> String {
         let fm = FileManager.default
-        let root = Self.uniqueFolder(name: request.name)
+        let root = request.outputPath ?? Self.uniqueFolder(name: request.name)
+        if let existing = try? fm.contentsOfDirectory(atPath: root),
+           existing.contains(where: { $0 != importDownloadFolderName && $0 != ".DS_Store" }) {
+            throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: root])
+        }
         try fm.createDirectory(atPath: root, withIntermediateDirectories: true)
         do {
             try await fill(root: root, request)
             return root
         } catch {
-            try? fm.removeItem(atPath: root)
+            // Everything this import made goes; downloads kept in the
+            // folder stay for another try.
+            for name in (try? fm.contentsOfDirectory(atPath: root)) ?? [] where name != importDownloadFolderName {
+                try? fm.removeItem(atPath: root + "/" + name)
+            }
+            if ((try? fm.contentsOfDirectory(atPath: root)) ?? []).isEmpty { try? fm.removeItem(atPath: root) }
             throw error
         }
     }
+
+    /// A folder name under Imported not taken yet, for a default.
+    static func suggestedFolder(name: String) -> String { uniqueFolder(name: name) }
 
     private func fill(root: String, _ request: Request) async throws {
         let fm = FileManager.default
@@ -762,7 +778,12 @@ struct ModelImportView: View {
     /// the base.
     private func downloaded(_ kind: ImportDownloadKind, path: String) {
         if kind == .shared {
-            baseID = downloadedImportBase()?.id
+            if path == importBaseDirectory {
+                baseID = downloadedImportBase()?.id
+            } else if let entry = unregisteredImportBase(path: path, registered: library.models + extraBases) {
+                extraBases.append(entry)
+                baseID = entry.id
+            }
             return
         }
         guard !files.contains(where: { $0.path == path }) else { return }

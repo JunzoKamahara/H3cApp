@@ -577,7 +577,10 @@ struct CreationFormView: View {
             if let message = viewModel.validationMessage, !viewModel.promptIsEmpty {
                 Text(message).foregroundStyle(palette.errorColor)
             } else {
-                Text(viewModel.draftSummaryText).foregroundStyle(palette.textSecondary)
+                Text(([viewModel.draftSummaryText] + [viewModel.draftEstimateText].compactMap { $0 })
+                    .joined(separator: summarySeparator))
+                    .foregroundStyle(palette.textSecondary)
+                    .help("このMacでの目安は、いまの設定とこれまでの生成実績から計算しています")
             }
         }
         .font(.caption)
