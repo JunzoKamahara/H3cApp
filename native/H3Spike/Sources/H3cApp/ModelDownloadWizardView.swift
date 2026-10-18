@@ -296,7 +296,16 @@ struct ModelDownloadWizardView: View {
                 Text(error).font(.caption).foregroundStyle(palette.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                picker(kind)
+                VStack(alignment: .leading, spacing: 2) {
+                    picker(kind)
+                    // The picker cuts long lines short; the picked file in full.
+                    if let picked = choice(kind) {
+                        Text(verbatim: kind == .shared ? "\(picked.label)・\(size(picked.bytes))" : picked.label)
+                            .font(.caption2).foregroundStyle(palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+                }
             }
         }
     }
