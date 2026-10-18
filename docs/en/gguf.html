@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en" data-alt-href="../gguf.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="../assets/js/lang.js"></script>
+  <title>Using GGUF (quantized) models — H3cApp</title>
+  <meta name="description" content="How to download or import a quantized model (GGUF) in H3cApp and use it instead of the official model (about 134 GiB): about 35–45 GB. Choosing sources, supported formats, combinations checked, deleting and disk space.">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/gguf.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/gguf.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/gguf.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/gguf.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:locale:alternate" content="ja_JP">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="Using GGUF (quantized) models — H3cApp">
+  <meta property="og:description" content="Download or import a quantized model (GGUF) and use it instead of the official model, in about 35–45 GB.">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/gguf.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image-en.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="../assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="../assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="../assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="Site">
+        <ul>
+          <li><a href="./#examples">Examples</a></li>
+          <li><a href="./#requirements">Requirements</a></li>
+          <li><a href="getting-started.html">Getting started</a></li>
+          <li><a href="guide.html">Guide</a></li>
+          <li><a href="gguf.html" aria-current="page">GGUF</a></li>
+          <li><a href="faq.html">Troubleshooting</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="../gguf.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>Using GGUF (quantized) models</h1>
+      <p class="lead">From H3cApp v0.6.0 a quantized model (GGUF) can stand in for the official model (about 134 GiB for FL2VA alone, used for generating from text and first images). What you download and store drops to about 45 GB with the recommended files, or about 35 GB at the smallest.</p>
+      <nav class="toc" aria-label="On this page">
+        <p>On this page</p>
+        <ol>
+          <li><a href="#parts">What comes as GGUF and what doesn't</a></li>
+          <li><a href="#wizard">Setting up with the download wizard (recommended)</a></li>
+          <li><a href="#source">Changing the source</a></li>
+          <li><a href="#import">Importing GGUF files you have</a></li>
+          <li><a href="#after">After importing</a></li>
+          <li><a href="#formats">Sources and supported formats</a></li>
+          <li><a href="#checked">Combinations checked</a></li>
+          <li><a href="#delete">Deleting models and disk space</a></li>
+          <li><a href="#license">License</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="parts" aria-labelledby="parts-title">
+      <h2 id="parts-title">What comes as GGUF and what doesn't</h2>
+      <p>A MiniMax H3 model has several parts. Only the parts with large weights are published as GGUF; the rest come from the official model.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Part</th><th scope="col">Where it comes from</th><th scope="col">Typical size</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">DiT (FL2VA)<br><span class="small muted">from text, first and last images</span></th><td>GGUF</td><td>21.4 GB at Q8_0, 11.4 GB at Q4_K</td></tr>
+            <tr><th scope="row">DiT (Ref2VA)<br><span class="small muted">from reference images, video, audio</span></th><td>GGUF (optional)</td><td>about the same as FL2VA</td></tr>
+            <tr><th scope="row">Text encoder</th><td>GGUF</td><td>18.2 GB for the H3-specific Q4_K_M, 34.8 GB for Qwen's Q8_0</td></tr>
+            <tr><th scope="row">Vision part (mmproj)</th><td>GGUF (not needed when the text-encoder file has it)</td><td>1.2 GB at F16</td></tr>
+            <tr><th scope="row">Tokenizer and configs</th><td>the official model (no GGUF)</td><td>tens of MB</td></tr>
+            <tr><th scope="row">Video and audio VAEs</th><td>the official model, or unsloth's safetensors (no GGUF)</td><td>11 GB official, 5.9 GB unsloth</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">A tokenizer is a few MB of vocabulary, not weights, so there is no GGUF of it. The VAEs aren't published as GGUF either, but unsloth and Comfy-Org publish them as single safetensors files (the video VAE in FP16, half the size), which H3cApp reads too.</p>
+    </section>
+
+    <section class="section section-narrow" id="wizard" aria-labelledby="wizard-title">
+      <h2 id="wizard-title">Setting up with the download wizard (recommended)</h2>
+      <div class="warn">
+        <p><strong>Check the licenses before downloading.</strong> The MiniMax H3 model (the official one and GGUF conversions such as unsloth's) is under the “MiniMax H3 Community License Agreement”, Qwen's text and image parts under the “Apache License 2.0”. See <a href="#license">License</a>.</p>
+      </div>
+      <ol class="steps">
+        <li><strong>Open the wizard.</strong> Use “<span class="ui">Set Up the MiniMax-H3 Model</span>”, shown at first launch; Model Manager's “<span class="ui">Download and Add…</span>” opens it too.</li>
+        <li><strong>Choose “<span class="ui">GGUF (quantized) and needed parts</span>”</strong> under “<span class="ui">What to download</span>”.</li>
+        <li><strong>Pick a file for each part.</strong> With the default sources, these are recommended:
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th scope="col">Part</th><th scope="col">Recommended</th><th scope="col">Smaller</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">DiT (FL2VA)</th><td>unsloth's Q8_0 (21.4 GB, tested)</td><td>Q4_K (11.4 GB)</td></tr>
+                <tr><th scope="row">Text encoder</th><td>unsloth's H3-specific Q4_K_M (18.2 GB, 50 layers, with the image part)</td><td>—</td></tr>
+                <tr><th scope="row">VAEs</th><td>unsloth's VAEs (5.9 GB, tested)</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+          For the most certain text-encoder quality, choose Qwen's own Q8_0 (34.8 GB, tested). The import then cuts it to the 50 layers used (about 27 GB written), so that much more space is needed; it has no image part, so the mmproj (F16, 1.2 GB) is added automatically. To generate with reference images, video or audio too, turn on “<span class="ui">Include Ref2VA</span>”.
+        </li>
+        <li><strong>Choose where it goes.</strong> The “<span class="ui">Location</span>” and “<span class="ui">Folder name</span>” become the imported model's folder; the downloads are kept inside it until imported. Even on an external disk, the import clones within that disk, so the space isn't doubled.</li>
+        <li><strong>Press “<span class="ui">Download and Import</span>”.</strong> Download, import and registration in Model Manager run on their own. An interrupted download resumes next time.</li>
+      </ol>
+      <p>Before you press it, the wizard shows the download size, what the import will write, and the free space on the destination disk; with too little room (2 GB is kept in reserve) the button stays off.</p>
+    </section>
+
+    <section class="section section-narrow" id="source" aria-labelledby="source-title">
+      <h2 id="source-title">Changing the source</h2>
+      <p>Each part's source (a Hugging Face repository) can be changed.</p>
+      <ul>
+        <li><strong>Known sources</strong>: the menu next to the source field offers publishers known to carry that part.</li>
+        <li><strong>Listing</strong>: the download-arrow button (or Return in the field) reads the first bytes of every file in the source and lists that part's files by what is inside them, not by their names, so each publisher's naming doesn't matter. What was read is kept, so the next time is instant.</li>
+        <li><strong>Custom</strong>: “<span class="ui">Custom…</span>” in the menu takes a repository name or a Hugging Face URL: a repository (<code>https://huggingface.co/owner/name</code>), a folder (<code>…/tree/main/vae</code>), one file (<code>…/blob/main/xxx.gguf</code>, <code>…/resolve/main/xxx.gguf</code>), on main or another branch. Custom places stay in that part's menu and can be removed with “<span class="ui">Remove Custom</span>”.</li>
+        <li><strong>Remembered</strong>: the source chosen is kept per part for next time.</li>
+      </ul>
+      <p>Files the app can't use are still listed, with “(unsupported: reason)”, and can't be picked; see <a href="#formats">supported formats</a>.</p>
+    </section>
+
+    <section class="section section-narrow" id="import" aria-labelledby="import-title">
+      <h2 id="import-title">Importing GGUF files you have</h2>
+      <p>With GGUF files already on disk, use Model Manager's “<span class="ui">Import GGUF…</span>”.</p>
+      <ol class="steps">
+        <li><strong>Choose files.</strong> “<span class="ui">Add GGUF Files…</span>” adds files; “<span class="ui">Add from Folder…</span>” adds a folder's (three levels down). Each file is inspected and shown as a DiT, text encoder or vision part. FL2VA and Ref2VA DiTs have the same tensors, so a file whose name contains <code>ref2va</code> is taken as Ref2VA (you can switch it). Missing parts show where to get them, with a “<span class="ui">Download…</span>” button.</li>
+        <li><strong>Review.</strong> The file used for each part and what is missing are shown; with several files for one part, pick one. “<span class="ui">Clone parts from</span>” chooses where the tokenizer, VAEs and configs come from: a model in Model Manager, a folder picked with “<span class="ui">Register Folder…</span>”, or the official shared parts fetched with “<span class="ui">Download Shared Parts…</span>”.</li>
+        <li><strong>Press “<span class="ui">Import</span>”.</strong> The model folder is created in <code>~/Library/Application Support/H3cApp/Imported/</code> and registered.</li>
+      </ol>
+    </section>
+
+    <section class="section section-narrow" id="after" aria-labelledby="after-title">
+      <h2 id="after-title">After importing</h2>
+      <ul>
+        <li>Model Manager's info button shows what the model holds (each part's format and size, AdaLN form, layers, caches, the import record) and what it can do.</li>
+        <li>For the fast M5 mode, build the int8 cache (about 19 GB) with “<span class="ui">Build Cache…</span>” in Advanced Settings; GGUF models can have one too.</li>
+        <li>M1–M4 run with SSD streaming; GGUF weights are read still quantized and expanded on the GPU, so less is read.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="formats" aria-labelledby="formats-title">
+      <h2 id="formats-title">Sources and supported formats</h2>
+      <h3>Known sources</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Source</th><th scope="col">Parts</th><th scope="col">Notes</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><a href="https://huggingface.co/unsloth/MiniMax-H3-GGUF">unsloth/MiniMax-H3-GGUF</a></th><td>DiT (FL2VA, Ref2VA), H3-specific text encoder, VAEs</td><td>the default; DiTs have curve-form AdaLN</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF">Qwen/Qwen3-VL-32B-Instruct-GGUF</a></th><td>text encoder (64 layers), mmproj</td><td>official; cut to 50 layers when imported</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/Abiray/MiniMax-H3-Pruned-GGUF">Abiray/MiniMax-H3-Pruned-GGUF</a></th><td>DiT</td><td>curve-form AdaLN</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/Abiray/MiniMax-H3-GGUF">Abiray/MiniMax-H3-GGUF</a></th><td>DiT, text encoder</td><td>DiTs have dense AdaLN (not tested)</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/leejet/MiniMax-H3-GGUF">leejet/MiniMax-H3-GGUF</a></th><td>DiT, text encoder</td><td>both curve-form and dense</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/molbal/MiniMax-H3-GGUF">molbal/MiniMax-H3-GGUF</a></th><td>DiT</td><td>Q8_CR and U16G unsupported</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/realrebelai/MiniMax-H3_GGUFs">realrebelai/MiniMax-H3_GGUFs</a></th><td>DiT, text encoder</td><td>DiTs have dense AdaLN</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/joeygambino/MiniMax-H3-x-Z-Image-GGUF">joeygambino/MiniMax-H3-x-Z-Image-GGUF</a></th><td>DiT</td><td>a merge with Z-Image; <code>curve</code> files are curve-form</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF">nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF</a></th><td>text encoder (50 layers), mmproj</td><td>IQ types unsupported</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/Comfy-Org/MiniMax-H3">Comfy-Org/MiniMax-H3</a></th><td>VAEs</td><td>the int8 one is unsupported</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">These are sorted by reading the files' headers in the download screens. Apart from files marked “tested”, loading has been checked but quality has not.</p>
+      <h3>Supported formats</h3>
+      <ul>
+        <li><strong>Quantization</strong>: Q8_0, Q4_0, Q4_1, Q5_0, Q5_1, Q2_K–Q6_K, F16, BF16, F32. Mixes such as unsloth's “UD-…_XL” work when made only of these.</li>
+        <li><strong>Unsupported</strong> (listed with the reason): files with IQ types (IQ4_XS, IQ3_XXS, …), I8 and the like; split GGUF files; safetensors DiTs and text encoders (only GGUF can be imported); VAEs in number formats the app can't read (F8, int8, …); text encoders with fewer than 50 layers.</li>
+        <li><strong>AdaLN form</strong>: DiT GGUFs come with curve-form AdaLN (ComfyUI's “pruned” form) or dense AdaLN. Curve-form is tested; dense loads but generation with it has not been tried.</li>
+        <li><strong>Text encoder</strong>: the engine uses the first 50 layers of Qwen3-VL-32B; a 64-layer file is cut to those 50 when imported.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="checked" aria-labelledby="checked-title">
+      <h2 id="checked-title">Combinations checked</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Combination</th><th scope="col">What was checked</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">DiT unsloth Q8_0 + text encoder Qwen Q8_0 (cut to 50 layers) + mmproj F16</th><td>values against the official weights (errors at quantization level), generation</td></tr>
+            <tr><th scope="row">DiT unsloth Q4_K + unsloth H3-specific text encoder Q4_K_M + unsloth VAEs</th><td>download, import, generation</td></tr>
+            <tr><th scope="row">unsloth's VAEs (video FP16, audio)</th><td>the same latents decoded with the official VAEs: video PSNR 51.7 dB on average, audio SNR 72 dB (indistinguishable)</td></tr>
+            <tr><th scope="row">unsloth's H3-specific text encoder</th><td>tensor names and shapes match the official weights; relative error 7% at Q4_K for the language part, the image part bit-exact</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="delete" aria-labelledby="delete-title">
+      <h2 id="delete-title">Deleting models and disk space</h2>
+      <p>A GGUF import places files as APFS clones on the same disk, so importing takes almost no space; in exchange, models can share data with each other and with the downloaded originals. Model Manager's “…” → “<span class="ui">Delete…</span>” works like this:</p>
+      <ul>
+        <li>Even when only unregistering, the model's generation caches (int8 cache and the like) are deleted right away (they can be rebuilt).</li>
+        <li>With “<span class="ui">Also delete the model files</span>”, the model folder goes to the Trash after one more confirmation; the space emptying the Trash will free is shown. Data shared with other models or originals stays, as those still use it.</li>
+        <li>Deleting the last model also deletes the downloaded shared parts and GGUF files, and caches no model uses.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="license-title">
+      <h2 id="license-title">License</h2>
+      <ul>
+        <li>The MiniMax H3 model (the official one and GGUF conversions such as unsloth's) is under the <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE">MiniMax H3 Community License Agreement</a>; the key points are in <a href="faq.html#license">Licenses and terms</a>.</li>
+        <li>Qwen's text and image parts (Qwen3-VL-32B-Instruct) are under the <a href="https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF">Apache License 2.0</a>.</li>
+        <li>Check each source's own license as well. Read each license before downloading and using them, and follow their terms.</li>
+      </ul>
+      <p class="small muted">For how it works and the API, see <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/GGUF.md">GGUF.md</a> on GitHub.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">Report a problem (Issues)</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md">README</a></li>
+        <li><a href="faq.html#license">License</a></li>
+        <li><a href="../gguf.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+      </ul>
+      <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). Videos are generated with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>, a video generation model by MiniMax, which comes under its own license, the MiniMax H3 Community License.</p>
+    </div>
+  </footer>
+</body>
+</html>

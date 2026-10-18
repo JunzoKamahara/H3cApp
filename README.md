@@ -46,6 +46,9 @@ below.
   text encoder and video/audio VAEs); adding `Ref2VA/` for reference-
   conditioned generation brings it to ~268 GiB combined. The app's model
   manager can download either or both directly.
+  Or, from v0.6.0, a quantized model (GGUF): about 35–45 GB, downloaded
+  and imported from the same wizard — see
+  [Downloading and importing GGUF models](GGUF.md).
 - Nothing else at runtime.
 
 ## Quick start
@@ -67,6 +70,10 @@ to skip that step and stream the original BF16 weights instead.
 
 ## Features
 
+- **GGUF (quantized) models** (v0.6.0): download a quantized DiT and text
+  encoder from Hugging Face (unsloth, Qwen and other publishers, or any
+  repository or URL) or import GGUF files you have, and use them like the
+  official model — see [GGUF.md](GGUF.md).
 - **Text-to-video+audio** (T2VA): a prompt alone produces a synchronized
   H.264 + AAC clip.
 - **First/last-frame conditioning** (FL2VA): anchor a generation's opening

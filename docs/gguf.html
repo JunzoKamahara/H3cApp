@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ja" data-alt-href="en/gguf.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="assets/js/lang.js"></script>
+  <title>GGUF（量子化モデル）を使う — H3cApp</title>
+  <meta name="description" content="H3cAppで量子化モデル（GGUF）をダウンロード・取り込みして使う方法。公式のモデル（約134GiB）の代わりに約35〜45GBで使えます。配布元の選び方、対応形式、動作を確かめた組み合わせ、削除と容量。">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/gguf.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/gguf.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/gguf.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/gguf.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="GGUF（量子化モデル）を使う — H3cApp">
+  <meta property="og:description" content="公式のモデルの代わりに、量子化モデル（GGUF）を約35〜45GBでダウンロード・取り込みして使う方法。">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/gguf.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へ移動</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="サイト内">
+        <ul>
+          <li><a href="./#examples">生成例</a></li>
+          <li><a href="./#requirements">動作条件</a></li>
+          <li><a href="getting-started.html">はじめ方</a></li>
+          <li><a href="guide.html">使い方</a></li>
+          <li><a href="gguf.html" aria-current="page">GGUF</a></li>
+          <li><a href="faq.html">困ったとき</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="en/gguf.html?lang=en" hreflang="en" lang="en">English</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>GGUF（量子化モデル）を使う</h1>
+      <p class="lead">H3cApp v0.6.0から、公式のモデル（文章から・最初の画像からの生成に使うFL2VAだけで約134GiB）の代わりに、量子化されたモデル（GGUF）を使えます。ダウンロードとディスクの使用量は、おすすめの組み合わせで約45GB、最小で約35GBです。</p>
+      <nav class="toc" aria-label="このページの内容">
+        <p>このページの内容</p>
+        <ol>
+          <li><a href="#parts">GGUFで用意するもの・しないもの</a></li>
+          <li><a href="#wizard">ダウンロードウィザードで用意する（おすすめ）</a></li>
+          <li><a href="#source">配布元を変える</a></li>
+          <li><a href="#import">手元のGGUFを取り込む</a></li>
+          <li><a href="#after">取り込んだあと</a></li>
+          <li><a href="#formats">配布元と対応している形式</a></li>
+          <li><a href="#checked">動作を確かめた組み合わせ</a></li>
+          <li><a href="#delete">モデルの削除とディスク容量</a></li>
+          <li><a href="#license">ライセンス</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="parts" aria-labelledby="parts-title">
+      <h2 id="parts-title">GGUFで用意するもの・しないもの</h2>
+      <p>MiniMax H3のモデルは、いくつかの部品でできています。GGUFで配られているのは重みの大きな部品だけで、残りは公式のモデルから取ります。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">部品</th><th scope="col">用意のしかた</th><th scope="col">大きさの目安</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">DiT（FL2VA）<br><span class="small muted">文章から・最初と最後の画像から</span></th><td>GGUF</td><td>Q8_0で21.4GB、Q4_Kで11.4GB</td></tr>
+            <tr><th scope="row">DiT（Ref2VA）<br><span class="small muted">参照画像・動画・音声から</span></th><td>GGUF（なくても取り込めます）</td><td>FL2VAと同じくらい</td></tr>
+            <tr><th scope="row">文章の部分<br><span class="small muted">テキストエンコーダー</span></th><td>GGUF</td><td>H3専用Q4_K_Mで18.2GB、Qwen公式Q8_0で34.8GB</td></tr>
+            <tr><th scope="row">画像の部分（mmproj）</th><td>GGUF（文章の部分に入っていれば不要）</td><td>F16で1.2GB</td></tr>
+            <tr><th scope="row">トークナイザー・設定</th><td>公式のモデルから（GGUFはありません）</td><td>数十MB</td></tr>
+            <tr><th scope="row">映像・音声のVAE</th><td>公式のモデルか、unslothのsafetensors（GGUFはありません）</td><td>公式11GB、unsloth 5.9GB</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">トークナイザーは重みではなく数MBの辞書なので、GGUFにする意味がなく、配られていません。VAEもGGUFでは配られていませんが、unslothとComfy-Orgが単体のsafetensors（映像のVAEをFP16にした小さいもの）を配っていて、H3cAppはそれも読めます。</p>
+    </section>
+
+    <section class="section section-narrow" id="wizard" aria-labelledby="wizard-title">
+      <h2 id="wizard-title">ダウンロードウィザードで用意する（おすすめ）</h2>
+      <div class="warn">
+        <p><strong>ダウンロードの前に、モデルのライセンスを確認してください。</strong>MiniMax H3のモデル（公式のもの、unslothなどのGGUF）には「MiniMax H3 Community License Agreement」が、Qwenの文章の部分・画像の部分には「Apache License 2.0」が適用されます。詳しくは<a href="#license">ライセンス</a>を参照してください。</p>
+      </div>
+      <ol class="steps">
+        <li><strong>ウィザードを開きます。</strong>最初の起動時に出る「<span class="ui">MiniMax-H3 モデルの用意</span>」を使います。モデル管理の「<span class="ui">ダウンロードして追加…</span>」からも開けます。</li>
+        <li><strong>「<span class="ui">GGUF（量子化）と必要な部品</span>」を選びます。</strong>「<span class="ui">ダウンロードするもの</span>」の切り替えで選びます。</li>
+        <li><strong>部品ごとにファイルを選びます。</strong>初期値の配布元のままなら、次の組み合わせがおすすめです。
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th scope="col">部品</th><th scope="col">おすすめ</th><th scope="col">小さくしたいとき</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">DiT（FL2VA）</th><td>unslothのQ8_0（21.4GB、動作確認済み）</td><td>Q4_K（11.4GB）</td></tr>
+                <tr><th scope="row">文章の部分</th><td>unslothのH3専用Q4_K_M（18.2GB、50層・画像の部分入り）</td><td>—</td></tr>
+                <tr><th scope="row">VAE</th><td>unslothのVAE（5.9GB、動作確認済み）</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+          文章の部分の画質をいちばん確実にするなら、Qwen公式のQ8_0（34.8GB、動作確認済み）も選べます。この場合は取り込みのときに使う50層だけに切り詰めて書き出す（約27GB）ので、そのぶんの空きも必要です。画像の部分が入っていないので、mmproj（F16、1.2GB）も自動で加わります。参照画像・動画・音声を使う生成もしたいときは「<span class="ui">Ref2VA も含める</span>」をオンにします。
+        </li>
+        <li><strong>保存先を決めます。</strong>「<span class="ui">保存する場所</span>」と「<span class="ui">フォルダ名</span>」が、取り込んだモデルのフォルダになります。ダウンロードしたファイルも、いったんこの中に置きます。外付けディスクを選んでも、取り込みは同じディスクの中の複製なので、容量は二重になりません。</li>
+        <li><strong>「<span class="ui">ダウンロードして取り込む</span>」を押します。</strong>ダウンロード、取り込み、モデル管理への登録まで自動で進みます。中断しても、次回は続きからダウンロードします。</li>
+      </ol>
+      <p>ボタンを押す前に、ダウンロードの量、取り込みで書き出す量、保存先のディスクの空き容量が表示されます。足りないときはボタンが押せません（余裕として2GBを残します）。</p>
+    </section>
+
+    <section class="section section-narrow" id="source" aria-labelledby="source-title">
+      <h2 id="source-title">配布元を変える</h2>
+      <p>各部品の配布元（Hugging Faceのリポジトリ）は変えられます。</p>
+      <ul>
+        <li><strong>既知の配布元から選ぶ</strong>：配布元の欄の横のメニュー（≡）から、その部品を配っている配布元を選べます。</li>
+        <li><strong>一覧を読み込む</strong>：「↓」ボタン（または欄でReturn）を押すと、その配布元の全ファイルの先頭を読み、中身を見てその部品のファイルだけを並べます。ファイル名ではなく中身で見分けるので、配布元ごとに名前の付け方が違っても正しく分かれます。一度読んだ結果は保存され、2回目からはすぐ出ます。</li>
+        <li><strong>カスタム</strong>：メニューの「<span class="ui">カスタム…</span>」で、リポジトリ名かHugging FaceのURLを入力できます。リポジトリ（<code>https://huggingface.co/owner/name</code>）、フォルダ（<code>…/tree/main/vae</code>）、1つのファイル（<code>…/blob/main/xxx.gguf</code>、<code>…/resolve/main/xxx.gguf</code>）、main以外のブランチのどれでも構いません。入力した場所は部品ごとに「カスタム」として残り、「<span class="ui">カスタムを削除</span>」で消せます。</li>
+        <li><strong>記憶</strong>：選んだ配布元は部品ごとに記憶され、次に開いたときの初期値になります。</li>
+      </ul>
+      <p>アプリで使えないファイルも一覧には出し、「（未対応：理由）」と添えます。選んでも選ばれません。理由は<a href="#formats">対応している形式</a>を参照してください。</p>
+    </section>
+
+    <section class="section section-narrow" id="import" aria-labelledby="import-title">
+      <h2 id="import-title">手元のGGUFを取り込む</h2>
+      <p>すでにGGUFファイルを持っている場合は、モデル管理の「<span class="ui">GGUFを取り込む…</span>」を使います。</p>
+      <ol class="steps">
+        <li><strong>ファイルを選びます。</strong>「<span class="ui">GGUFファイルを追加…</span>」でファイルを、「<span class="ui">フォルダから追加…</span>」でフォルダごと（3階層下まで）追加します。ファイルごとに中身を調べて、DiT・文章の部分・画像の部分のどれかを表示します。DiTのFL2VAとRef2VAは中身では区別できないので、名前に <code>ref2va</code> を含むものをRef2VAとみなします（切り替えもできます）。足りない部品には、入手先の例と「<span class="ui">ダウンロード…</span>」ボタンが出ます。</li>
+        <li><strong>内容を確認します。</strong>部品ごとに使うファイルと足りないものが表示されます。同じ部品のファイルが複数あるときは、使うものを選びます。「<span class="ui">部品の複製元</span>」で、トークナイザー・VAE・設定をどこから取るかを選びます（モデル管理に登録したモデル、「<span class="ui">フォルダを登録…</span>」で選んだフォルダ、または「<span class="ui">共通部品をダウンロード…</span>」で取った公式の共通部品）。</li>
+        <li><strong>「<span class="ui">取り込む</span>」を押します。</strong><code>~/Library/Application Support/H3cApp/Imported/</code> にモデルのフォルダを作り、モデル管理に登録します。</li>
+      </ol>
+    </section>
+
+    <section class="section section-narrow" id="after" aria-labelledby="after-title">
+      <h2 id="after-title">取り込んだあと</h2>
+      <ul>
+        <li>モデル管理の「ⓘ」で、モデルの中身（各部品の形式・大きさ、AdaLNの形、層の数、キャッシュの有無、取り込みの記録）と、このモデルでできることを確かめられます。</li>
+        <li>M5で速く生成したいときは、詳細設定の「<span class="ui">キャッシュを作成…</span>」でint8キャッシュ（約19GB）を作ります。GGUFのモデルでも作れます。</li>
+        <li>M1〜M4ではSSDストリーミングで動きます。GGUFの重みは量子化されたまま読み込んでGPUで展開するので、読み込む量が減ります。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="formats" aria-labelledby="formats-title">
+      <h2 id="formats-title">配布元と対応している形式</h2>
+      <h3>既知の配布元</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">配布元</th><th scope="col">部品</th><th scope="col">メモ</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><a href="https://huggingface.co/unsloth/MiniMax-H3-GGUF">unsloth/MiniMax-H3-GGUF</a></th><td>DiT（FL2VA・Ref2VA）、H3専用の文章の部分、VAE</td><td>標準の配布元。DiTは曲線形のAdaLN</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF">Qwen/Qwen3-VL-32B-Instruct-GGUF</a></th><td>文章の部分（64層）、mmproj</td><td>公式。取り込み時に50層へ切り詰め</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/Abiray/MiniMax-H3-Pruned-GGUF">Abiray/MiniMax-H3-Pruned-GGUF</a></th><td>DiT</td><td>曲線形のAdaLN</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/Abiray/MiniMax-H3-GGUF">Abiray/MiniMax-H3-GGUF</a></th><td>DiT、文章の部分</td><td>DiTは密なAdaLN（動作未確認）</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/leejet/MiniMax-H3-GGUF">leejet/MiniMax-H3-GGUF</a></th><td>DiT、文章の部分</td><td>曲線形と密な形の両方</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/molbal/MiniMax-H3-GGUF">molbal/MiniMax-H3-GGUF</a></th><td>DiT</td><td>Q8_CR・U16Gは未対応</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/realrebelai/MiniMax-H3_GGUFs">realrebelai/MiniMax-H3_GGUFs</a></th><td>DiT、文章の部分</td><td>DiTは密なAdaLN</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/joeygambino/MiniMax-H3-x-Z-Image-GGUF">joeygambino/MiniMax-H3-x-Z-Image-GGUF</a></th><td>DiT</td><td>Z-Imageとの合成モデル。<code>curve</code>付きが曲線形</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF">nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF</a></th><td>文章の部分（50層）、mmproj</td><td>IQ系は未対応</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/Comfy-Org/MiniMax-H3">Comfy-Org/MiniMax-H3</a></th><td>VAE</td><td>int8版は未対応</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">いずれも、ダウンロードの画面でファイルの先頭を読んだ結果に基づく分類です。「動作確認済み」と表示するもの以外は、読み込めることは確かめていますが、画質はまだ確かめていません。</p>
+      <h3>対応している形式</h3>
+      <ul>
+        <li><strong>量子化形式</strong>：Q8_0、Q4_0、Q4_1、Q5_0、Q5_1、Q2_K〜Q6_K、F16、BF16、F32。unslothの「UD-○○_XL」のような混在も、これらだけでできていれば使えます。</li>
+        <li><strong>未対応</strong>（一覧に理由付きで出ます）：IQ系（IQ4_XS、IQ3_XXSなど）やI8などを含むファイル、分割されたGGUF、safetensors形式のDiT・文章の部分（取り込めるのはGGUFだけ）、読めない数値形式（F8、int8など）のVAE、層が50に足りない文章の部分。</li>
+        <li><strong>AdaLNの形</strong>：DiTのGGUFには、AdaLNが「曲線形」（ComfyUIのpruned形式）と「密な形」の2種類があります。曲線形は動作を確かめています。密な形は読み込めますが、生成はまだ試していません。</li>
+        <li><strong>文章の部分</strong>：エンジンが使うのはQwen3-VL-32Bの最初の50層です。64層のものは取り込みのときに50層だけに切り詰めて書き出します。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="checked" aria-labelledby="checked-title">
+      <h2 id="checked-title">動作を確かめた組み合わせ</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">組み合わせ</th><th scope="col">確かめたこと</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">DiT unsloth Q8_0 ＋ 文章の部分 Qwen Q8_0（50層へ切り詰め）＋ mmproj F16</th><td>公式の重みと値を照合（誤差は量子化相当）、生成</td></tr>
+            <tr><th scope="row">DiT unsloth Q4_K ＋ 文章の部分 unsloth H3専用 Q4_K_M ＋ unslothのVAE</th><td>ダウンロード・取り込み・生成</td></tr>
+            <tr><th scope="row">unslothのVAE（映像FP16・音声）</th><td>同じ潜在を公式のVAEと比べて、映像PSNR平均51.7dB、音声SNR 72dB（見分けがつかない）</td></tr>
+            <tr><th scope="row">unslothのH3専用 文章の部分</th><td>テンソル名と形が公式の重みと一致。言語の部分の誤差はQ4_Kで相対7%、画像の部分はビット単位で一致</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="delete" aria-labelledby="delete-title">
+      <h2 id="delete-title">モデルの削除とディスク容量</h2>
+      <p>GGUFの取り込みは、同じディスク上のファイルをAPFSの複製（クローン）で置くので、取り込み自体ではほとんど容量を使いません。その代わり、モデルどうしやダウンロードした元のファイルとデータを共有することがあります。モデル管理の「…」→「<span class="ui">削除…</span>」では、次のように動きます。</p>
+      <ul>
+        <li>登録を外すだけの場合でも、そのモデル用の生成キャッシュ（int8キャッシュなど）はすぐに削除します（作り直せます）。</li>
+        <li>「<span class="ui">モデルファイルも削除する</span>」をオンにすると、もう一度確認してから、モデルのフォルダをゴミ箱に移します。ゴミ箱を空にすると解放される容量を表示します。ほかのモデルや元のファイルと共有している部分は、そちらで使われているので残ります。</li>
+        <li>最後の1つのモデルを削除するときは、ダウンロードした共通部品・GGUFと、使われていないキャッシュも削除します。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="license-title">
+      <h2 id="license-title">ライセンス</h2>
+      <ul>
+        <li>MiniMax H3のモデル（公式のもの、unslothなどのGGUF）には<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE">MiniMax H3 Community License Agreement</a>が適用されます。要点は<a href="faq.html#license">ライセンスと利用条件</a>にあります。</li>
+        <li>Qwenの文章の部分・画像の部分（Qwen3-VL-32B-Instruct）には<a href="https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF">Apache License 2.0</a>が適用されます。</li>
+        <li>それぞれの配布元のライセンスも確認してください。ダウンロードと利用の前に各ライセンスを読み、その条件に従ってください。</li>
+      </ul>
+      <p class="small muted">仕組みとAPIの詳細は、GitHubの<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/GGUF.ja.md">GGUF.ja.md</a>を参照してください。</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">不具合の報告（Issues）</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.ja.md">README</a></li>
+        <li><a href="faq.html#license">ライセンス</a></li>
+        <li><a href="en/gguf.html?lang=en" hreflang="en" lang="en">English</a></li>
+      </ul>
+      <p>H3cApp：大阪成蹊大学データサイエンス学部 鎌原淳三／Junzo Kamahara</p>
+      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画の生成にはMiniMaxの動画生成モデル<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>を使っています。モデルにはMiniMax H3独自のライセンス（MiniMax H3 Community License）が適用されます。</p>
+    </div>
+  </footer>
+</body>
+</html>
