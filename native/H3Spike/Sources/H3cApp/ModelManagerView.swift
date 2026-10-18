@@ -239,14 +239,14 @@ struct ModelManagerView: View {
             removalMessage = String(localized: "「\(model.name)」をモデル管理から外しました（ファイルは残っています）。")
             return
         }
-        removalMessage = String(localized: "「\(model.name)」のファイルを削除しています…")
+        removalMessage = String(localized: "「\(model.name)」のファイルをゴミ箱に移しています…")
         let name = model.name
         Task {
             let failed = await Task.detached { plan.execute() }.value
             let freed = ByteCountFormatter.string(fromByteCount: plan.freedBytes, countStyle: .file)
             removalMessage = failed.isEmpty
-                ? String(localized: "「\(name)」を削除しました（約\(freed)を解放）。")
-                : String(localized: "「\(name)」の一部を削除できませんでした：\(failed.joined(separator: "、"))")
+                ? String(localized: "「\(name)」のファイルをゴミ箱に移しました（ゴミ箱を空にすると約\(freed)空きます）。")
+                : String(localized: "「\(name)」の一部をゴミ箱に移せませんでした：\(failed.joined(separator: "、"))")
         }
     }
 

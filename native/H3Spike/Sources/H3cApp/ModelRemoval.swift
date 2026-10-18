@@ -40,7 +40,8 @@ struct CloneStat {
     }
 }
 
-/// What deleting a model's files would remove and free.
+/// What deleting a model's files would remove and free (once the Trash
+/// they go to is emptied).
 struct ModelRemovalPlan: Sendable {
     struct Target: Sendable, Identifiable {
         var id: String { path }
@@ -50,7 +51,7 @@ struct ModelRemovalPlan: Sendable {
     }
 
     var targets: [Target] = []
-    /// Space the deletion gives back.
+    /// Space the deletion gives back when the Trash is emptied.
     var freedBytes: Int64 = 0
     /// Data the deleted files share with files that stay (kept).
     var sharedBytes: Int64 = 0
@@ -138,11 +139,13 @@ struct ModelRemovalPlan: Sendable {
         return files
     }
 
-    /// Deletes the targets for good (not to the Trash: the point is the
-    /// space). Returns the paths that could not be removed.
+    /// Moves the targets to the Trash (the space comes back when it is
+    /// emptied; until then they can be put back). Returns the paths that
+    /// could not be moved.
     func execute() -> [String] {
         targets.compactMap { target in
-            (try? FileManager.default.removeItem(atPath: target.path)) == nil ? target.path : nil
+            (try? FileManager.default.trashItem(at: URL(fileURLWithPath: target.path), resultingItemURL: nil)) == nil
+                ? target.path : nil
         }
     }
 }
@@ -180,7 +183,7 @@ struct ModelRemoveView: View {
             HStack {
                 Spacer()
                 Button("キャンセル") { onCancel() }.keyboardShortcut(.cancelAction)
-                Button(deleteFiles ? String(localized: "外してファイルを削除") : String(localized: "外す"),
+                Button(deleteFiles ? String(localized: "外してゴミ箱に移す") : String(localized: "外す"),
                        role: .destructive) {
                     onRemove(deleteFiles ? plan : nil)
                 }
@@ -221,15 +224,16 @@ struct ModelRemoveView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Divider()
-                    Text("解放されるディスク容量：約\(size(plan.freedBytes))")
+                    Text("ゴミ箱を空にすると解放される容量：約\(size(plan.freedBytes))")
                         .font(.callout.weight(.semibold))
                     if plan.sharedBytes > 0 {
                         Text("ほかのモデルや、取り込みのもとにしたファイルと共有している部分（\(plan.sharedFiles)個のファイル、約\(size(plan.sharedBytes))）は、そちらで使われているので残ります。GGUFの取り込みは、同じディスク上のファイルを複製して容量を共有するためです。")
                             .font(.caption).foregroundStyle(palette.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text("ゴミ箱には入らず、すぐに削除されます。元に戻せません。")
-                        .font(.caption).foregroundStyle(palette.errorColor)
+                    Text("ファイルはゴミ箱に移します。ゴミ箱を空にするまで容量は空きませんが、それまではゴミ箱から戻せます。")
+                        .font(.caption).foregroundStyle(palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

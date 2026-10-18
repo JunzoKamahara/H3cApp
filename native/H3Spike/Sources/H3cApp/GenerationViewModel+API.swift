@@ -112,9 +112,9 @@ extension GenerationViewModel {
                   let entry = library.models.first(where: { $0.id == id }) else {
                 return .error(400, "\"id\" must be a model id from GET /api/models")
             }
-            // "delete_files": true deletes the model's files instead, like
-            // Model Management's 削除… ("dry_run": true only reports what
-            // would go and the space it frees).
+            // "delete_files": true moves the model's files to the Trash
+            // instead, like Model Management's 削除… ("dry_run": true only
+            // reports what would go and the space emptying the Trash frees).
             if json["delete_files"] as? Bool == true {
                 let others = library.models.filter { $0.id != id }.map { (path: $0.path, id: $0.id) }
                 let path = entry.path
