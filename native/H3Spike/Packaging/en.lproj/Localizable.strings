@@ -571,9 +571,9 @@
 "複製元にできるモデルがありません。公式のモデルか取り込み済みのモデルのフォルダを登録するか、共通部品をダウンロードしてください。" = "There is no model to copy from. Register the folder of the official model or an imported model, or download the shared parts.";
 "文章の部分のGGUFが必要です（「%@」には文章の部分の重みがありません）" = "A text-part GGUF is needed (“%@” has no text-part weights)";
 "必須です。複製元に文章の部分の重みがないので、GGUFで用意してください。" = "Required. The base has no text-part weights, so provide them as a GGUF.";
-"GGUFには入っていません（トークナイザーとVAEはGGUFの形では配布されていません）。モデル管理に登録したモデルか、ダウンロードした共通部品から複製します。" = "Not in the GGUF files (tokenizers and VAEs are not distributed as GGUF). Copied from a model in Model Management or from the downloaded shared parts.";
+"GGUFには入っていません（トークナイザーとVAEはGGUFの形では配布されていません）。モデル管理に登録したモデルか、ダウンロードした共通部品から複製します。" = "Not in the GGUF files (tokenizers and VAEs are not distributed as GGUF). Copied from a model in Model Manager or from the downloaded shared parts.";
 "公式のモデルか取り込み済みのモデルがあれば、そのフォルダを登録してください。ない場合は、公式のモデルから共通部品だけ（約11GB）をダウンロードできます（GGUFの形のものはありません）。" = "If you have the official model or an imported model, register its folder. Otherwise you can download just the shared parts of the official model (about 11 GB; there is no GGUF form of them).";
-"「%@」をモデル管理に登録しました。" = "Registered “%@” in Model Management.";
+"「%@」をモデル管理に登録しました。" = "Registered “%@” in Model Manager.";
 "共通部品をダウンロード…" = "Download Shared Parts…";
 "ダウンロード…" = "Download…";
 "フォルダを登録…" = "Register Folder…";
@@ -667,13 +667,13 @@
 "このモデルの中身（DiT・文章の部分・VAEの形式、キャッシュなど）を表示します" = "Shows what this model holds (DiT, text part and VAE formats, caches and more)";
 "詳細を表示…" = "Show Details…";
 "不要（DiTのファイルに含まれています）" = "Not needed (included in the DiT file)";
-"「%@」をモデル管理から外しました（ファイルは残っています）。" = "Removed “%@” from Model Management (its files are kept).";
+"「%@」をモデル管理から外しました（ファイルは残っています）。" = "Removed “%@” from Model Manager (its files are kept).";
 "モデルのフォルダ" = "Model folder";
 "このモデルのキャッシュ" = "This model's caches";
 "ダウンロードしたGGUF" = "Downloaded GGUF files";
 "使われていないキャッシュ" = "Caches no model uses";
 "「%@」を削除" = "Delete “%@”";
-"モデル管理から外します。ファイルを残しておけば、あとで「フォルダを追加…」で登録し直せます。" = "Removes it from Model Management. If you keep the files, you can register it again later with “Add Folder…”.";
+"モデル管理から外します。ファイルを残しておけば、あとで「フォルダを追加…」で登録し直せます。" = "Removes it from Model Manager. If you keep the files, you can register it again later with “Add Folder…”.";
 "モデルファイルも削除する" = "Also delete the model files";
 "外す" = "Remove";
 "最後のモデルなので、ダウンロードした共通部品・GGUFと、使われていないキャッシュも削除します。" = "This is the last model, so the downloaded shared parts and GGUF files and the caches no model uses are deleted too.";

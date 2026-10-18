@@ -83,7 +83,7 @@ struct ModelDetail: Sendable {
             formatter.timeStyle = .short
             var rows = [Row(title: String(localized: "取り込み"), status: .info,
                             lines: [formatter.string(from: manifest.importedAt),
-                                    String(localized: "トークナイザー・VAE・設定の複製元：\(manifest.baseModel)")])]
+                                    String(localized: "トークナイザー・VAE・設定の複製元：\(baseName(manifest.baseModel))")])]
             for part in manifest.parts {
                 let role: String
                 switch part.role {
@@ -100,6 +100,17 @@ struct ModelDetail: Sendable {
 
         detail.totalBytes = folderSize(path)
         return detail
+    }
+
+    /// The import records the base's name as shown then, in the language
+    /// of that moment; the names the app made itself are shown in today's.
+    private static func baseName(_ recorded: String) -> String {
+        let shared = String(localized: "ダウンロードした共通部品")
+        let official = String(localized: "公式モデルの共通部品（ダウンロード済み）")
+        let known = ["ダウンロードした共通部品": shared, "Downloaded shared parts": shared,
+                     "公式モデルの共通部品（ダウンロード済み）": official,
+                     "Official model's shared parts (downloaded)": official]
+        return known[recorded] ?? recorded
     }
 
     // MARK: One partition (FL2VA or Ref2VA)
