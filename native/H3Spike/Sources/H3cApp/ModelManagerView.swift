@@ -230,23 +230,33 @@ struct ModelManagerView: View {
 
     /// Unregisters the model (moving off it first when it is in use, so the
     /// engine lets go of its files), then deletes the planned files.
-    private func remove(_ model: H3ModelEntry, deleting plan: ModelRemovalPlan?) {
+    /// Unregisters the model (moving off it first when it is in use, so the
+    /// engine lets go of its files), then deletes its caches and, if asked,
+    /// moves its files to the Trash.
+    private func remove(_ model: H3ModelEntry, deleting plan: ModelRemovalPlan) {
         removingModel = nil
         let wasActive = model.id == library.activeModelID
         library.removeModel(id: model.id)
         if wasActive { onActiveModelChange(library.activeModelID) }
-        guard let plan else {
-            removalMessage = String(localized: "「\(model.name)」をモデル管理から外しました（ファイルは残っています）。")
-            return
-        }
-        removalMessage = String(localized: "「\(model.name)」のファイルをゴミ箱に移しています…")
         let name = model.name
+        removalMessage = plan.includesFiles
+            ? String(localized: "「\(name)」のファイルをゴミ箱に移しています…")
+            : String(localized: "「\(name)」をモデル管理から外しました（ファイルは残っています）。")
         Task {
             let failed = await Task.detached { plan.execute() }.value
-            let freed = ByteCountFormatter.string(fromByteCount: plan.freedBytes, countStyle: .file)
-            removalMessage = failed.isEmpty
-                ? String(localized: "「\(name)」のファイルをゴミ箱に移しました（ゴミ箱を空にすると約\(freed)空きます）。")
-                : String(localized: "「\(name)」の一部をゴミ箱に移せませんでした：\(failed.joined(separator: "、"))")
+            let format = { (bytes: Int64) in ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
+            var message: String
+            if !failed.isEmpty {
+                message = String(localized: "「\(name)」の一部を削除できませんでした：\(failed.joined(separator: "、"))")
+            } else if plan.includesFiles {
+                message = String(localized: "「\(name)」のファイルをゴミ箱に移しました（ゴミ箱を空にすると約\(format(plan.freedBytes))空きます）。")
+            } else {
+                message = String(localized: "「\(name)」をモデル管理から外しました（ファイルは残っています）。")
+            }
+            if failed.isEmpty && plan.cacheBytes > 0 {
+                message += String(localized: "キャッシュを削除して約\(format(plan.cacheBytes))空きました。")
+            }
+            removalMessage = message
         }
     }
 

@@ -104,39 +104,32 @@ extension GenerationViewModel {
                 return .error(502, error.localizedDescription)
             }
         case ("POST", "/api/models/remove"):
-            // Unregisters a model and, for one this app imported, moves its
-            // folder to the Trash; other folders are left where they are.
+            // Unregisters a model and deletes its generation caches.
             let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
             guard !isGenerating else { return .error(409, "a generation is running") }
             guard let text = json["id"] as? String, let id = UUID(uuidString: text),
                   let entry = library.models.first(where: { $0.id == id }) else {
                 return .error(400, "\"id\" must be a model id from GET /api/models")
             }
-            // "delete_files": true moves the model's files to the Trash
-            // instead, like Model Management's 削除… ("dry_run": true only
-            // reports what would go and the space emptying the Trash frees).
-            if json["delete_files"] as? Bool == true {
-                let others = library.models.filter { $0.id != id }.map { (path: $0.path, id: $0.id) }
-                let path = entry.path
-                let plan = await Task.detached { ModelRemovalPlan.make(modelPath: path, id: id, others: others) }.value
-                let report: [String: Any] = [
-                    "targets": plan.targets.map { ["path": $0.path, "label": $0.label, "bytes": $0.bytes] },
-                    "freed_bytes": plan.freedBytes, "shared_bytes": plan.sharedBytes,
-                    "shared_files": plan.sharedFiles, "refused": plan.refused]
-                if json["dry_run"] as? Bool == true { return .json(200, report) }
-                guard id != library.activeModelID else { return .error(409, "that model is in use") }
-                library.removeModel(id: id)
-                let failed = await Task.detached { plan.execute() }.value
-                return .json(200, report.merging(["ok": failed.isEmpty, "failed": failed]) { $1 })
-            }
+            // "delete_files": true also moves the model's files to the Trash,
+            // like Model Management's 削除… ("dry_run": true only reports
+            // what would go and the space it frees).
+            // The model's generation caches are always deleted.
+            let others = library.models.filter { $0.id != id }.map { (path: $0.path, id: $0.id) }
+            let path = entry.path, files = json["delete_files"] as? Bool == true
+            let plan = await Task.detached {
+                ModelRemovalPlan.make(modelPath: path, id: id, others: others, includeFiles: files)
+            }.value
+            let report: [String: Any] = [
+                "targets": plan.targets.map { ["path": $0.path, "label": $0.label, "bytes": $0.bytes] },
+                "caches": plan.caches.map { ["path": $0.path, "label": $0.label, "bytes": $0.bytes] },
+                "freed_bytes": plan.freedBytes, "cache_bytes": plan.cacheBytes,
+                "shared_bytes": plan.sharedBytes, "shared_files": plan.sharedFiles, "refused": plan.refused]
+            if json["dry_run"] as? Bool == true { return .json(200, report) }
             guard id != library.activeModelID else { return .error(409, "that model is in use") }
             library.removeModel(id: id)
-            var trashed = false
-            if entry.path.hasPrefix(importedModelsDirectory + "/") {
-                trashed = (try? FileManager.default.trashItem(
-                    at: URL(fileURLWithPath: entry.path), resultingItemURL: nil)) != nil
-            }
-            return .json(200, ["ok": true, "trashed": trashed])
+            let failed = await Task.detached { plan.execute() }.value
+            return .json(200, report.merging(["ok": failed.isEmpty, "failed": failed]) { $1 })
         case ("POST", "/api/models/add"):
             // Registers a model folder, like Model Management's フォルダを追加….
             let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]

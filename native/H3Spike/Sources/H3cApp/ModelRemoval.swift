@@ -50,45 +50,61 @@ struct ModelRemovalPlan: Sendable {
         let bytes: Int64
     }
 
+    /// Moved to the Trash (only when the files are deleted too).
     var targets: [Target] = []
-    /// Space the deletion gives back when the Trash is emptied.
+    /// Deleted outright, even when only unregistering: the int8 caches and
+    /// AdaLN curves built for generating (they can be rebuilt).
+    var caches: [Target] = []
+    var includesFiles = false
+    /// Space emptying the Trash gives back.
     var freedBytes: Int64 = 0
-    /// Data the deleted files share with files that stay (kept).
+    /// Space deleting the caches gives back right away.
+    var cacheBytes: Int64 { caches.reduce(0) { $0 + $1.bytes } }
+    /// Data the trashed files share with files that stay (kept).
     var sharedBytes: Int64 = 0
     var sharedFiles = 0
     /// Folders that refuse deletion (not a model folder, too high up).
     var refused: [String] = []
 
-    /// `others` are the models staying registered; when there are none,
-    /// the app's shared download folders and caches no model uses go too.
-    static func make(modelPath: String, id: UUID, others: [(path: String, id: UUID)]) -> ModelRemovalPlan {
+    /// `others` are the models staying registered; when there are none and
+    /// the files go too, so do the app's shared download folders and the
+    /// caches no model uses.
+    static func make(modelPath: String, id: UUID, others: [(path: String, id: UUID)],
+                     includeFiles: Bool) -> ModelRemovalPlan {
         var plan = ModelRemovalPlan()
+        plan.includesFiles = includeFiles
         let fm = FileManager.default
+        func folder(_ path: String, _ label: String) -> Target? {
+            fm.fileExists(atPath: path) ? Target(path: path, label: label, bytes: folderBytes(path)) : nil
+        }
+
+        let cacheRoot = h3AppSupportDirectory + "/cache"
+        let cache = modelCacheDirectory(path: modelPath, id: id)
+        if cache.hasPrefix(cacheRoot + "/"), let target = folder(cache, String(localized: "このモデルのキャッシュ")) {
+            plan.caches.append(target)
+        }
+        guard includeFiles else { return plan }
+
         func add(_ path: String, _ label: String) {
-            guard fm.fileExists(atPath: path) else { return }
-            plan.targets.append(Target(path: path, label: label, bytes: 0))
+            if fm.fileExists(atPath: path) { plan.targets.append(Target(path: path, label: label, bytes: 0)) }
         }
         if isDeletableModelFolder(modelPath) {
             add(modelPath, String(localized: "モデルのフォルダ"))
         } else {
             plan.refused.append(modelPath)
         }
-        let cache = modelCacheDirectory(path: modelPath, id: id)
-        if cache.hasPrefix(h3AppSupportDirectory + "/cache/") {
-            add(cache, String(localized: "このモデルのキャッシュ"))
-        }
         if others.isEmpty {
             add(importBaseDirectory, String(localized: "ダウンロードした共通部品"))
             add(importDownloadsDirectory, String(localized: "ダウンロードしたGGUF"))
-            let kept = Set(others.map { modelCacheDirectory(path: $0.path, id: $0.id) })
-            let cacheRoot = h3AppSupportDirectory + "/cache"
             for name in ((try? fm.contentsOfDirectory(atPath: cacheRoot)) ?? []).sorted()
-            where UUID(uuidString: name) != nil && cacheRoot + "/" + name != cache && !kept.contains(cacheRoot + "/" + name) {
-                add(cacheRoot + "/" + name, String(localized: "使われていないキャッシュ"))
+            where UUID(uuidString: name) != nil && cacheRoot + "/" + name != cache {
+                if let target = folder(cacheRoot + "/" + name, String(localized: "使われていないキャッシュ")) {
+                    plan.caches.append(target)
+                }
             }
         }
 
-        // Every file, by clone family.
+        // Every trashed file, by clone family.
         var families: [UInt64: [CloneStat]] = [:]
         for (index, target) in plan.targets.enumerated() {
             var bytes: Int64 = 0
@@ -116,6 +132,12 @@ struct ModelRemovalPlan: Sendable {
         return plan
     }
 
+    private static func folderBytes(_ path: String) -> Int64 {
+        regularFiles(under: path).reduce(0) { total, file in
+            total + (((try? FileManager.default.attributesOfItem(atPath: file))?[.size] as? NSNumber)?.int64Value ?? 0)
+        }
+    }
+
     /// Only a folder that looks like a model (FL2VA/Ref2VA or an import
     /// record) and sits well below the root and the home folder.
     static func isDeletableModelFolder(_ path: String) -> Bool {
@@ -139,14 +161,16 @@ struct ModelRemovalPlan: Sendable {
         return files
     }
 
-    /// Moves the targets to the Trash (the space comes back when it is
-    /// emptied; until then they can be put back). Returns the paths that
-    /// could not be moved.
+    /// Deletes the caches and moves the other targets to the Trash (their
+    /// space comes back when it is emptied; until then they can be put
+    /// back). Returns the paths that could not be removed.
     func execute() -> [String] {
-        targets.compactMap { target in
-            (try? FileManager.default.trashItem(at: URL(fileURLWithPath: target.path), resultingItemURL: nil)) == nil
-                ? target.path : nil
-        }
+        let fm = FileManager.default
+        return caches.compactMap { (try? fm.removeItem(atPath: $0.path)) == nil ? $0.path : nil } +
+            targets.compactMap { target in
+                (try? fm.trashItem(at: URL(fileURLWithPath: target.path), resultingItemURL: nil)) == nil
+                    ? target.path : nil
+            }
     }
 }
 
@@ -155,9 +179,9 @@ struct ModelRemovalPlan: Sendable {
 struct ModelRemoveView: View {
     let model: H3ModelEntry
     let others: [H3ModelEntry]
-    /// Called with whether to delete the files; the caller unregisters
-    /// the model first, then runs the plan.
-    var onRemove: (_ plan: ModelRemovalPlan?) -> Void
+    /// Called with the plan; the caller unregisters the model first (and
+    /// moves off it if in use), then runs the plan.
+    var onRemove: (_ plan: ModelRemovalPlan) -> Void
     var onCancel: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
@@ -175,6 +199,11 @@ struct ModelRemoveView: View {
             Text("モデル管理から外します。ファイルを残しておけば、あとで「フォルダを追加…」で登録し直せます。")
                 .font(.caption).foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let plan, plan.cacheBytes > 0 {
+                Text("生成に使うキャッシュ（int8キャッシュなど、約\(size(plan.cacheBytes))）は削除します。ゴミ箱には入れず、すぐに空きます（もう一度使うときは作り直せます）。")
+                    .font(.caption).foregroundStyle(palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Toggle("モデルファイルも削除する", isOn: $deleteFiles)
             if deleteFiles {
                 filesSection
@@ -185,19 +214,21 @@ struct ModelRemoveView: View {
                 Button("キャンセル") { onCancel() }.keyboardShortcut(.cancelAction)
                 Button(deleteFiles ? String(localized: "外してゴミ箱に移す") : String(localized: "外す"),
                        role: .destructive) {
-                    onRemove(deleteFiles ? plan : nil)
+                    if let plan { onRemove(plan) }
                 }
-                .disabled(deleteFiles && plan == nil)
+                .disabled(plan == nil)
             }
         }
         .padding(H3Spacing.lg)
-        .frame(width: 560, height: deleteFiles ? 520 : 220)
+        .frame(width: 560, height: deleteFiles ? 560 : 260)
         .background(palette.canvas)
         .task(id: deleteFiles) {
-            guard deleteFiles, plan == nil else { return }
-            let path = model.path, id = model.id
+            plan = nil
+            let path = model.path, id = model.id, files = deleteFiles
             let others = self.others.map { (path: $0.path, id: $0.id) }
-            plan = await Task.detached { ModelRemovalPlan.make(modelPath: path, id: id, others: others) }.value
+            plan = await Task.detached {
+                ModelRemovalPlan.make(modelPath: path, id: id, others: others, includeFiles: files)
+            }.value
         }
     }
 
@@ -205,13 +236,11 @@ struct ModelRemoveView: View {
         if let plan {
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("削除するもの").font(.callout.weight(.semibold))
-                    ForEach(plan.targets) { target in
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(verbatim: "\(target.label)・\(size(target.bytes))").font(.caption)
-                            Text(target.path).font(.caption2).foregroundStyle(palette.textSecondary)
-                                .lineLimit(1).truncationMode(.middle)
-                        }
+                    Text("ゴミ箱に移すもの").font(.callout.weight(.semibold))
+                    ForEach(plan.targets) { target in targetRow(target) }
+                    if !plan.caches.isEmpty {
+                        Text("すぐに削除するキャッシュ").font(.callout.weight(.semibold))
+                        ForEach(plan.caches) { target in targetRow(target) }
                     }
                     if others.isEmpty {
                         Text("最後のモデルなので、ダウンロードした共通部品・GGUFと、使われていないキャッシュも削除します。")
@@ -226,6 +255,10 @@ struct ModelRemoveView: View {
                     Divider()
                     Text("ゴミ箱を空にすると解放される容量：約\(size(plan.freedBytes))")
                         .font(.callout.weight(.semibold))
+                    if plan.cacheBytes > 0 {
+                        Text("キャッシュの削除ですぐに空く容量：約\(size(plan.cacheBytes))")
+                            .font(.caption)
+                    }
                     if plan.sharedBytes > 0 {
                         Text("ほかのモデルや、取り込みのもとにしたファイルと共有している部分（\(plan.sharedFiles)個のファイル、約\(size(plan.sharedBytes))）は、そちらで使われているので残ります。GGUFの取り込みは、同じディスク上のファイルを複製して容量を共有するためです。")
                             .font(.caption).foregroundStyle(palette.textSecondary)
@@ -243,6 +276,14 @@ struct ModelRemoveView: View {
                 Text("削除するファイルと、解放される容量を調べています…")
                     .font(.caption).foregroundStyle(palette.textSecondary)
             }
+        }
+    }
+
+    private func targetRow(_ target: ModelRemovalPlan.Target) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(verbatim: "\(target.label)・\(size(target.bytes))").font(.caption)
+            Text(target.path).font(.caption2).foregroundStyle(palette.textSecondary)
+                .lineLimit(1).truncationMode(.middle)
         }
     }
 }
