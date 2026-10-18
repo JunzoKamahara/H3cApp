@@ -566,6 +566,7 @@ final class GenerationViewModel: ObservableObject {
     /// whenever ModelManagerView changes which registered model is active.
     func loadModel() {
         guard let active = library.activeModel else {
+            engine = nil // lets go of the removed model's files
             modelDirectory = ""
             deviceLine = String(localized: "モデルが登録されていません")
             engineState = .failed(String(localized: "「モデル管理」からMiniMax-H3のフォルダを追加してください。"))

@@ -111,7 +111,7 @@ struct ContentView: View {
             Text(viewModel.projectMessage ?? "")
         }
         .sheet(isPresented: $showingModelManager) {
-            ModelManagerView(library: viewModel.library) { id in
+            ModelManagerView(library: viewModel.library, isGenerating: viewModel.isGenerating) { id in
                 viewModel.switchModel(to: id)
             }
         }

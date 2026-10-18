@@ -13,6 +13,8 @@ struct ModelManagerView: View {
     /// reload the engine. Not called for LoRA changes - the stack only takes
     /// effect at the next generate() call, no engine reload needed.
     var onActiveModelChange: (UUID?) -> Void
+    /// A generation is running (the model in use can't be removed then).
+    var isGenerating = false
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -22,6 +24,8 @@ struct ModelManagerView: View {
     @State private var renameText: String = ""
     @State private var showingDownloadWizard = false
     @State private var detailModel: H3ModelEntry?
+    @State private var removingModel: H3ModelEntry?
+    @State private var removalMessage: String?
     @State private var showingImport = false
     /// A LoRA picked from a folder macOS guards, waiting for the choice to
     /// move it into the LoRA folder.
@@ -88,6 +92,11 @@ struct ModelManagerView: View {
                 }
                 .listStyle(.inset)
             }
+            if let removalMessage {
+                Text(removalMessage).font(.caption).foregroundStyle(palette.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, H3Spacing.md).padding(.top, H3Spacing.sm)
+            }
             HStack {
                 Text("FL2VA（と、あれば任意でRef2VA）を含むフォルダを登録してください。")
                     .font(.caption)
@@ -98,6 +107,11 @@ struct ModelManagerView: View {
                 Button("フォルダを追加…") { addModel() }
             }
             .padding(H3Spacing.md)
+        }
+        .sheet(item: $removingModel) { model in
+            ModelRemoveView(model: model, others: library.models.filter { $0.id != model.id },
+                            onRemove: { plan in remove(model, deleting: plan) },
+                            onCancel: { removingModel = nil })
         }
         .sheet(item: $detailModel) { model in
             ModelDetailView(model: model) { detailModel = nil }
@@ -180,11 +194,8 @@ struct ModelManagerView: View {
                     renameText = model.name
                     renamingModelID = model.id
                 }
-                Button("削除", role: .destructive) {
-                    let wasActive = model.id == library.activeModelID
-                    library.removeModel(id: model.id)
-                    if wasActive { onActiveModelChange(library.activeModelID) }
-                }
+                Button("削除…", role: .destructive) { removingModel = model }
+                    .disabled(isGenerating && model.id == library.activeModelID)
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -215,6 +226,28 @@ struct ModelManagerView: View {
             parts.append(String(localized: "GGUFから取り込み（\(manifest.summary)）"))
         }
         return parts.joined(separator: summarySeparator)
+    }
+
+    /// Unregisters the model (moving off it first when it is in use, so the
+    /// engine lets go of its files), then deletes the planned files.
+    private func remove(_ model: H3ModelEntry, deleting plan: ModelRemovalPlan?) {
+        removingModel = nil
+        let wasActive = model.id == library.activeModelID
+        library.removeModel(id: model.id)
+        if wasActive { onActiveModelChange(library.activeModelID) }
+        guard let plan else {
+            removalMessage = String(localized: "「\(model.name)」をモデル管理から外しました（ファイルは残っています）。")
+            return
+        }
+        removalMessage = String(localized: "「\(model.name)」のファイルを削除しています…")
+        let name = model.name
+        Task {
+            let failed = await Task.detached { plan.execute() }.value
+            let freed = ByteCountFormatter.string(fromByteCount: plan.freedBytes, countStyle: .file)
+            removalMessage = failed.isEmpty
+                ? String(localized: "「\(name)」を削除しました（約\(freed)を解放）。")
+                : String(localized: "「\(name)」の一部を削除できませんでした：\(failed.joined(separator: "、"))")
+        }
     }
 
     private func addModel() {

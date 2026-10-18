@@ -112,6 +112,23 @@ extension GenerationViewModel {
                   let entry = library.models.first(where: { $0.id == id }) else {
                 return .error(400, "\"id\" must be a model id from GET /api/models")
             }
+            // "delete_files": true deletes the model's files instead, like
+            // Model Management's 削除… ("dry_run": true only reports what
+            // would go and the space it frees).
+            if json["delete_files"] as? Bool == true {
+                let others = library.models.filter { $0.id != id }.map { (path: $0.path, id: $0.id) }
+                let path = entry.path
+                let plan = await Task.detached { ModelRemovalPlan.make(modelPath: path, id: id, others: others) }.value
+                let report: [String: Any] = [
+                    "targets": plan.targets.map { ["path": $0.path, "label": $0.label, "bytes": $0.bytes] },
+                    "freed_bytes": plan.freedBytes, "shared_bytes": plan.sharedBytes,
+                    "shared_files": plan.sharedFiles, "refused": plan.refused]
+                if json["dry_run"] as? Bool == true { return .json(200, report) }
+                guard id != library.activeModelID else { return .error(409, "that model is in use") }
+                library.removeModel(id: id)
+                let failed = await Task.detached { plan.execute() }.value
+                return .json(200, report.merging(["ok": failed.isEmpty, "failed": failed]) { $1 })
+            }
             guard id != library.activeModelID else { return .error(409, "that model is in use") }
             library.removeModel(id: id)
             var trashed = false
@@ -120,6 +137,14 @@ extension GenerationViewModel {
                     at: URL(fileURLWithPath: entry.path), resultingItemURL: nil)) != nil
             }
             return .json(200, ["ok": true, "trashed": trashed])
+        case ("POST", "/api/models/add"):
+            // Registers a model folder, like Model Management's フォルダを追加….
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard let path = json["path"] as? String, FileManager.default.fileExists(atPath: path + "/FL2VA") else {
+                return .error(400, "\"path\" must be a folder holding FL2VA")
+            }
+            library.addModel(path: path, name: json["name"] as? String)
+            return .json(200, ["id": library.models.first { $0.path == path }?.id.uuidString ?? ""])
         case ("POST", "/api/models/select"):
             let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
             guard !isGenerating else { return .error(409, "a generation is running") }
