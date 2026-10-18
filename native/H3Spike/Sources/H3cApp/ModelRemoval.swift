@@ -187,6 +187,7 @@ struct ModelRemoveView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var deleteFiles = false
     @State private var plan: ModelRemovalPlan?
+    @State private var confirmingFiles = false
 
     private var palette: H3Palette { H3Palette(colorScheme) }
     private func size(_ bytes: Int64) -> String {
@@ -214,13 +215,20 @@ struct ModelRemoveView: View {
                 Button("キャンセル") { onCancel() }.keyboardShortcut(.cancelAction)
                 Button(deleteFiles ? String(localized: "外してゴミ箱に移す") : String(localized: "外す"),
                        role: .destructive) {
-                    if let plan { onRemove(plan) }
+                    // Deleting the files asks once more.
+                    if deleteFiles { confirmingFiles = true } else if let plan { onRemove(plan) }
                 }
                 // A sheet's destructive button is not red by itself.
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
                 .disabled(plan == nil)
             }
+        }
+        .alert("モデルファイルを本当に削除してもいいですか？", isPresented: $confirmingFiles) {
+            Button("削除する", role: .destructive) { if let plan { onRemove(plan) } }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text(confirmationText)
         }
         .padding(H3Spacing.lg)
         .frame(width: 560, height: deleteFiles ? 560 : 260)
@@ -233,6 +241,11 @@ struct ModelRemoveView: View {
                 ModelRemovalPlan.make(modelPath: path, id: id, others: others, includeFiles: files)
             }.value
         }
+    }
+
+    private var confirmationText: String {
+        let folders = plan?.targets.map(\.path).joined(separator: "、") ?? ""
+        return String(localized: "次のフォルダをゴミ箱に移します：\(folders)")
     }
 
     @ViewBuilder private var filesSection: some View {
