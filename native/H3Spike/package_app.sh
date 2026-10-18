@@ -1,10 +1,10 @@
 #!/bin/sh
 # Assembles H3cApp.app from a release build of the H3cApp SPM target.
 # The app is named H3cApp everywhere the user sees it - the bundle folder,
-# the executable inside it, Info.plist - while the repository is h3c-app.
-# The bundle ID (dev.kamahara.h3c-app), the UserDefaults keys and the
-# Application Support folder keep the h3c-app spelling so existing
-# settings, presets and downloaded models carry over.
+# the executable inside it, Info.plist, the Application Support folder
+# (renamed from h3c-app at first launch, see h3AppSupportDirectory). The
+# bundle ID (dev.kamahara.h3c-app) and the UserDefaults keys keep the old
+# spelling so existing settings, presets and permissions carry over.
 set -eu
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
@@ -18,7 +18,7 @@ app_bundle="$build_dir/H3cApp.app"
 # generic llbuild flakiness. Building to a scratch path outside that synced
 # tree sidesteps it entirely (verified: reliable across many consecutive
 # builds, vs. frequent failures at the in-tree default path).
-scratch_dir="${TMPDIR:-/tmp}h3c-app-build-scratch"
+scratch_dir="${TMPDIR:-/tmp}H3cApp-build-scratch"
 
 # swift build's own llbuild database can still occasionally hit a transient
 # "disk I/O error" writing its bookkeeping *after* compiling and linking

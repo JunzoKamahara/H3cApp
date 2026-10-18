@@ -19,14 +19,18 @@ struct H3cApp: App {
 
         // The primary model and the HTTP API exist from launch, independent
         // of windows (see AppModels).
+        // Settles the app's folder (renamed from h3c-app) before anything
+        // reads paths under it.
+        _ = h3AppSupportDirectory
         _ = AppModels.shared
     }
 
     var body: some Scene {
         // The app is named H3cApp wherever the user sees it - this
         // window's title, the app/menu-bar name from Info.plist, the
-        // bundle and executable filenames from package_app.sh. Only the
-        // repository (and internal identifiers) are h3c-app.
+        // bundle and executable filenames from package_app.sh, and the
+        // Application Support folder. Only internal identifiers (the bundle
+        // id, settings keys) still say h3c-app.
         WindowGroup("H3cApp", id: mainWindowID) {
             WindowRoot()
         }

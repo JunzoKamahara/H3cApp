@@ -707,3 +707,7 @@
 "モデルファイルを本当に削除してもいいですか？" = "Really delete the model files?";
 "削除する" = "Delete";
 "次のフォルダをゴミ箱に移します：%@" = "These folders are moved to the Trash: %@";
+"MiniMax H3のモデル（公式のもの、unslothのGGUF）には「MiniMax H3 Community License Agreement」が、Qwenの文章の部分・画像の部分には「Apache License 2.0」が適用されます。ダウンロードと利用の前に各ライセンスを読み、その条件に従ってください。" = "The MiniMax H3 model (the official one and unsloth's GGUF files) is under the “MiniMax H3 Community License Agreement”, Qwen's text and image parts under the “Apache License 2.0”. Read each license before downloading and using them, and follow their terms.";
+"MiniMax H3のモデルには「MiniMax H3 Community License Agreement」が適用されます。ダウンロードと利用の前にライセンスを読み、その条件に従ってください。" = "The MiniMax H3 model is under the “MiniMax H3 Community License Agreement”. Read the license before downloading and using it, and follow its terms.";
+"MiniMax H3のライセンス" = "MiniMax H3 license";
+"Qwen3-VLのライセンス（Apache 2.0）" = "Qwen3-VL license (Apache 2.0)";

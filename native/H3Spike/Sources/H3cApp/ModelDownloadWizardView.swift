@@ -153,6 +153,7 @@ struct ModelDownloadWizardView: View {
             DownloadDestinationFields(parent: $officialParent, name: $officialName, disabled: isBusy)
             Toggle("Ref2VA も含める（参照画像・動画機能。おおよそ倍のサイズになります）", isOn: $includeRef2VA)
                 .disabled(isBusy)
+            ModelLicenseNotice()
             if case .failure(let error) = officialDestination {
                 Text(error.message).font(.caption).foregroundStyle(palette.errorColor)
             } else if let space = officialSpace {
@@ -244,6 +245,7 @@ struct ModelDownloadWizardView: View {
             }
             Text(ggufNote).font(.caption2).foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+            ModelLicenseNotice(includesQwen: true)
             Text("保存先（取り込んだモデルのフォルダ。ダウンロードしたファイルもこの中に置きます）")
                 .font(.caption).foregroundStyle(palette.textSecondary)
             DownloadDestinationFields(parent: $ggufParent, name: $ggufName, disabled: isBusy)

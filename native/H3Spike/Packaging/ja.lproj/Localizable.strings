@@ -707,3 +707,7 @@
 "モデルファイルを本当に削除してもいいですか？" = "モデルファイルを本当に削除してもいいですか？";
 "削除する" = "削除する";
 "次のフォルダをゴミ箱に移します：%@" = "次のフォルダをゴミ箱に移します：%@";
+"MiniMax H3のモデル（公式のもの、unslothのGGUF）には「MiniMax H3 Community License Agreement」が、Qwenの文章の部分・画像の部分には「Apache License 2.0」が適用されます。ダウンロードと利用の前に各ライセンスを読み、その条件に従ってください。" = "MiniMax H3のモデル（公式のもの、unslothのGGUF）には「MiniMax H3 Community License Agreement」が、Qwenの文章の部分・画像の部分には「Apache License 2.0」が適用されます。ダウンロードと利用の前に各ライセンスを読み、その条件に従ってください。";
+"MiniMax H3のモデルには「MiniMax H3 Community License Agreement」が適用されます。ダウンロードと利用の前にライセンスを読み、その条件に従ってください。" = "MiniMax H3のモデルには「MiniMax H3 Community License Agreement」が適用されます。ダウンロードと利用の前にライセンスを読み、その条件に従ってください。";
+"MiniMax H3のライセンス" = "MiniMax H3のライセンス";
+"Qwen3-VLのライセンス（Apache 2.0）" = "Qwen3-VLのライセンス（Apache 2.0）";

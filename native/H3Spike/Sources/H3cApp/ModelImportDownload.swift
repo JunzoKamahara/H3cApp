@@ -221,6 +221,7 @@ struct ImportDownloadView: View {
                 Text(kindNote).font(.caption).foregroundStyle(palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            ModelLicenseNotice(includesQwen: kind == .textEncoder || kind == .vision)
             DownloadDestinationFields(parent: $parent, name: $folderName,
                                       disabled: downloader.state == .downloading)
             if case .failure(let error) = destination {
@@ -404,4 +405,39 @@ enum DestinationError: Error {
         text += "\n" + String(localized: "保存先のディスクの空き容量が足りません（余裕として2GBを残します）。保存する場所を変えるか、ディスクを空けてください。")
     }
     return (text, fits)
+}
+
+/// The license note shown wherever model files are downloaded: MiniMax H3's
+/// own license covers the official model and the GGUF conversions of its
+/// DiT (and unsloth's H3 text encoders); Qwen's files are Apache 2.0.
+struct ModelLicenseNotice: View {
+    var includesQwen = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var palette: H3Palette { H3Palette(colorScheme) }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: H3Spacing.sm) {
+            Image(systemName: "doc.text.magnifyingglass").foregroundStyle(palette.accent)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(includesQwen
+                     ? "MiniMax H3のモデル（公式のもの、unslothのGGUF）には「MiniMax H3 Community License Agreement」が、Qwenの文章の部分・画像の部分には「Apache License 2.0」が適用されます。ダウンロードと利用の前に各ライセンスを読み、その条件に従ってください。"
+                     : "MiniMax H3のモデルには「MiniMax H3 Community License Agreement」が適用されます。ダウンロードと利用の前にライセンスを読み、その条件に従ってください。")
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: H3Spacing.md) {
+                    Link("MiniMax H3のライセンス",
+                         destination: URL(string: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE")!)
+                    if includesQwen {
+                        Link("Qwen3-VLのライセンス（Apache 2.0）",
+                             destination: URL(string: "https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF")!)
+                    }
+                }
+                .font(.caption)
+            }
+        }
+        .padding(H3Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+    }
 }

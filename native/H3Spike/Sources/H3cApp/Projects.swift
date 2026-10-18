@@ -859,7 +859,7 @@ extension GenerationViewModel {
     func useVideoAsReference(_ url: URL) {
         var path = url.path
         if project == nil && isTemporaryResult(url) {
-            let folder = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("h3c-app-references", isDirectory: true)
+            let folder = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("H3cApp-references", isDirectory: true)
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let copy = folder.appendingPathComponent(url.lastPathComponent)
             try? FileManager.default.removeItem(at: copy)
@@ -873,7 +873,7 @@ extension GenerationViewModel {
     }
 
     func isTemporaryResult(_ url: URL) -> Bool {
-        url.lastPathComponent.hasPrefix("h3c-app_")
+        (url.lastPathComponent.hasPrefix("H3cApp_") || url.lastPathComponent.hasPrefix("h3c-app_"))
             && url.standardizedFileURL.path.hasPrefix(URL(fileURLWithPath: NSTemporaryDirectory()).standardizedFileURL.path)
     }
 

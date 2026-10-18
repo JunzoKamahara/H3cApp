@@ -166,11 +166,18 @@ struct ModelRemovalPlan: Sendable {
     /// back). Returns the paths that could not be removed.
     func execute() -> [String] {
         let fm = FileManager.default
-        return caches.compactMap { (try? fm.removeItem(atPath: $0.path)) == nil ? $0.path : nil } +
+        let failed = caches.compactMap { (try? fm.removeItem(atPath: $0.path)) == nil ? $0.path : nil } +
             targets.compactMap { target in
                 (try? fm.trashItem(at: URL(fileURLWithPath: target.path), resultingItemURL: nil)) == nil
                     ? target.path : nil
             }
+        // The shared parts live one level down (ImportBase/MiniMax-H3); an
+        // emptied ImportBase goes too.
+        let importBaseParent = (importBaseDirectory as NSString).deletingLastPathComponent
+        if ((try? fm.contentsOfDirectory(atPath: importBaseParent)) ?? ["?"]).allSatisfy({ $0 == ".DS_Store" }) {
+            try? fm.removeItem(atPath: importBaseParent)
+        }
+        return failed
     }
 }
 

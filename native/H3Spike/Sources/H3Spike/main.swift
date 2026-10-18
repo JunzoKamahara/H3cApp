@@ -61,7 +61,7 @@ let modelDir = arguments.count > 1 ? arguments[1]
 let outputPath = arguments.count > 2 ? arguments[2] : "/tmp/h3spike_output.mp4"
 let prompt = arguments.count > 3 ? arguments[3] : "A cat playing with a ball of yarn."
 
-print("== h3c-app native spike ==")
+print("== H3cApp native spike ==")
 
 // Reproduces a real, unexplained failure: this exact call (creates its own
 // GPU, no model needed) succeeds from a plain C/Objective-C++ process but

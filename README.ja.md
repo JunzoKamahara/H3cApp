@@ -1,4 +1,4 @@
-# h3c-app
+# H3cApp
 
 [English](README.md) | [日本語](README.ja.md)
 
@@ -578,7 +578,7 @@ cd native/H3Spike
 `make libh3.a`を先に（エンジンのコードを変更した後も同様に）実行して
 ください。`package_app.sh`はその後`swift build -c release`を実行し、
 `H3cApp.app`を組み立てます。SwiftPM標準のリポジトリ内`.build`ではなく
-リポジトリ外のスクラッチディレクトリ（`${TMPDIR}h3c-app-build-scratch`）
+リポジトリ外のスクラッチディレクトリ（`${TMPDIR}H3cApp-build-scratch`）
 にビルドします。これは、リポジトリが同期フォルダ（Google Drive、
 iCloud Drive、Dropboxなど）配下にあると、その同期デーモンがSwiftPMの
 `build.db`のロックを保持してしまい、見せかけの「disk I/O error」で

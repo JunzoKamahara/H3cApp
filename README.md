@@ -1,4 +1,4 @@
-# h3c-app
+# H3cApp
 
 [English](README.md) | [日本語](README.ja.md)
 
@@ -590,7 +590,7 @@ cd native/H3Spike
 `libh3.a` isn't rebuilt by this script — run `make libh3.a` at the repo root
 first, and again after changing engine code. `package_app.sh` then runs
 `swift build -c release` and assembles `H3cApp.app`. It builds to a
-scratch directory outside the repo (`${TMPDIR}h3c-app-build-scratch`)
+scratch directory outside the repo (`${TMPDIR}H3cApp-build-scratch`)
 rather than SwiftPM's default in-tree `.build`, because a repo that lives
 under a synced folder (Google Drive, iCloud Drive, Dropbox, ...) can cause
 that daemon to hold locks on SwiftPM's `build.db`, intermittently failing

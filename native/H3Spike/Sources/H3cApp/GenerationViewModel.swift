@@ -44,8 +44,51 @@ extension Comparable {
 let h3AppSupportDirectory: String = {
     let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.path
         ?? (NSHomeDirectory() + "/Library/Application Support")
-    return base + "/h3c-app"
+    let current = base + "/H3cApp"
+    migrateAppSupportDirectory(from: base + "/h3c-app", to: current)
+    return current
 }()
+
+/// Up to v0.5 the folder was named after the repository's old name,
+/// h3c-app. Renamed once to H3cApp (same disk, so instant), with the paths
+/// saved under it - registered models, LoRAs, anything else in this app's
+/// settings - rewritten to match. Runs before ModelLibrary reads them (see
+/// H3cApp.init).
+private func migrateAppSupportDirectory(from legacy: String, to current: String) {
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: legacy), !fm.fileExists(atPath: current) else { return }
+    do {
+        try fm.moveItem(atPath: legacy, toPath: current)
+    } catch {
+        NSLog("H3cApp: could not rename %@ to %@: %@", legacy, current, error.localizedDescription)
+        return
+    }
+    guard let domain = Bundle.main.bundleIdentifier,
+          let settings = UserDefaults.standard.persistentDomain(forName: domain) else { return }
+    func rewrite(_ value: Any) -> Any {
+        switch value {
+        case let text as String:
+            return text == legacy ? current : text.hasPrefix(legacy + "/") ? current + text.dropFirst(legacy.count) : text
+        case let list as [Any]: return list.map(rewrite)
+        case let table as [String: Any]: return table.mapValues(rewrite)
+        default: return value
+        }
+    }
+    for (key, value) in settings {
+        // Lists saved as JSON data (the model and LoRA libraries).
+        if let data = value as? Data, let json = try? JSONSerialization.jsonObject(with: data),
+           json is [Any] || json is [String: Any] {
+            let updated = rewrite(json)
+            if !(updated as AnyObject).isEqual(json),
+               let encoded = try? JSONSerialization.data(withJSONObject: updated) {
+                UserDefaults.standard.set(encoded, forKey: key)
+            }
+        } else if value is String || value is [Any] || value is [String: Any] {
+            let updated = rewrite(value)
+            if !(updated as AnyObject).isEqual(value) { UserDefaults.standard.set(updated, forKey: key) }
+        }
+    }
+}
 // Paired with legacyDefaultH3ModelPath (ModelLibrary.swift) - moved
 // alongside it, from h3AppSupportDirectory + "/cache" to ~/models/cache, so
 // this dev's ~36GB of caches live next to the model instead of in
@@ -548,7 +591,8 @@ final class GenerationViewModel: ObservableObject {
     private static func sweepStaleTempFiles() {
         let directory = NSTemporaryDirectory()
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return }
-        for name in names where name.hasPrefix("h3c-app_") && name.hasSuffix(".mp4") {
+        // (h3c-app_ is the name before v0.6.)
+        for name in names where (name.hasPrefix("H3cApp_") || name.hasPrefix("h3c-app_")) && name.hasSuffix(".mp4") {
             try? FileManager.default.removeItem(atPath: directory + name)
         }
     }
@@ -970,7 +1014,7 @@ final class GenerationViewModel: ObservableObject {
         resultURL = nil
         phase = ""
 
-        let outputPath = NSTemporaryDirectory() + "h3c-app_\(Int(Date().timeIntervalSince1970))_\(index).mp4"
+        let outputPath = NSTemporaryDirectory() + "H3cApp_\(Int(Date().timeIntervalSince1970))_\(index).mp4"
         estimator = ProgressEstimator(
             shape: request.shape,
             calibration: TimingCalibration.load(for: request.computeMode, speed: request.speedMode,
