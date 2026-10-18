@@ -317,6 +317,15 @@ final class ModelImporter: ObservableObject {
     }
 }
 
+/// The size of a base model's text encoder files (what an import without
+/// a text-encoder GGUF clones from it).
+func baseTextEncoderBytes(_ model: H3ModelEntry) -> Int64 {
+    let directory = model.path + "/FL2VA/text_encoder"
+    return ((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []).reduce(0) { total, name in
+        total + (((try? FileManager.default.attributesOfItem(atPath: directory + "/" + name))?[.size] as? NSNumber)?.int64Value ?? 0)
+    }
+}
+
 /// The base model must have every part an import leaves out.
 func isUsableImportBase(_ model: H3ModelEntry) -> Bool {
     let fm = FileManager.default
@@ -639,8 +648,9 @@ struct ImportPlan {
                               hint: String(localized: "例：Hugging Face の Qwen/Qwen3-VL-32B-Instruct-GGUF にある Qwen3VL-32B-Instruct-Q8_0.gguf（動作を確認済み。H3の文章の部分はQwen3-VL-32B-Instructと同じ重みです）"),
                               url: "https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF", download: .textEncoder))
         } else {
+            let baseText = size(UInt64(max(base.map(baseTextEncoderBytes) ?? 0, 0)))
             items.append(item("text", String(localized: "文章の部分（テキストエンコーダー）"), .info,
-                              String(localized: "GGUFがないので、複製元のモデルのもの（約62GB）を使います。同じディスクなら容量は増えませんが、複製元を消すとその分の容量が残ります。"),
+                              String(localized: "GGUFがないので、複製元のモデルのもの（約\(baseText)）を使います。同じディスクなら容量は増えませんが、複製元を消すとその分の容量が残ります。"),
                               hint: String(localized: "例：Hugging Face の Qwen/Qwen3-VL-32B-Instruct-GGUF にある Qwen3VL-32B-Instruct-Q8_0.gguf（動作を確認済み。H3の文章の部分はQwen3-VL-32B-Instructと同じ重みです）"),
                               url: "https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF", download: .textEncoder))
         }
@@ -1034,7 +1044,8 @@ struct ModelImportView: View {
         let name = (folder as NSString).lastPathComponent
         var message = found.picks.isEmpty && found.skipped.isEmpty
             ? String(localized: "「\(name)」にGGUFファイルはありませんでした。")
-            : String(localized: "「\(name)」から\(added)個のファイルを追加しました。")
+            : added == 1 ? String(localized: "「\(name)」から1個のファイルを追加しました。")
+                         : String(localized: "「\(name)」から\(added)個のファイルを追加しました。")
         if !found.skipped.isEmpty {
             message += String(localized: "MiniMax H3の部品ではないので除いたもの：\(found.skipped.joined(separator: "、"))")
         }
@@ -1154,6 +1165,9 @@ struct ModelImportView: View {
             .volumeAvailableCapacityForImportantUsage) ?? nil
         let written = ByteCountFormatter.string(fromByteCount: Int64(plan.bytesWritten), countStyle: .file)
         let freeText = free.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "?"
+        if plan.bytesWritten == 0 {
+            return String(localized: "新しく書き出すものはありません（すべて複製なので、同じディスクなら容量は増えません）。空き容量：\(freeText)")
+        }
         return String(localized: "新しく書き出す量：約\(written)（ほかは複製なので、同じディスクなら容量は増えません）。空き容量：\(freeText)")
     }
 
