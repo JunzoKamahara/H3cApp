@@ -516,8 +516,8 @@
 "まだファイルがありません。" = "No files yet.";
 "トークナイザー・VAE・設定" = "Tokenizer, VAEs and configs";
 "ファイルを選ぶ" = "Choose files";
-"例：Hugging Face の Qwen/Qwen3-VL-32B-Instruct-GGUF にある Qwen3VL-32B-Instruct-Q8_0.gguf（動作を確認済み。H3の文章の部分はQwen3-VL-32B-Instructと同じ重みです）" = "For example Qwen3VL-32B-Instruct-Q8_0.gguf in Qwen/Qwen3-VL-32B-Instruct-GGUF on Hugging Face (verified; H3's text encoder has the same weights as Qwen3-VL-32B-Instruct)";
-"例：Hugging Face の unsloth/MiniMax-H3-GGUF にある minimax_h3_fl2va_pruned-Q8_0.gguf（動作を確認済み）" = "For example minimax_h3_fl2va_pruned-Q8_0.gguf in unsloth/MiniMax-H3-GGUF on Hugging Face (verified)";
+"例：Hugging Face の Qwen/Qwen3-VL-32B-Instruct-GGUF にある Qwen3VL-32B-Instruct-Q8_0.gguf（動作を確認済み。H3の文章の部分はQwen3-VL-32B-Instructと同じ重みです）" = "For example Qwen3VL-32B-Instruct-Q8_0.gguf in Qwen/Qwen3-VL-32B-Instruct-GGUF on Hugging Face (tested; H3's text encoder has the same weights as Qwen3-VL-32B-Instruct)";
+"例：Hugging Face の unsloth/MiniMax-H3-GGUF にある minimax_h3_fl2va_pruned-Q8_0.gguf（動作を確認済み）" = "For example minimax_h3_fl2va_pruned-Q8_0.gguf in unsloth/MiniMax-H3-GGUF on Hugging Face (tested)";
 "例：Qwen/Qwen3-VL-32B-Instruct-GGUF にある mmproj-Qwen3VL-32B-Instruct-F16.gguf" = "For example mmproj-Qwen3VL-32B-Instruct-F16.gguf in Qwen/Qwen3-VL-32B-Instruct-GGUF";
 "例：unsloth/MiniMax-H3-GGUF にある minimax_h3_ref2va_pruned-Q8_0.gguf（DiTのファイルは、名前に ref2va を含むものをRef2VAとみなします）" = "For example minimax_h3_ref2va_pruned-Q8_0.gguf in unsloth/MiniMax-H3-GGUF (a DiT file whose name contains ref2va is taken as Ref2VA)";
 "内容の確認" = "Review";
@@ -534,7 +534,7 @@
 "画像の部分を置いています" = "Placing the vision part";
 "複製元のモデルの文章の部分に含まれています" = "Included in the base model's text encoder";
 "部品の複製元" = "Clone parts from";
-"（AdaLNが密な形。この形式での動作はまだ確認していません）" = " (dense AdaLN; this format has not been verified yet)";
+"（AdaLNが密な形。この形式での動作はまだ確認していません）" = " (dense AdaLN; this format has not been tested yet)";
 "GGUFがないので、複製元のモデルのものを複製します（容量は増えません）" = "No GGUF for it, so the base model's is cloned (no extra space)";
 "%@ と %@ は同じ内容の可能性があります（大きさと形式が同じ）" = "%@ and %@ may be the same file (same size and format)";
 "%@ はGGUFとして読めないので使いません" = "%@ cannot be read as GGUF and is not used";

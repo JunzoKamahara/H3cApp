@@ -382,17 +382,31 @@ func unregisteredImportBase(path: String, registered: [H3ModelEntry]) -> H3Model
 /// levels down) that are MiniMax H3 parts, and the names of the ones that
 /// are not (unreadable, other models, split shards).
 func importableGGUFs(in folder: String) -> (picks: [ImportPick], skipped: [String]) {
-    let root = URL(fileURLWithPath: folder)
-    guard let enumerator = FileManager.default.enumerator(
-        at: root, includingPropertiesForKeys: [.isRegularFileKey],
-        options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return ([], []) }
+    // Walked by hand to follow linked folders too (a model folder of
+    // links, as made for trying a layout), a few levels down; each file
+    // once, however many links lead to it.
+    let fm = FileManager.default
     var paths: [String] = []
-    for case let url as URL in enumerator {
-        if enumerator.level > 3 { enumerator.skipDescendants(); continue }
-        if url.pathExtension.lowercased() == "gguf" { paths.append(url.path) }
+    var seenFiles = Set<String>(), seenFolders = Set<String>()
+    func walk(_ dir: String, depth: Int) {
+        let resolved = (dir as NSString).resolvingSymlinksInPath
+        guard depth <= 3, seenFolders.insert(resolved).inserted,
+              let names = try? fm.contentsOfDirectory(atPath: dir) else { return }
+        for name in names.sorted() where !name.hasPrefix(".") {
+            let path = dir + "/" + name
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: path, isDirectory: &isDir) else { continue }
+            if isDir.boolValue {
+                if !name.hasSuffix(".app") { walk(path, depth: depth + 1) }
+            } else if name.lowercased().hasSuffix(".gguf"),
+                      seenFiles.insert((path as NSString).resolvingSymlinksInPath).inserted {
+                paths.append(path)
+            }
+        }
     }
+    walk(folder, depth: 0)
     var picks: [ImportPick] = [], skipped: [String] = []
-    for path in paths.sorted() {
+    for path in paths {
         let pick = ImportPick(path: path)
         if pick.info.map({ $0.role != .unknown }) == true {
             picks.append(pick)
