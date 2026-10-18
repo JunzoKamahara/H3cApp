@@ -21,6 +21,7 @@ struct ModelManagerView: View {
     @State private var renamingLoRAID: UUID?
     @State private var renameText: String = ""
     @State private var showingDownloadWizard = false
+    @State private var detailModel: H3ModelEntry?
     @State private var showingImport = false
     /// A LoRA picked from a folder macOS guards, waiting for the choice to
     /// move it into the LoRA folder.
@@ -98,6 +99,9 @@ struct ModelManagerView: View {
             }
             .padding(H3Spacing.md)
         }
+        .sheet(item: $detailModel) { model in
+            ModelDetailView(model: model) { detailModel = nil }
+        }
         .sheet(isPresented: $showingImport) {
             ModelImportView(
                 library: library,
@@ -163,7 +167,15 @@ struct ModelManagerView: View {
                     .foregroundStyle(palette.textSecondary)
             }
             Spacer()
+            Button {
+                detailModel = model
+            } label: {
+                Image(systemName: "info.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("このモデルの中身（DiT・文章の部分・VAEの形式、キャッシュなど）を表示します")
             Menu {
+                Button("詳細を表示…") { detailModel = model }
                 Button("名前を変更") {
                     renameText = model.name
                     renamingModelID = model.id

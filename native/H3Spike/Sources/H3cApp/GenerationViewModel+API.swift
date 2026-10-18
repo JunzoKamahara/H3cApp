@@ -72,6 +72,21 @@ extension GenerationViewModel {
             })
         case ("POST", "/api/models/import"):
             return await handleModelImport(request)
+        case ("GET", "/api/models/detail"):
+            // Model Management's 詳細 as JSON (?id=<model id>).
+            guard let id = request.query["id"].flatMap(UUID.init(uuidString:)),
+                  let entry = library.models.first(where: { $0.id == id }) else {
+                return .error(400, "\"id\" must be a model id from GET /api/models")
+            }
+            let path = entry.path
+            let detail = await Task.detached { ModelDetail.inspect(path: path, id: id) }.value
+            return .json(200, ["name": entry.name, "path": path, "total_bytes": detail.totalBytes,
+                               "sections": detail.sections.map { section in
+                                   ["title": section.title, "note": section.note ?? NSNull(),
+                                    "rows": section.rows.map { row in
+                                        ["title": row.title, "status": "\(row.status)", "lines": row.lines] as [String: Any]
+                                    }] as [String: Any]
+                               }])
         case ("GET", "/api/models/import/downloads"):
             // What the import wizard would offer to download for a part
             // (?kind=dit|ref2va|textEncoder|vision|shared); lists only.

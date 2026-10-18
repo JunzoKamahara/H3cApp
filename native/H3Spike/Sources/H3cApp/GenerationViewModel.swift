@@ -52,6 +52,15 @@ let h3AppSupportDirectory: String = {
 // ~/Library.
 private let legacyCacheDirectory = NSHomeDirectory() + "/models/cache"
 
+/// Where a model's int8 caches and AdaLN curves live (see
+/// GenerationViewModel.attentionCacheDirectory(for:)).
+func modelCacheDirectory(path: String, id: UUID) -> String {
+    if path == legacyDefaultH3ModelPath, FileManager.default.fileExists(atPath: legacyCacheDirectory) {
+        return legacyCacheDirectory
+    }
+    return h3AppSupportDirectory + "/cache/" + id.uuidString
+}
+
 enum EngineState: Equatable {
     case loading
     case ready
@@ -253,11 +262,7 @@ final class GenerationViewModel: ObservableObject {
     /// reuse that path for exactly that entry so upgrading doesn't demand
     /// rebuilding them.
     private func attentionCacheDirectory(for model: H3ModelEntry) -> String {
-        if model.path == legacyDefaultH3ModelPath,
-           FileManager.default.fileExists(atPath: legacyCacheDirectory) {
-            return legacyCacheDirectory
-        }
-        return h3AppSupportDirectory + "/cache/" + model.id.uuidString
+        modelCacheDirectory(path: model.path, id: model.id)
     }
 
     /// The int8 cache this job would use - which one depends on whether it
