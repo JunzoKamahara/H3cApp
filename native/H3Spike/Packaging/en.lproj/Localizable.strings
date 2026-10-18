@@ -702,3 +702,5 @@
 "ゴミ箱に移すもの" = "Moved to the Trash";
 "すぐに削除するキャッシュ" = "Caches deleted right away";
 "キャッシュの削除ですぐに空く容量：約%@" = "Freed right away by deleting the caches: about %@";
+"「%@」のファイルをゴミ箱に移しました（ほかと共有しているため、ゴミ箱を空にしてもほとんど空きません）。" = "Moved the files of “%@” to the Trash (they share their data with other files, so emptying it frees almost nothing).";
+"ゴミ箱を空にしても、ほかと共有しているためほとんど空きません" = "Emptying the Trash frees almost nothing, as the data is shared with other files";

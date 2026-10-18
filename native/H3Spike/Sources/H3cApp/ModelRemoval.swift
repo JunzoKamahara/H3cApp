@@ -216,6 +216,9 @@ struct ModelRemoveView: View {
                        role: .destructive) {
                     if let plan { onRemove(plan) }
                 }
+                // A sheet's destructive button is not red by itself.
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
                 .disabled(plan == nil)
             }
         }
@@ -253,7 +256,11 @@ struct ModelRemoveView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Divider()
-                    Text("ゴミ箱を空にすると解放される容量：約\(size(plan.freedBytes))")
+                    // Under a megabyte is just configs and the like: say so
+                    // rather than show "約529 バイト".
+                    Text(plan.freedBytes < 1_000_000
+                         ? String(localized: "ゴミ箱を空にしても、ほかと共有しているためほとんど空きません")
+                         : String(localized: "ゴミ箱を空にすると解放される容量：約\(size(plan.freedBytes))"))
                         .font(.callout.weight(.semibold))
                     if plan.cacheBytes > 0 {
                         Text("キャッシュの削除ですぐに空く容量：約\(size(plan.cacheBytes))")

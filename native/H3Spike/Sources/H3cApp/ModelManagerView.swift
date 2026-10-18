@@ -249,7 +249,9 @@ struct ModelManagerView: View {
             if !failed.isEmpty {
                 message = String(localized: "「\(name)」の一部を削除できませんでした：\(failed.joined(separator: "、"))")
             } else if plan.includesFiles {
-                message = String(localized: "「\(name)」のファイルをゴミ箱に移しました（ゴミ箱を空にすると約\(format(plan.freedBytes))空きます）。")
+                message = plan.freedBytes < 1_000_000
+                    ? String(localized: "「\(name)」のファイルをゴミ箱に移しました（ほかと共有しているため、ゴミ箱を空にしてもほとんど空きません）。")
+                    : String(localized: "「\(name)」のファイルをゴミ箱に移しました（ゴミ箱を空にすると約\(format(plan.freedBytes))空きます）。")
             } else {
                 message = String(localized: "「\(name)」をモデル管理から外しました（ファイルは残っています）。")
             }
