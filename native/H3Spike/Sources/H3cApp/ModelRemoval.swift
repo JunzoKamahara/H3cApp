@@ -308,7 +308,7 @@ struct ModelRemoveView: View {
 
     private func targetRow(_ target: ModelRemovalPlan.Target) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(verbatim: "\(target.label)・\(size(target.bytes))").font(.caption)
+            Text(verbatim: "\(target.label)\(itemSeparator)\(size(target.bytes))").font(.caption)
             Text(target.path).font(.caption2).foregroundStyle(palette.textSecondary)
                 .lineLimit(1).truncationMode(.middle)
         }

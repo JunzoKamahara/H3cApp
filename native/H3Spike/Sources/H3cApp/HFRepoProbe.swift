@@ -22,9 +22,32 @@ struct HFProbedFile: Codable, Sendable, Equatable {
     var denseAdaLN = false
     var textLayers = 0
     var hasVision = false
-    /// Why the app can't use it (unsupported quantization, split file,
-    /// not GGUF, ...); nil when it can.
-    var unsupported: String?
+    /// Why the app can't use it; nil when it can. Kept as a reason, not
+    /// text, so the cached result reads in whatever language the app is in.
+    var problem: Problem?
+    var unsupported: String? { problem?.message }
+
+    enum Problem: Codable, Sendable, Equatable {
+        case unreadable(String)
+        case split(Int)
+        case quantizations([String])
+        case numberFormats([String])
+        case safetensorsPart
+        case unknownPart
+
+        var message: String {
+            switch self {
+            case .unreadable(let detail): return String(localized: "先頭を読めませんでした（\(detail)）")
+            case .split(let count): return String(localized: "分割されたGGUF（\(count)ファイル）は未対応です")
+            case .quantizations(let names):
+                return String(localized: "未対応の量子化形式（\(names.joined(separator: itemSeparator))）を含みます")
+            case .numberFormats(let names):
+                return String(localized: "未対応の数値形式（\(names.joined(separator: itemSeparator))）を含みます")
+            case .safetensorsPart: return String(localized: "safetensors形式です（取り込めるのはGGUF）")
+            case .unknownPart: return String(localized: "MiniMax H3の部品として認識できません")
+            }
+        }
+    }
 
     var fileName: String { (path as NSString).lastPathComponent }
     /// DiT files of FL2VA and Ref2VA have the same tensors; only the name
@@ -81,7 +104,7 @@ enum HFRepoProbe {
                 try await probeSafetensors(&file)
             }
         } catch {
-            file.unsupported = String(localized: "先頭を読めませんでした（\(error.localizedDescription)）")
+            file.problem = .unreadable(error.localizedDescription)
         }
         return file
     }
@@ -105,10 +128,9 @@ enum HFRepoProbe {
         guard let scan else { return }
         let unsupportedTypes = scan.types.subtracting(supportedGGMLTypes)
         if let split = scan.splitCount, split > 1 {
-            file.unsupported = String(localized: "分割されたGGUF（\(split)ファイル）は未対応です")
+            file.problem = .split(split)
         } else if !unsupportedTypes.isEmpty {
-            let names = unsupportedTypes.sorted().map(ggmlTypeName).joined(separator: "・")
-            file.unsupported = String(localized: "未対応の量子化形式（\(names)）を含みます")
+            file.problem = .quantizations(unsupportedTypes.sorted().map(ggmlTypeName))
         }
         // The engine's own inspection, on a sparse file of the real size
         // holding just the header.
@@ -144,7 +166,7 @@ enum HFRepoProbe {
             23: "IQ4_XS", 24: "I8", 25: "I16", 26: "I32", 27: "I64", 28: "F64", 29: "IQ1_M", 30: "BF16",
             34: "TQ1_0", 35: "TQ2_0", 39: "MXFP4",
         ]
-        return names[id] ?? String(localized: "型\(id)")
+        return names[id] ?? "type \(id)" // kept in the cache: not localized
     }
 
     // MARK: safetensors
@@ -186,12 +208,12 @@ enum HFRepoProbe {
         case .videoVAE, .audioVAE:
             let others = Set(dtypeBytes.keys).subtracting(readable)
             if !others.isEmpty {
-                file.unsupported = String(localized: "未対応の数値形式（\(others.sorted().joined(separator: "・"))）を含みます")
+                file.problem = .numberFormats(others.sorted())
             }
         case .dit, .textEncoder, .vision:
-            file.unsupported = String(localized: "safetensors形式です（取り込めるのはGGUF）")
+            file.problem = .safetensorsPart
         case .other:
-            file.unsupported = String(localized: "MiniMax H3の部品として認識できません")
+            file.problem = .unknownPart
         }
     }
 
@@ -307,13 +329,14 @@ private struct GGUFScan {
     }
 }
 
-/// Probed files kept between runs (Application Support/H3cApp/hf-probe-cache.json).
+/// Probed files kept between runs (Application Support/H3cApp/hf-probe-cache-v2.json).
 private actor ProbeCache {
     static let shared = ProbeCache()
     private var files: [String: HFProbedFile] = [:]
     private var loaded = false
     private var dirty = false
-    private let path = h3AppSupportDirectory + "/hf-probe-cache.json"
+    // v2: reasons kept as codes (v1 kept localized text).
+    private let path = h3AppSupportDirectory + "/hf-probe-cache-v2.json"
 
     private static func key(_ repo: String, _ path: String, _ size: Int64) -> String { "\(repo)/\(path)@\(size)" }
 
@@ -334,7 +357,7 @@ private actor ProbeCache {
     func put(_ file: HFProbedFile) {
         load()
         // A failed read is not kept: the next listing tries again.
-        if file.unsupported?.hasPrefix(String(localized: "先頭を読めませんでした")) == true { return }
+        if case .unreadable = file.problem { return }
         files[Self.key(file.repo, file.path, file.size)] = file
         dirty = true
     }

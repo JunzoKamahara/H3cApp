@@ -11,6 +11,8 @@ func formatElapsed(_ seconds: Double) -> String {
 
 /// Joins short items in one-line summaries (" ・ " in Japanese).
 let summarySeparator = String(localized: " ・ ")
+/// Joins the facts about one file ("Q8_0・21.44 GB"; " · " in English).
+let itemSeparator = String(localized: "・")
 
 private let clockFormatter: DateFormatter = {
     let formatter = DateFormatter()

@@ -300,7 +300,7 @@ struct ModelDownloadWizardView: View {
                     picker(kind)
                     // The picker cuts long lines short; the picked file in full.
                     if let picked = choice(kind) {
-                        Text(verbatim: kind == .shared ? "\(picked.label)・\(size(picked.bytes))" : picked.label)
+                        Text(verbatim: kind == .shared ? "\(picked.label)\(itemSeparator)\(size(picked.bytes))" : picked.label)
                             .font(.caption2).foregroundStyle(palette.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
@@ -316,7 +316,7 @@ struct ModelDownloadWizardView: View {
             if choices[kind]?.first(where: { $0.id == id })?.unsupported == nil { picked[kind] = id }
         })) {
             ForEach(choices[kind] ?? []) { item in
-                Text(verbatim: kind == .shared ? "\(item.label)・\(size(item.bytes))" : item.label)
+                Text(verbatim: kind == .shared ? "\(item.label)\(itemSeparator)\(size(item.bytes))" : item.label)
                     .tag(item.id)
             }
         }

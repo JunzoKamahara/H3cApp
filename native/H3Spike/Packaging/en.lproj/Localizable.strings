@@ -704,11 +704,9 @@
 "未対応の量子化形式（%@）を含みます" = "Has unsupported quantization types (%@)";
 "未対応の数値形式（%@）を含みます" = "Has unsupported number formats (%@)";
 "safetensors形式です（取り込めるのはGGUF）" = "safetensors (only GGUF can be imported)";
-"型%u" = "type %u";
 "先頭部分が大きすぎます" = "The header is too large";
 "先頭部分が読めません" = "Can't read the header";
 "URLを作れません" = "Can't make the URL";
-"先頭を読めませんでした" = "Couldn't read the header";
 "VAE（共通部品と一緒に）" = "VAEs (with the shared parts)";
 "「%@」には、この部品のファイルが見つかりませんでした。" = "No files for this part were found in “%@”.";
 "「%@」のこの部品のファイルは、どれもこのアプリでは使えません。" = "None of the files for this part in “%@” can be used by this app.";
@@ -734,3 +732,5 @@
 "GGUFがないので、複製元のモデルのもの（約%@）を使います。同じディスクなら容量は増えませんが、複製元を消すとその分の容量が残ります。" = "No GGUF for it, so the base model's (about %@) is used. On the same disk it takes no extra space, but that space stays in use if the base model is deleted.";
 "「%@」から1個のファイルを追加しました。" = "Added 1 file from “%@”. ";
 "新しく書き出すものはありません（すべて複製なので、同じディスクなら容量は増えません）。空き容量：%@" = "Nothing new is written (everything is cloned, no extra space on the same disk). Free space: %@";
+"ダウンロードする" = "Download";
+"・" = " · ";

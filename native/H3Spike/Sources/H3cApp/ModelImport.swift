@@ -47,7 +47,7 @@ struct ModelImportManifest: Codable {
             let label = part.role == "textEncoder" ? String(localized: "文章") :
                 part.role == "ref2va" ? "Ref2VA" : "DiT"
             return "\(label) \(part.type)"
-        }.joined(separator: "・")
+        }.joined(separator: itemSeparator)
     }
 }
 
@@ -588,7 +588,7 @@ struct ImportPlan {
             ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
         }
         func describe(_ file: ImportPick) -> String {
-            "\(label(file))・\(file.info?.mainType ?? "")・\(size(file.info?.fileBytes ?? 0))"
+            "\(label(file))\(itemSeparator)\(file.info?.mainType ?? "")\(itemSeparator)\(size(file.info?.fileBytes ?? 0))"
         }
         /// The detail line, prefixed with the duplicate notice when several
         /// files compete for the part.
@@ -631,7 +631,7 @@ struct ImportPlan {
             let trimmed = info.textLayers > 50
             let written = trimmed ? info.fileBytes / UInt64(info.textLayers) * 50 : 0
             bytesWritten += written
-            let detail = describe(te) + "・" + (trimmed
+            let detail = describe(te) + itemSeparator + (trimmed
                 ? String(localized: "\(info.textLayers)層から50層に切り詰めて書き出します（約\(size(written))）")
                 : String(localized: "\(info.textLayers)層をそのまま使います"))
             items.append(item("text", String(localized: "文章の部分（テキストエンコーダー）"), .ok, detail,

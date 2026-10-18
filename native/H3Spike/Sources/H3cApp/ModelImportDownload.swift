@@ -165,7 +165,7 @@ struct ImportDownloadChoice: Identifiable, Hashable {
         }
         let entry = HFFileEntry(path: file.path, size: file.size, repo: file.repo)
         return ImportDownloadChoice(id: file.repo + "/" + file.path,
-                                    title: ([file.fileName] + notes).joined(separator: "・"),
+                                    title: ([file.fileName] + notes).joined(separator: itemSeparator),
                                     entries: [entry],
                                     verified: verifiedFiles.contains(file.repo + "/" + file.path),
                                     includesVision: file.hasVision, importWrites: writes,
@@ -335,7 +335,7 @@ struct ImportDownloadView: View {
                                if choices.first(where: { $0.id == id })?.unsupported == nil { choiceID = id }
                            })) {
                         ForEach(choices) { item in
-                            Text(verbatim: kind == .shared ? "\(item.label)・\(gigabytes(item.bytes))" : item.label)
+                            Text(verbatim: kind == .shared ? "\(item.label)\(itemSeparator)\(gigabytes(item.bytes))" : item.label)
                                 .foregroundStyle(item.unsupported == nil ? palette.textPrimary : palette.textSecondary)
                                 .tag(item.id)
                         }
@@ -414,7 +414,7 @@ struct ImportDownloadView: View {
                 Button("再開") { start() }.buttonStyle(.borderedProminent)
                     .disabled(space?.fits == false)
             default:
-                Button("ダウンロード") { start() }
+                Button("ダウンロードする") { start() }
                     .buttonStyle(.borderedProminent)
                     .disabled(choice == nil || space?.fits != true)
             }

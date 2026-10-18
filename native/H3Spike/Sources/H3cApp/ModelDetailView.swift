@@ -93,7 +93,7 @@ struct ModelDetail: Sendable {
                 default: role = String(localized: "画像の部分")
                 }
                 rows.append(Row(title: role, status: .info,
-                                lines: ["\(part.source)・\(part.type)・\(bytes(Int64(part.bytes)))"]))
+                                lines: ["\(part.source)\(itemSeparator)\(part.type)\(itemSeparator)\(bytes(Int64(part.bytes)))"]))
             }
             detail.sections.append(Section(title: String(localized: "GGUFからの取り込み"), note: nil, rows: rows))
         }
@@ -141,7 +141,7 @@ struct ModelDetail: Sendable {
             dit = true
             part.curveInFile = info.curveAdaLN
             part.rows.append(Row(title: String(localized: "DiT"), status: .ok, lines: [
-                "GGUF・\(info.mainType)・\(bytes(Int64(info.fileBytes)))",
+                "GGUF\(itemSeparator)\(info.mainType)\(itemSeparator)\(bytes(Int64(info.fileBytes)))",
                 info.curveAdaLN ? String(localized: "AdaLNは曲線形（近似を含む）") : String(localized: "AdaLNは密な形"),
             ]))
         } else if let st = SafetensorsSummary(dir: transformer) {
@@ -163,7 +163,7 @@ struct ModelDetail: Sendable {
            let info = try? H3GGUFInfo.inspect(path: gguf) {
             text = info.textLayers >= 50
             part.rows.append(Row(title: String(localized: "文章の部分"), status: text ? .ok : .warning, lines: [
-                "GGUF・\(info.mainType)・\(bytes(Int64(info.fileBytes)))",
+                "GGUF\(itemSeparator)\(info.mainType)\(itemSeparator)\(bytes(Int64(info.fileBytes)))",
                 layerLine(info.textLayers),
             ]))
             if info.hasVision { visionLine = String(localized: "文章の部分のファイルに含まれています") }
@@ -181,10 +181,10 @@ struct ModelDetail: Sendable {
         }
         if visionLine == nil, let mmproj = files(encoder, ".gguf").first(where: { $0.hasSuffix("/mmproj.gguf") }),
            let info = try? H3GGUFInfo.inspect(path: mmproj) {
-            visionLine = "mmproj.gguf・GGUF・\(info.mainType)・\(bytes(Int64(info.fileBytes)))"
+            visionLine = "mmproj.gguf\(itemSeparator)GGUF\(itemSeparator)\(info.mainType)\(itemSeparator)\(bytes(Int64(info.fileBytes)))"
         }
         if visionLine == nil, fm.fileExists(atPath: encoder + "/vision.safetensors") {
-            visionLine = "vision.safetensors・\(bytes(fileSize(encoder + "/vision.safetensors")))"
+            visionLine = "vision.safetensors\(itemSeparator)\(bytes(fileSize(encoder + "/vision.safetensors")))"
         }
         part.vision = visionLine != nil
         part.rows.append(Row(title: String(localized: "画像の部分"), status: part.vision ? .ok : .warning,
@@ -281,7 +281,7 @@ private struct SafetensorsSummary {
     var mainType: String { dtypeBytes.max { $0.value < $1.value }?.key ?? "?" }
 
     var formatLine: String {
-        files == 1 ? "safetensors・\(mainType)・\(ModelDetail.bytes(bytes))"
+        files == 1 ? "safetensors\(itemSeparator)\(mainType)\(itemSeparator)\(ModelDetail.bytes(bytes))"
                    : String(localized: "safetensors・\(mainType)・\(files)ファイル・\(ModelDetail.bytes(bytes))")
     }
 
