@@ -721,7 +721,6 @@
 "50層" = "50 layers";
 "画像の部分入り" = "with image part";
 "層が足りません（%lld層、50層が必要）" = "Not enough layers (%lld; 50 needed)";
-"配布元（Hugging Faceのリポジトリ名）" = "Source (Hugging Face repository)";
 "この部品を配布している既知のリポジトリから選びます" = "Choose from repositories known to publish this part";
 "Hugging Faceからこの配布元のファイル一覧を取得し、各ファイルの先頭を読んで部品ごとに分けます" = "Fetches this repository's file list from Hugging Face and reads each file's header to sort them into parts";
 "VAEの配布元（Hugging Face）" = "Where the VAEs come from (Hugging Face)";
@@ -734,3 +733,11 @@
 "新しく書き出すものはありません（すべて複製なので、同じディスクなら容量は増えません）。空き容量：%@" = "Nothing new is written (everything is cloned, no extra space on the same disk). Free space: %@";
 "ダウンロードする" = "Download";
 "・" = " · ";
+"「%@」は、Hugging Faceのリポジトリ名（例：unsloth/MiniMax-H3-GGUF）かURLとして読めません" = "“%@” can't be read as a Hugging Face repository name (such as unsloth/MiniMax-H3-GGUF) or URL";
+"カスタムの配布元" = "Custom Source";
+"配布元（Hugging Faceのリポジトリ名かURL）" = "Source (Hugging Face repository or URL)";
+"既知の配布元" = "Known sources";
+"カスタムを削除" = "Remove Custom";
+"https://huggingface.co/…" = "https://huggingface.co/…";
+"追加" = "Add";
+"Hugging Faceのリポジトリ名か、リポジトリ・フォルダ・ファイルのURLを入力してください（例：https://huggingface.co/unsloth/MiniMax-H3-GGUF/tree/main/vae）。" = "Enter a Hugging Face repository name, or the URL of a repository, folder or file (for example https://huggingface.co/unsloth/MiniMax-H3-GGUF/tree/main/vae).";

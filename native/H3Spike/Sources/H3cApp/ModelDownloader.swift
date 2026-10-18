@@ -8,8 +8,10 @@ import Foundation
 struct HFFileEntry: Equatable {
     let path: String
     let size: Int64
-    /// The repository it is in (the GGUF import downloads from others).
+    /// The repository it is in (the GGUF import downloads from others),
+    /// and the branch (or other revision) it is read from.
     var repo: String = officialModelRepo
+    var revision = "main"
     /// Where it goes under the destination, when not at its repo path
     /// (e.g. unsloth's VAE files put where the engine looks for them).
     var localPath: String? = nil
@@ -128,9 +130,9 @@ final class ModelDownloader: ObservableObject {
     }
 
     /// A repository's files under subpath ("" for all of them).
-    static func fetchEntries(repo: String, subpath: String) async throws -> [HFFileEntry] {
-        let tree = subpath.isEmpty ? "" : "/" + subpath
-        guard let url = URL(string: "https://huggingface.co/api/models/\(repo)/tree/main\(tree)?recursive=true") else {
+    static func fetchEntries(repo: String, subpath: String, revision: String = "main") async throws -> [HFFileEntry] {
+        let tree = subpath.isEmpty ? "" : "/" + (subpath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? subpath)
+        guard let url = URL(string: "https://huggingface.co/api/models/\(repo)/tree/\(hfRevisionComponent(revision))\(tree)?recursive=true") else {
             throw ModelDownloadError.listingFailed("invalid URL")
         }
         let (data, response) = try await URLSession.shared.data(from: url)
@@ -139,7 +141,11 @@ final class ModelDownloader: ObservableObject {
         }
         struct RawEntry: Decodable { let type: String; let path: String; let size: Int64 }
         let raw = try JSONDecoder().decode([RawEntry].self, from: data)
-        return raw.filter { $0.type == "file" }.map { HFFileEntry(path: $0.path, size: $0.size, repo: repo) }
+        return raw.filter { $0.type == "file" }.map {
+            var entry = HFFileEntry(path: $0.path, size: $0.size, repo: repo)
+            entry.revision = revision
+            return entry
+        }
     }
 
     // MARK: Downloading
@@ -279,7 +285,7 @@ final class ModelDownloader: ObservableObject {
         guard let encodedPath = entry.path.addingPercentEncoding(withAllowedCharacters: .urlHFPath) else {
             throw ModelDownloadError.httpStatus(path: entry.path, status: -1)
         }
-        guard let url = URL(string: "https://huggingface.co/\(entry.repo)/resolve/main/\(encodedPath)") else {
+        guard let url = URL(string: "https://huggingface.co/\(entry.repo)/resolve/\(hfRevisionComponent(entry.revision))/\(encodedPath)") else {
             throw ModelDownloadError.httpStatus(path: entry.path, status: -1)
         }
         var request = URLRequest(url: url)

@@ -1,6 +1,55 @@
 import Foundation
 import H3Engine
 
+/// Where a part's files are on Hugging Face: a repository, typed as its
+/// name ("owner/name") or pasted as a URL of the repository, a folder in it
+/// (".../tree/<branch>/<folder>") or one file (".../blob/<branch>/<path>",
+/// ".../resolve/<branch>/<path>").
+struct HFSource: Equatable, Sendable {
+    var repo: String
+    var revision = "main"
+    var folder = ""
+    var file: String?
+
+    init?(_ text: String) {
+        var rest = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let query = rest.firstIndex(where: { $0 == "?" || $0 == "#" }) { rest = String(rest[..<query]) }
+        for prefix in ["https://", "http://"] where rest.lowercased().hasPrefix(prefix) {
+            rest = String(rest.dropFirst(prefix.count))
+        }
+        for host in ["huggingface.co/", "www.huggingface.co/", "hf.co/"] where rest.lowercased().hasPrefix(host) {
+            rest = String(rest.dropFirst(host.count))
+        }
+        if rest.hasPrefix("models/") { rest = String(rest.dropFirst("models/".count)) }
+        let parts = rest.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard parts.count >= 2, parts[0] != "datasets", parts[0] != "spaces",
+              parts[0].allSatisfy({ $0.isLetter || $0.isNumber || "-_.".contains($0) }),
+              parts[1].allSatisfy({ $0.isLetter || $0.isNumber || "-_.".contains($0) }) else { return nil }
+        repo = parts[0] + "/" + parts[1]
+        if parts.count >= 4, ["tree", "blob", "resolve"].contains(parts[2]) {
+            revision = parts[3].removingPercentEncoding ?? parts[3]
+            let path = parts.dropFirst(4).joined(separator: "/").removingPercentEncoding ?? ""
+            if parts[2] == "tree" { folder = path } else if !path.isEmpty { file = path }
+        } else if parts.count > 2 {
+            return nil
+        }
+    }
+
+    /// What it reads as in the menu ("owner/name", or "owner/name ・ vae").
+    var label: String {
+        var text = repo
+        if revision != "main" { text += "@" + revision }
+        if let file { return text + itemSeparator + file }
+        if !folder.isEmpty { text += itemSeparator + folder }
+        return text
+    }
+}
+
+/// A revision as one URL path component ("main", "refs%2Fpr%2F1").
+func hfRevisionComponent(_ revision: String) -> String {
+    revision.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? revision
+}
+
 // What the files of a Hugging Face repository are, read from their first
 // bytes rather than guessed from names (each publisher names files its own
 // way): a GGUF's header (key/values and tensor table) and a safetensors
@@ -15,6 +64,7 @@ struct HFProbedFile: Codable, Sendable, Equatable {
     let repo: String
     let path: String
     let size: Int64
+    var revision = "main"
     var kind: Kind = .other
     var format = "GGUF"
     var mainType = ""
@@ -58,15 +108,19 @@ struct HFProbedFile: Codable, Sendable, Equatable {
 enum HFRepoProbe {
     /// The repository's model files, each inspected (cached ones are not
     /// fetched again). `progress` gets (done, total).
-    static func probe(repo: String, progress: @escaping @Sendable (Int, Int) -> Void = { _, _ in })
+    static func probe(source: HFSource, progress: @escaping @Sendable (Int, Int) -> Void = { _, _ in })
         async throws -> [HFProbedFile] {
-        let entries = try await ModelDownloader.fetchEntries(repo: repo, subpath: "")
+        let repo = source.repo
+        // A file names its folder for the listing, then only itself.
+        let folder = source.file.map { ($0 as NSString).deletingLastPathComponent } ?? source.folder
+        let entries = try await ModelDownloader.fetchEntries(repo: repo, subpath: folder, revision: source.revision)
             .filter { $0.path.hasSuffix(".gguf") || $0.path.hasSuffix(".safetensors") }
+            .filter { source.file == nil || $0.path == source.file }
         let cache = ProbeCache.shared
         var results: [HFProbedFile?] = Array(repeating: nil, count: entries.count)
         var pending: [Int] = []
         for (index, entry) in entries.enumerated() {
-            if let hit = await cache.get(repo: repo, path: entry.path, size: entry.size) {
+            if let hit = await cache.get(repo: repo + "@" + entry.revision, path: entry.path, size: entry.size) {
                 results[index] = hit
             } else {
                 pending.append(index)
@@ -97,6 +151,7 @@ enum HFRepoProbe {
 
     private static func probeFile(repo: String, entry: HFFileEntry) async -> HFProbedFile {
         var file = HFProbedFile(repo: repo, path: entry.path, size: entry.size)
+        file.revision = entry.revision
         do {
             if entry.path.hasSuffix(".gguf") {
                 try await probeGGUF(&file)
@@ -118,7 +173,7 @@ enum HFRepoProbe {
         var data = Data()
         var scan: GGUFScan?
         while scan == nil {
-            data = try await fetchRange(repo: file.repo, path: file.path, from: 0, count: min(length, file.size))
+            data = try await fetchRange(repo: file.repo, revision: file.revision, path: file.path, from: 0, count: min(length, file.size))
             scan = GGUFScan(data)
             if scan == nil {
                 guard length < 128 << 20, length < file.size else { throw ProbeError.headerTooLarge }
@@ -173,11 +228,11 @@ enum HFRepoProbe {
 
     private static func probeSafetensors(_ file: inout HFProbedFile) async throws {
         file.format = "safetensors"
-        let prefix = try await fetchRange(repo: file.repo, path: file.path, from: 0, count: 8)
+        let prefix = try await fetchRange(repo: file.repo, revision: file.revision, path: file.path, from: 0, count: 8)
         guard prefix.count == 8 else { throw ProbeError.short }
         let length = prefix.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self) }.littleEndian
         guard length > 0, length < 256 << 20 else { throw ProbeError.headerTooLarge }
-        let json = try await fetchRange(repo: file.repo, path: file.path, from: 8, count: Int64(length))
+        let json = try await fetchRange(repo: file.repo, revision: file.revision, path: file.path, from: 8, count: Int64(length))
         guard let header = (try? JSONSerialization.jsonObject(with: json)) as? [String: Any] else {
             throw ProbeError.short
         }
@@ -219,9 +274,9 @@ enum HFRepoProbe {
 
     // MARK: HTTP
 
-    private static func fetchRange(repo: String, path: String, from: Int64, count: Int64) async throws -> Data {
+    private static func fetchRange(repo: String, revision: String, path: String, from: Int64, count: Int64) async throws -> Data {
         guard let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let url = URL(string: "https://huggingface.co/\(repo)/resolve/main/\(encoded)") else {
+              let url = URL(string: "https://huggingface.co/\(repo)/resolve/\(hfRevisionComponent(revision))/\(encoded)") else {
             throw ProbeError.badURL
         }
         var request = URLRequest(url: url)
@@ -358,7 +413,7 @@ private actor ProbeCache {
         load()
         // A failed read is not kept: the next listing tries again.
         if case .unreadable = file.problem { return }
-        files[Self.key(file.repo, file.path, file.size)] = file
+        files[Self.key(file.repo + "@" + file.revision, file.path, file.size)] = file
         dirty = true
     }
 

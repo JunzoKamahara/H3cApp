@@ -126,9 +126,10 @@ struct ImportDownloadChoice: Identifiable, Hashable {
     /// usable ones largest (best) first, then the ones the app can't read.
     static func list(_ kind: ImportDownloadKind, repo: String,
                      progress: @escaping @Sendable (Int, Int) -> Void = { _, _ in }) async throws -> [ImportDownloadChoice] {
-        let repo = repo.trimmingCharacters(in: .whitespaces)
+        let repo = repo.trimmingCharacters(in: .whitespacesAndNewlines)
         if kind == .shared { return try await sharedChoices(vaeRepo: repo, progress: progress) }
-        let files = try await HFRepoProbe.probe(repo: repo, progress: progress)
+        guard let source = HFSource(repo) else { throw HFSourceError(text: repo) }
+        let files = try await HFRepoProbe.probe(source: source, progress: progress)
         let matches: [HFProbedFile] = files.filter { file in
             switch kind {
             case .dit: return file.kind == .dit && !file.isRef2VA
@@ -163,7 +164,8 @@ struct ImportDownloadChoice: Identifiable, Hashable {
         default:
             break
         }
-        let entry = HFFileEntry(path: file.path, size: file.size, repo: file.repo)
+        var entry = HFFileEntry(path: file.path, size: file.size, repo: file.repo)
+        entry.revision = file.revision
         return ImportDownloadChoice(id: file.repo + "/" + file.path,
                                     title: ([file.fileName] + notes).joined(separator: itemSeparator),
                                     entries: [entry],
@@ -192,8 +194,9 @@ struct ImportDownloadChoice: Identifiable, Hashable {
             id: "shared", title: String(localized: "公式のVAE（MiniMaxAI/MiniMax-H3、映像はF32）"),
             entries: fl2va + ref2va, verified: true)]
         guard !vaeRepo.isEmpty, vaeRepo != officialModelRepo else { return choices }
+        guard let source = HFSource(vaeRepo) else { throw HFSourceError(text: vaeRepo) }
 
-        let files = try await HFRepoProbe.probe(repo: vaeRepo, progress: progress)
+        let files = try await HFRepoProbe.probe(source: source, progress: progress)
         // The same file is sometimes published twice (unsloth's vae/ and
         // vae/official/); one of each is enough.
         var seen = Set<String>()
@@ -202,24 +205,42 @@ struct ImportDownloadChoice: Identifiable, Hashable {
         let officialAudio = fl2va.first { $0.path == audioLocal }
         for video in unique where video.kind == .videoVAE {
             var entries = fl2va.filter { $0.path != videoLocal && $0.path != audioLocal } + ref2va
-            var videoEntry = HFFileEntry(path: video.path, size: video.size, repo: vaeRepo)
+            var videoEntry = HFFileEntry(path: video.path, size: video.size, repo: source.repo)
+            videoEntry.revision = video.revision
             videoEntry.localPath = videoLocal
             entries.append(videoEntry)
             var audioNote = String(localized: "音声は公式")
             if let audio {
-                var audioEntry = HFFileEntry(path: audio.path, size: audio.size, repo: vaeRepo)
+                var audioEntry = HFFileEntry(path: audio.path, size: audio.size, repo: source.repo)
+                audioEntry.revision = audio.revision
                 audioEntry.localPath = audioLocal
                 entries.append(audioEntry)
                 audioNote = String(localized: "音声 \(audio.mainType)")
             } else if let officialAudio {
                 entries.append(officialAudio)
             }
-            let title = String(localized: "\(vaeRepo)のVAE（映像 \(video.mainType)・\(audioNote)）")
+            let title = String(localized: "\(source.repo)のVAE（映像 \(video.mainType)・\(audioNote)）")
             choices.append(ImportDownloadChoice(
-                id: "shared|" + vaeRepo + "/" + video.path, title: title, entries: entries,
-                verified: verifiedFiles.contains(vaeRepo + "/" + video.path), unsupported: video.unsupported))
+                id: "shared|" + source.repo + "/" + video.path, title: title, entries: entries,
+                verified: verifiedFiles.contains(source.repo + "/" + video.path), unsupported: video.unsupported))
         }
         return choices
+    }
+}
+
+/// Text that is neither a repository name nor a Hugging Face URL.
+struct HFSourceError: LocalizedError {
+    let text: String
+    var errorDescription: String? {
+        String(localized: "「\(text)」は、Hugging Faceのリポジトリ名（例：unsloth/MiniMax-H3-GGUF）かURLとして読めません")
+    }
+}
+
+extension ImportDownloadKind {
+    /// Places the user added with カスタム… (newest first).
+    var customRepos: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "H3cApp.customRepos." + rawValue) ?? [] }
+        nonmutating set { UserDefaults.standard.set(newValue, forKey: "H3cApp.customRepos." + rawValue) }
     }
 }
 
@@ -232,17 +253,45 @@ struct RepoSourceField: View {
     var busy: Bool
     var onFetch: () -> Void
 
+    @State private var customs: [String] = []
+    @State private var addingCustom = false
+    @State private var customText = ""
+
     var body: some View {
         HStack(spacing: 4) {
-            TextField("配布元（Hugging Faceのリポジトリ名）", text: $repo)
+            TextField("配布元（Hugging Faceのリポジトリ名かURL）", text: $repo)
                 .textFieldStyle(.roundedBorder)
                 .font(.caption)
                 .onSubmit { onFetch() }
             Menu {
-                ForEach(kind.knownRepos, id: \.self) { name in
-                    Button(name) {
-                        repo = name
-                        onFetch()
+                if !customs.isEmpty {
+                    Section("カスタム") {
+                        ForEach(customs, id: \.self) { text in
+                            Button(HFSource(text)?.label ?? text) {
+                                repo = text
+                                onFetch()
+                            }
+                        }
+                    }
+                }
+                if customs.isEmpty {
+                    knownButtons
+                } else {
+                    Section("既知の配布元") { knownButtons }
+                }
+                Divider()
+                Button("カスタム…") {
+                    customText = ""
+                    addingCustom = true
+                }
+                if !customs.isEmpty {
+                    Menu("カスタムを削除") {
+                        ForEach(customs, id: \.self) { text in
+                            Button(HFSource(text)?.label ?? text) {
+                                customs.removeAll { $0 == text }
+                                kind.customRepos = customs
+                            }
+                        }
                     }
                 }
             } label: {
@@ -260,6 +309,37 @@ struct RepoSourceField: View {
             .help("Hugging Faceからこの配布元のファイル一覧を取得し、各ファイルの先頭を読んで部品ごとに分けます")
             .disabled(busy || repo.trimmingCharacters(in: .whitespaces).isEmpty)
         }
+        .onAppear { customs = kind.customRepos }
+        .alert("カスタムの配布元", isPresented: $addingCustom) {
+            TextField("https://huggingface.co/…", text: $customText)
+            Button("追加") { addCustom() }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("Hugging Faceのリポジトリ名か、リポジトリ・フォルダ・ファイルのURLを入力してください（例：https://huggingface.co/unsloth/MiniMax-H3-GGUF/tree/main/vae）。")
+        }
+    }
+
+    @ViewBuilder private var knownButtons: some View {
+        ForEach(kind.knownRepos, id: \.self) { name in
+            Button(name) {
+                repo = name
+                onFetch()
+            }
+        }
+    }
+
+    /// Keeps the place in this part's list (newest first) and lists it.
+    private func addCustom() {
+        let text = customText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if HFSource(text) != nil {
+            customs.removeAll { $0 == text }
+            customs.insert(text, at: 0)
+            kind.customRepos = customs
+        }
+        // An unreadable one is still tried, so the listing says why.
+        repo = text
+        onFetch()
     }
 }
 
