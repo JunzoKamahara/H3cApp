@@ -94,11 +94,13 @@ extension GenerationViewModel {
                 return .error(400, "\"kind\" must be one of dit, ref2va, textEncoder, vision, shared")
             }
             do {
-                let choices = try await ImportDownloadChoice.list(kind)
-                return .json(200, ["repo": kind.repo, "destination": kind.destination,
+                let repo = request.query["repo"] ?? kind.savedRepo
+                let choices = try await ImportDownloadChoice.list(kind, repo: repo)
+                return .json(200, ["repo": repo, "destination": kind.destination,
                                    "choices": choices.map {
                                        ["title": $0.title, "files": $0.entries.count, "bytes": $0.bytes,
-                                        "verified": $0.verified] as [String: Any]
+                                        "verified": $0.verified,
+                                        "unsupported": $0.unsupported ?? NSNull()] as [String: Any]
                                    }])
             } catch {
                 return .error(502, error.localizedDescription)

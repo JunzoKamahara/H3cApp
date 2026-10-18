@@ -37,7 +37,12 @@ struct ModelDownloadWizardView: View {
     // GGUF route
     @State private var choices: [ImportDownloadKind: [ImportDownloadChoice]] = [:]
     @State private var picked: [ImportDownloadKind: String] = [:]
-    @State private var listError: String?
+    /// Each part's repository (Hugging Face), its listing's error, and the
+    /// headers read so far while it is listed.
+    @State private var repos: [ImportDownloadKind: String] =
+        Dictionary(uniqueKeysWithValues: ImportDownloadKind.allCases.map { ($0, $0.savedRepo) })
+    @State private var listErrors: [ImportDownloadKind: String] = [:]
+    @State private var listing: [ImportDownloadKind: (done: Int, total: Int)] = [:]
     @State private var trashDownloads = true
     @State private var importError: String?
     @State private var importedPath: String?
@@ -87,7 +92,7 @@ struct ModelDownloadWizardView: View {
             footer
         }
         .padding(H3Spacing.xl)
-        .frame(width: 580, height: 600)
+        .frame(width: 720, height: 660)
         .background(palette.canvas)
         .onDisappear { downloader.cancel(); importer.cancel() }
         .task(id: source) { await prepare() }
@@ -189,9 +194,18 @@ struct ModelDownloadWizardView: View {
 
     // MARK: GGUF
 
+    /// The part's picked file; unusable files are never picked.
     private func choice(_ kind: ImportDownloadKind) -> ImportDownloadChoice? {
-        let list = choices[kind] ?? []
+        let list = (choices[kind] ?? []).filter { $0.unsupported == nil }
         return list.first { $0.id == picked[kind] } ?? list.first { $0.verified } ?? list.first
+    }
+
+    /// Every part the download needs has a usable file.
+    private var ggufReady: Bool {
+        var kinds: [ImportDownloadKind] = [.dit, .textEncoder, .shared]
+        if needsVision { kinds.append(.vision) }
+        if includeRef2VA { kinds.append(.ref2va) }
+        return kinds.allSatisfy { choice($0) != nil } && listing.isEmpty
     }
 
     /// The text encoder lacks the vision tower: the mmproj file is added.
@@ -212,77 +226,119 @@ struct ModelDownloadWizardView: View {
             .font(.caption)
             .foregroundStyle(palette.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
-        if let listError {
-            Text(listError).font(.caption).foregroundStyle(palette.errorColor)
-        } else if choices.count < ImportDownloadKind.allCases.count {
-            HStack {
-                ProgressView().controlSize(.small)
-                Text("ファイル一覧を確認しています…").font(.caption).foregroundStyle(palette.textSecondary)
-            }
-        } else {
-            Grid(alignment: .leading, horizontalSpacing: H3Spacing.md, verticalSpacing: 8) {
-                choiceRow(.dit, String(localized: "DiT（FL2VA）"))
-                choiceRow(.textEncoder, String(localized: "文章の部分"))
+        Grid(alignment: .leading, horizontalSpacing: H3Spacing.md, verticalSpacing: 6) {
+            partRows(.dit, String(localized: "DiT（FL2VA）"))
+            partRows(.textEncoder, String(localized: "文章の部分"))
+            if needsVision {
+                partRows(.vision, String(localized: "画像の部分（mmproj）"))
+            } else {
                 GridRow {
                     Text("画像の部分").font(.caption)
-                    Text(needsVision
-                         ? String(localized: "mmproj-Qwen3VL-32B-Instruct-F16（\(size(choice(.vision)?.bytes ?? 0))）を加えます")
-                         : String(localized: "文章の部分のファイルに含まれています"))
+                    Text(choice(.textEncoder) == nil ? "" : String(localized: "文章の部分のファイルに含まれています"))
                         .font(.caption).foregroundStyle(palette.textSecondary)
                 }
-                choiceRow(.shared, String(localized: "トークナイザー・VAE・設定"))
-                GridRow {
-                    Toggle("Ref2VA も含める", isOn: $includeRef2VA)
-                        .font(.caption)
-                        .disabled(isBusy)
-                    if includeRef2VA {
-                        picker(.ref2va)
-                    } else {
-                        Text("参照画像・動画・音声を使う生成に必要です")
-                            .font(.caption).foregroundStyle(palette.textSecondary)
-                    }
-                }
             }
-            Text(ggufNote).font(.caption2).foregroundStyle(palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            ModelLicenseNotice(includesQwen: true)
-            Text("保存先（取り込んだモデルのフォルダ。ダウンロードしたファイルもこの中に置きます）")
-                .font(.caption).foregroundStyle(palette.textSecondary)
-            DownloadDestinationFields(parent: $ggufParent, name: $ggufName, disabled: isBusy)
-            if case .failure(let error) = ggufDestination {
-                Text(error.message).font(.caption).foregroundStyle(palette.errorColor)
-            } else if ggufFolderTaken {
-                Text("同じ名前のフォルダが既にあります。フォルダ名を変えてください。")
-                    .font(.caption).foregroundStyle(palette.errorColor)
+            partRows(.shared, String(localized: "VAE（共通部品と一緒に）"))
+            GridRow {
+                Toggle("Ref2VA も含める", isOn: $includeRef2VA)
+                    .font(.caption)
+                    .disabled(isBusy)
+                Text("参照画像・動画・音声を使う生成に必要です")
+                    .font(.caption).foregroundStyle(palette.textSecondary)
             }
-            Toggle("取り込んだあと、ダウンロードした元のファイルをゴミ箱に入れる（取り込んだモデルは自分のコピーを持っています）",
-                   isOn: $trashDownloads)
-                .font(.caption)
-                .disabled(isBusy)
-            Text(spaceLine).font(.caption)
-                .foregroundStyle(hasRoom ? palette.textSecondary : palette.errorColor)
-                .fixedSize(horizontal: false, vertical: true)
+            if includeRef2VA {
+                partRows(.ref2va, String(localized: "DiT（Ref2VA）"))
+            }
         }
+        Text(ggufNote).font(.caption2).foregroundStyle(palette.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        ModelLicenseNotice(includesQwen: true)
+        Text("保存先（取り込んだモデルのフォルダ。ダウンロードしたファイルもこの中に置きます）")
+            .font(.caption).foregroundStyle(palette.textSecondary)
+        DownloadDestinationFields(parent: $ggufParent, name: $ggufName, disabled: isBusy)
+        if case .failure(let error) = ggufDestination {
+            Text(error.message).font(.caption).foregroundStyle(palette.errorColor)
+        } else if ggufFolderTaken {
+            Text("同じ名前のフォルダが既にあります。フォルダ名を変えてください。")
+                .font(.caption).foregroundStyle(palette.errorColor)
+        }
+        Toggle("取り込んだあと、ダウンロードした元のファイルをゴミ箱に入れる（取り込んだモデルは自分のコピーを持っています）",
+               isOn: $trashDownloads)
+            .font(.caption)
+            .disabled(isBusy)
+        Text(spaceLine).font(.caption)
+            .foregroundStyle(hasRoom ? palette.textSecondary : palette.errorColor)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func choiceRow(_ kind: ImportDownloadKind, _ title: String) -> some View {
+    /// A part's two lines: where it comes from (a Hugging Face repository,
+    /// with the button that lists it), and which of its files to use.
+    @ViewBuilder private func partRows(_ kind: ImportDownloadKind, _ title: String) -> some View {
         GridRow {
             Text(title).font(.caption)
-            picker(kind)
+            RepoSourceField(kind: kind,
+                            repo: Binding(get: { repos[kind] ?? kind.defaultRepo }, set: { repos[kind] = $0 }),
+                            busy: isBusy || listing[kind] != nil) {
+                Task { await load(kind) }
+            }
+        }
+        GridRow {
+            Color.clear.frame(width: 1, height: 1)
+            if let progress = listing[kind] {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text(progress.total > 0
+                         ? String(localized: "ファイルの先頭を読んでいます（\(progress.done)/\(progress.total)）…")
+                         : String(localized: "ファイル一覧を確認しています…"))
+                        .font(.caption).foregroundStyle(palette.textSecondary)
+                }
+            } else if let error = listErrors[kind] {
+                Text(error).font(.caption).foregroundStyle(palette.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                picker(kind)
+            }
         }
     }
 
     private func picker(_ kind: ImportDownloadKind) -> some View {
-        Picker("", selection: Binding(get: { choice(kind)?.id ?? "" }, set: { picked[kind] = $0 })) {
+        Picker("", selection: Binding(get: { choice(kind)?.id ?? "" }, set: { id in
+            // An unusable file stays listed but can't be picked.
+            if choices[kind]?.first(where: { $0.id == id })?.unsupported == nil { picked[kind] = id }
+        })) {
             ForEach(choices[kind] ?? []) { item in
-                Text(verbatim: "\(item.title)・\(size(item.bytes))" +
-                     (item.verified ? String(localized: "（動作確認済み）") : ""))
+                Text(verbatim: kind == .shared ? "\(item.label)・\(size(item.bytes))" : item.label)
                     .tag(item.id)
             }
         }
         .labelsHidden()
-        .frame(maxWidth: 360, alignment: .leading)
+        .frame(maxWidth: 480, alignment: .leading)
         .disabled(isBusy)
+    }
+
+    /// Lists a part's files in its repository (reading each header) and
+    /// remembers the repository once that worked.
+    private func load(_ kind: ImportDownloadKind) async {
+        let repo = (repos[kind] ?? kind.defaultRepo).trimmingCharacters(in: .whitespaces)
+        listing[kind] = (0, 0)
+        listErrors[kind] = nil
+        defer { listing[kind] = nil }
+        do {
+            let list = try await ImportDownloadChoice.list(kind, repo: repo) { done, total in
+                Task { @MainActor in if listing[kind] != nil { listing[kind] = (done, total) } }
+            }
+            choices[kind] = list
+            picked[kind] = nil
+            kind.savedRepo = repo
+            if list.isEmpty {
+                listErrors[kind] = String(localized: "「\(repo)」には、この部品のファイルが見つかりませんでした。")
+            } else if list.allSatisfy({ $0.unsupported != nil }) {
+                listErrors[kind] = String(localized: "「\(repo)」のこの部品のファイルは、どれもこのアプリでは使えません。")
+            }
+        } catch {
+            choices[kind] = []
+            listErrors[kind] = ModelDownloadError.listingFailed(error.localizedDescription).errorDescription
+        }
     }
 
     private var ggufNote: String {
@@ -329,14 +385,10 @@ struct ModelDownloadWizardView: View {
             }
         case .gguf:
             if downloader.state != .downloading { downloader.reset() }
-            guard choices.count < ImportDownloadKind.allCases.count else { return }
-            listError = nil
-            do {
-                for kind in ImportDownloadKind.allCases where choices[kind] == nil {
-                    choices[kind] = try await ImportDownloadChoice.list(kind)
-                }
-            } catch {
-                listError = ModelDownloadError.listingFailed(error.localizedDescription).errorDescription
+            // One after another: parts from the same repository reuse the
+            // headers read for the first.
+            for kind in ImportDownloadKind.allCases where choices[kind] == nil && listing[kind] == nil {
+                await load(kind)
             }
         }
     }
@@ -507,7 +559,7 @@ struct ModelDownloadWizardView: View {
                 startGGUFDownload()
             }
             .buttonStyle(.borderedProminent)
-            .disabled(choices.count < ImportDownloadKind.allCases.count || !hasRoom || ggufFolderTaken)
+            .disabled(!ggufReady || !hasRoom || ggufFolderTaken)
         }
     }
 

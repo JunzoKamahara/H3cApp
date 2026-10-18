@@ -39,12 +39,36 @@ enum ImportDownloadKind: String, Identifiable, CaseIterable {
     case dit, ref2va, textEncoder, vision, shared
     var id: String { rawValue }
 
-    var repo: String {
+    /// Where a part comes from unless the user named another repository.
+    var defaultRepo: String {
         switch self {
-        case .dit, .ref2va: return "unsloth/MiniMax-H3-GGUF"
+        case .dit, .ref2va, .shared: return "unsloth/MiniMax-H3-GGUF"
         case .textEncoder, .vision: return "Qwen/Qwen3-VL-32B-Instruct-GGUF"
-        case .shared: return officialModelRepo
         }
+    }
+
+    /// Publishers known to carry this part (offered next to the name field).
+    var knownRepos: [String] {
+        switch self {
+        case .dit, .ref2va:
+            return ["unsloth/MiniMax-H3-GGUF", "Abiray/MiniMax-H3-Pruned-GGUF", "Abiray/MiniMax-H3-GGUF",
+                    "leejet/MiniMax-H3-GGUF", "molbal/MiniMax-H3-GGUF", "realrebelai/MiniMax-H3_GGUFs",
+                    "joeygambino/MiniMax-H3-x-Z-Image-GGUF"]
+        case .textEncoder:
+            return ["Qwen/Qwen3-VL-32B-Instruct-GGUF", "unsloth/MiniMax-H3-GGUF", "leejet/MiniMax-H3-GGUF",
+                    "Abiray/MiniMax-H3-GGUF", "realrebelai/MiniMax-H3_GGUFs",
+                    "nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF"]
+        case .vision:
+            return ["Qwen/Qwen3-VL-32B-Instruct-GGUF", "nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF"]
+        case .shared:
+            return ["unsloth/MiniMax-H3-GGUF", "Comfy-Org/MiniMax-H3"]
+        }
+    }
+
+    /// The repository last used for this part (kept between runs).
+    var savedRepo: String {
+        get { UserDefaults.standard.string(forKey: "H3cApp.downloadRepo." + rawValue) ?? defaultRepo }
+        nonmutating set { UserDefaults.standard.set(newValue, forKey: "H3cApp.downloadRepo." + rawValue) }
     }
 
     var title: String {
@@ -73,75 +97,168 @@ struct ImportDownloadChoice: Identifiable, Hashable {
     /// What the import writes on top of the download (a 64-layer text
     /// encoder is cut to the 50 layers used).
     var importWrites: Int64 = 0
+    /// Why it can't be used (shown, not selectable).
+    var unsupported: String?
     var bytes: Int64 { entries.reduce(0) { $0 + $1.size } }
+
+    /// The picker's line: title, and whether it is tested or unusable.
+    var label: String {
+        if let unsupported { return title + String(localized: "（未対応：\(unsupported)）") }
+        return title + (verified ? String(localized: "（動作確認済み）") : "")
+    }
 
     static func == (a: Self, b: Self) -> Bool { a.id == b.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
 
-    /// The repository's current files for a part, largest (best) first.
-    static func list(_ kind: ImportDownloadKind) async throws -> [ImportDownloadChoice] {
-        func files(prefix: String, verifiedType: String, repo: String? = nil,
-                   label: String = "") async throws -> [ImportDownloadChoice] {
-            try await ModelDownloader.fetchEntries(repo: repo ?? kind.repo, subpath: "")
-                // Not split files, nor unsloth's "UD" mixes (their tensor
-                // types have not been checked against what the engine reads).
-                .filter {
-                    $0.path.hasPrefix(prefix) && $0.path.hasSuffix(".gguf") && !$0.path.contains("-split-") &&
-                        !$0.path.contains("-UD-")
-                }
-                .sorted { $0.size > $1.size }
-                .map { entry in
-                    let type = String(entry.path.dropFirst(prefix.count).dropLast(".gguf".count))
-                    var choice = ImportDownloadChoice(id: entry.path, title: label + type, entries: [entry],
-                                                      verified: type == verifiedType)
-                    if kind == .textEncoder {
-                        // unsloth's H3 files are cut already and carry the
-                        // vision tower; Qwen's have all 64 layers, no vision.
-                        choice.includesVision = repo != nil
-                        choice.importWrites = repo != nil ? 0 : entry.size / 64 * 50
-                    }
-                    return choice
-                }
+    /// Files the app has generated with end to end.
+    private static let verifiedFiles: Set<String> = [
+        "unsloth/MiniMax-H3-GGUF/minimax_h3_fl2va_pruned-Q8_0.gguf",
+        "Qwen/Qwen3-VL-32B-Instruct-GGUF/Qwen3VL-32B-Instruct-Q8_0.gguf",
+        "Qwen/Qwen3-VL-32B-Instruct-GGUF/mmproj-Qwen3VL-32B-Instruct-F16.gguf",
+        "unsloth/MiniMax-H3-GGUF/vae/minimax_h3_video_vae_fp16.safetensors",
+    ]
+
+    private static func size(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    /// A part's files in `repo`, sorted out by reading each file's header:
+    /// usable ones largest (best) first, then the ones the app can't read.
+    static func list(_ kind: ImportDownloadKind, repo: String,
+                     progress: @escaping @Sendable (Int, Int) -> Void = { _, _ in }) async throws -> [ImportDownloadChoice] {
+        let repo = repo.trimmingCharacters(in: .whitespaces)
+        if kind == .shared { return try await sharedChoices(vaeRepo: repo, progress: progress) }
+        let files = try await HFRepoProbe.probe(repo: repo, progress: progress)
+        let matches: [HFProbedFile] = files.filter { file in
+            switch kind {
+            case .dit: return file.kind == .dit && !file.isRef2VA
+            case .ref2va: return file.kind == .dit && file.isRef2VA
+            case .textEncoder: return file.kind == .textEncoder
+            case .vision: return file.kind == .vision
+            case .shared: return false
+            }
         }
+        return matches.map { choice(from: $0, kind: kind) }
+            .sorted { ($0.unsupported == nil ? 0 : 1, -$0.bytes) < ($1.unsupported == nil ? 0 : 1, -$1.bytes) }
+    }
+
+    private static func choice(from file: HFProbedFile, kind: ImportDownloadKind) -> ImportDownloadChoice {
+        var notes = [file.mainType, size(file.size)].filter { !$0.isEmpty }
+        var unsupported = file.unsupported
+        var writes: Int64 = 0
         switch kind {
-        case .dit: return try await files(prefix: "minimax_h3_fl2va_pruned-", verifiedType: "Q8_0")
-        case .ref2va: return try await files(prefix: "minimax_h3_ref2va_pruned-", verifiedType: "")
+        case .dit, .ref2va:
+            notes.append(file.curveAdaLN ? String(localized: "AdaLNは曲線形")
+                         : String(localized: "AdaLNは密な形（動作未確認）"))
         case .textEncoder:
-            // unsloth's H3 text encoders are already cut to the 50 layers
-            // and carry the vision tower (headers and sample tensors checked
-            // against the released weights; generation quality not yet).
-            let h3 = try await files(prefix: "qwen3vl_32b_minimax_h3-", verifiedType: "",
-                                     repo: "unsloth/MiniMax-H3-GGUF",
-                                     label: String(localized: "H3専用・50層・画像の部分入り "))
-            return try await files(prefix: "Qwen3VL-32B-Instruct-", verifiedType: "Q8_0") + h3
-        case .vision: return try await files(prefix: "mmproj-Qwen3VL-32B-Instruct-", verifiedType: "F16")
-        case .shared:
-            // FL2VA without the DiT and text encoder weights (and the
-            // Python sources and shard indexes nothing here reads), plus
-            // the two Ref2VA files that differ from FL2VA's.
-            let fl2va = try await ModelDownloader.fetchEntries(repo: kind.repo, subpath: "FL2VA").filter {
-                !$0.path.contains("/transformer/model") && !$0.path.contains("/text_encoder/model") &&
-                    !$0.path.hasSuffix(".py")
+            if file.textLayers < 50 {
+                unsupported = unsupported ?? String(localized: "層が足りません（\(file.textLayers)層、50層が必要）")
+            } else if file.textLayers > 50 {
+                notes.append(String(localized: "\(file.textLayers)層（50層に切り詰めて書き出し）"))
+                writes = file.size / Int64(file.textLayers) * 50
+            } else {
+                notes.append(String(localized: "50層"))
             }
-            let ref2va = try await ModelDownloader.fetchEntries(repo: kind.repo, subpath: "Ref2VA").filter {
-                $0.path == "Ref2VA/model_index.json" || $0.path == "Ref2VA/transformer/config.json"
+            if file.hasVision { notes.append(String(localized: "画像の部分入り")) }
+        default:
+            break
+        }
+        let entry = HFFileEntry(path: file.path, size: file.size, repo: file.repo)
+        return ImportDownloadChoice(id: file.repo + "/" + file.path,
+                                    title: ([file.fileName] + notes).joined(separator: "・"),
+                                    entries: [entry],
+                                    verified: verifiedFiles.contains(file.repo + "/" + file.path),
+                                    includesVision: file.hasVision, importWrites: writes,
+                                    unsupported: unsupported)
+    }
+
+    /// The official model's shared parts (FL2VA without the DiT and text
+    /// encoder weights, the Python sources and shard indexes; plus the two
+    /// Ref2VA files that differ from FL2VA's), with the official VAEs or
+    /// the video and audio VAEs found in `vaeRepo`, placed where the
+    /// official ones go.
+    private static func sharedChoices(vaeRepo: String, progress: @escaping @Sendable (Int, Int) -> Void)
+        async throws -> [ImportDownloadChoice] {
+        let fl2va = try await ModelDownloader.fetchEntries(repo: officialModelRepo, subpath: "FL2VA").filter {
+            !$0.path.contains("/transformer/model") && !$0.path.contains("/text_encoder/model") &&
+                !$0.path.hasSuffix(".py")
+        }
+        let ref2va = try await ModelDownloader.fetchEntries(repo: officialModelRepo, subpath: "Ref2VA").filter {
+            $0.path == "Ref2VA/model_index.json" || $0.path == "Ref2VA/transformer/config.json"
+        }
+        let videoLocal = "FL2VA/video_vae/source/model.safetensors"
+        let audioLocal = "FL2VA/audio_vae/model.safetensors"
+        var choices = [ImportDownloadChoice(
+            id: "shared", title: String(localized: "公式のVAE（MiniMaxAI/MiniMax-H3、映像はF32）"),
+            entries: fl2va + ref2va, verified: true)]
+        guard !vaeRepo.isEmpty, vaeRepo != officialModelRepo else { return choices }
+
+        let files = try await HFRepoProbe.probe(repo: vaeRepo, progress: progress)
+        // The same file is sometimes published twice (unsloth's vae/ and
+        // vae/official/); one of each is enough.
+        var seen = Set<String>()
+        let unique = files.filter { seen.insert("\($0.kind)|\($0.fileName)|\($0.size)").inserted }
+        let audio = unique.first { $0.kind == .audioVAE && $0.unsupported == nil }
+        let officialAudio = fl2va.first { $0.path == audioLocal }
+        for video in unique where video.kind == .videoVAE {
+            var entries = fl2va.filter { $0.path != videoLocal && $0.path != audioLocal } + ref2va
+            var videoEntry = HFFileEntry(path: video.path, size: video.size, repo: vaeRepo)
+            videoEntry.localPath = videoLocal
+            entries.append(videoEntry)
+            var audioNote = String(localized: "音声は公式")
+            if let audio {
+                var audioEntry = HFFileEntry(path: audio.path, size: audio.size, repo: vaeRepo)
+                audioEntry.localPath = audioLocal
+                entries.append(audioEntry)
+                audioNote = String(localized: "音声 \(audio.mainType)")
+            } else if let officialAudio {
+                entries.append(officialAudio)
             }
-            // The same parts with unsloth's VAE files (video in FP16, half
-            // the size; audio with its weight normalization folded), put
-            // where the official ones go.
-            let vaeFiles = ["FL2VA/video_vae/source/model.safetensors": "vae/minimax_h3_video_vae_fp16.safetensors",
-                            "FL2VA/audio_vae/model.safetensors": "vae/minimax_h3_audio_vae_fp32.safetensors"]
-            let unsloth = try await ModelDownloader.fetchEntries(repo: "unsloth/MiniMax-H3-GGUF", subpath: "vae")
-            var replaced = fl2va.filter { vaeFiles[$0.path] == nil }
-            for (local, remote) in vaeFiles {
-                guard var entry = unsloth.first(where: { $0.path == remote }) else { return [] }
-                entry.localPath = local
-                replaced.append(entry)
+            let title = String(localized: "\(vaeRepo)のVAE（映像 \(video.mainType)・\(audioNote)）")
+            choices.append(ImportDownloadChoice(
+                id: "shared|" + vaeRepo + "/" + video.path, title: title, entries: entries,
+                verified: verifiedFiles.contains(vaeRepo + "/" + video.path), unsupported: video.unsupported))
+        }
+        return choices
+    }
+}
+
+/// "配布元": the Hugging Face repository a part comes from - typed, or
+/// picked from the publishers known to carry it - and the button that
+/// fetches its file list.
+struct RepoSourceField: View {
+    let kind: ImportDownloadKind
+    @Binding var repo: String
+    var busy: Bool
+    var onFetch: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            TextField("配布元（Hugging Faceのリポジトリ名）", text: $repo)
+                .textFieldStyle(.roundedBorder)
+                .font(.caption)
+                .onSubmit { onFetch() }
+            Menu {
+                ForEach(kind.knownRepos, id: \.self) { name in
+                    Button(name) {
+                        repo = name
+                        onFetch()
+                    }
+                }
+            } label: {
+                Image(systemName: "list.bullet")
             }
-            return [ImportDownloadChoice(id: "shared", title: String(localized: "公式のVAE（映像はF32）"),
-                                         entries: fl2va + ref2va, verified: true),
-                    ImportDownloadChoice(id: "shared-unsloth", title: String(localized: "unslothのVAE（映像はFP16）"),
-                                         entries: replaced + ref2va, verified: false)]
+            .menuStyle(.borderlessButton)
+            .frame(width: 28)
+            .help("この部品を配布している既知のリポジトリから選びます")
+            Button {
+                onFetch()
+            } label: {
+                Image(systemName: "arrow.down.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("Hugging Faceからこの配布元のファイル一覧を取得し、各ファイルの先頭を読んで部品ごとに分けます")
+            .disabled(busy || repo.trimmingCharacters(in: .whitespaces).isEmpty)
         }
     }
 }
@@ -160,6 +277,9 @@ struct ImportDownloadView: View {
     @State private var listError: String?
     @State private var parent: String
     @State private var folderName: String
+    @State private var repo: String
+    @State private var loading = false
+    @State private var probed: (done: Int, total: Int) = (0, 0)
 
     init(kind: ImportDownloadKind, onFinished: @escaping (String) -> Void, onCancelled: @escaping () -> Void) {
         self.kind = kind
@@ -167,6 +287,7 @@ struct ImportDownloadView: View {
         self.onCancelled = onCancelled
         _parent = State(initialValue: (kind.destination as NSString).deletingLastPathComponent)
         _folderName = State(initialValue: (kind.destination as NSString).lastPathComponent)
+        _repo = State(initialValue: kind.savedRepo)
     }
 
     private var destination: Result<String, DestinationError> {
@@ -180,44 +301,50 @@ struct ImportDownloadView: View {
     }
 
     private var palette: H3Palette { H3Palette(colorScheme) }
+    /// The picked file; unusable ones are never picked.
     private var choice: ImportDownloadChoice? {
-        choices.first { $0.id == choiceID } ?? choices.first
+        let usable = choices.filter { $0.unsupported == nil }
+        return usable.first { $0.id == choiceID } ?? usable.first { $0.verified } ?? usable.first
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: H3Spacing.md) {
             Text("\(kind.title)をダウンロード").font(.system(size: 16, weight: .semibold))
-            Text("Hugging Face：\(choice?.entries.first?.repo ?? kind.repo)").font(.caption).foregroundStyle(palette.textSecondary)
-                .textSelection(.enabled)
+            Text(kind == .shared ? String(localized: "VAEの配布元（Hugging Face）") : String(localized: "配布元（Hugging Face）"))
+                .font(.caption).foregroundStyle(palette.textSecondary)
+            RepoSourceField(kind: kind, repo: $repo, busy: loading || downloader.state == .downloading) {
+                Task { await loadChoices() }
+            }
             Divider()
-            if let listError {
-                Text(listError).font(.caption).foregroundStyle(palette.errorColor)
-            } else if choices.isEmpty {
+            if loading {
                 HStack {
                     ProgressView().controlSize(.small)
-                    Text("ファイル一覧を確認しています…").font(.caption).foregroundStyle(palette.textSecondary)
+                    Text(probed.total > 0
+                         ? String(localized: "ファイルの先頭を読んでいます（\(probed.done)/\(probed.total)）…")
+                         : String(localized: "ファイル一覧を確認しています…"))
+                        .font(.caption).foregroundStyle(palette.textSecondary)
                 }
-            } else if kind == .shared {
-                Picker("VAE", selection: Binding(get: { choice?.id ?? "" }, set: { choiceID = $0 })) {
-                    ForEach(choices) { item in
-                        Text(verbatim: "\(item.title)・\(gigabytes(item.bytes))").tag(item.id)
-                    }
-                }
-                .pickerStyle(.radioGroup)
-                .disabled(downloader.state == .downloading)
-                Text("公式のモデルから、DiTと文章の部分の重みを除いた部品（トークナイザー・VAE・設定）だけをダウンロードします。これらはGGUFの形では配布されていません。VAEは、unslothが配っている小さいもの（映像のVAEをFP16にしたもの）も選べます。DiTと文章の部分はGGUFで用意してください。")
-                    .font(.caption).foregroundStyle(palette.textSecondary)
+            } else if let listError {
+                Text(listError).font(.caption).foregroundStyle(palette.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Picker("ファイル", selection: Binding(get: { choice?.id ?? "" }, set: { choiceID = $0 })) {
-                    ForEach(choices) { item in
-                        Text(verbatim: "\(item.title)・\(gigabytes(item.bytes))" +
-                             (item.verified ? String(localized: "（動作確認済み）") : ""))
-                            .tag(item.id)
+                ScrollView {
+                    Picker(kind == .shared ? "VAE" : String(localized: "ファイル"),
+                           selection: Binding(get: { choice?.id ?? "" }, set: { id in
+                               // An unusable file stays listed but can't be picked.
+                               if choices.first(where: { $0.id == id })?.unsupported == nil { choiceID = id }
+                           })) {
+                        ForEach(choices) { item in
+                            Text(verbatim: kind == .shared ? "\(item.label)・\(gigabytes(item.bytes))" : item.label)
+                                .foregroundStyle(item.unsupported == nil ? palette.textPrimary : palette.textSecondary)
+                                .tag(item.id)
+                        }
                     }
+                    .pickerStyle(.radioGroup)
+                    .disabled(downloader.state == .downloading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .pickerStyle(.radioGroup)
-                .disabled(downloader.state == .downloading)
+                .frame(maxHeight: 160)
                 Text(kindNote).font(.caption).foregroundStyle(palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -236,7 +363,7 @@ struct ImportDownloadView: View {
             footer
         }
         .padding(H3Spacing.lg)
-        .frame(width: 560, height: 520)
+        .frame(width: 640, height: 640)
         .background(palette.canvas)
         .task { await loadChoices() }
         .onDisappear { downloader.cancel() }
@@ -247,16 +374,14 @@ struct ImportDownloadView: View {
 
     private var kindNote: String {
         switch kind {
-        case .dit:
-            return String(localized: "小さいものほど容量は減りますが、画質が落ちます。Q8_0以外は、読み込めることは確認していますが、画質はまだ確かめていません。")
-        case .ref2va:
-            return String(localized: "Ref2VAのGGUFは、まだこのアプリで試していません（FL2VAのものと同じ作りです）。小さいものほど容量は減りますが、画質が落ちます。")
+        case .dit, .ref2va:
+            return String(localized: "各ファイルの先頭を読んで、DiTのファイルだけを並べています。小さい形式ほど容量は減り、画質は落ちます。「動作確認済み」以外は、読み込めることは確認していますが、画質はまだ確かめていません。")
         case .textEncoder:
-            return String(localized: "Qwen公式のものは、取り込むときに使う50層だけに切り詰めて書き出します（Q8_0で約27GB）。H3専用のもの（unsloth）は切り詰め済みで画像の部分も入っているので、書き出しもmmprojも要りません（名前と形は公式の重みと一致を確認済み。画質は未確認）。")
+            return String(localized: "50層より多いものは、取り込むときに使う50層だけに切り詰めて書き出します。画像の部分入りのものなら、mmprojは要りません。")
         case .vision:
             return String(localized: "最初の画像や参照画像を使う生成に必要です。")
         case .shared:
-            return ""
+            return String(localized: "公式のモデルから、DiTと文章の部分の重みを除いた部品（トークナイザー・VAE・設定）だけをダウンロードします。これらはGGUFの形では配布されていません。VAEは、上の配布元にあるもの（unslothの映像FP16など）も選べます。")
         }
     }
 
@@ -296,10 +421,25 @@ struct ImportDownloadView: View {
         }
     }
 
+    /// Lists the part's files in the named repository (reading each
+    /// file's header), and remembers the repository once that worked.
     private func loadChoices() async {
+        loading = true
+        listError = nil
+        choices = []
+        probed = (0, 0)
+        defer { loading = false }
+        let name = repo.trimmingCharacters(in: .whitespaces)
         do {
-            choices = try await ImportDownloadChoice.list(kind)
-            if choices.isEmpty { listError = String(localized: "ダウンロードできるファイルが見つかりませんでした。") }
+            choices = try await ImportDownloadChoice.list(kind, repo: name) { done, total in
+                Task { @MainActor in probed = (done, total) }
+            }
+            kind.savedRepo = name
+            if choices.isEmpty {
+                listError = String(localized: "「\(name)」には、この部品のファイルが見つかりませんでした。")
+            } else if choices.allSatisfy({ $0.unsupported != nil }) {
+                listError = String(localized: "「\(name)」のこの部品のファイルは、どれもこのアプリでは使えません。")
+            }
         } catch {
             listError = ModelDownloadError.listingFailed(error.localizedDescription).errorDescription
         }
