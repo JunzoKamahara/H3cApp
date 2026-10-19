@@ -196,6 +196,12 @@ DiT.
 The image part (mmproj) is only used when generating with reference images, so
 this check covers loading it.
 
+A plain Q2_K DiT (unsloth's `minimax_h3_fl2va_pruned-Q2_K`) makes broken videos
+(melted figures, a grid-like background, humming audio): its block matrices are
+all Q2_K, 27.7% relative error against Q8_0 (15.6% for Q3_K, 7.4% for Q4_K).
+Use Q3_K_M or better; H3cApp marks such files with a warning. Q2_K text encoders
+work, and mixes such as "UD-Q2_K_XL" are untested.
+
 ## Deleting models and disk space
 
 A GGUF import places files as APFS clones on the same disk, so importing takes

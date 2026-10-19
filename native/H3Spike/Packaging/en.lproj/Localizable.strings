@@ -498,6 +498,8 @@
 "%lld層から50層に切り詰めて書き出します（約%@）" = "Trimmed from %lld layers to 50 and written out (about %@)";
 "%lld層をそのまま使います" = "Uses its %lld layers as they are";
 "AdaLNは密な形" = "dense AdaLN";
+"画質が大きく崩れます（Q2_K）" = "badly broken output (Q2_K)";
+"Q2_KのDiTは画質が大きく崩れます（人物が溶ける・背景が格子状になる・音声がうなる）。Q3_K_M以上をおすすめします。" = "A Q2_K DiT makes badly broken videos (melted figures, a grid-like background, humming audio). Q3_K_M or better is recommended.";
 "AdaLNは曲線形" = "curve-form AdaLN";
 "DiT" = "DiT";
 "DiT（FL2VA）" = "DiT (FL2VA)";

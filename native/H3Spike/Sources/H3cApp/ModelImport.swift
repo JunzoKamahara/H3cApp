@@ -597,6 +597,7 @@ struct ImportPlan {
             guard list.count > 1 else { return nil }
             return String(localized: "同じ部品のファイルが\(list.count)つあります（\(list.map(label).joined(separator: "、"))）。使うものを1つ選んでください。")
         }
+        let q2kWarning = String(localized: "Q2_KのDiTは画質が大きく崩れます（人物が溶ける・背景が格子状になる・音声がうなる）。Q3_K_M以上をおすすめします。")
         func item(_ id: String, _ title: String, _ status: Status, _ detail: String,
                   hint: String? = nil, url: String? = nil, download: ImportDownloadKind? = nil,
                   part: Part? = nil, chosen file: ImportPick? = nil) -> Item {
@@ -613,7 +614,9 @@ struct ImportPlan {
 
         // DiT (FL2VA)
         if let dit, dit.info != nil {
-            items.append(item("dit", String(localized: "DiT（FL2VA）"), .ok, describe(dit),
+            let q2k = isPlainQ2KDiT(mainType: dit.info?.mainType ?? "", fileName: dit.fileName)
+            items.append(item("dit", String(localized: "DiT（FL2VA）"), q2k ? .warning : .ok,
+                              describe(dit) + (q2k ? "\n" + q2kWarning : ""),
                               part: .dit, chosen: dit))
         } else {
             items.append(item("dit", String(localized: "DiT（FL2VA）"), .missing,
@@ -709,8 +712,10 @@ struct ImportPlan {
 
         // Ref2VA
         if let ref = ref2vaDit, let info = ref.info {
+            let q2k = isPlainQ2KDiT(mainType: info.mainType, fileName: ref.fileName)
             items.append(item("ref2va", String(localized: "DiT（Ref2VA）"),
-                              info.curveAdaLN ? .ok : .warning, describe(ref), part: .ref2va, chosen: ref))
+                              info.curveAdaLN && !q2k ? .ok : .warning,
+                              describe(ref) + (q2k ? "\n" + q2kWarning : ""), part: .ref2va, chosen: ref))
         } else {
             items.append(item("ref2va", String(localized: "DiT（Ref2VA）"), .info,
                               String(localized: "ありません。参照画像・動画・音声を使う生成はできません（文章から・最初の画像からは使えます）。"),

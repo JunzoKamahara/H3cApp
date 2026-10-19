@@ -203,6 +203,7 @@
         </table>
       </div>
       <p class="small muted">画像の部分（mmproj）は参照画像を使う生成でしか使わないため、この確認では読み込みまでです。</p>
+      <p>ただし、Q2_KだけでできたDiT（unslothの<code>minimax_h3_fl2va_pruned-Q2_K</code>）は、人物が溶け、背景が格子状になり、音声がうなりになるなど、動画が大きく崩れます。ブロックの行列がすべてQ2_Kで、Q8_0との相対誤差が27.7%（Q3_Kは15.6%、Q4_Kは7.4%）あるためです。Q3_K_M以上を使ってください。H3cAppはこうしたファイルに警告を出します。Q2_Kの文章の部分は問題なく使え、「UD-Q2_K_XL」のような混在は確かめていません。</p>
     </section>
 
     <section class="section section-narrow" id="delete" aria-labelledby="delete-title">

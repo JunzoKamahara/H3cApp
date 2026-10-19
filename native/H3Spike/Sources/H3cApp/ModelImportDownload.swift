@@ -34,6 +34,15 @@ func baseHasTextEncoderWeights(_ model: H3ModelEntry) -> Bool {
     return names.contains { $0.hasSuffix(".safetensors") || $0.hasSuffix(".gguf") }
 }
 
+/// Whether a DiT GGUF is plain Q2_K (most of its weight bytes Q2_K): those
+/// make broken videos (melted figures, a grid background, humming audio;
+/// 27.7% relative error against Q8_0, vs 15.6% for Q3_K). Mixed files such
+/// as unsloth's UD-Q2_K_XL are untested, so they are left alone.
+func isPlainQ2KDiT(mainType: String, fileName: String) -> Bool {
+    let name = fileName.uppercased()
+    return mainType == "Q2_K" && !name.contains("UD-") && !name.contains("_XL")
+}
+
 /// What the wizard can download.
 enum ImportDownloadKind: String, Identifiable, CaseIterable {
     case dit, ref2va, textEncoder, vision, shared
@@ -151,6 +160,9 @@ struct ImportDownloadChoice: Identifiable, Hashable {
         case .dit, .ref2va:
             notes.append(file.curveAdaLN ? String(localized: "AdaLNは曲線形")
                          : String(localized: "AdaLNは密な形"))
+            if isPlainQ2KDiT(mainType: file.mainType, fileName: file.fileName) {
+                notes.append(String(localized: "画質が大きく崩れます（Q2_K）"))
+            }
         case .textEncoder:
             if file.textLayers < 50 {
                 unsupported = unsupported ?? String(localized: "層が足りません（\(file.textLayers)層、50層が必要）")
