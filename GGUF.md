@@ -123,6 +123,10 @@ With GGUF files already on disk, use Model Manager's "Import GGUF…".
   on the GPU, so less is read.
 - A GGUF DiT with curve-form AdaLN carries the conditioning approximation
   itself; no separate curve file is needed.
+- A model imported without Ref2VA can get it later: Model Manager's "…" →
+  "Add Ref2VA…" downloads a Ref2VA DiT GGUF from Hugging Face or takes a file
+  you have. The text encoder, VAEs and configs are cloned from the model's
+  FL2VA, so only the DiT takes space.
 
 ## Sources and supported formats
 
@@ -248,6 +252,7 @@ The app's JSON API (`127.0.0.1:8420`) does the same.
 | `GET /api/models/detail?id=…` | what a model holds (the details screen) |
 | `POST /api/models/remove` | unregisters (caches deleted); `delete_files` also moves the files to the Trash, `dry_run` only computes |
 | `POST /api/models/add` | registers a folder as a model |
+| `POST /api/models/add_ref2va` | adds Ref2VA to a model without it: `file` (the Ref2VA DiT) for a GGUF model, `dry_run` for the plan only (an official model's only as a plan) |
 
 ## License
 

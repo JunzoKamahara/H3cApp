@@ -117,6 +117,10 @@ VAE も GGUF では配られていませんが、unsloth と Comfy-Org が単体
   減ります。
 - GGUF の DiT（曲線形の AdaLN を含むもの）は、条件の計算の近似をファイル自体に
   持っているので、別の近似ファイルは要りません。
+- Ref2VA なしで取り込んだモデルには、あとから Ref2VA を加えられます。モデル管理の
+  「…」→「Ref2VAを追加…」で、Ref2VA の DiT（GGUF）を Hugging Face からダウンロード
+  するか、手元のファイルを選びます。文章の部分・VAE・設定はそのモデルの FL2VA から
+  複製するので、増えるのは DiT の分だけです。
 
 ## 配布元と対応している形式
 
@@ -238,6 +242,7 @@ GGUF の取り込みは、同じディスク上のファイルを APFS の複製
 | `GET /api/models/detail?id=…` | モデルの中身（詳細画面と同じ内容） |
 | `POST /api/models/remove` | 登録を外す（キャッシュは削除）。`delete_files` でファイルもゴミ箱へ、`dry_run` で計算だけ |
 | `POST /api/models/add` | フォルダをモデルとして登録 |
+| `POST /api/models/add_ref2va` | Ref2VA のないモデルに Ref2VA を加える。GGUF のモデルは `file`（Ref2VA の DiT）、`dry_run` で計画だけ（公式のモデルの分は計画のみ） |
 
 ## ライセンス
 

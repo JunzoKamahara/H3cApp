@@ -138,6 +138,7 @@
         <li>Model Manager's info button shows what the model holds (each part's format and size, AdaLN form, layers, caches, the import record) and what it can do.</li>
         <li>For the fast M5 mode, build the int8 cache (about 19 GB) with “<span class="ui">Build Cache…</span>” in Advanced Settings; GGUF models can have one too.</li>
         <li>M1–M4 run with SSD streaming; GGUF weights are read still quantized and expanded on the GPU, so less is read.</li>
+        <li>A model imported without Ref2VA can get it later: Model Manager's “…” → “<span class="ui">Add Ref2VA…</span>” downloads a Ref2VA DiT GGUF from Hugging Face or takes a file you have. The text encoder, VAEs and configs are cloned from the model's FL2VA, so only the DiT takes space.</li>
       </ul>
     </section>
 
