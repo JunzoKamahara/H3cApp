@@ -46,7 +46,7 @@
   <main id="main">
     <div class="page-head">
       <h1>Troubleshooting</h1>
-      <p class="lead">Common stumbling points and what to check, in order. Written for H3cApp v0.5.0.</p>
+      <p class="lead">Common stumbling points and what to check, in order. Written for H3cApp v0.6.0.</p>
       <nav class="toc" aria-label="On this page">
         <p>On this page</p>
         <ol>
@@ -110,8 +110,8 @@
           <tbody>
             <tr><th scope="row">No project open</th><td>A temporary file, deleted when you generate the next one. Save it with “<span class="ui">Export Video…</span>” (starts in Downloads) or “<span class="ui">Save as Project…</span>”.</td></tr>
             <tr><th scope="row">Project open</th><td>In the project folder (by default <code>~/Movies/H3cApp/&lt;name&gt;</code>): an MP4 named with the date, time and seed, plus a record of its settings (.json). It stays until you delete it.</td></tr>
-            <tr><th scope="row">Model</th><td>The destination chosen at download time (by default <code>~/Library/Application Support/h3c-app/MiniMax-H3</code>).</td></tr>
-            <tr><th scope="row">int8 cache</th><td>Inside <code>~/Library/Application Support/h3c-app/cache</code>.</td></tr>
+            <tr><th scope="row">Model</th><td>The destination chosen at download time (by default <code>~/Library/Application Support/H3cApp/MiniMax-H3</code>).</td></tr>
+            <tr><th scope="row">int8 cache</th><td>Inside <code>~/Library/Application Support/H3cApp/cache</code>.</td></tr>
           </tbody>
         </table>
       </div>
@@ -140,7 +140,7 @@
 
     <section class="section section-narrow" id="update" aria-labelledby="q9">
       <h2 id="q9">Updating from an earlier version</h2>
-      <p>Open the new DMG and drag H3cApp into Applications to replace the old one. Settings, presets and registered models carry over. Up to v0.3.0 the app was called “h3c-app”, so once you have v0.4.0 or later installed you can delete the old <code>h3c-app.app</code>.</p>
+      <p>Open the new DMG and drag H3cApp into Applications to replace the old one. Settings, presets and registered models carry over. Up to v0.3.0 the app was called “h3c-app”, so once you have v0.4.0 or later installed you can delete the old <code>h3c-app.app</code>. In v0.6.0 the folder for models and caches is renamed too, from <code>~/Library/Application Support/h3c-app</code> to <code>H3cApp</code>. The app renames it on its first launch and updates the locations of registered models and LoRAs, so there is nothing to move by hand.</p>
     </section>
 
     <section class="section section-narrow" id="report" aria-labelledby="q10">

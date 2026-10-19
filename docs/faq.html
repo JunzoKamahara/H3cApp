@@ -47,7 +47,7 @@
   <main id="main">
     <div class="page-head">
       <h1>困ったとき</h1>
-      <p class="lead">よくあるつまずきと、確認する順番をまとめました。内容はH3cApp v0.5.0に合わせています。</p>
+      <p class="lead">よくあるつまずきと、確認する順番をまとめました。内容はH3cApp v0.6.0に合わせています。</p>
       <nav class="toc" aria-label="このページの目次">
         <p>このページの内容</p>
         <ol>
@@ -111,8 +111,8 @@
           <tbody>
             <tr><th scope="row">プロジェクトを開いていないとき</th><td>一時ファイルです。次に生成すると消えます。「<span class="ui">動画を書き出す…</span>」（最初はダウンロードフォルダ）か「<span class="ui">プロジェクトとして保存…</span>」で保存してください。</td></tr>
             <tr><th scope="row">プロジェクトを開いているとき</th><td>プロジェクトのフォルダ（既定は <code>~/Movies/H3cApp/&lt;名前&gt;</code>）に、日付・時刻・シードを含む名前のMP4と、設定の記録（.json）が保存されます。削除するまで残ります。</td></tr>
-            <tr><th scope="row">モデル</th><td>ダウンロード時に選んだ保存先（既定は <code>~/Library/Application Support/h3c-app/MiniMax-H3</code>）。</td></tr>
-            <tr><th scope="row">int8キャッシュ</th><td><code>~/Library/Application Support/h3c-app/cache</code> の中。</td></tr>
+            <tr><th scope="row">モデル</th><td>ダウンロード時に選んだ保存先（既定は <code>~/Library/Application Support/H3cApp/MiniMax-H3</code>）。</td></tr>
+            <tr><th scope="row">int8キャッシュ</th><td><code>~/Library/Application Support/H3cApp/cache</code> の中。</td></tr>
           </tbody>
         </table>
       </div>
@@ -141,7 +141,7 @@
 
     <section class="section section-narrow" id="update" aria-labelledby="q9">
       <h2 id="q9">以前の版から更新する</h2>
-      <p>新しいDMGを開き、H3cAppをアプリケーションフォルダへドラッグして置き換えます。設定、プリセット、登録したモデルは引き継がれます。v0.3.0以前は「h3c-app」という名前のアプリだったため、v0.4.0以降を入れたら古い <code>h3c-app.app</code> は削除してかまいません。</p>
+      <p>新しいDMGを開き、H3cAppをアプリケーションフォルダへドラッグして置き換えます。設定、プリセット、登録したモデルは引き継がれます。v0.3.0以前は「h3c-app」という名前のアプリだったため、v0.4.0以降を入れたら古い <code>h3c-app.app</code> は削除してかまいません。v0.6.0では、モデルやキャッシュを置くフォルダの名前も <code>~/Library/Application Support/h3c-app</code> から <code>H3cApp</code> に変わります。最初に起動したときに自動で名前を変え、登録したモデルやLoRAの場所も合わせて書き換えるので、手で移す必要はありません。</p>
     </section>
 
     <section class="section section-narrow" id="report" aria-labelledby="q10">
