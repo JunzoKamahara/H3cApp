@@ -46,7 +46,7 @@ struct ModelDetail: Sendable {
                             status: ref2va.usable && ref2va.vision ? .ok : .info,
                             lines: [ref2va.usable && ref2va.vision ? String(localized: "使えます（Ref2VA）")
                                     : ref2va.present ? String(localized: "使えません（Ref2VAの部品が足りません）")
-                                    : String(localized: "使えません（Ref2VAがありません）")]))
+                                    : String(localized: "使えません（Ref2VAがありません。モデル管理の「…」→「Ref2VAを追加…」で加えられます）")]))
 
         let cache = modelCacheDirectory(path: path, id: id)
         let cacheRows = [

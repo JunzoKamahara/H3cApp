@@ -41,6 +41,14 @@ struct ModelImportManifest: Codable {
         return try? decoder.decode(ModelImportManifest.self, from: data)
     }
 
+    func save(modelPath: String) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(self).write(
+            to: URL(fileURLWithPath: modelPath).appendingPathComponent(Self.fileName))
+    }
+
     /// e.g. "DiT Q8_0・文章 Q8_0" for the model list.
     var summary: String {
         parts.filter { $0.role != "vision" }.map { part in
@@ -285,13 +293,8 @@ final class ModelImporter: ObservableObject {
                                bytes: ref.info?.fileBytes ?? 0))
         }
 
-        let manifest = ModelImportManifest(importedAt: Date(), baseModel: request.base.name,
-                                           parts: parts)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode(manifest).write(
-            to: URL(fileURLWithPath: root).appendingPathComponent(ModelImportManifest.fileName))
+        try ModelImportManifest(importedAt: Date(), baseModel: request.base.name, parts: parts)
+            .save(modelPath: root)
     }
 
     private func checkCancelled() throws {

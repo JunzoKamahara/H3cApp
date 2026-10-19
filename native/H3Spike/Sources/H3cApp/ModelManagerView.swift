@@ -25,6 +25,10 @@ struct ModelManagerView: View {
     @State private var showingDownloadWizard = false
     @State private var detailModel: H3ModelEntry?
     @State private var removingModel: H3ModelEntry?
+    @State private var addingRef2VA: H3ModelEntry?
+    /// Bumped when a model's folder changed under the list (Ref2VA added):
+    /// the rows read their folders while drawing, so they draw again.
+    @State private var folderVersion = 0
     @State private var removalMessage: String?
     @State private var showingImport = false
     /// A LoRA picked from a folder macOS guards, waiting for the choice to
@@ -91,6 +95,7 @@ struct ModelManagerView: View {
                     }
                 }
                 .listStyle(.inset)
+                .id(folderVersion)
             }
             if let removalMessage {
                 Text(removalMessage).font(.caption).foregroundStyle(palette.textSecondary)
@@ -115,6 +120,11 @@ struct ModelManagerView: View {
         }
         .sheet(item: $detailModel) { model in
             ModelDetailView(model: model) { detailModel = nil }
+        }
+        .sheet(item: $addingRef2VA) { model in
+            AddRef2VAView(model: model,
+                          onFinished: { addingRef2VA = nil; folderVersion += 1 },
+                          onCancelled: { addingRef2VA = nil; folderVersion += 1 })
         }
         .sheet(isPresented: $showingImport) {
             ModelImportView(
@@ -190,6 +200,9 @@ struct ModelManagerView: View {
             .help("このモデルの中身（DiT・文章の部分・VAEの形式、キャッシュなど）を表示します")
             Menu {
                 Button("詳細を表示…") { detailModel = model }
+                if !modelHasRef2VA(model) {
+                    Button("Ref2VAを追加…") { addingRef2VA = model }
+                }
                 Button("名前を変更") {
                     renameText = model.name
                     renamingModelID = model.id

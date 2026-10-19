@@ -132,6 +132,8 @@ extension GenerationViewModel {
             library.removeModel(id: id)
             let failed = await Task.detached { plan.execute() }.value
             return .json(200, report.merging(["ok": failed.isEmpty, "failed": failed]) { $1 })
+        case ("POST", "/api/models/add_ref2va"):
+            return await handleAddRef2VA(request)
         case ("POST", "/api/models/add"):
             // Registers a model folder, like Model Management's フォルダを追加….
             let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
@@ -238,6 +240,61 @@ extension GenerationViewModel {
             return .json(200, ["id": entry?.id.uuidString ?? "", "path": path,
                                "items": plan.items.map { ["part": $0.title, "detail": $0.detail] },
                                "notes": plan.notes])
+        } catch {
+            return .error(500, error.localizedDescription)
+        }
+    }
+
+    /// POST /api/models/add_ref2va: {"id", "file"? (a Ref2VA DiT GGUF),
+    /// "dry_run"?} - Model Manager's Ref2VAを追加… for a model without
+    /// Ref2VA. A GGUF model takes "file" and clones everything else from its
+    /// FL2VA. An official model's Ref2VA (about 66 GB) is downloaded from
+    /// Model Manager only; "dry_run" reports what either would download
+    /// and clone, nothing written.
+    private func handleAddRef2VA(_ request: HTTPRequest) async -> HTTPResponse {
+        let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+        guard let text = json["id"] as? String, let id = UUID(uuidString: text),
+              let entry = library.models.first(where: { $0.id == id }) else {
+            return .error(400, "\"id\" must be a model id from GET /api/models")
+        }
+        guard !modelHasRef2VA(entry) else { return .error(409, "that model already has Ref2VA") }
+        let gguf = isGGUFModel(entry)
+        let plan: Ref2VAAddPlan
+        do {
+            plan = gguf ? try await .gguf(modelPath: entry.path) : try await .official(modelPath: entry.path)
+        } catch {
+            return .error(502, error.localizedDescription)
+        }
+        var clones = plan.clones
+        var part: ModelImportManifest.Part?
+        if let file = json["file"] as? String {
+            guard gguf else { return .error(400, "\"file\" is for a model made from GGUF files") }
+            guard let local = Ref2VAAddPlan.localDiT(ImportPick(path: file), modelPath: entry.path) else {
+                return .error(400, "\"file\" must be a DiT GGUF")
+            }
+            clones.append(local.clone)
+            part = local.part
+        }
+        let report: [String: Any] = [
+            "gguf_model": gguf,
+            "downloads": plan.downloads.map { ["path": $0.path, "bytes": $0.size] },
+            "download_bytes": plan.downloadBytes,
+            "clones": clones.map { ["from": $0.from, "to": $0.to] }, "clone_bytes": plan.cloneBytes]
+        if json["dry_run"] as? Bool == true { return .json(200, report) }
+        guard gguf else {
+            return .error(400, "an official model's Ref2VA is downloaded from Model Manager (Ref2VAを追加…)")
+        }
+        guard part != nil else { return .error(400, "\"file\" (a Ref2VA DiT GGUF) is required") }
+        let path = entry.path
+        do {
+            try FileManager.default.createDirectory(atPath: path + "/" + ref2vaStagingFolderName,
+                                                    withIntermediateDirectories: true)
+            try await Ref2VAAddPlan.downloadSmall(plan.downloads, modelPath: path)
+            let manifestPart = part
+            try await Task.detached(priority: .userInitiated) {
+                try Ref2VAAddPlan.finish(modelPath: path, clones: clones, manifestPart: manifestPart)
+            }.value
+            return .json(200, report.merging(["ok": true, "path": path + "/Ref2VA"]) { $1 })
         } catch {
             return .error(500, error.localizedDescription)
         }
