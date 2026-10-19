@@ -364,6 +364,40 @@ code {
   }
 }
 
+/* One line per release, between the hero and the examples. */
+.updates {
+  padding-top: 8px;
+  padding-bottom: 36px;
+}
+
+.updates h2 {
+  font-size: 19px;
+}
+
+.update-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.update-list a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.update-list a:hover strong,
+.update-list a:focus-visible strong {
+  text-decoration: underline;
+}
+
+.update-list strong {
+  color: var(--accent);
+}
+
+.update-date {
+  color: var(--text-muted);
+}
+
 .example {
   margin: 0;
   background: var(--surface);
