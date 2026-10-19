@@ -72,4 +72,8 @@
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/gguf.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/gguf.html"/>
   </url>
+  <url>
+    <loc>https://junzokamahara.github.io/H3cApp/joined-example.html</loc>
+    <lastmod>2026-10-17</lastmod>
+  </url>
 </urlset>

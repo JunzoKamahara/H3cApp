@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="assets/js/lang.js"></script>
+  <title>つなげて生成の作例（つないで15秒） — H3cApp</title>
+  <meta name="description" content="H3cAppの「つなげて生成」で、約7秒の動画3本を自動でつないでつくった15秒の音声付き動画の作例。窓辺の猫が庭を眺める場面です。">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/joined-example.html">
+  <meta property="og:type" content="video.other">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="つなげて生成の作例（つないで15秒） — H3cApp">
+  <meta property="og:description" content="約7秒の動画3本を自動でつないだ15秒の音声付き動画。Macの中で生成しました。">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/joined-example.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-joined-15s.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:video" content="https://junzokamahara.github.io/H3cApp/assets/video/joined-15s.mp4">
+  <meta property="og:video:type" content="video/mp4">
+  <meta property="og:video:width" content="672">
+  <meta property="og:video:height" content="384">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へ移動</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="サイト内">
+        <ul>
+          <li><a href="./#examples">生成例</a></li>
+          <li><a href="./#requirements">動作条件</a></li>
+          <li><a href="getting-started.html">はじめ方</a></li>
+          <li><a href="guide.html">使い方</a></li>
+          <li><a href="gguf.html">GGUF</a></li>
+          <li><a href="faq.html">困ったとき</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>つなげて生成の作例（つないで15秒）</h1>
+      <p class="lead">H3cAppの「つなげて生成」（v0.5.0で追加）で、約7秒の動画の続きを順につくり、自動で1本にまとめた15秒の動画です。音声付きです。再生ボタンを押すと音も流れます（自動では再生しません）。</p>
+    </div>
+
+    <section class="section section-narrow" aria-label="作例">
+      <figure class="example">
+        <div class="media" style="aspect-ratio: 7 / 4">
+          <video controls playsinline preload="metadata" width="672" height="384" poster="assets/video/joined-15s-poster.jpg" aria-label="作例：木の窓辺に座った茶トラの猫が、庭を眺めながらゆっくり首を動かす（横長・15秒）">
+            <source src="assets/video/joined-15s.mp4" type="video/mp4">
+            <a href="assets/video/joined-15s.mp4">動画ファイルを開く</a>
+          </video>
+        </div>
+        <figcaption>
+          <p class="spec">横長・中（672×384）・つないで15秒（3本をつなぐ、1本約7秒）・15.1秒・音声あり</p>
+          <p class="small muted">文章から／20ステップ／速度「標準」／シード11。生成時間 24分37秒（M5・24GB、3本の合計）。音は小さめです。</p>
+          <p class="prompt">A fluffy orange cat sits on a wooden windowsill, watching the garden outside. The cat slowly turns its head and gently moves its ears. Soft afternoon sunlight, a calm atmosphere, a fixed camera, realistic video. Quiet outdoor ambience and birds chirping. No speech, no subtitles.</p>
+        </figcaption>
+      </figure>
+      <p>使い方は「<a href="guide.html#chain">長い動画をつくる（つなげて生成）</a>」をご覧ください。同じプロンプトでも、同じ映像になるとは限りません。</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">不具合の報告（Issues）</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.ja.md">README</a></li>
+        <li><a href="faq.html#license">ライセンス</a></li>
+      </ul>
+      <p>H3cApp：大阪成蹊大学データサイエンス学部 鎌原淳三／Junzo Kamahara</p>
+      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画の生成にはMiniMaxの動画生成モデル<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>を使っています。モデルにはMiniMax H3独自のライセンス（MiniMax H3 Community License）が適用されます。</p>
+    </div>
+  </footer>
+</body>
+</html>
