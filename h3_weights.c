@@ -131,10 +131,15 @@ h3_weight_store *h3_weight_store_open(const char *directory,
     }
     free_paths(paths, count);
     /* ComfyUI-derived checkpoints are recognizable by its curve-form AdaLN
-     * (adaln_t_table, no time embedder); H3_QKV_LAYOUT=split|interleaved
-     * overrides the guess. */
-    store->qkv_split = find_exact(store, "adaln_t_table", NULL) &&
-                       !find_exact(store, "time_embedder.proj_in.weight", NULL);
+     * (adaln_t_table, no time embedder), and every GGUF DiT is one (they
+     * are made for ComfyUI-GGUF, dense AdaLN ones included);
+     * H3_QKV_LAYOUT=split|interleaved overrides the guess. */
+    int gguf = 0;
+    for (size_t index = 0; index < count; index++)
+        if (has_suffix(store->headers[index].path, ".gguf")) gguf = 1;
+    store->qkv_split = (find_exact(store, "adaln_t_table", NULL) &&
+                        !find_exact(store, "time_embedder.proj_in.weight", NULL)) ||
+                       (gguf && find_exact(store, "video_patch_proj.weight", NULL));
     const char *layout = getenv("H3_QKV_LAYOUT");
     if (layout && !strcmp(layout, "split")) store->qkv_split = 1;
     if (layout && !strcmp(layout, "interleaved")) store->qkv_split = 0;

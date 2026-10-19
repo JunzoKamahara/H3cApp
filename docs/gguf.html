@@ -151,22 +151,22 @@
             <tr><th scope="row"><a href="https://huggingface.co/unsloth/MiniMax-H3-GGUF">unsloth/MiniMax-H3-GGUF</a></th><td>DiT（FL2VA・Ref2VA）、H3専用の文章の部分、VAE</td><td>標準の配布元。DiTは曲線形のAdaLN</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF">Qwen/Qwen3-VL-32B-Instruct-GGUF</a></th><td>文章の部分（64層）、mmproj</td><td>公式。取り込み時に50層へ切り詰め</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/Abiray/MiniMax-H3-Pruned-GGUF">Abiray/MiniMax-H3-Pruned-GGUF</a></th><td>DiT</td><td>曲線形のAdaLN</td></tr>
-            <tr><th scope="row"><a href="https://huggingface.co/Abiray/MiniMax-H3-GGUF">Abiray/MiniMax-H3-GGUF</a></th><td>DiT、文章の部分</td><td>DiTは密なAdaLN（動作未確認）</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/Abiray/MiniMax-H3-GGUF">Abiray/MiniMax-H3-GGUF</a></th><td>DiT、文章の部分</td><td>DiTは密なAdaLN</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/leejet/MiniMax-H3-GGUF">leejet/MiniMax-H3-GGUF</a></th><td>DiT、文章の部分</td><td>曲線形と密な形の両方</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/molbal/MiniMax-H3-GGUF">molbal/MiniMax-H3-GGUF</a></th><td>DiT</td><td>Q8_CR・U16Gは未対応</td></tr>
-            <tr><th scope="row"><a href="https://huggingface.co/realrebelai/MiniMax-H3_GGUFs">realrebelai/MiniMax-H3_GGUFs</a></th><td>DiT、文章の部分</td><td>DiTは密なAdaLN</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/realrebelai/MiniMax-H3_GGUFs">realrebelai/MiniMax-H3_GGUFs</a></th><td>DiT、文章の部分</td><td>DiTは密なAdaLN（中身はAbirayと同じ重み）</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/joeygambino/MiniMax-H3-x-Z-Image-GGUF">joeygambino/MiniMax-H3-x-Z-Image-GGUF</a></th><td>DiT</td><td>Z-Imageとの合成モデル。<code>curve</code>付きが曲線形</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF">nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF</a></th><td>文章の部分（50層）、mmproj</td><td>IQ系は未対応</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/Comfy-Org/MiniMax-H3">Comfy-Org/MiniMax-H3</a></th><td>VAE</td><td>int8版は未対応</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="small muted">いずれも、ダウンロードの画面でファイルの先頭を読んだ結果に基づく分類です。「動作確認済み」と表示するもの以外は、読み込めることは確かめていますが、画質はまだ確かめていません。</p>
+      <p class="small muted">いずれも、ダウンロードの画面でファイルの先頭を読んだ結果に基づく分類です。どの配布元も、Q4前後の代表的なファイルで短い動画を作れることを確かめています（下の「動作を確かめた組み合わせ」）。</p>
       <h3>対応している形式</h3>
       <ul>
         <li><strong>量子化形式</strong>：Q8_0、Q4_0、Q4_1、Q5_0、Q5_1、Q2_K〜Q6_K、F16、BF16、F32。unslothの「UD-○○_XL」のような混在も、これらだけでできていれば使えます。</li>
         <li><strong>未対応</strong>（一覧に理由付きで出ます）：IQ系（IQ4_XS、IQ3_XXSなど）やI8などを含むファイル、分割されたGGUF、safetensors形式のDiT・文章の部分（取り込めるのはGGUFだけ）、読めない数値形式（F8、int8など）のVAE、層が50に足りない文章の部分。</li>
-        <li><strong>AdaLNの形</strong>：DiTのGGUFには、AdaLNが「曲線形」（ComfyUIのpruned形式）と「密な形」の2種類があります。曲線形は動作を確かめています。密な形は読み込めますが、生成はまだ試していません。</li>
+        <li><strong>AdaLNの形</strong>：DiTのGGUFには、AdaLNが「曲線形」（ComfyUIのpruned形式）と「密な形」の2種類があります。どちらも使えます。密な形はファイルが8GBほど大きくなります。</li>
         <li><strong>文章の部分</strong>：エンジンが使うのはQwen3-VL-32Bの最初の50層です。64層のものは取り込みのときに50層だけに切り詰めて書き出します。</li>
       </ul>
     </section>
@@ -184,6 +184,25 @@
           </tbody>
         </table>
       </div>
+      <p>既知の配布元ごとに、なるべく同じ配布元・同じ量子化のDiTと文章の部分を組み合わせて、3秒・512×512・SSDストリーミングで同じプロンプトとseedの動画を作り、映像と音声（話し声）を確かめました（2026年10月19日、Apple M5・24GB）。配布元に文章の部分がないものはunslothのQ4_K_Mを、文章の部分だけの配布元はDiTにunslothのQ4_Kを使っています。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">配布元</th><th scope="col">DiT</th><th scope="col">文章の部分</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">unsloth</th><td><code>minimax_h3_fl2va_pruned-Q4_K</code>（曲線形）</td><td><code>qwen3vl_32b_minimax_h3-Q4_K_M</code></td></tr>
+            <tr><th scope="row">leejet（剪定版）</th><td>unslothと同じファイル</td><td>unslothと同じファイル</td></tr>
+            <tr><th scope="row">leejet</th><td><code>minimax_h3_fl2va-Q4_K_M</code>（密な形）</td><td>unslothと同じファイル</td></tr>
+            <tr><th scope="row">Abiray</th><td><code>MiniMax-H3-FL2VA-Q4_K_M</code>（密な形）</td><td><code>qwen3vl_32b_minimax_h3-Q4_K_M</code></td></tr>
+            <tr><th scope="row">Abiray（Pruned）</th><td><code>MiniMax-H3-FL2VA-Pruned-Q4_K_M</code>（曲線形）</td><td>Abirayの<code>Q4_K_M</code></td></tr>
+            <tr><th scope="row">realrebelai</th><td><code>MiniMax-H3-FL2VA-Q4_K_M</code>（密な形）</td><td><code>qwen3vl-32B-MiniMax-H3-Q4_K_M</code></td></tr>
+            <tr><th scope="row">molbal</th><td><code>minimax_h3_fl2va_pruned_fp8_Q4_0</code>（曲線形）</td><td>unslothの<code>Q4_K_M</code></td></tr>
+            <tr><th scope="row">joeygambino</th><td><code>MiniMax-H3-fl2va-curve-zs05-Q4_0</code>（曲線形）</td><td>unslothの<code>Q4_K_M</code></td></tr>
+            <tr><th scope="row">Qwen</th><td>unslothの<code>Q4_K</code></td><td><code>Qwen3VL-32B-Instruct-Q4_K_M</code>（50層へ切り詰め）＋ mmproj F16</td></tr>
+            <tr><th scope="row">nif0</th><td>unslothの<code>Q4_K</code></td><td><code>…-L0-49-Q4_K_M</code> ＋ mmproj BF16</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">画像の部分（mmproj）は参照画像を使う生成でしか使わないため、この確認では読み込みまでです。</p>
     </section>
 
     <section class="section section-narrow" id="delete" aria-labelledby="delete-title">

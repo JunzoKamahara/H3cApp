@@ -150,7 +150,7 @@ struct ImportDownloadChoice: Identifiable, Hashable {
         switch kind {
         case .dit, .ref2va:
             notes.append(file.curveAdaLN ? String(localized: "AdaLNは曲線形")
-                         : String(localized: "AdaLNは密な形（動作未確認）"))
+                         : String(localized: "AdaLNは密な形"))
         case .textEncoder:
             if file.textLayers < 50 {
                 unsupported = unsupported ?? String(localized: "層が足りません（\(file.textLayers)層、50層が必要）")

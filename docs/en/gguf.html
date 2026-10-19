@@ -151,22 +151,22 @@
             <tr><th scope="row"><a href="https://huggingface.co/unsloth/MiniMax-H3-GGUF">unsloth/MiniMax-H3-GGUF</a></th><td>DiT (FL2VA, Ref2VA), H3-specific text encoder, VAEs</td><td>the default; DiTs have curve-form AdaLN</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF">Qwen/Qwen3-VL-32B-Instruct-GGUF</a></th><td>text encoder (64 layers), mmproj</td><td>official; cut to 50 layers when imported</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/Abiray/MiniMax-H3-Pruned-GGUF">Abiray/MiniMax-H3-Pruned-GGUF</a></th><td>DiT</td><td>curve-form AdaLN</td></tr>
-            <tr><th scope="row"><a href="https://huggingface.co/Abiray/MiniMax-H3-GGUF">Abiray/MiniMax-H3-GGUF</a></th><td>DiT, text encoder</td><td>DiTs have dense AdaLN (not tested)</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/Abiray/MiniMax-H3-GGUF">Abiray/MiniMax-H3-GGUF</a></th><td>DiT, text encoder</td><td>DiTs have dense AdaLN</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/leejet/MiniMax-H3-GGUF">leejet/MiniMax-H3-GGUF</a></th><td>DiT, text encoder</td><td>both curve-form and dense</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/molbal/MiniMax-H3-GGUF">molbal/MiniMax-H3-GGUF</a></th><td>DiT</td><td>Q8_CR and U16G unsupported</td></tr>
-            <tr><th scope="row"><a href="https://huggingface.co/realrebelai/MiniMax-H3_GGUFs">realrebelai/MiniMax-H3_GGUFs</a></th><td>DiT, text encoder</td><td>DiTs have dense AdaLN</td></tr>
+            <tr><th scope="row"><a href="https://huggingface.co/realrebelai/MiniMax-H3_GGUFs">realrebelai/MiniMax-H3_GGUFs</a></th><td>DiT, text encoder</td><td>DiTs have dense AdaLN (the same weights as Abiray's)</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/joeygambino/MiniMax-H3-x-Z-Image-GGUF">joeygambino/MiniMax-H3-x-Z-Image-GGUF</a></th><td>DiT</td><td>a merge with Z-Image; <code>curve</code> files are curve-form</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF">nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF</a></th><td>text encoder (50 layers), mmproj</td><td>IQ types unsupported</td></tr>
             <tr><th scope="row"><a href="https://huggingface.co/Comfy-Org/MiniMax-H3">Comfy-Org/MiniMax-H3</a></th><td>VAEs</td><td>the int8 one is unsupported</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="small muted">These are sorted by reading the files' headers in the download screens. Apart from files marked “tested”, loading has been checked but quality has not.</p>
+      <p class="small muted">These are sorted by reading the files' headers in the download screens. Every source has been checked to make a short video with a typical file around Q4 (see “Combinations checked” below).</p>
       <h3>Supported formats</h3>
       <ul>
         <li><strong>Quantization</strong>: Q8_0, Q4_0, Q4_1, Q5_0, Q5_1, Q2_K–Q6_K, F16, BF16, F32. Mixes such as unsloth's “UD-…_XL” work when made only of these.</li>
         <li><strong>Unsupported</strong> (listed with the reason): files with IQ types (IQ4_XS, IQ3_XXS, …), I8 and the like; split GGUF files; safetensors DiTs and text encoders (only GGUF can be imported); VAEs in number formats the app can't read (F8, int8, …); text encoders with fewer than 50 layers.</li>
-        <li><strong>AdaLN form</strong>: DiT GGUFs come with curve-form AdaLN (ComfyUI's “pruned” form) or dense AdaLN. Curve-form is tested; dense loads but generation with it has not been tried.</li>
+        <li><strong>AdaLN form</strong>: DiT GGUFs come with curve-form AdaLN (ComfyUI's “pruned” form) or dense AdaLN. Both work; dense files are about 8 GB larger.</li>
         <li><strong>Text encoder</strong>: the engine uses the first 50 layers of Qwen3-VL-32B; a 64-layer file is cut to those 50 when imported.</li>
       </ul>
     </section>
@@ -184,6 +184,25 @@
           </tbody>
         </table>
       </div>
+      <p>For each known source, a DiT and a text encoder from that source at the same quantization (as far as it offers them) made a 3-second 512×512 video with the same prompt and seed using SSD streaming, and the picture and the audio (speech) were checked (October 19, 2026, Apple M5, 24 GB). Sources without a text encoder were paired with unsloth's Q4_K_M; text-encoder-only sources with unsloth's Q4_K DiT.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Source</th><th scope="col">DiT</th><th scope="col">Text encoder</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">unsloth</th><td><code>minimax_h3_fl2va_pruned-Q4_K</code> (curve-form)</td><td><code>qwen3vl_32b_minimax_h3-Q4_K_M</code></td></tr>
+            <tr><th scope="row">leejet (pruned)</th><td>the same file as unsloth's</td><td>the same file as unsloth's</td></tr>
+            <tr><th scope="row">leejet</th><td><code>minimax_h3_fl2va-Q4_K_M</code> (dense)</td><td>the same file as unsloth's</td></tr>
+            <tr><th scope="row">Abiray</th><td><code>MiniMax-H3-FL2VA-Q4_K_M</code> (dense)</td><td><code>qwen3vl_32b_minimax_h3-Q4_K_M</code></td></tr>
+            <tr><th scope="row">Abiray (Pruned)</th><td><code>MiniMax-H3-FL2VA-Pruned-Q4_K_M</code> (curve-form)</td><td>Abiray's <code>Q4_K_M</code></td></tr>
+            <tr><th scope="row">realrebelai</th><td><code>MiniMax-H3-FL2VA-Q4_K_M</code> (dense)</td><td><code>qwen3vl-32B-MiniMax-H3-Q4_K_M</code></td></tr>
+            <tr><th scope="row">molbal</th><td><code>minimax_h3_fl2va_pruned_fp8_Q4_0</code> (curve-form)</td><td>unsloth's <code>Q4_K_M</code></td></tr>
+            <tr><th scope="row">joeygambino</th><td><code>MiniMax-H3-fl2va-curve-zs05-Q4_0</code> (curve-form)</td><td>unsloth's <code>Q4_K_M</code></td></tr>
+            <tr><th scope="row">Qwen</th><td>unsloth's <code>Q4_K</code></td><td><code>Qwen3VL-32B-Instruct-Q4_K_M</code> (cut to 50 layers) + mmproj F16</td></tr>
+            <tr><th scope="row">nif0</th><td>unsloth's <code>Q4_K</code></td><td><code>…-L0-49-Q4_K_M</code> + mmproj BF16</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">The image part (mmproj) is only used when generating with reference images, so this check covers loading it.</p>
     </section>
 
     <section class="section section-narrow" id="delete" aria-labelledby="delete-title">

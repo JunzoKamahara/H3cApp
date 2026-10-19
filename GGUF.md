@@ -133,16 +133,17 @@ With GGUF files already on disk, use Model Manager's "Import GGUF…".
 | [unsloth/MiniMax-H3-GGUF](https://huggingface.co/unsloth/MiniMax-H3-GGUF) | DiT (FL2VA, Ref2VA), H3-specific text encoder, VAEs | the default; DiTs have curve-form AdaLN |
 | [Qwen/Qwen3-VL-32B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF) | text encoder (64 layers), mmproj | official; cut to 50 layers when imported |
 | [Abiray/MiniMax-H3-Pruned-GGUF](https://huggingface.co/Abiray/MiniMax-H3-Pruned-GGUF) | DiT | curve-form AdaLN |
-| [Abiray/MiniMax-H3-GGUF](https://huggingface.co/Abiray/MiniMax-H3-GGUF) | DiT, text encoder | DiTs have dense AdaLN (not tested) |
+| [Abiray/MiniMax-H3-GGUF](https://huggingface.co/Abiray/MiniMax-H3-GGUF) | DiT, text encoder | DiTs have dense AdaLN |
 | [leejet/MiniMax-H3-GGUF](https://huggingface.co/leejet/MiniMax-H3-GGUF) | DiT, text encoder | both curve-form and dense |
 | [molbal/MiniMax-H3-GGUF](https://huggingface.co/molbal/MiniMax-H3-GGUF) | DiT | Q8_CR and U16G unsupported |
-| [realrebelai/MiniMax-H3_GGUFs](https://huggingface.co/realrebelai/MiniMax-H3_GGUFs) | DiT, text encoder | DiTs have dense AdaLN |
+| [realrebelai/MiniMax-H3_GGUFs](https://huggingface.co/realrebelai/MiniMax-H3_GGUFs) | DiT, text encoder | DiTs have dense AdaLN (the same weights as Abiray's) |
 | [joeygambino/MiniMax-H3-x-Z-Image-GGUF](https://huggingface.co/joeygambino/MiniMax-H3-x-Z-Image-GGUF) | DiT | a merge with Z-Image; `curve` files are curve-form |
 | [nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF](https://huggingface.co/nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF) | text encoder (50 layers), mmproj | IQ types unsupported |
 | [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) | VAEs | the int8 one is unsupported |
 
-These are sorted by reading the files' headers in the download screens. Apart
-from files marked "tested", loading has been checked but quality has not.
+These are sorted by reading the files' headers in the download screens. Every
+source has been checked to make a short video with a typical file around Q4
+(see "Combinations checked" below).
 
 ### Supported formats
 
@@ -156,7 +157,9 @@ from files marked "tested", loading has been checked but quality has not.
   - text encoders with fewer than 50 layers
 - **AdaLN form**: DiT GGUFs come with curve-form AdaLN (ComfyUI's "pruned"
   form, about 24 GiB of weights replaced by a small curve) or dense AdaLN.
-  Curve-form is tested; dense loads but generation with it has not been tried.
+  Both work; dense files are about 8 GB larger. Tensors that ComfyUI-GGUF
+  reshaped to fit whole quantization blocks (`comfy.gguf.orig_shape`) are read
+  back in their original shape.
 - **Text encoder**: the engine uses the first 50 layers of Qwen3-VL-32B. A
   64-layer file is cut to those 50 when imported; an H3-specific (50-layer) file
   is used as is.
@@ -169,6 +172,29 @@ from files marked "tested", loading has been checked but quality has not.
 | DiT unsloth Q4_K + unsloth H3-specific text encoder Q4_K_M + unsloth VAEs | download, import, generation |
 | unsloth's VAEs (video FP16, audio) | the same latents decoded with the official VAEs: video PSNR 51.7 dB on average, audio SNR 72 dB (indistinguishable) |
 | unsloth's H3-specific text encoder | tensor names and shapes match the official weights; relative error 7% at Q4_K for the language part, the image part bit-exact |
+
+For each known source, a DiT and a text encoder from that source at the same
+quantization (as far as it offers them) made a 3-second 512×512 video with the
+same prompt and seed using SSD streaming, and the picture and the audio (speech)
+were checked (October 19, 2026, Apple M5, 24 GB). Sources without a text encoder
+were paired with unsloth's Q4_K_M; text-encoder-only sources with unsloth's Q4_K
+DiT.
+
+| Source | DiT | Text encoder |
+|---|---|---|
+| unsloth | `minimax_h3_fl2va_pruned-Q4_K` (curve-form) | `qwen3vl_32b_minimax_h3-Q4_K_M` |
+| leejet (pruned) | the same file as unsloth's | the same file as unsloth's |
+| leejet | `minimax_h3_fl2va-Q4_K_M` (dense) | the same file as unsloth's |
+| Abiray | `MiniMax-H3-FL2VA-Q4_K_M` (dense) | `qwen3vl_32b_minimax_h3-Q4_K_M` |
+| Abiray (Pruned) | `MiniMax-H3-FL2VA-Pruned-Q4_K_M` (curve-form) | Abiray's `Q4_K_M` |
+| realrebelai | `MiniMax-H3-FL2VA-Q4_K_M` (dense) | `qwen3vl-32B-MiniMax-H3-Q4_K_M` |
+| molbal | `minimax_h3_fl2va_pruned_fp8_Q4_0` (curve-form) | unsloth's `Q4_K_M` |
+| joeygambino | `MiniMax-H3-fl2va-curve-zs05-Q4_0` (curve-form) | unsloth's `Q4_K_M` |
+| Qwen | unsloth's `Q4_K` | `Qwen3VL-32B-Instruct-Q4_K_M` (cut to 50 layers) + mmproj F16 |
+| nif0 | unsloth's `Q4_K` | `…-L0-49-Q4_K_M` + mmproj BF16 |
+
+The image part (mmproj) is only used when generating with reference images, so
+this check covers loading it.
 
 ## Deleting models and disk space
 

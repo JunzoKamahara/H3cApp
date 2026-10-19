@@ -612,13 +612,9 @@ struct ImportPlan {
         }
 
         // DiT (FL2VA)
-        if let dit, let info = dit.info {
-            var detail = describe(dit)
-            if !info.curveAdaLN {
-                detail += String(localized: "（AdaLNが密な形。この形式での動作はまだ確認していません）")
-            }
-            items.append(item("dit", String(localized: "DiT（FL2VA）"),
-                              info.curveAdaLN ? .ok : .warning, detail, part: .dit, chosen: dit))
+        if let dit, dit.info != nil {
+            items.append(item("dit", String(localized: "DiT（FL2VA）"), .ok, describe(dit),
+                              part: .dit, chosen: dit))
         } else {
             items.append(item("dit", String(localized: "DiT（FL2VA）"), .missing,
                               String(localized: "必須です。文章からの生成と最初の画像からの生成に使います。"),

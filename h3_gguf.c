@@ -145,6 +145,71 @@ static int value(reader *r, uint32_t type, char **text, uint64_t *number) {
     return skip(r, size);
 }
 
+/* ComfyUI-GGUF stores a tensor whose rows don't fill whole quant blocks
+ * (H3's AdaLN projections, [96768, 2688]) flattened to rows of 256 and
+ * records its PyTorch shape as comfy.gguf.orig_shape.<name>: the same
+ * values in the same order, so the tensor takes that shape back. */
+#define ORIG_SHAPE_PREFIX "comfy.gguf.orig_shape."
+
+typedef struct {
+    char *name;
+    int ndim;
+    uint64_t shape[8];
+} orig_shape;
+
+/* Reads an array value as a shape; anything but up to 8 integers leaves
+ * ndim 0. */
+static int shape_value(reader *r, orig_shape *out) {
+    uint32_t element;
+    uint64_t count;
+    out->ndim = 0;
+    if (!u32(r, &element) || !u64(r, &count)) return 0;
+    int wide = element == GGUF_UINT64 || element == GGUF_INT64;
+    if ((wide || element == GGUF_UINT32 || element == GGUF_INT32) &&
+        count >= 1 && count <= 8) {
+        for (uint64_t index = 0; index < count; index++) {
+            uint64_t v = 0;
+            uint32_t narrow;
+            if (wide ? !u64(r, &v) : !u32(r, &narrow)) return 0;
+            if (!wide) v = element == GGUF_INT32 ? (uint64_t)(int64_t)(int32_t)narrow : narrow;
+            out->shape[index] = v;
+        }
+        out->ndim = (int)count;
+        return 1;
+    }
+    uint64_t size = scalar_size(element);
+    if (size) {
+        if (count > (r->size - r->position) / size)
+            return fail(r, "truncated GGUF array");
+        return skip(r, count * size);
+    }
+    for (uint64_t index = 0; index < count; index++)
+        if (!value(r, element, NULL, NULL)) return 0;
+    return 1;
+}
+
+static void apply_orig_shapes(h3_st_header *header, const orig_shape *shapes,
+                              size_t count) {
+    for (size_t s = 0; s < count; s++) {
+        uint64_t want = 1;
+        for (int d = 0; d < shapes[s].ndim; d++) {
+            if (!shapes[s].shape[d] || shapes[s].shape[d] > (1ull << 40)) want = 0;
+            else want *= shapes[s].shape[d];
+        }
+        for (size_t t = 0; want && t < header->tensor_count; t++) {
+            h3_st_tensor *tensor = &header->tensors[t];
+            if (strcmp(tensor->name, shapes[s].name)) continue;
+            uint64_t have = 1;
+            for (int d = 0; d < tensor->ndim; d++) have *= tensor->shape[d];
+            if (have == want) {
+                tensor->ndim = shapes[s].ndim;
+                memcpy(tensor->shape, shapes[s].shape, sizeof(shapes[s].shape));
+            }
+            break;
+        }
+    }
+}
+
 int h3_gguf_read_header(const char *path, h3_st_header *header,
                         char *error, size_t error_size) {
     if (!path || !header) return 0;
@@ -168,6 +233,8 @@ int h3_gguf_read_header(const char *path, h3_st_header *header,
     uint32_t version = 0;
     uint64_t tensor_count = 0, kv_count = 0, alignment = 32;
     size_t metadata_capacity = 0;
+    orig_shape *shapes = NULL;
+    size_t shape_count = 0, shape_capacity = 0;
     if (!take(&r, magic, 4) || memcmp(magic, "GGUF", 4)) {
         fail(&r, "not a GGUF file");
         goto failed;
@@ -194,6 +261,30 @@ int h3_gguf_read_header(const char *path, h3_st_header *header,
         if (!u32(&r, &type)) {
             free(key);
             goto failed;
+        }
+        if (type == GGUF_ARRAY && !strncmp(key, ORIG_SHAPE_PREFIX, strlen(ORIG_SHAPE_PREFIX))) {
+            orig_shape shape;
+            if (!shape_value(&r, &shape)) {
+                free(key);
+                goto failed;
+            }
+            if (shape.ndim && shape_count == shape_capacity) {
+                size_t next = shape_capacity ? shape_capacity * 2 : 16;
+                orig_shape *grown = realloc(shapes, next * sizeof(*grown));
+                if (!grown) {
+                    free(key);
+                    fail(&r, "out of memory");
+                    goto failed;
+                }
+                shapes = grown;
+                shape_capacity = next;
+            }
+            if (shape.ndim) {
+                shape.name = strdup(key + strlen(ORIG_SHAPE_PREFIX));
+                if (shape.name) shapes[shape_count++] = shape;
+            }
+            free(key);
+            continue;
         }
         char *text = NULL;
         uint64_t number = 0;
@@ -289,10 +380,15 @@ int h3_gguf_read_header(const char *path, h3_st_header *header,
         }
         tensor->file_offset = data_start + tensor->data_begin;
     }
+    apply_orig_shapes(header, shapes, shape_count);
+    for (size_t index = 0; index < shape_count; index++) free(shapes[index].name);
+    free(shapes);
     fclose(r.file);
     return 1;
 
 failed:
+    for (size_t index = 0; index < shape_count; index++) free(shapes[index].name);
+    free(shapes);
     if (r.file) fclose(r.file);
     h3_st_free_header(header);
     return 0;

@@ -127,16 +127,17 @@ VAE も GGUF では配られていませんが、unsloth と Comfy-Org が単体
 | [unsloth/MiniMax-H3-GGUF](https://huggingface.co/unsloth/MiniMax-H3-GGUF) | DiT（FL2VA・Ref2VA）、H3専用の文章の部分、VAE | 標準の配布元。DiT は曲線形の AdaLN |
 | [Qwen/Qwen3-VL-32B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF) | 文章の部分（64層）、mmproj | 公式。取り込み時に50層へ切り詰め |
 | [Abiray/MiniMax-H3-Pruned-GGUF](https://huggingface.co/Abiray/MiniMax-H3-Pruned-GGUF) | DiT | 曲線形の AdaLN |
-| [Abiray/MiniMax-H3-GGUF](https://huggingface.co/Abiray/MiniMax-H3-GGUF) | DiT、文章の部分 | DiT は密な AdaLN（動作未確認） |
+| [Abiray/MiniMax-H3-GGUF](https://huggingface.co/Abiray/MiniMax-H3-GGUF) | DiT、文章の部分 | DiT は密な AdaLN |
 | [leejet/MiniMax-H3-GGUF](https://huggingface.co/leejet/MiniMax-H3-GGUF) | DiT、文章の部分 | 曲線形と密な形の両方 |
 | [molbal/MiniMax-H3-GGUF](https://huggingface.co/molbal/MiniMax-H3-GGUF) | DiT | Q8_CR・U16G は未対応 |
-| [realrebelai/MiniMax-H3_GGUFs](https://huggingface.co/realrebelai/MiniMax-H3_GGUFs) | DiT、文章の部分 | DiT は密な AdaLN |
+| [realrebelai/MiniMax-H3_GGUFs](https://huggingface.co/realrebelai/MiniMax-H3_GGUFs) | DiT、文章の部分 | DiT は密な AdaLN（中身は Abiray と同じ重み） |
 | [joeygambino/MiniMax-H3-x-Z-Image-GGUF](https://huggingface.co/joeygambino/MiniMax-H3-x-Z-Image-GGUF) | DiT | Z-Image との合成モデル。`curve` 付きが曲線形 |
 | [nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF](https://huggingface.co/nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF) | 文章の部分（50層）、mmproj | IQ 系は未対応 |
 | [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) | VAE | int8 版は未対応 |
 
-いずれも、ダウンロードの画面で先頭を読んだ結果に基づく分類です。「動作確認済み」と
-表示するもの以外は、読み込めることは確かめていますが、画質はまだ確かめていません。
+いずれも、ダウンロードの画面で先頭を読んだ結果に基づく分類です。どの配布元も、
+Q4 前後の代表的なファイルで短い動画を作れることを確かめています（下の
+「動作を確かめた組み合わせ」）。
 
 ### 対応している形式
 
@@ -149,8 +150,9 @@ VAE も GGUF では配られていませんが、unsloth と Comfy-Org が単体
   - 読めない数値形式（F8、int8 など）の VAE
   - 層が50に足りない文章の部分
 - **AdaLN の形**：DiT の GGUF には、AdaLN が「曲線形」（ComfyUI の pruned 形式。
-  約24GiBの重みを小さな曲線で表したもの）と「密な形」の2種類があります。曲線形は
-  動作を確かめています。密な形は読み込めますが、生成はまだ試していません。
+  約24GiBの重みを小さな曲線で表したもの）と「密な形」の2種類があります。どちらも
+  使えます。密な形はファイルが8GBほど大きくなります。ComfyUI-GGUF が行の長さを
+  揃えるために並べ替えたテンソル（`comfy.gguf.orig_shape`）は、元の形に戻して読みます。
 - **文章の部分**：エンジンが使うのは Qwen3-VL-32B の最初の50層です。64層のものは
   取り込みのときに50層だけに切り詰めて書き出します。H3専用（50層）のものは
   そのまま使います。
@@ -163,6 +165,27 @@ VAE も GGUF では配られていませんが、unsloth と Comfy-Org が単体
 | DiT unsloth Q4_K ＋ 文章の部分 unsloth H3専用 Q4_K_M ＋ unsloth の VAE | ダウンロード・取り込み・生成 |
 | unsloth の VAE（映像 FP16・音声） | 同じ潜在を公式の VAE と比べて、映像 PSNR 平均 51.7dB、音声 SNR 72dB（見分けがつかない） |
 | unsloth の H3専用 文章の部分 | テンソル名と形が公式の重みと一致。言語の部分の誤差は Q4_K で相対 7%、画像の部分はビット単位で一致 |
+
+既知の配布元ごとに、なるべく同じ配布元・同じ量子化の DiT と文章の部分を組み合わせて、
+3秒・512×512・SSD ストリーミングで同じプロンプトと seed の動画を作り、映像と音声
+（話し声）を確かめました（2026年10月19日、Apple M5・24GB）。配布元に文章の部分がない
+ものは unsloth の Q4_K_M を、文章の部分だけの配布元は DiT に unsloth の Q4_K を使っています。
+
+| 配布元 | DiT | 文章の部分 |
+|---|---|---|
+| unsloth | `minimax_h3_fl2va_pruned-Q4_K`（曲線形） | `qwen3vl_32b_minimax_h3-Q4_K_M` |
+| leejet（剪定版） | unsloth と同じファイル | unsloth と同じファイル |
+| leejet | `minimax_h3_fl2va-Q4_K_M`（密な形） | unsloth と同じファイル |
+| Abiray | `MiniMax-H3-FL2VA-Q4_K_M`（密な形） | `qwen3vl_32b_minimax_h3-Q4_K_M` |
+| Abiray（Pruned） | `MiniMax-H3-FL2VA-Pruned-Q4_K_M`（曲線形） | Abiray の `Q4_K_M` |
+| realrebelai | `MiniMax-H3-FL2VA-Q4_K_M`（密な形） | `qwen3vl-32B-MiniMax-H3-Q4_K_M` |
+| molbal | `minimax_h3_fl2va_pruned_fp8_Q4_0`（曲線形） | unsloth の `Q4_K_M` |
+| joeygambino | `MiniMax-H3-fl2va-curve-zs05-Q4_0`（曲線形） | unsloth の `Q4_K_M` |
+| Qwen | unsloth の `Q4_K` | `Qwen3VL-32B-Instruct-Q4_K_M`（50層へ切り詰め）＋ mmproj F16 |
+| nif0 | unsloth の `Q4_K` | `…-L0-49-Q4_K_M` ＋ mmproj BF16 |
+
+画像の部分（mmproj）は、参照画像を使う生成でしか使わないため、この確認では読み込み
+までです。
 
 ## モデルの削除とディスク容量
 
