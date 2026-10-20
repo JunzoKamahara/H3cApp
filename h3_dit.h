@@ -18,6 +18,13 @@ typedef int (*h3_dit_preview)(int completed_steps, int total_steps,
                               const float *video_latent,
                               size_t video_elements, void *opaque);
 
+/* The model's estimate of the clean video latent, x0 = x_t + sigma * v, as
+ * channel-major F32 [24, time, height, width] (valid only during the call),
+ * after the model evaluation of a step. Nonzero stops the denoise. */
+typedef int (*h3_dit_latent_preview)(int completed_steps, int total_steps,
+                                     const float *clean_video, int time,
+                                     int height, int width, void *opaque);
+
 /* Seed-independent preparation kept between loads: the token refiner's
  * output (a few MB) and the AdaLN schedule (time rows x 50 blocks, a few
  * hundred MB). A load reuses a part only when everything it was computed
@@ -125,6 +132,14 @@ void h3_dit_set_sampler(h3_dit *dit, int sampler, uint64_t seed);
 /* A stop request the denoising loop checks before every step and DiT
  * block (h3_params.cancel_requested); NULL turns the check off. */
 void h3_dit_set_cancel(h3_dit *dit, const volatile int *cancel_requested);
+
+/* A light preview for a caller-side tiny decoder (no VAE runs): on every
+ * `every`-th model evaluation of the next denoise (counted from 1, so reused
+ * steps never shift it), except on the last step, `preview` gets the
+ * clean-latent estimate. It costs one wait for the GPU per delivery. every 0
+ * or NULL turns it off; set it before each denoise. */
+void h3_dit_set_latent_preview(h3_dit *dit, int every,
+                               h3_dit_latent_preview preview, void *opaque);
 
 int h3_dit_set_forced_audio(h3_dit *dit, const float *clean_latent,
                             size_t elements, char *error, size_t error_size);

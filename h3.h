@@ -92,6 +92,23 @@ typedef struct {
 } h3_frame;
 
 typedef int (*h3_frame_callback)(const h3_frame *frame, void *opaque);
+
+/* The model's estimate of the finished video latent while it denoises
+ * (x0 = x_t + sigma * v): channel-major F32 [24, time, height, width] in the
+ * DiT's normalized latent space, valid only during the callback. For a tiny
+ * caller-side preview decoder (such as TAEHV's taeh3); no VAE runs. */
+typedef struct {
+    const float *latent;
+    int channels;
+    int time;
+    int height;
+    int width;
+    int step;   /* 1-based denoising step whose model evaluation this is */
+    int steps;
+} h3_latent_preview;
+
+typedef int (*h3_latent_preview_callback)(const h3_latent_preview *preview,
+                                          void *opaque);
 typedef int (*h3_progress_callback)(const char *phase, int completed, int total,
                                     void *opaque);
 
@@ -158,6 +175,11 @@ typedef struct {
     int use_slower_grouped_quantizer;
     /* Decode and deliver one representative frame after every Euler step. */
     int preview_denoise;
+    /* Hand on_latent_preview the clean-latent estimate on every this-many-th
+     * model evaluation (reused steps are not counted; never the last step);
+     * 0 is off. Each delivery waits for the GPU once. */
+    int latent_preview_every;
+    h3_latent_preview_callback on_latent_preview;
     h3_frame_callback on_frame;
     h3_progress_callback on_progress;
     void *callback_opaque;

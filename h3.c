@@ -856,6 +856,11 @@ static int h3_valid_params(h3_ctx *ctx, const h3_params *params) {
         h3_set_error(ctx, "denoising preview must be zero or one");
         return 0;
     }
+    if (params->latent_preview_every < 0 ||
+        (params->latent_preview_every > 0 && !params->on_latent_preview)) {
+        h3_set_error(ctx, "a latent preview needs a positive interval and a callback");
+        return 0;
+    }
     if (params->preview_denoise && !params->on_frame) {
         h3_set_error(ctx, "denoising preview requires a frame callback");
         return 0;
@@ -1158,6 +1163,16 @@ typedef struct {
     int output_height;
     int failed;
 } h3_live_preview;
+
+/* h3_dit's latent preview handed on as h3_params.on_latent_preview. */
+static int h3_deliver_latent_preview(int completed_steps, int total_steps,
+                                     const float *clean_video, int time,
+                                     int height, int width, void *opaque) {
+    const h3_params *params = opaque;
+    h3_latent_preview preview = {clean_video, 24, time, height, width,
+                                 completed_steps, total_steps};
+    return params->on_latent_preview(&preview, params->callback_opaque);
+}
 
 static int h3_deliver_denoise_preview(int completed_steps, int total_steps,
                                       const float *video_latent,
@@ -2198,12 +2213,20 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     uint64_t ccv_calls_before = h3_gpu_ccv_attention_dispatch_count();
     uint64_t ccv_direct_before = h3_gpu_ccv_attention_direct_count();
     h3_dit_set_cancel(dit, params->cancel_requested);
-    if (!h3_dit_denoise_euler_preview(
+    /* Set on every run (and cleared below), so a retained DiT never keeps a
+     * callback into an earlier request. */
+    h3_dit_set_latent_preview(dit, params->latent_preview_every,
+                              params->latent_preview_every > 0
+                                  ? h3_deliver_latent_preview : NULL,
+                              (void *)params);
+    int denoised = h3_dit_denoise_euler_preview(
             dit, video, audio, params->denoise_reuse,
             h3_dit_progress_bridge, &progress,
             preview_decoder ? h3_deliver_denoise_preview : NULL,
             preview_decoder ? &live_preview : NULL,
-            detail, sizeof(detail))) {
+            detail, sizeof(detail));
+    h3_dit_set_latent_preview(dit, 0, NULL, NULL);
+    if (!denoised) {
         if (!live_preview.failed) h3_set_error(ctx, "%s", detail);
         h3_dit_set_cancel(dit, NULL);
         h3_dit_release_backend_scratch(dit);

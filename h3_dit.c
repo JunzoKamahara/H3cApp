@@ -234,6 +234,11 @@ struct h3_dit {
     h3_lora_set *loras;
     /* h3_params.cancel_requested, via h3_dit_set_cancel. */
     const volatile int *cancel_requested;
+    /* h3_dit_set_latent_preview; evaluations counted since it was set */
+    int latent_preview_every;
+    int latent_preview_evaluations;
+    h3_dit_latent_preview latent_preview;
+    void *latent_preview_opaque;
     h3_dit_attention_slot attention_slots[2];
     unsigned attn_ready_layer;
     unsigned attn_ready_slot;
@@ -328,6 +333,37 @@ static void report(h3_dit_progress progress, void *opaque, const char *phase,
 
 void h3_dit_set_cancel(h3_dit *dit, const volatile int *cancel_requested) {
     if (dit) dit->cancel_requested = cancel_requested;
+}
+
+void h3_dit_set_latent_preview(h3_dit *dit, int every,
+                               h3_dit_latent_preview preview, void *opaque) {
+    if (!dit) return;
+    dit->latent_preview_every = preview ? every : 0;
+    dit->latent_preview = every > 0 ? preview : NULL;
+    dit->latent_preview_opaque = opaque;
+    dit->latent_preview_evaluations = 0;
+}
+
+/* Called once per evaluated step (0-based): whether it delivers a latent
+ * preview. */
+static int wants_latent_preview(h3_dit *dit, int step) {
+    if (!dit->latent_preview || dit->latent_preview_every <= 0) return 0;
+    dit->latent_preview_evaluations++;
+    return dit->latent_preview_evaluations % dit->latent_preview_every == 0 &&
+           step + 1 < dit->sigmas.steps;
+}
+
+/* clean = sample + sigma * velocity, channel-major, handed to the preview. */
+static int deliver_latent_preview(h3_dit *dit, int step, const float *clean,
+                                  char *error, size_t error_size) {
+    if (dit->latent_preview(step + 1, dit->sigmas.steps, clean,
+                            dit->latent_t, dit->latent_h, dit->latent_w,
+                            dit->latent_preview_opaque)) {
+        fail(error, error_size, "denoising preview stopped at step %d",
+             step + 1);
+        return 0;
+    }
+    return 1;
 }
 
 /* A stop was asked for: let the GPU finish what is already encoded (a
@@ -4026,6 +4062,52 @@ static int denoise_euler_gpu(h3_dit *dit, float *video_latent,
             }
         }
         if (!ok) break;
+        if (evaluate && wants_latent_preview(dit, step)) {
+            /* Before the update: x_t and this step's fresh velocity give the
+             * clean estimate for Euler and re-noise alike. */
+            uint16_t *velocity = malloc(video_count * sizeof(*velocity));
+            float *clean = malloc(h3_dit_video_elements(dit) * sizeof(*clean));
+            ok = gpu_op(dit, h3_gpu_submit(dit->gpu), error, error_size,
+                        "submit GPU preview step");
+            command_active = 0;
+            pending_evaluations = 0;
+            if (ok && (!velocity || !clean)) {
+                fail(error, error_size, "out of memory for the latent preview");
+                ok = 0;
+            }
+            if (ok && !(h3_gpu_tensor_read_f32_range(
+                            dit->video_input, video_offset, video_rows,
+                            video_count) &&
+                        h3_gpu_tensor_read_bf16(dit->video_output_bf16,
+                                                velocity, video_count))) {
+                fail(error, error_size,
+                     "cannot read the latent preview at step %d", step);
+                ok = 0;
+            }
+            if (ok) {
+                float sigma = dit->sigmas.video[step];
+                for (size_t index = 0; index < video_count; index++) {
+                    uint32_t bits = (uint32_t)velocity[index] << 16;
+                    float v;
+                    memcpy(&v, &bits, sizeof(v));
+                    video_rows[index] += sigma * v;
+                }
+                ok = h3_dit_unpatchify_video(
+                         video_rows, VIDEO_CHANNELS, dit->latent_t,
+                         dit->latent_h, dit->latent_w, clean,
+                         h3_dit_video_elements(dit)) &&
+                     deliver_latent_preview(dit, step, clean,
+                                            error, error_size);
+            }
+            free(velocity);
+            free(clean);
+            if (ok) {
+                ok = gpu_op(dit, h3_gpu_begin(dit->gpu), error, error_size,
+                            "begin GPU Euler command chain");
+                command_active = ok;
+            }
+            if (!ok) break;
+        }
 
         float video_ratio = evaluate ? 0.0f : extrapolation_ratio(
             dit->sigmas.video[step], dit->sigmas.video[last_evaluated],
@@ -4334,6 +4416,21 @@ int h3_dit_denoise_euler_preview(
         if (ok && forced)
             memcpy(audio_velocity, forced_velocity,
                    audio_count * sizeof(*audio_velocity));
+        if (ok && evaluate && wants_latent_preview(dit, step)) {
+            float *clean = malloc(video_count * sizeof(*clean));
+            float sigma = dit->sigmas.video[step];
+            if (!clean) {
+                fail(error, error_size, "out of memory for the latent preview");
+                ok = 0;
+            } else {
+                for (size_t index = 0; index < video_count; index++)
+                    clean[index] = video_latent[index] +
+                                   sigma * video_velocity[index];
+                ok = deliver_latent_preview(dit, step, clean,
+                                            error, error_size);
+                free(clean);
+            }
+        }
         if (ok && dit->sampler == H3_SAMPLER_RENOISE) {
             uint32_t video_keys[2], audio_keys[2];
             h3_renoise_keys(dit->sampler_seed, step, 0, video_keys);
