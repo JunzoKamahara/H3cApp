@@ -10,7 +10,22 @@ public enum H3GenerationEvent: Sendable {
     case progress(phase: String, completed: Int, total: Int)
     case frame(index: Int, count: Int, width: Int, height: Int)
     case preview(step: Int, steps: Int)
+    /// The model's estimate of the finished video latent while it denoises
+    /// (see H3GenerationParams.latentPreviewEvery).
+    case latentPreview(H3LatentPreview)
     case finished(H3GenerationResult)
+}
+
+/// x0 = x_t + sigma * v after a step's model evaluation: channel-major
+/// [24, time, height, width] in the DiT's normalized latent space, for a
+/// tiny preview decoder.
+public struct H3LatentPreview: Sendable {
+    public let step: Int
+    public let steps: Int
+    public let time: Int
+    public let height: Int
+    public let width: Int
+    public let latent: [Float]
 }
 
 public struct H3AttentionCacheProgress: Sendable {
@@ -188,6 +203,10 @@ public struct H3GenerationParams: Sendable {
     public var saveLatentPath: String?
     public var continueLatentPath: String?
     public var continueFrames: Int32 = 22
+    /// Deliver .latentPreview on every this-many-th model evaluation
+    /// (reused steps are not counted; never the last step); 0 is off. Each
+    /// costs one wait for the GPU.
+    public var latentPreviewEvery: Int32 = 0
     public init() {}
 }
 
@@ -346,6 +365,19 @@ private let h3FrameTrampoline: h3_frame_callback = { framePtr, opaque in
     } else {
         bridge.continuation.yield(.frame(index: Int(frame.frame_index), count: Int(frame.frame_count),
                                           width: Int(frame.width), height: Int(frame.height)))
+    }
+    return bridge.cancelFlag.isCancelled ? 1 : 0
+}
+
+private let h3LatentPreviewTrampoline: h3_latent_preview_callback = { previewPtr, opaque in
+    guard let previewPtr, let opaque else { return 0 }
+    let bridge = Unmanaged<GenerationBridge>.fromOpaque(opaque).takeUnretainedValue()
+    let p = previewPtr.pointee
+    let count = Int(p.channels) * Int(p.time) * Int(p.height) * Int(p.width)
+    if let latent = p.latent, count > 0 {
+        bridge.continuation.yield(.latentPreview(H3LatentPreview(
+            step: Int(p.step), steps: Int(p.steps), time: Int(p.time), height: Int(p.height),
+            width: Int(p.width), latent: Array(UnsafeBufferPointer(start: latent, count: count)))))
     }
     return bridge.cancelFlag.isCancelled ? 1 : 0
 }
@@ -524,16 +556,20 @@ public final class H3Engine: @unchecked Sendable {
                 cParams.continue_frames = params.continueFrames
                 // The values actually handed to the engine (not the form's
                 // labels), for checking presets and defaults end to end.
-                NSLog("h3: generation params - %dx%d, %d frames, %d steps, dit_layers %d, denoise_reuse %d, core_reuse %d, token_reduction %d, fast_attention %d, ssd_streaming %d, sampler %d, audio_shift %.3g, forced_audio %d (offset %.3f s), continue %d (%d frames), seed %llu",
+                NSLog("h3: generation params - %dx%d, %d frames, %d steps, dit_layers %d, denoise_reuse %d, core_reuse %d, token_reduction %d, fast_attention %d, ssd_streaming %d, sampler %d, audio_shift %.3g, forced_audio %d (offset %.3f s), continue %d (%d frames), latent preview every %d, seed %llu",
                       cParams.width, cParams.height, cParams.frames, cParams.steps,
                       cParams.dit_layers, cParams.denoise_reuse, cParams.core_reuse,
                       cParams.token_reduction, cParams.fast_attention, cParams.ssd_streaming,
                       cParams.sampler, Double(cParams.audio_sigma_shift),
                       params.forcedAudioPath == nil ? 0 : 1, params.forcedAudioOffset,
                       params.continueLatentPath == nil ? 0 : 1, params.continueFrames,
-                      cParams.seed)
+                      params.latentPreviewEvery, cParams.seed)
                 cParams.on_progress = h3ProgressTrampoline
                 cParams.on_frame = h3FrameTrampoline
+                if params.latentPreviewEvery > 0 {
+                    cParams.latent_preview_every = params.latentPreviewEvery
+                    cParams.on_latent_preview = h3LatentPreviewTrampoline
+                }
                 cParams.callback_opaque = bridgeHandle.toOpaque()
 
                 let result: UnsafeMutablePointer<h3_result>? = withLoRAArray(params.loras) { loraBuffer in

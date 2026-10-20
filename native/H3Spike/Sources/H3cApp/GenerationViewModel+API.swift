@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import H3Engine
 
@@ -66,6 +67,21 @@ extension GenerationViewModel {
             return .json(200, ["ok": true])
         case ("GET", "/api/result/video"):
             return resultVideoResponse()
+        case ("GET", "/api/preview"):
+            // 途中の様子 as PNG: the latest picture of the running generation.
+            guard let image = denoisePreviewImage,
+                  let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+                return .error(404, "no denoise preview yet (turn it on with POST /api/preview/settings)")
+            }
+            return HTTPResponse(status: 200, headers: ["Content-Type": "image/png"], body: png)
+        case ("POST", "/api/preview/settings"):
+            // {"enabled": bool} - Advanced Settings' 途中の様子; turning it on
+            // downloads the decoder (22.7 MB) when it is not there yet.
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard let enabled = json["enabled"] as? Bool else { return .error(400, "\"enabled\" must be true or false") }
+            showDenoisePreview = enabled
+            if enabled && !DenoisePreviewWeights.isPresent { denoisePreviewDownloader.download() }
+            return .json(200, denoisePreviewStatus)
         case ("GET", "/api/models"):
             return .json(200, library.models.map {
                 ["id": $0.id.uuidString, "name": $0.name, "path": $0.path, "active": $0.id == library.activeModelID]
@@ -329,6 +345,7 @@ extension GenerationViewModel {
         if let progressBarFraction { body["progress_fraction"] = progressBarFraction }
         if let errorMessage { body["error_message"] = errorMessage }
         if let project { body["project"] = project.name }
+        body["denoise_preview"] = denoisePreviewStatus
         if let batchProgress {
             var batch: [String: Any] = ["index": batchProgress.index, "total": batchProgress.total,
                                         "chained": batchProgress.chained]
@@ -422,6 +439,22 @@ extension GenerationViewModel {
             return .error(400, projectMessage)
         }
         return projectResponse()
+    }
+
+    private var denoisePreviewStatus: [String: Any] {
+        var status: [String: Any] = ["enabled": showDenoisePreview,
+                                     "decoder_ready": DenoisePreviewWeights.isPresent,
+                                     "available": denoisePreviewImage != nil]
+        switch denoisePreviewDownloader.state {
+        case .downloading: status["downloading"] = true
+        case .failed(let message): status["download_error"] = message
+        case .idle: break
+        }
+        if denoisePreviewImage != nil {
+            status["step"] = denoisePreviewStep
+            status["steps"] = denoisePreviewSteps
+        }
+        return status
     }
 
     private func resultVideoResponse() -> HTTPResponse {

@@ -153,6 +153,21 @@ final class GenerationViewModel: ObservableObject {
         UserDefaults.standard.object(forKey: "h3c-app.useAdaLNCurve") as? Bool ?? true {
         didSet { UserDefaults.standard.set(useAdaLNCurve, forKey: "h3c-app.useAdaLNCurve") }
     }
+    /// 途中の様子: show what the video is turning into while it denoises
+    /// (DenoisePreview.swift). An app-wide preference; off until turned on,
+    /// since it needs the 22.7 MB decoder downloaded first.
+    @Published var showDenoisePreview: Bool =
+        UserDefaults.standard.bool(forKey: "h3c-app.showDenoisePreview") {
+        didSet { UserDefaults.standard.set(showDenoisePreview, forKey: "h3c-app.showDenoisePreview") }
+    }
+    /// The latest preview picture of the running generation and its step.
+    @Published private(set) var denoisePreviewImage: CGImage?
+    @Published private(set) var denoisePreviewStep: Int = 0
+    @Published private(set) var denoisePreviewSteps: Int = 0
+    let denoisePreviewDownloader = DenoisePreviewDownloader()
+    private let denoisePreviewRenderer = DenoisePreviewRenderer()
+    /// On, and the decoder is there.
+    var denoisePreviewActive: Bool { showDenoisePreview && DenoisePreviewWeights.isPresent }
     /// Reuse actually sent to the engine: the 高速/最速 presets rely on core
     /// reuse, which the engine won't combine with denoiser reuse, and were
     /// measured at reuse 1 - so they run at 1 whatever denoiseReuse holds.
@@ -946,6 +961,8 @@ final class GenerationViewModel: ObservableObject {
         params.forcedAudioOffset = max(0, forcedAudioOffset)
         params.continueLatentPath = continuation?.latentURL.path
         params.continueFrames = Int32(continuation?.frames ?? continuationFrames)
+        params.latentPreviewEvery = denoisePreviewActive
+            ? DenoisePreviewRenderer.interval(steps: Int(params.steps), reuse: effectiveDenoiseReuse) : 0
 
         var lateness = 0.0
         if let continuation {
@@ -1013,6 +1030,7 @@ final class GenerationViewModel: ObservableObject {
         errorMessage = nil
         resultURL = nil
         phase = ""
+        denoisePreviewImage = nil
 
         let outputPath = NSTemporaryDirectory() + "H3cApp_\(Int(Date().timeIntervalSince1970))_\(index).mp4"
         estimator = ProgressEstimator(
@@ -1044,6 +1062,13 @@ final class GenerationViewModel: ObservableObject {
                         break
                     case .preview:
                         break
+                    case .latentPreview(let preview):
+                        self.denoisePreviewRenderer.render(preview) { [weak self] image in
+                            guard let self, self.isGenerating, let image else { return }
+                            self.denoisePreviewImage = image
+                            self.denoisePreviewStep = preview.step
+                            self.denoisePreviewSteps = preview.steps
+                        }
                     case .finished(let result):
                         self.finish(result, request: request, seedWasRandom: seedWasRandom, startedAt: startedAt)
                         succeeded = true
@@ -1062,6 +1087,7 @@ final class GenerationViewModel: ObservableObject {
             if succeeded { self.batchState?.actual.append(Date().timeIntervalSince(startedAt)) }
             self.isGenerating = false
             self.isCancelling = false
+            self.denoisePreviewImage = nil
             self.stopElapsedTimer()
             // Next video of the batch, unless this one failed or the batch
             // was cancelled.

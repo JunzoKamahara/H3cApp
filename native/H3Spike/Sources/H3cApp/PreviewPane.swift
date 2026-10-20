@@ -107,6 +107,9 @@ struct PreviewPane: View {
 
     private var generatingView: some View {
         VStack(spacing: H3Spacing.md) {
+            if let image = viewModel.denoisePreviewImage {
+                denoisePreview(image)
+            }
             if let batch = viewModel.batchProgress, let timing = viewModel.batchTiming {
                 batchTimingView(batch, timing)
             }
@@ -146,6 +149,22 @@ struct PreviewPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(palette.stage)
         .clipShape(RoundedRectangle(cornerRadius: H3Radius.stage))
+    }
+
+    /// 途中の様子: the picture the video is turning into, from the model's
+    /// estimate of the finished latent (Advanced Settings).
+    private func denoisePreview(_ image: CGImage) -> some View {
+        VStack(spacing: 4) {
+            Image(decorative: image, scale: 1)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: 640, maxHeight: 360)
+                .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
+            Text("途中の様子（ステップ \(viewModel.denoisePreviewStep)/\(viewModel.denoisePreviewSteps)）。できあがる動画とは細部が変わります。")
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
+        }
+        .padding(.horizontal, H3Spacing.lg)
     }
 
     /// Several videos or a つなげて生成: which one this is and when the whole
