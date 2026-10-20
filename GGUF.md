@@ -123,7 +123,7 @@ With GGUF files already on disk, use Model Manager's "Import GGUF…".
   on the GPU, so less is read.
 - A GGUF DiT with curve-form AdaLN carries the conditioning approximation
   itself; no separate curve file is needed.
-- A model imported without Ref2VA can get it later: Model Manager's "…" →
+- From v0.6.1, a model imported without Ref2VA can get it later: Model Manager's "…" →
   "Add Ref2VA…" downloads a Ref2VA DiT GGUF from Hugging Face or takes a file
   you have. The text encoder, VAEs and configs are cloned from the model's
   FL2VA, so only the DiT takes space.
