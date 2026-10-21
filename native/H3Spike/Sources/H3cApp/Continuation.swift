@@ -47,12 +47,40 @@ extension GenerationViewModel {
             projectMessage = String(localized: "登録されていない追加モデル（LoRA）は使えません: \(names)")
         }
         creationMethod = .text
-        if forcedAudioPath != nil {
-            let added = Double(record.actualFrameCount - continuationFrames) / Double(record.fps)
-            forcedAudioOffset = (draft.forcedAudioOffset ?? 0) + added
+        if let audio = forcedAudioPath {
+            let length = (try? AVAudioFile(forReading: URL(fileURLWithPath: audio)))
+                .map { Double($0.length) / $0.fileFormat.sampleRate }
+            if let offset = continuationAudioOffset(after: video), offset < (length ?? .infinity) - 0.1 {
+                forcedAudioOffset = offset
+            } else {
+                // Past the end of the audio: the continuation makes its own
+                // sound, as a つなげて生成's later clips do.
+                forcedAudioPath = nil
+                forcedAudioOffset = 0
+                projectMessage = String(localized: "音声の終わりを過ぎるので、続きはリップシンクなしで作ります")
+            }
         }
         continuation = ContinuationSource(videoURL: video.url, latentURL: latent,
                                           sizeProfileRaw: draft.sizeProfile)
+    }
+
+    /// Where lip sync carries on after `video`: where its last clip's audio
+    /// started plus what that clip added beyond the frames the continuation
+    /// carries over. A joined video's record has its whole length but
+    /// either its last clip's settings (つないで書き出す) or its first
+    /// clip's (つなげて生成), so the last clip's own record is used. Nil
+    /// when that clip had no lip sync (its audio had already ended).
+    func continuationAudioOffset(after video: ProjectVideo) -> Double? {
+        guard var record = video.record else { return nil }
+        // A joined video can end in another joined video; a few levels.
+        for _ in 0 ..< 8 {
+            guard let last = record.joinedClips?.last,
+                  let clip = projectVideo(atStoredPath: last)?.record else { break }
+            record = clip
+        }
+        guard record.draft.forcedAudio != nil else { return nil }
+        return (record.draft.forcedAudioOffset ?? 0)
+            + Double(record.actualFrameCount - continuationFrames) / Double(max(record.fps, 1))
     }
 
     /// Whether the panel offers 続きを生成 for the video in the preview: a
