@@ -770,3 +770,5 @@
 "プレビュー用のデコーダを読み込めません（%@）" = "Can't read the preview decoder (%@)";
 "プレビュー用のデコーダに %@ がありません" = "The preview decoder has no %@";
 "GPUを使えません" = "The GPU isn't available";
+"音声の終わりを過ぎるので、続きはリップシンクなしで作ります" = "The audio ends before this point, so the continuation is made without lip sync";
+"途中の様子は、ノイズ除去が少し進むと表示されます" = "A preview appears once the noise removal is a little way along";

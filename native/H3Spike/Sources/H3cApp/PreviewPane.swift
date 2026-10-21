@@ -106,9 +106,29 @@ struct PreviewPane: View {
     }
 
     private var generatingView: some View {
+        GeometryReader { geometry in
+            generatingStack(height: geometry.size.height)
+                .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .background(palette.stage)
+        .clipShape(RoundedRectangle(cornerRadius: H3Radius.stage))
+    }
+
+    /// The preview picture gets what the progress text below it leaves of
+    /// the stage (above the composer), so that text always stays in view.
+    private func denoisePreviewHeight(stage height: CGFloat) -> CGFloat {
+        let text: CGFloat = viewModel.batchProgress == nil ? 190 : 290
+        return min(360, max(60, height - bottomInset - text))
+    }
+
+    private func generatingStack(height: CGFloat) -> some View {
         VStack(spacing: H3Spacing.md) {
             if let image = viewModel.denoisePreviewImage {
-                denoisePreview(image)
+                denoisePreview(image, maxHeight: denoisePreviewHeight(stage: height))
+            } else if viewModel.denoisePreviewActive {
+                Text("途中の様子は、ノイズ除去が少し進むと表示されます")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
             }
             if let batch = viewModel.batchProgress, let timing = viewModel.batchTiming {
                 batchTimingView(batch, timing)
@@ -146,19 +166,16 @@ struct PreviewPane: View {
             }
         }
         .padding(.bottom, bottomInset)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(palette.stage)
-        .clipShape(RoundedRectangle(cornerRadius: H3Radius.stage))
     }
 
     /// 途中の様子: the picture the video is turning into, from the model's
     /// estimate of the finished latent (Advanced Settings).
-    private func denoisePreview(_ image: CGImage) -> some View {
+    private func denoisePreview(_ image: CGImage, maxHeight: CGFloat) -> some View {
         VStack(spacing: 4) {
             Image(decorative: image, scale: 1)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: 640, maxHeight: 360)
+                .frame(maxWidth: 640, maxHeight: maxHeight)
                 .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
             Text("途中の様子（ステップ \(viewModel.denoisePreviewStep)/\(viewModel.denoisePreviewSteps)）。できあがる動画とは細部が変わります。")
                 .font(.caption)
