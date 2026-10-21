@@ -142,6 +142,14 @@ to skip that step and stream the original BF16 weights instead.
   few-step adapters trained with another sampler, such as
   [DMAD](https://github.com/Yzmblog/DMAD) (see
   [Step rule and audio shift](#step-rule-and-audio-shift)).
+- **Progress previews** (v0.6.2): with "Show progress previews while
+  generating" on in Advanced Settings, a frame of the finished video the model
+  currently predicts is shown about five times per video while noise is
+  removed. The heavy video VAE doesn't run: a small decoder (taeh3 from
+  madebyollin/taehv, MIT, 22.7 MB, downloaded the first time) runs with
+  MPSGraph, so generation time barely changes. API: `GET /api/preview` (PNG),
+  `POST /api/preview/settings` (`{"enabled": true}`), and `denoise_preview` in
+  `/api/status`.
 - **Three compute modes**, see [Compute modes](#compute-modes): a fast int8
   attention cache, a resident mode for a Mac with memory to spare that
   needs no cache file, and a slow-but-low-memory SSD-streaming mode.

@@ -47,7 +47,7 @@
   <main id="main">
     <div class="page-head">
       <h1>詳細設定の解説</h1>
-      <p class="lead">「詳細設定」の各項目が何を変えるのかを、画面の上から順に説明します。<strong>最初は既定のままで問題ありません。</strong>待ち時間や仕上がりを調整したくなったときに読んでください。内容はH3cApp v0.6.1に合わせています。</p>
+      <p class="lead">「詳細設定」の各項目が何を変えるのかを、画面の上から順に説明します。<strong>最初は既定のままで問題ありません。</strong>待ち時間や仕上がりを調整したくなったときに読んでください。内容はH3cApp v0.6.2に合わせています。</p>
       <nav class="toc" aria-label="このページの目次">
         <p>このページの内容</p>
         <ol>
@@ -55,6 +55,7 @@
           <li><a href="#size">サイズ</a></li>
           <li><a href="#steps">生成ステップ数</a></li>
           <li><a href="#compute">計算方式</a></li>
+          <li><a href="#preview">生成中の途中の様子</a></li>
           <li><a href="#speed">速度と高速モード（試験的）</a></li>
           <li><a href="#reuse">ノイズ除去の再利用（reuse）</a></li>
           <li><a href="#layers">使用する層数（DiTブロック）</a></li>
@@ -81,6 +82,7 @@
             <tr><th scope="row"><a href="#size">サイズ</a></th><td>プリセット（正方形・中）</td><td>プリセット／カスタムサイズ</td><td>大きいほど遅い</td></tr>
             <tr><th scope="row"><a href="#steps">生成ステップ数</a></th><td class="num">20</td><td class="num">3〜40</td><td>多いほど遅く、少ないと品質が落ちる</td></tr>
             <tr><th scope="row"><a href="#compute">計算方式</a></th><td>M5クラスでは高速（int8キャッシュ）、それ以外は省メモリ（SSDストリーミング）</td><td>3種類</td><td>速さと必要なメモリ・ディスク</td></tr>
+            <tr><th scope="row"><a href="#preview">生成中に途中の様子を表示する</a></th><td>オフ</td><td>オン／オフ</td><td>途中の1コマを表示（生成時間はほぼ変わらない）</td></tr>
             <tr><th scope="row"><a href="#speed">速度</a></th><td>標準（高品質）</td><td>標準（高品質）／高速／最速</td><td>速くなるが仕上がりが変わる</td></tr>
             <tr><th scope="row"><a href="#speed">高速モード（試験的）</a></th><td>オフ</td><td>オン／オフ（対応環境のみ表示）</td><td>長い動画ほど速くなる</td></tr>
             <tr><th scope="row"><a href="#reuse">ノイズ除去の再利用</a></th><td class="num">2</td><td class="num">1〜3</td><td>大きいほど速く、品質は下がることがある</td></tr>
@@ -145,6 +147,17 @@
         <li><strong>赤字の注意</strong>：常駐を選んでいてこのMacのメモリが少ない場合（M5以降で32GB未満、それ以外で64GB未満）や、SSDストリーミングで大きなサイズ・10秒以上を選んだ場合は、スワップで非常に遅くなるおそれがあると表示されます。</li>
       </ul>
       <p class="small muted">「高速（int8キャッシュ）」は、M5クラスのGPUでないと選べません。</p>
+    </section>
+
+    <section class="section section-narrow" id="preview" aria-labelledby="preview-title">
+      <h2 id="preview-title">生成中の途中の様子（v0.6.2から）</h2>
+      <p>「<span class="ui">生成中に途中の様子を表示する</span>」をオンにすると、ノイズを取り除いている途中で、できあがりつつある動画の1コマを、プレビュー欄に数回表示します（1本の動画で約5回）。思っていた動画と違えば、最後まで待たずに止められます。つなげて生成や複数本の生成でも、1本ごとに表示します。</p>
+      <ul>
+        <li><strong>しくみ</strong>：モデルがその時点で予測している完成形を、小さなデコーダ（madebyollin/taehv の taeh3、MITライセンス）で絵にします。重い動画用のVAEは使わないので、生成時間はほとんど変わりません（M5で、横長・小・3秒・20ステップの生成時間に差は出ませんでした）。</li>
+        <li><strong>最初の表示</strong>：ノイズ除去が少し進んでから表示します（20ステップなら3ステップ目ごろ）。それまでは「途中の様子は、ノイズ除去が少し進むと表示されます」と出ます。</li>
+        <li><strong>見え方</strong>：はじめはぼやけていて、ステップが進むにつれて完成に近づきます。途中の絵とできあがる動画とでは、細部が変わります。</li>
+        <li><strong>ダウンロード</strong>：初めてオンにしたときに、デコーダ（22.7MB）をダウンロードします。</li>
+      </ul>
     </section>
 
     <section class="section section-narrow" id="speed" aria-labelledby="speed-title">
