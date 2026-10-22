@@ -19,7 +19,7 @@ struct CreationFormView: View {
     @State private var dragBase: CGSize?
     /// The input file shown in Quick Look (clicking its name).
     @State private var quickLookURL: URL?
-    @State private var showingCustomDuration = false
+    @State private var showingClipEditor = false
 
     private var palette: H3Palette { H3Palette(colorScheme) }
 
@@ -38,7 +38,7 @@ struct CreationFormView: View {
                 }
                 lipSyncSection
                 if viewModel.isChained {
-                    ClipPromptsSection(viewModel: viewModel)
+                    ClipPromptsSection(viewModel: viewModel, showingEditor: $showingClipEditor)
                 }
                 promptSection
             }
@@ -52,8 +52,8 @@ struct CreationFormView: View {
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(palette.border, lineWidth: 1))
         .shadow(color: .black.opacity(0.25), radius: 18, y: 6)
         .quickLookPreview($quickLookURL)
-        .sheet(isPresented: $showingCustomDuration) {
-            CustomDurationSheet(viewModel: viewModel, isPresented: $showingCustomDuration)
+        .sheet(isPresented: $showingClipEditor) {
+            CustomClipsSheet(viewModel: viewModel, isPresented: $showingClipEditor)
         }
     }
 
@@ -432,7 +432,8 @@ struct CreationFormView: View {
         return profile.upscaled ? String(localized: "\(name) ×2") : name
     }
 
-    /// 1-15 s in one generation, つなげて生成 for 15-90 s, and カスタム.
+    /// 1-15 s in one generation, and つなげて生成: 15 s of equal clips, or
+    /// カスタムクリップ laid out clip by clip.
     private var durationMenu: some View {
         Menu {
             Picker("1回で生成", selection: durationSelection) {
@@ -443,13 +444,15 @@ struct CreationFormView: View {
             .pickerStyle(.inline)
             Picker("つなげて生成", selection: durationSelection) {
                 Text("つないで15秒").tag("chain-\(chainedSecondsRange.lowerBound)")
-                ForEach(chainedSecondsChoices, id: \.self) { value in
-                    Text("\(value) 秒").tag("chain-\(value)")
-                }
             }
             .pickerStyle(.inline)
-            Divider()
-            Button("カスタム…") { showingCustomDuration = true }
+            // A toggle, for the menu's check mark while it is in use.
+            Toggle("カスタムクリップ…", isOn: Binding(
+                get: { viewModel.usesCustomClips },
+                set: { _ in
+                    viewModel.useCustomClips()
+                    showingClipEditor = true
+                }))
         } label: {
             composerChip(systemImage: viewModel.isChained ? "film.stack" : "clock",
                          text: viewModel.durationLabel)
@@ -489,7 +492,10 @@ struct CreationFormView: View {
 
     private var durationSelection: Binding<String> {
         Binding(
-            get: { (viewModel.isChained ? "chain-" : "single-") + String(viewModel.seconds) },
+            get: {
+                viewModel.usesCustomClips ? "custom"
+                    : (viewModel.isChained ? "chain-" : "single-") + String(viewModel.seconds)
+            },
             set: { tag in
                 let parts = tag.split(separator: "-")
                 guard parts.count == 2, let value = Int(parts[1]) else { return }
@@ -671,65 +677,6 @@ private struct FileLink: View {
             if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
         }
         .help("クリックで内容を確認")
-    }
-}
-
-/// カスタム: any length up to 90 s. Past 15 s it is made by つなげて生成;
-/// up to 15 s either way.
-private struct CustomDurationSheet: View {
-    @ObservedObject var viewModel: GenerationViewModel
-    @Binding var isPresented: Bool
-    @State private var value = 30
-    @State private var chained = true
-
-    private var needsChain: Bool { value > secondsRange.upperBound }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: H3Spacing.md) {
-            Text("動画の長さ").font(.headline)
-            HStack {
-                TextField("秒", value: $value, format: .number)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 70)
-                    .multilineTextAlignment(.trailing)
-                Stepper("", value: $value, in: 1 ... chainedSecondsRange.upperBound)
-                    .labelsHidden()
-                Text("秒（1〜\(chainedSecondsRange.upperBound)秒）")
-            }
-            Toggle("つなげて生成", isOn: Binding(get: { chained || needsChain }, set: { chained = $0 }))
-                .disabled(needsChain || value < chainedSecondsRange.lowerBound)
-            Text(explanation)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Spacer()
-                Button("キャンセル") { isPresented = false }
-                    .keyboardShortcut(.cancelAction)
-                Button("決定") {
-                    let clamped = value.clamped(to: 1 ... chainedSecondsRange.upperBound)
-                    viewModel.setDuration(seconds: clamped,
-                                          chained: (chained || needsChain) && clamped >= chainedSecondsRange.lowerBound)
-                    isPresented = false
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(H3Spacing.lg)
-        .frame(width: 420)
-        .onAppear {
-            value = viewModel.seconds
-            chained = viewModel.isChained
-        }
-    }
-
-    private var explanation: String {
-        let clamped = value.clamped(to: 1 ... chainedSecondsRange.upperBound)
-        guard (chained || needsChain) && clamped >= chainedSecondsRange.lowerBound else {
-            return String(localized: "1回の生成でつくります（15秒まで）。")
-        }
-        let plan = chainPlan(seconds: clamped, clip: viewModel.chainClipLength)
-        return String(localized: "\(viewModel.chainClipLength.label)の動画を\(plan.count)本、前の動画の続きとして順につくり、重なり（約0.9秒）でつないで1本にします。15秒より長い動画は、この方法でつくります。1本の長さは詳細設定で変えられます。")
     }
 }
 

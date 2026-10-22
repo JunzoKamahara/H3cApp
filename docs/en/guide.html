@@ -205,10 +205,11 @@
 
     <section class="section section-narrow" id="chain" aria-labelledby="chain-title">
       <h2 id="chain-title">Making longer videos (joined generation)</h2>
-      <p>One generation makes at most 15 seconds. Longer videos, up to 90 seconds, come from joined generation: short videos are made one after another, each continuing the one before, and joined into one at their overlaps.</p>
+      <p>One generation makes at most 15 seconds. Longer videos come from joined generation: short videos are made one after another, each continuing the one before, and joined into one at their overlaps.</p>
       <ol class="steps">
         <li><strong>Open a project.</strong> It keeps the clips and the joined video. With none open, pressing generate asks you to create one or pick an existing one.</li>
-        <li><strong>Pick the length.</strong> In the length menu under the prompt, pick “<span class="ui">15 s Joined</span>” or 20 / 30 / 45 / 60 / 90 s from the “<span class="ui">Joined Generation</span>” section. For other lengths, enter 1 to 90 seconds with “<span class="ui">Custom…</span>” (16 s and longer are always joined). The summary under the panel shows how many clips, such as “5 clips joined (about 7 s each)”.</li>
+        <li><strong>Pick the length.</strong> In the length menu under the prompt, pick “<span class="ui">15 s Joined</span>” or “<span class="ui">Custom Clips…</span>” from the “<span class="ui">Joined Generation</span>” section. 15 s Joined is three clips of about 7 s. In Custom Clips, the editor that opens sets each clip's length (1 to 15 s, 2 s or more for a continuation) and what happens in it, and “<span class="ui">Add a Clip</span>” adds the next clip below. The summary under the panel shows how many clips, such as “3 clips joined (15.1 s in all)”.</li>
+        <li><strong>Write the common directions.</strong> The prompt box is used for every clip (the people, their clothes, the style); each clip gets its own directions added after it. Starting from how the clip before ends, then describing the movement, how the clip ends and what the camera does, moves the story on.</li>
         <li><strong>Generate.</strong> From the second clip on, each one carries over the previous clip's last 0.9 seconds or so and its sound. While it runs, the preview shows which clip of how many is being made, with the whole run's elapsed time, time left and finish time.</li>
         <li><strong>Done.</strong> The clips are joined smoothly at their overlaps into one video, shown in the preview. In “<span class="ui">Project Videos…</span>” it is one row, “Joined video (5 clips, 30.7 s)”, with its clips grouped under it.</li>
       </ol>
@@ -217,7 +218,9 @@
         <li><strong>Make it longer</strong>: with the joined video shown, “<span class="ui">Continue</span>” in the panel makes one more clip. Then “<span class="ui">Join and Export</span>” joins the whole run into one again.</li>
         <li><strong>If you stop partway</strong>: when two or more clips are done, those are joined.</li>
         <li><strong>Make the same video again</strong>: with “<span class="ui">Randomness</span>” set to “<span class="ui">Fixed</span>”, the same settings make the same run (later clips use the next seeds up).</li>
-        <li><strong>First image and references</strong>: only the first clip uses them.</li>
+        <li><strong>Images</strong>: reference images are used by every clip, so the people look the same when they come back after leaving the frame. From the second clip in Custom Clips, turning off “<span class="ui">Use the same reference images</span>” lets that clip use its own reference images, or a first and/or last frame. A clip with a first frame doesn't continue the one before: it starts from that image and is joined with a cut. With only a last frame it still continues and is made to end on that image. The panel's first and last frame are used by the first clip only.</li>
+        <li><strong>Lip sync</strong>: the audio's position moves on by itself for each clip. In Custom Clips, each clip can “<span class="ui">Carry on from the clip before</span>”, “<span class="ui">Change to another audio file</span>” or have “<span class="ui">No lip sync</span>”.</li>
+        <li><strong>Saving to a file</strong>: “<span class="ui">Save…</span>” and “<span class="ui">Open…</span>” in the Custom Clips editor write and read a JSON file.</li>
         <li><strong>Deleting</strong>: deleting the joined video moves its clips to the Trash too.</li>
       </ul>
       <div class="note">

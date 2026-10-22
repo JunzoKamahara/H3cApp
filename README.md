@@ -107,11 +107,12 @@ to skip that step and stream the original BF16 weights instead.
   clips takes under a second. The panel offers Continue once a video is
   in the preview (a video outside any project is saved as one first), and
   Join and Export when that video continues another.
-- **Joined generation, up to 90 s**: the length menu has 1-15 s in one
-  generation, then 15 s Joined, 20 / 30 / 45 / 60 / 90 s and Custom (1-90
-  s). These lengths are made as clips of about 7 s (or 5 s, in Advanced
-  Settings), each continuing the one before, joined automatically over
-  their overlaps; the joined video is the one in the project's list, with
+- **Joined generation**: the length menu has 1-15 s in one generation, then
+  15 s Joined and Custom Clips…. 15 s Joined is made of clips of about 7 s
+  (or 5 s, in Advanced Settings), Custom Clips of clips whose length,
+  directions, images and lip-sync audio are set one by one; each clip
+  continues the one before, and they are joined automatically over their
+  overlaps; the joined video is the one in the project's list, with
   its clips folded under it (kept in `chains/<name>/`), and it can be
   continued like any other. With lip sync the audio moves on clip by clip;
   clips that start past its end make their own sound. 15 s this way took
@@ -219,23 +220,33 @@ to skip that step and stream the original BF16 weights instead.
 ## Joined generation: how to use it
 
 One generation makes at most 15 s (362 frames). Longer videos come from
-joined generation (up to 90 s): short videos are made one after another,
+joined generation: short videos are made one after another,
 each continuing the one before, and joined into one at their overlaps.
 
 1. **Open a project.** The clips and the joined video are kept in one. With
    none open, pressing generate asks you to create one or pick an existing
    one.
-2. **Pick the length.** In the length menu under the prompt, pick
-   “15 s Joined” or 20 / 30 / 45 / 60 / 90 s from the “Joined Generation”
-   section, or enter 1-90 s with “Custom…” (16 s and longer are always
-   joined; 15 s only when “Joined Generation” is on). The length then reads
-   like “30 s · Joined”, and the summary under the panel shows the number of
-   clips, e.g. “5 clips joined (about 7 s each)” (30 s is 5 clips, 30.7 s).
-   The count menu is off for joined generation (one at a time).
-3. **(Optional) change the clip length.** “Clip length for joined generation”
-   in Advanced Settings is about 7 s (standard, 175 frames) or about 5 s
-   (124 frames). Longer clips mean fewer seams. The last clip is shorter, to
-   fit what is left.
+2. **Pick the length.** In the length menu under the prompt, pick “15 s
+   Joined” or “Custom Clips…” from the “Joined Generation” section.
+   - **15 s Joined**: three clips of about 7 s (“Clip length for joined
+     generation” in Advanced Settings can make them about 5 s).
+   - **Custom Clips**: an editor opens with one clip; “Add a Clip” adds the
+     next one below. Each clip gets a length (1-15 s, 2 s or more for a
+     continuation) and what happens in it. From the second clip on, turning
+     off “Use the same reference images” lets that clip use its own
+     reference images, or a first and/or last frame. A clip with a first
+     frame doesn't continue the one before: it starts from that image and is
+     joined with a cut. With only a last frame it still continues and is
+     made to end on that image. Each clip's lip-sync audio can carry on from
+     the clip before, change to another file, or be off. Each clip's start
+     time and where it is in its audio are listed, so scenes can be laid
+     out along a song. The clips can be saved to and read from a JSON file.
+   The summary under the panel shows the number of clips, e.g. “3 clips
+   joined (15.1 s in all)”. The count menu is off for joined generation (one
+   at a time).
+3. **Write the common directions.** The prompt box is used for every clip
+   (the people, their clothes, the style); each clip gets its own directions
+   added after it.
 4. **Generate.** The first clip is an ordinary generation; from the second
    on, each one carries over the previous clip's last 22 frames (about
    0.9 s) and their sound. While it runs, the preview shows which clip of
@@ -247,13 +258,10 @@ each continuing the one before, and joined into one at their overlaps.
 Good to know:
 
 - **Directions for each clip.** Given the same prompt, every clip tends to
-  start over from the prompt's first scene. With a joined length, “Different
-  directions for each clip…” lets you write what happens in each clip. The
-  prompt box is used for all of them (the people, their clothes, the style),
-  and each clip gets its own directions added after it. A clip left empty is
-  made from the prompt alone. Each clip's start time (and, with lip sync,
-  where it is in the audio) is listed, so scenes can be laid out along a
-  song. The directions can be saved to and read from a JSON file.
+  start over from the prompt's first scene. Writing what happens in each
+  clip in Custom Clips moves the story on (a clip left empty is made from
+  the prompt alone). With 15 s Joined, “Edit the clips one by one…” in the
+  panel switches to Custom Clips.
 - **Make it longer.** With the joined video shown, “Continue” in the panel
   makes one more clip; “Join and Export” then joins the whole run again.
 - **If you stop partway,** the clips made so far (two or more) are joined.
@@ -262,8 +270,8 @@ Good to know:
   make the same run.
 - **First image, references and lip sync.** Reference images are used by
   every clip, so the people look the same when they come back after leaving
-  the frame; “Different directions for each clip…” can turn them off for a
-  scene they don't appear in. A first or last frame is used by the first
+  the frame; in Custom Clips, “Use the same reference images” can be turned
+  off for a scene they don't appear in. A first or last frame is used by the first
   clip only. With lip sync, the audio's start moves on by
   itself for each clip, and clips that start after the audio ends make their
   own sound.
@@ -767,6 +775,7 @@ plain filesystem paths, not uploads.
 | `seconds` / `chained` / `chain_clip_seconds` | `5` / `false` / `7` | 1-15 s are made in one generation; 16-90 s (or 15 with `"chained": true`) by joined generation, from clips of 5 or 7 s, into one joined video. A joined length needs an open project and `count` 1. |
 | `clip_prompts` | none | Joined generation only: an array of strings, one per clip in order, each added after `prompt` for that clip (an empty string or a missing entry uses `prompt` alone). |
 | `clip_references` | none | Joined generation with reference images only: an array of true/false, one per clip in order, whether that clip uses the reference images (missing entries do). |
+| `clips` | none | Custom Clips: an array of objects, one per clip: `seconds` (1-15, 2+ for a continuation; default 7), `prompt` (added after `prompt`), and from the second clip `images` (`same` / `references` / `frames`), `reference_paths`, `first_frame_path` (the clip then starts from it, joined with a cut), `last_frame_path`, `audio` (`carry_on` / `file` / `none`), `audio_path`, `audio_offset`. The first clip uses the request's own images and lip sync. Needs an open project. |
 | `continue_from` | none | A video of the open project (a file name from `GET /api/project`) to continue: its last 22 frames and their sound are carried over. Needs the same size; not with first/last frames (references are fine). |
 | `forced_audio_path` / `forced_audio_offset` | none / `0` | Lip sync: this file's audio (an audio file or a video's soundtrack), from `forced_audio_offset` seconds on, is held as the soundtrack while the picture is generated to match it, and the output carries that audio itself. Works with every creation method. |
 | `reference_paths` | `[]` | Ordered Ref2VA references; image/video/audio is auto-detected per path. At least one image or video is required if any audio path is included. |

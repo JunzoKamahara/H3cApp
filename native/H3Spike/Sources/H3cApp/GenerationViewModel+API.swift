@@ -566,6 +566,59 @@ extension GenerationViewModel {
         } else {
             clipPrompts = []
         }
+        // カスタムクリップ: "clips" lays the chain out clip by clip -
+        // [{"seconds": 7, "prompt": "...", "images": "same" | "references" |
+        // "frames", "reference_paths": [...], "first_frame_path": ...,
+        // "last_frame_path": ..., "audio": "carry_on" | "file" | "none",
+        // "audio_path": ..., "audio_offset": 0}, ...]; the first clip takes
+        // the request's own images and lip sync.
+        chainCustom = false
+        customClips = []
+        if let value = json["clips"] {
+            guard let list = value as? [[String: Any]], !list.isEmpty else {
+                return .error(400, "\"clips\" must be a non-empty array of objects")
+            }
+            var clips: [ChainClipSpec] = []
+            for (index, item) in list.enumerated() {
+                var clip = ChainClipSpec()
+                if let seconds = item["seconds"] {
+                    let range = index == 0 ? ChainClipSpec.secondsRange : ChainClipSpec.continuingSecondsRange
+                    guard let value = jsonInteger(seconds), value >= 1, value <= range.upperBound else {
+                        return .error(400, "clip \(index + 1): \"seconds\" must be an integer from 1 to \(range.upperBound)")
+                    }
+                    clip.seconds = value
+                }
+                clip.prompt = (item["prompt"] as? String) ?? ""
+                if let images = item["images"] {
+                    guard let raw = images as? String, let parsed = ChainClipSpec.Images(rawValue: raw) else {
+                        return .error(400, "clip \(index + 1): \"images\" must be same, references or frames")
+                    }
+                    clip.images = parsed
+                }
+                clip.references = ((item["reference_paths"] as? [String]) ?? []).map { path in
+                    .init(kind: (isVideoFile(path: path) ? H3ReferenceKind.video
+                                 : isAudioFile(path: path) ? .audio : .image).storedName, path: path)
+                }
+                clip.firstFrame = item["first_frame_path"] as? String
+                clip.lastFrame = item["last_frame_path"] as? String
+                if let audio = item["audio"] {
+                    let names: [String: ChainClipSpec.Audio] = ["carry_on": .carryOn, "file": .file, "none": .none]
+                    guard let raw = audio as? String, let parsed = names[raw] else {
+                        return .error(400, "clip \(index + 1): \"audio\" must be carry_on, file or none")
+                    }
+                    clip.audio = parsed
+                }
+                clip.audioPath = item["audio_path"] as? String
+                clip.audioOffset = (item["audio_offset"] as? NSNumber)?.doubleValue ?? 0
+                if index > 0 && clip.seconds < 2 && !clip.startsFresh {
+                    return .error(400, "clip \(index + 1): a continuing clip needs 2 seconds or more")
+                }
+                clips.append(clip)
+            }
+            customClips = clips
+            chainCustom = true
+            chained = true
+        }
         // With reference images: whether each clip uses them (default yes).
         if let value = json["clip_references"] {
             guard let list = value as? [Bool] else {

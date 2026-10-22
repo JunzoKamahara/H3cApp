@@ -57,6 +57,17 @@ struct ProjectDraft: Codable, Equatable {
     /// つなげて生成 with reference images: whether each clip uses them, in
     /// plan order (missing ones do). Absent while every clip does.
     var clipReferences: [Bool]? = nil
+    /// カスタムクリップ (CustomClips.swift): the length is made of these
+    /// clips (while chainCustom); kept when switching back to a length.
+    var chainCustom: Bool? = nil
+    var customClips: [ChainClipSpec]? = nil
+
+    /// The draft with every path in customClips passed through `map`.
+    func mappingClipPaths(_ map: (String) -> String) -> ProjectDraft {
+        var draft = self
+        draft.customClips = customClips?.map { $0.mappingPaths(map) }
+        return draft
+    }
 }
 
 /// project.json
@@ -405,7 +416,9 @@ extension GenerationViewModel {
             chained: isChained ? true : nil,
             chainClipFrames: chainClipLength == defaultChainClipLength ? nil : chainClipLength.frames,
             clipPrompts: storedClipPrompts,
-            clipReferences: storedClipReferences)
+            clipReferences: storedClipReferences,
+            chainCustom: chainCustom ? true : nil,
+            customClips: customClips.isEmpty ? nil : customClips)
     }
 
     /// Puts a draft into the form. Relative paths resolve against
@@ -437,6 +450,8 @@ extension GenerationViewModel {
         chainClipLength = draft.chainClipFrames.flatMap(ChainClipLength.init(rawValue:)) ?? defaultChainClipLength
         clipPrompts = draft.clipPrompts ?? []
         clipReferences = draft.clipReferences ?? []
+        chainCustom = draft.chainCustom ?? false
+        customClips = (draft.customClips ?? []).map { $0.mappingPaths(resolve) }
         seconds = draft.seconds.clamped(to: currentSecondsRange)
         if let speed = SpeedMode(rawValue: draft.speedMode) { speedMode = speed }
         denoiseReuse = draft.denoiseReuse.clamped(to: reuseRange)
@@ -707,6 +722,7 @@ extension GenerationViewModel {
         draft.forcedAudio = draft.forcedAudio.map { ProjectFiles.stored($0, in: project.url) }
         draft.continueFrom = draft.continueFrom.map { ProjectFiles.stored($0, in: project.url) }
         draft.references = draft.references.map { .init(kind: $0.kind, path: ProjectFiles.stored($0.path, in: project.url)) }
+        draft = draft.mappingClipPaths { ProjectFiles.stored($0, in: project.url) }
         guard force || draft != file.draft || batchCount != file.batchCount else { return }
         file.draft = draft
         file.batchCount = batchCount
@@ -722,6 +738,7 @@ extension GenerationViewModel {
     /// The form's input files that still have to be copied into the project.
     private func referencesToImport(for projectURL: URL) -> [String] {
         var paths = [firstFramePath, lastFramePath, forcedAudioPath].compactMap { $0 } + referenceImages.map(\.path)
+            + customClips.flatMap(\.paths)
         paths = paths.filter {
             !ProjectFiles.isImported($0, in: projectURL) && FileManager.default.fileExists(atPath: $0)
                 && !failedReferenceImports.contains(projectURL.path + "\n" + $0)
@@ -768,6 +785,8 @@ extension GenerationViewModel {
                 let new = copy(of: path)
                 if new != path { self.referenceImages[index].path = new }
             }
+            let clips = self.customClips.map { $0.mappingPaths { copy(of: $0) } }
+            if clips != self.customClips { self.customClips = clips }
             if let failure {
                 self.projectMessage = String(localized: "参照ファイルをプロジェクトにコピーできませんでした（詳細: \(failure.localizedDescription)）")
             }
@@ -938,7 +957,8 @@ extension ResolvedResult {
             plannedClipCount: record.chainPlannedClips,
             chainClipFrames: (draft.chained ?? false) ? (draft.chainClipFrames ?? defaultChainClipLength.frames) : nil,
             clipPrompts: (draft.chained ?? false) ? draft.clipPrompts : nil,
-            clipReferences: (draft.chained ?? false) ? draft.clipReferences : nil)
+            clipReferences: (draft.chained ?? false) ? draft.clipReferences : nil,
+            customClips: (draft.chained ?? false) && (draft.chainCustom ?? false) ? draft.customClips : nil)
     }
 }
 

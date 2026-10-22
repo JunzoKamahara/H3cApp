@@ -1,166 +1,156 @@
 import AppKit
+import H3Engine
 import SwiftUI
 import UniformTypeIdentifiers
 
-// クリップごとの指示: in a つなげて生成 every clip used to get the same
-// prompt, so a story told in it (dark -> two lights -> singing -> a city)
-// started over in each clip. The prompt box now holds what stays the same,
-// and each clip can add what happens in it (chainClipPrompt). They can be
+// カスタムクリップ's editor: in a つなげて生成 every clip used to get the
+// same prompt, so a story told in it (dark -> two lights -> singing -> a
+// city) started over in each clip. The prompt box now holds what stays the
+// same, and each clip says what happens in it, how long it is, which images
+// it uses and which audio it lip-syncs to (CustomClips.swift). Clips can be
 // written here, or in a storyboard file read in - by hand or by any tool.
 
-/// The storyboard file the sheet writes (and the simplest form it reads).
+/// The storyboard file the editor writes (and the simpler forms it reads).
 struct StoryboardFile: Codable {
     struct Clip: Codable {
         var clip: Int
         var start: Double
         var seconds: Double
         var prompt: String
-        /// Whether the clip uses the reference images (omitted: yes).
+        /// Uses the form's reference images (written before カスタムクリップ;
+        /// false reads as no images).
         var references: Bool? = nil
+        var images: ChainClipSpec.Images? = nil
+        var referencePaths: [String]? = nil
+        var firstFrame: String? = nil
+        var lastFrame: String? = nil
+        var audio: ChainClipSpec.Audio? = nil
+        var audioPath: String? = nil
+        var audioOffset: Double? = nil
     }
 
-    var version = 1
+    var version = 2
     var prompt: String
-    var clipSeconds: Int
     var clips: [Clip]
 
-    /// Reads the file written above, or looser forms: "clips" as plain
+    /// Reads the file written below, or looser forms: "clips" as plain
     /// strings, or the whole file one array of strings. Returns the common
-    /// prompt (nil if the file has none), each clip's text, and whether
-    /// each uses the reference images.
-    static func read(_ data: Data) throws -> (prompt: String?, clips: [String], references: [Bool]) {
+    /// prompt (nil if the file has none) and the clips.
+    static func read(_ data: Data) throws -> (prompt: String?, clips: [ChainClipSpec]) {
         let json = try JSONSerialization.jsonObject(with: data)
-        func clipTexts(_ value: Any?) -> (texts: [String], references: [Bool])? {
+        func clips(_ value: Any?) -> [ChainClipSpec]? {
             guard let list = value as? [Any] else { return nil }
-            var texts: [String] = []
-            var references: [Bool] = []
+            var clips: [ChainClipSpec] = []
             for item in list {
+                var clip = ChainClipSpec()
                 if let text = item as? String {
-                    texts.append(text)
-                    references.append(true)
+                    clip.prompt = text
                 } else if let object = item as? [String: Any], let text = object["prompt"] as? String {
-                    texts.append(text)
-                    references.append((object["references"] as? Bool) ?? true)
+                    clip.prompt = text
+                    if let seconds = object["seconds"] as? Double {
+                        clip.seconds = Int(seconds.rounded()).clamped(to: ChainClipSpec.secondsRange)
+                    }
+                    if object["references"] as? Bool == false { clip.images = .references }
+                    if let images = (object["images"] as? String).flatMap(ChainClipSpec.Images.init(rawValue:)) {
+                        clip.images = images
+                    }
+                    clip.references = ((object["referencePaths"] as? [String]) ?? []).map { path in
+                        .init(kind: (isVideoFile(path: path) ? H3ReferenceKind.video
+                                     : isAudioFile(path: path) ? .audio : .image).storedName, path: path)
+                    }
+                    clip.firstFrame = object["firstFrame"] as? String
+                    clip.lastFrame = object["lastFrame"] as? String
+                    if let audio = (object["audio"] as? String).flatMap(ChainClipSpec.Audio.init(rawValue:)) {
+                        clip.audio = audio
+                    }
+                    clip.audioPath = object["audioPath"] as? String
+                    clip.audioOffset = (object["audioOffset"] as? Double) ?? 0
                 } else {
                     return nil
                 }
+                clips.append(clip)
             }
-            return (texts, references)
+            return clips.isEmpty ? nil : clips
         }
-        if let clips = clipTexts(json) { return (nil, clips.texts, clips.references) }
-        guard let object = json as? [String: Any], let clips = clipTexts(object["clips"]) else {
+        if let list = clips(json) { return (nil, list) }
+        guard let object = json as? [String: Any], let list = clips(object["clips"]) else {
             throw CocoaError(.fileReadCorruptFile)
         }
         let prompt = (object["prompt"] as? String) ?? (object["commonPrompt"] as? String)
-        return (prompt, clips.texts, clips.references)
+        return (prompt, list)
     }
 }
 
-/// The form's row for クリップごとの指示, shown while the length is
-/// chained: one line until any are written.
+/// The form's row while the length is chained: what カスタムクリップ holds,
+/// or a way into it from the equal clips of a length.
 struct ClipPromptsSection: View {
     @ObservedObject var viewModel: GenerationViewModel
-    @State private var showingSheet = false
+    @Binding var showingEditor: Bool
     @Environment(\.colorScheme) private var colorScheme
     private var palette: H3Palette { H3Palette(colorScheme) }
 
     var body: some View {
-        Group {
-            if viewModel.storedClipPrompts != nil || viewModel.storedClipReferences != nil {
-                let plan = viewModel.currentChainPlan
-                let written = (viewModel.storedClipPrompts ?? []).prefix(plan.count).filter {
-                    !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                }.count
-                let withoutReferences = (viewModel.storedClipReferences ?? []).prefix(plan.count)
-                    .filter { !$0 }.count
-                HStack {
-                    Image(systemName: "list.number").foregroundStyle(palette.textSecondary)
-                    Text("クリップごとの指示：\(plan.count)本のうち\(written)本").font(.caption)
-                    if withoutReferences > 0 {
-                        Text("（参照画像なし\(withoutReferences)本）").font(.caption)
-                            .foregroundStyle(palette.textSecondary)
-                    }
-                    Spacer()
-                    Button("編集…") { showingSheet = true }
-                    Button("取り除く") {
-                        viewModel.clipPrompts = []
-                        viewModel.clipReferences = []
-                    }
-                }
-                .padding(H3Spacing.md)
-                .background(palette.surfaceMuted)
-                .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
-            } else {
-                Button {
-                    showingSheet = true
-                } label: {
-                    Label("クリップごとに指示を変える…", systemImage: "list.number")
-                }
-                .font(.caption)
-                .help("つなぐ動画の1本ずつに、その動画で起きることを書けます。下の入力欄の文章は全部に共通で使います")
+        if viewModel.usesCustomClips {
+            HStack {
+                Image(systemName: "list.number").foregroundStyle(palette.textSecondary)
+                let total = String(format: "%.1f", viewModel.customClipsTotalSeconds)
+                Text("カスタムクリップ：\(viewModel.customClips.count)本・計\(total)秒").font(.caption)
+                Spacer()
+                Button("編集…") { showingEditor = true }
             }
-        }
-        .sheet(isPresented: $showingSheet) {
-            ClipPromptsSheet(viewModel: viewModel, isPresented: $showingSheet)
+            .padding(H3Spacing.md)
+            .background(palette.surfaceMuted)
+            .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
+        } else {
+            Button {
+                viewModel.useCustomClips()
+                showingEditor = true
+            } label: {
+                Label("クリップを1本ずつ編集する…", systemImage: "list.number")
+            }
+            .font(.caption)
+            .help("つなぐ動画の1本ずつに、長さ、起きること、画像、リップシンクの音声を決められます（カスタムクリップ）")
         }
     }
 }
 
-struct ClipPromptsSheet: View {
+struct CustomClipsSheet: View {
     @ObservedObject var viewModel: GenerationViewModel
     @Binding var isPresented: Bool
-    @State private var audioSeconds: Double?
     @State private var message: String?
     @Environment(\.colorScheme) private var colorScheme
     private var palette: H3Palette { H3Palette(colorScheme) }
 
-    private var plan: [Int] { viewModel.currentChainPlan }
-
     var body: some View {
+        let plans = viewModel.chainClipPlans()
+        let starts = chainClipStarts(frames: plans.map(\.frames), continues: plans.map(\.continues))
         VStack(alignment: .leading, spacing: H3Spacing.md) {
-            Text("クリップごとの指示").font(.headline)
-            Text("つなぐ動画の1本ずつに、その動画で起きることを書きます。前の動画の終わりの様子から始めて、そこで起きる動き、終わりの様子、カメラの動きを書くと、話が先へ進みます。空のままの動画は、共通の指示だけでつくります。")
+            Text("カスタムクリップ").font(.headline)
+            Text("つなぐ動画を1本ずつ決めます。2本目からは、前の動画の最後の約0.9秒を引き継いで続きをつくります。前の動画の終わりの様子から始めて、そこで起きる動き、終わりの様子、カメラの動きを書くと、話が先へ進みます。")
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             ScrollView {
-                VStack(alignment: .leading, spacing: H3Spacing.md) {
+                VStack(alignment: .leading, spacing: H3Spacing.lg) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("共通の指示（全部の動画に使う：人物、服装、画風など）").font(.caption.weight(.semibold))
-                        editor($viewModel.prompt, placeholder: "")
+                        ClipTextEditor(text: $viewModel.prompt, placeholder: "")
                     }
-                    let starts = chainClipStarts(plan)
-                    ForEach(plan.indices, id: \.self) { index in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: H3Spacing.sm) {
-                                Text("\(index + 1)本目").font(.caption.weight(.semibold))
-                                Text(timeRange(start: starts[index], frames: plan[index]))
-                                    .font(.caption)
-                                    .foregroundStyle(palette.textSecondary)
-                                if let audio = audioRange(start: starts[index], frames: plan[index]) {
-                                    Text(audio).font(.caption).foregroundStyle(palette.textSecondary)
-                                }
-                                Spacer()
-                                if hasReferences {
-                                    Toggle("参照画像を使う", isOn: referenceBinding(index))
-                                        .toggleStyle(.checkbox)
-                                        .font(.caption)
-                                        .help("人物が出ない場面（背景だけの場面など）では外せます。外した動画は、前の動画の続きと文章だけでつくります")
-                                }
-                            }
-                            editor(clipBinding(index), placeholder: String(localized: "（共通の指示だけでつくります）"))
-                        }
+                    ForEach($viewModel.customClips) { $clip in
+                        let index = viewModel.customClips.firstIndex { $0.id == clip.id } ?? 0
+                        CustomClipRow(viewModel: viewModel, clip: $clip, index: index,
+                                      start: index < starts.count ? starts[index] : 0,
+                                      plan: index < plans.count ? plans[index] : nil)
+                        Divider()
                     }
-                    if viewModel.clipPrompts.count > plan.count {
-                        let unused = viewModel.clipPrompts[plan.count...].filter {
-                            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        }.count
-                        if unused > 0 {
-                            Text("このあとの\(unused)本分の指示は、今の長さでは使いません（長さを延ばすと使います）")
-                                .font(.caption)
-                                .foregroundStyle(palette.textSecondary)
-                        }
+                    Button {
+                        var clip = ChainClipSpec()
+                        if let last = viewModel.customClips.last { clip.seconds = max(2, last.seconds) }
+                        viewModel.customClips.append(clip)
+                    } label: {
+                        Label("クリップを足す", systemImage: "plus")
                     }
+                    .help("この下に、続きの動画を1本足します")
                 }
                 .padding(.trailing, H3Spacing.sm)
             }
@@ -170,91 +160,14 @@ struct ClipPromptsSheet: View {
             HStack {
                 Button("読み込む…") { importFile() }
                     .help("書き出したファイルか、同じ形のJSONファイルから読み込みます")
-                Button("書き出す…") { exportFile() }
+                Button("書き出す…") { exportFile(starts: starts) }
                 Spacer()
-                Button("すべて消す") {
-                    viewModel.clipPrompts = []
-                    viewModel.clipReferences = []
-                }
-                .disabled(viewModel.storedClipPrompts == nil && viewModel.storedClipReferences == nil)
                 Button("完了") { isPresented = false }
                     .keyboardShortcut(.defaultAction)
             }
         }
         .padding(H3Spacing.lg)
-        .frame(width: 600, height: 640)
-        .onAppear {
-            audioSeconds = viewModel.forcedAudioPath.flatMap(audioFileSeconds)
-        }
-    }
-
-    private func editor(_ text: Binding<String>, placeholder: String) -> some View {
-        ZStack(alignment: .topLeading) {
-            TextEditor(text: text)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .padding(4)
-            if text.wrappedValue.isEmpty && !placeholder.isEmpty {
-                Text(placeholder)
-                    .font(.body)
-                    .foregroundStyle(palette.textSecondary.opacity(0.75))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .allowsHitTesting(false)
-            }
-        }
-        .frame(height: 58)
-        .background(palette.surface)
-        .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
-        .overlay(RoundedRectangle(cornerRadius: H3Radius.control).stroke(palette.border, lineWidth: 1))
-    }
-
-    /// The form's reference images are in use (画像から, 参照画像).
-    private var hasReferences: Bool {
-        viewModel.creationMethod == .image && viewModel.imageInputMode == .referenceImage
-            && !viewModel.referenceImages.isEmpty
-    }
-
-    private func referenceBinding(_ index: Int) -> Binding<Bool> {
-        Binding(
-            get: { viewModel.chainClipUsesReferences(viewModel.clipReferences, index: index) },
-            set: { on in
-                var flags = viewModel.clipReferences
-                if flags.count <= index { flags += Array(repeating: true, count: index + 1 - flags.count) }
-                flags[index] = on
-                viewModel.clipReferences = flags
-            })
-    }
-
-    private func clipBinding(_ index: Int) -> Binding<String> {
-        Binding(
-            get: { index < viewModel.clipPrompts.count ? viewModel.clipPrompts[index] : "" },
-            set: { text in
-                var prompts = viewModel.clipPrompts
-                if prompts.count <= index { prompts += Array(repeating: "", count: index + 1 - prompts.count) }
-                prompts[index] = text
-                viewModel.clipPrompts = prompts
-            })
-    }
-
-    private func timeRange(start: Int, frames: Int) -> String {
-        let from = String(format: "%.1f", Double(start) / 24)
-        let to = String(format: "%.1f", Double(start + frames) / 24)
-        return String(localized: "\(from)〜\(to)秒")
-    }
-
-    /// With lip sync, where in the audio the clip is: it starts at the
-    /// form's offset.
-    private func audioRange(start: Int, frames: Int) -> String? {
-        guard viewModel.forcedAudioPath != nil else { return nil }
-        let offset = max(0, viewModel.forcedAudioOffset)
-        let begin = offset + Double(start) / 24
-        if let audioSeconds, begin >= audioSeconds - 0.1 {
-            return String(localized: "（音声の終わりの後）")
-        }
-        let from = String(format: "%.1f", begin)
-        let to = String(format: "%.1f", begin + Double(frames) / 24)
-        return String(localized: "（音声 \(from)〜\(to)秒）")
+        .frame(width: 640, height: 700)
     }
 
     private func importFile() {
@@ -267,31 +180,36 @@ struct ClipPromptsSheet: View {
             if let prompt = file.prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 viewModel.prompt = prompt
             }
-            viewModel.clipPrompts = file.clips
-            viewModel.clipReferences = file.references
+            viewModel.customClips = file.clips
+            viewModel.chained = true
+            viewModel.chainCustom = true
         } catch {
             message = String(localized: "読み込めませんでした。クリップごとの指示を並べたJSONファイルを選んでください")
         }
     }
 
-    private func exportFile() {
+    private func exportFile(starts: [Int]) {
         message = nil
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "storyboard.json"
         if let project = viewModel.project { panel.directoryURL = project.url }
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let starts = chainClipStarts(plan)
         let file = StoryboardFile(
             prompt: viewModel.prompt,
-            clipSeconds: viewModel.chainClipLength == .five ? 5 : 7,
-            clips: plan.indices.map { index in
-                StoryboardFile.Clip(clip: index + 1,
-                                    start: (Double(starts[index]) / 24 * 100).rounded() / 100,
-                                    seconds: (Double(plan[index]) / 24 * 100).rounded() / 100,
-                                    prompt: index < viewModel.clipPrompts.count ? viewModel.clipPrompts[index] : "",
-                                    references: hasReferences
-                                        ? viewModel.chainClipUsesReferences(viewModel.clipReferences, index: index) : nil)
+            clips: viewModel.customClips.enumerated().map { index, clip in
+                StoryboardFile.Clip(
+                    clip: index + 1,
+                    start: index < starts.count ? (Double(starts[index]) / 24 * 100).rounded() / 100 : 0,
+                    seconds: (Double(clip.frames) / 24 * 100).rounded() / 100,
+                    prompt: clip.prompt,
+                    images: index > 0 ? clip.images : nil,
+                    referencePaths: index > 0 && clip.images == .references ? clip.references.map(\.path) : nil,
+                    firstFrame: index > 0 && clip.images == .frames ? clip.firstFrame : nil,
+                    lastFrame: index > 0 && clip.images == .frames ? clip.lastFrame : nil,
+                    audio: index > 0 ? clip.audio : nil,
+                    audioPath: index > 0 && clip.audio == .file ? clip.audioPath : nil,
+                    audioOffset: index > 0 && clip.audio == .file ? clip.audioOffset : nil)
             })
         do {
             let encoder = JSONEncoder()
@@ -300,5 +218,217 @@ struct ClipPromptsSheet: View {
         } catch {
             message = String(localized: "書き出せませんでした（詳細: \(error.localizedDescription)）")
         }
+    }
+}
+
+/// One clip in カスタムクリップ's editor.
+private struct CustomClipRow: View {
+    @ObservedObject var viewModel: GenerationViewModel
+    @Binding var clip: ChainClipSpec
+    let index: Int
+    let start: Int
+    let plan: ChainClipPlan?
+    @Environment(\.colorScheme) private var colorScheme
+    private var palette: H3Palette { H3Palette(colorScheme) }
+
+    private var secondsRange: ClosedRange<Int> {
+        index == 0 || clip.startsFresh ? ChainClipSpec.secondsRange : ChainClipSpec.continuingSecondsRange
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: H3Spacing.sm) {
+            HStack(spacing: H3Spacing.sm) {
+                Text("\(index + 1)本目").font(.callout.weight(.semibold))
+                Text(timeRange).font(.caption).foregroundStyle(palette.textSecondary)
+                if let audio = audioRange {
+                    Text(audio).font(.caption).foregroundStyle(palette.textSecondary)
+                }
+                Spacer()
+                Stepper(value: Binding(get: { clip.seconds },
+                                       set: { clip.seconds = $0.clamped(to: secondsRange) }),
+                        in: secondsRange) {
+                    Text("\(clip.seconds)秒").font(.caption).monospacedDigit()
+                }
+                .help("この動画の長さ")
+                if viewModel.customClips.count > 1 {
+                    Button {
+                        let id = clip.id
+                        viewModel.customClips.removeAll { $0.id == id }
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("このクリップを取り除く")
+                }
+            }
+            ClipTextEditor(text: $clip.prompt, placeholder: String(localized: "（共通の指示だけでつくります）"))
+            if index == 0 {
+                Text("1本目は、パネルの画像（画像から）とリップシンクの設定でつくります。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+            } else {
+                imagesSection
+                audioSection
+            }
+        }
+    }
+
+    // MARK: Images
+
+    @ViewBuilder
+    private var imagesSection: some View {
+        Toggle("同じ参照画像を使う", isOn: Binding(
+            get: { clip.images == .same },
+            set: { clip.images = $0 ? .same : .references }))
+            .toggleStyle(.checkbox)
+            .font(.caption)
+            .help("パネルで選んだ参照画像を、この動画にも使います（パネルに参照画像がなければ、画像なしでつくります）")
+        if clip.images != .same {
+            VStack(alignment: .leading, spacing: H3Spacing.sm) {
+                Picker("", selection: $clip.images) {
+                    Text("参照画像").tag(ChainClipSpec.Images.references)
+                    Text("最初・最後の画像").tag(ChainClipSpec.Images.frames)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 280)
+                if clip.images == .references {
+                    ForEach(Array(clip.references.enumerated()), id: \.offset) { offset, reference in
+                        HStack {
+                            Image(systemName: reference.kind == "audio" ? "waveform"
+                                  : reference.kind == "video" ? "video" : "photo")
+                                .foregroundStyle(palette.textSecondary)
+                            Text(URL(fileURLWithPath: reference.path).lastPathComponent).font(.caption)
+                            Spacer()
+                            Button("取り除く") { clip.references.remove(at: offset) }.font(.caption)
+                        }
+                    }
+                    HStack {
+                        Button("ファイルを選ぶ…") {
+                            for path in chooseFiles(allowedContentTypes: referenceMediaTypes)
+                            where !clip.references.contains(where: { $0.path == path }) {
+                                let kind: H3ReferenceKind = isVideoFile(path: path) ? .video
+                                    : isAudioFile(path: path) ? .audio : .image
+                                clip.references.append(.init(kind: kind.storedName, path: path))
+                            }
+                        }
+                        .font(.caption)
+                        if clip.references.isEmpty {
+                            Text("選ばなければ、画像なしで前の動画の続きをつくります")
+                                .font(.caption).foregroundStyle(palette.textSecondary)
+                        }
+                    }
+                } else {
+                    frameRow(label: String(localized: "最初の画像"), path: $clip.firstFrame)
+                    frameRow(label: String(localized: "最後の画像"), path: $clip.lastFrame)
+                    Text(clip.firstFrame != nil
+                         ? String(localized: "最初の画像を選んだので、この動画は前の動画の続きにせず、その画像から始めます（前の動画とはカットでつながります）。")
+                         : String(localized: "最後の画像だけなら、前の動画の続きのまま、その画像で終わるようにつくります。"))
+                        .font(.caption)
+                        .foregroundStyle(palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.leading, H3Spacing.lg)
+        }
+    }
+
+    private func frameRow(label: String, path: Binding<String?>) -> some View {
+        HStack {
+            Text(label).font(.caption)
+            if let value = path.wrappedValue {
+                Text(URL(fileURLWithPath: value).lastPathComponent).font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+            }
+            Spacer()
+            Button(path.wrappedValue == nil ? String(localized: "選ぶ…") : String(localized: "変更…")) {
+                if let chosen = chooseFile(allowedContentTypes: imageTypes) { path.wrappedValue = chosen }
+            }
+            .font(.caption)
+            if path.wrappedValue != nil {
+                Button("取り除く") { path.wrappedValue = nil }.font(.caption)
+            }
+        }
+    }
+
+    // MARK: Audio
+
+    @ViewBuilder
+    private var audioSection: some View {
+        HStack {
+            Picker("リップシンクの音声", selection: $clip.audio) {
+                Text("前の動画から続ける").tag(ChainClipSpec.Audio.carryOn)
+                Text("別の音声に変える").tag(ChainClipSpec.Audio.file)
+                Text("リップシンクなし").tag(ChainClipSpec.Audio.none)
+            }
+            .font(.caption)
+            .fixedSize()
+            if clip.audio == .file {
+                if let path = clip.audioPath {
+                    Text(URL(fileURLWithPath: path).lastPathComponent).font(.caption)
+                        .foregroundStyle(palette.textSecondary)
+                }
+                Button(clip.audioPath == nil ? String(localized: "選ぶ…") : String(localized: "変更…")) {
+                    if let chosen = chooseFile(allowedContentTypes: forcedAudioTypes) { clip.audioPath = chosen }
+                }
+                .font(.caption)
+                TextField("開始位置", value: $clip.audioOffset, format: .number.precision(.fractionLength(0 ... 2)))
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 60)
+                    .help("音声の何秒目から使うか")
+                Text("秒から").font(.caption)
+            }
+        }
+    }
+
+    // MARK: Times
+
+    private var timeRange: String {
+        let from = String(format: "%.1f", Double(start) / 24)
+        let to = String(format: "%.1f", Double(start + clip.frames) / 24)
+        return String(localized: "\(from)〜\(to)秒")
+    }
+
+    /// With lip sync, where in the audio the clip is.
+    private var audioRange: String? {
+        guard let plan else { return nil }
+        guard let path = plan.audioPath else {
+            let lipSync = viewModel.forcedAudioPath != nil || viewModel.customClips.contains { $0.audio == .file }
+            return lipSync ? String(localized: "（リップシンクなし）") : nil
+        }
+        let from = String(format: "%.1f", plan.audioOffset)
+        let to = String(format: "%.1f", plan.audioOffset + Double(plan.frames) / 24)
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        return String(localized: "（\(name) \(from)〜\(to)秒）")
+    }
+}
+
+/// A short multi-line text box with a grey placeholder.
+struct ClipTextEditor: View {
+    @Binding var text: String
+    var placeholder: String
+    @Environment(\.colorScheme) private var colorScheme
+    private var palette: H3Palette { H3Palette(colorScheme) }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            TextEditor(text: $text)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .padding(4)
+            if text.isEmpty && !placeholder.isEmpty {
+                Text(placeholder)
+                    .font(.body)
+                    .foregroundStyle(palette.textSecondary.opacity(0.75))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .allowsHitTesting(false)
+            }
+        }
+        .frame(height: 58)
+        .background(palette.surface)
+        .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
+        .overlay(RoundedRectangle(cornerRadius: H3Radius.control).stroke(palette.border, lineWidth: 1))
     }
 }

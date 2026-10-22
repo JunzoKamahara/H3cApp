@@ -343,14 +343,16 @@ static int h3_continuation_rows(const h3_params *params,
     return ok;
 }
 
-/* Puts `count` values of `front` before the `*elements` values of `*rows`. */
-static int h3_prepend_rows(float **rows, size_t *elements,
-                           const float *front, size_t count) {
+/* Adds `count` values of `more` before (`first`) or after the `*elements`
+ * values of `*rows`. */
+static int h3_join_rows(float **rows, size_t *elements,
+                        const float *more, size_t count, int first) {
     if (!count) return 1;
     float *joined = malloc((*elements + count) * sizeof(*joined));
     if (!joined) return 0;
-    memcpy(joined, front, count * sizeof(*joined));
-    if (*elements) memcpy(joined + count, *rows, *elements * sizeof(*joined));
+    float *existing = joined + (first ? count : 0);
+    if (*elements) memcpy(existing, *rows, *elements * sizeof(*joined));
+    memcpy(first ? joined : joined + *elements, more, count * sizeof(*joined));
     free(*rows);
     *rows = joined;
     *elements += count;
@@ -2004,8 +2006,9 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         }
     }
     if (continuation.active) {
-        /* The pinned steps go before any Ref2VA reference rows, the order
-         * h3_layout_build packs them in. */
+        /* With Ref2VA references the pinned steps go before the reference
+         * rows; otherwise after a last frame's - the order the keyframes
+         * (and h3_layout_build) have them in. */
         float *pinned_video = NULL, *pinned_audio = NULL;
         size_t pinned_video_elements = 0, pinned_audio_elements = 0;
         detail[0] = '\0';
@@ -2013,10 +2016,10 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                                   &pinned_video, &pinned_video_elements,
                                   &pinned_audio, &pinned_audio_elements,
                                   detail, sizeof(detail)) ||
-            !h3_prepend_rows(&condition_video_rows, &condition_video_elements,
-                             pinned_video, pinned_video_elements) ||
-            !h3_prepend_rows(&condition_audio_rows, &condition_audio_elements,
-                             pinned_audio, pinned_audio_elements)) {
+            !h3_join_rows(&condition_video_rows, &condition_video_elements,
+                          pinned_video, pinned_video_elements, ref2va) ||
+            !h3_join_rows(&condition_audio_rows, &condition_audio_elements,
+                          pinned_audio, pinned_audio_elements, ref2va)) {
             free(pinned_video);
             free(pinned_audio);
             h3_set_error(ctx, "%s", detail[0] ? detail :

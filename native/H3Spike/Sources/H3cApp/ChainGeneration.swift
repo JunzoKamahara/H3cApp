@@ -7,8 +7,6 @@ import Foundation
 /// took about 23% less time than one 362-frame generation
 /// (long-vs-chain/REPORT.md), so 15 s is offered chained as well.
 let chainedSecondsRange = 15 ... 90
-/// The duration menu's chained choices, besides 15 s and カスタム.
-let chainedSecondsChoices = [20, 30, 45, 60, 90]
 
 /// How long each clip of a chain is (詳細設定). Both lengths leave
 /// frames past the carried-over 22 that fill whole 40 Hz audio steps, so the
@@ -61,17 +59,6 @@ func chainTotalFrames(_ plan: [Int], overlap: Int = continuationFrames) -> Int {
     plan.enumerated().reduce(0) { $0 + ($1.offset == 0 ? $1.element : $1.element - overlap) }
 }
 
-/// Where each clip of a plan starts in the joined video, in frames.
-func chainClipStarts(_ plan: [Int], overlap: Int = continuationFrames) -> [Int] {
-    var starts: [Int] = []
-    var start = 0
-    for frames in plan {
-        starts.append(start)
-        start += frames - overlap
-    }
-    return starts
-}
-
 /// A clip's prompt in a つなげて生成 with クリップごとの指示: the form's
 /// prompt (what stays the same: the people, their clothes, the style), then
 /// what happens in this clip. Without a clip's text it is the prompt alone,
@@ -86,13 +73,16 @@ func chainClipPrompt(common: String, clip: String?) -> String {
 
 extension GenerationViewModel {
     /// Whether the form's length is made by joining clips.
-    var isChained: Bool { chained && seconds >= chainedSecondsRange.lowerBound }
+    var isChained: Bool {
+        chained && (chainCustom ? !customClips.isEmpty : seconds >= chainedSecondsRange.lowerBound)
+    }
 
     /// The seconds the form may hold: 1-15 in one generation, 15-90 chained.
     var currentSecondsRange: ClosedRange<Int> { chained ? chainedSecondsRange : secondsRange }
 
     var currentChainPlan: [Int] {
-        chainPlan(seconds: seconds.clamped(to: chainedSecondsRange), clip: chainClipLength)
+        usesCustomClips ? customClips.map(\.frames)
+            : chainPlan(seconds: seconds.clamped(to: chainedSecondsRange), clip: chainClipLength)
     }
 
     /// The クリップごとの指示 as saved: up to the last one with text, none
@@ -117,16 +107,20 @@ extension GenerationViewModel {
         return flags[index]
     }
 
-    /// Picks a length from the duration menu or カスタム.
+    /// Picks a length from the duration menu (カスタムクリップ is
+    /// useCustomClips).
     func setDuration(seconds value: Int, chained wantsChain: Bool) {
         let chain = wantsChain || value > secondsRange.upperBound
         chained = chain
+        chainCustom = false
         seconds = value.clamped(to: chain ? chainedSecondsRange : secondsRange)
     }
 
-    /// The composer chip's text: "5秒", "つないで15秒", "30秒・つなぐ".
+    /// The composer chip's text: "5秒", "つないで15秒", "30秒・つなぐ",
+    /// "カスタム・3本".
     var durationLabel: String {
         guard isChained else { return String(localized: "\(seconds)秒") }
+        if usesCustomClips { return String(localized: "カスタム・\(customClips.count)本") }
         return seconds == chainedSecondsRange.lowerBound
             ? String(localized: "つないで15秒") : String(localized: "\(seconds)秒・つなぐ")
     }
@@ -159,7 +153,9 @@ extension GenerationViewModel {
 /// One つなげて生成 while it runs: its plan, where its clips go, and the
 /// clips made so far.
 final class ChainRun {
+    /// Each clip's frames (from clipPlans).
     let plan: [Int]
+    let clipPlans: [ChainClipPlan]
     let folder: URL
     let baseName: String
     let baseSeed: UInt64
@@ -168,20 +164,17 @@ final class ChainRun {
     /// The whole chain's request (the first clip's settings).
     let request: GenerationViewModel.GenerationRequest
     var clips: [(url: URL, record: ProjectVideoRecord)] = []
-    /// The lip-sync audio's length: clips starting past its end are made
-    /// without it (their sound carried over instead).
-    let forcedAudioSeconds: Double?
 
-    init(plan: [Int], projectURL: URL, fixedSeed: UInt64?,
+    init(plans: [ChainClipPlan], projectURL: URL, fixedSeed: UInt64?,
          request: GenerationViewModel.GenerationRequest) {
-        self.plan = plan
+        clipPlans = plans
+        plan = plans.map(\.frames)
         baseSeed = fixedSeed ?? UInt64.random(in: 0 ... UInt64.max / 2)
         seedWasRandom = fixedSeed == nil
         let chains = projectURL.appendingPathComponent("chains", isDirectory: true)
         baseName = ProjectFiles.videoBaseName(completedAt: Date(), seed: baseSeed, in: projectURL)
         folder = chains.appendingPathComponent(baseName, isDirectory: true)
         self.request = request
-        forcedAudioSeconds = request.params.forcedAudioPath.flatMap(audioFileSeconds)
     }
 }
 
@@ -208,15 +201,17 @@ extension GenerationViewModel {
                                                           overlapFrames: continuationFrames, fps: 24)
     }
 
-    /// Clip `index` of a chain: the chain's request at the clip's length,
-    /// with that clip's own prompt (chainClipPrompt); after the first,
-    /// continuing the clip before with lip sync moved on by what the earlier
-    /// clips added. Reference images go to every clip, so the people keep
-    /// looking the same even after leaving the frame; a first or last frame
-    /// only shapes the first clip.
+    /// Clip `index` of a chain (its ChainClipPlan): the chain's request at
+    /// the clip's length with the clip's own prompt (chainClipPrompt),
+    /// images and lip sync; after the first, continuing the clip before
+    /// unless it starts from a first frame of its own. The form's reference
+    /// images go to every clip unless the clip says otherwise, so the people
+    /// keep looking the same even after leaving the frame; the form's first
+    /// and last frame only shape the first clip.
     func chainClipRequest(_ chain: ChainRun, index: Int) -> GenerationRequest {
         var request = chain.request
-        let frames = chain.plan[index]
+        let clip = chain.clipPlans[index]
+        let frames = clip.frames
         request.params.frames = Int32(frames)
         request.requestedFrames = frames
         request.requestedSeconds = Int((Double(frames) / 24).rounded())
@@ -226,64 +221,79 @@ extension GenerationViewModel {
         var draft = chain.request.draft
         draft.chained = nil
         draft.chainClipFrames = nil
+        draft.chainCustom = nil
+        draft.customClips = nil
         draft.seconds = request.requestedSeconds
-        if index > 0, let previous = chain.clips.last {
-            let latent = ProjectFiles.latentURL(for: previous.url)
-            request.params.continueLatentPath = latent.path
-            request.params.continueFrames = Int32(continuationFrames)
+        let projectURL = request.projectURL
+        func stored(_ path: String) -> String { projectURL.map { ProjectFiles.stored(path, in: $0) } ?? path }
+
+        // Images.
+        if index > 0 {
             request.params.firstFrame = nil
             request.params.lastFrame = nil
-            if request.params.references.isEmpty {
-                request.creationMethod = .text
-                request.imageInputMode = nil
-                request.referenceNames = []
-            }
-            let carried = chain.plan[..<index].reduce(0) { $0 + $1 - continuationFrames }
-            if request.params.forcedAudioPath != nil {
-                let offset = chain.request.params.forcedAudioOffset + Double(carried) / 24
-                if let length = chain.forcedAudioSeconds, offset >= length - 0.1 {
-                    // Past the end of the audio: the clip makes its own sound.
-                    request.params.forcedAudioPath = nil
-                    request.params.forcedAudioOffset = 0
-                    draft.forcedAudio = nil
-                    draft.forcedAudioOffset = nil
-                } else {
-                    request.params.forcedAudioOffset = offset
-                    draft.forcedAudioOffset = offset
-                }
-            }
-            request.soundLateness = continuationSoundLateness(
-                source: previous.record, latentURL: latent, forced: request.params.forcedAudioPath != nil)
-            if let projectURL = request.projectURL {
-                draft.continueFrom = ProjectFiles.stored(previous.url.path, in: projectURL)
-            }
-            draft.continueFrames = continuationFrames
-            if request.params.references.isEmpty {
-                draft.creationMethod = CreationMethod.text.rawValue
-                draft.references = []
-            }
             draft.firstFrame = nil
             draft.lastFrame = nil
         }
-        // A clip switched off in クリップごとの指示 goes without the
-        // reference images (a scene the people don't appear in).
-        if !request.params.references.isEmpty,
-           !chainClipUsesReferences(chain.request.draft.clipReferences, index: index) {
+        switch clip.images {
+        case .form:
+            break
+        case .none:
             request.params.references = []
-            if request.params.attentionCachePath != nil {
-                request.params.attentionCachePath = attentionCachePath(usesReferences: false)
-            }
+            draft.references = []
+        case .references(let references):
+            request.params.references = references
+            draft.references = references.map { .init(kind: $0.kind.storedName, path: stored($0.path)) }
+        case .frames(let first, let last):
+            request.params.references = []
+            request.params.firstFrame = first
+            request.params.lastFrame = last
+            draft.references = []
+            draft.firstFrame = first.map(stored)
+            draft.lastFrame = last.map(stored)
+        }
+        let usesFrames = request.params.firstFrame != nil || request.params.lastFrame != nil
+        let usesReferences = !request.params.references.isEmpty
+        if usesReferences || usesFrames {
+            request.creationMethod = .image
+            request.imageInputMode = usesReferences ? .referenceImage : .firstLastFrame
+            draft.creationMethod = CreationMethod.image.rawValue
+            draft.imageInputMode = (usesReferences ? ImageInputMode.referenceImage : .firstLastFrame).rawValue
+        } else {
             request.creationMethod = .text
             request.imageInputMode = nil
-            request.referenceNames = []
             draft.creationMethod = CreationMethod.text.rawValue
-            draft.references = []
         }
-        let clipPrompts = chain.request.draft.clipPrompts ?? []
-        request.prompt = chainClipPrompt(common: chain.request.prompt,
-                                         clip: index < clipPrompts.count ? clipPrompts[index] : nil)
-        // The clip's record holds the prompt it was made from; the joined
-        // video's keeps the form's prompt and clipPrompts.
+        if request.params.attentionCachePath != nil {
+            request.params.attentionCachePath = attentionCachePath(usesReferences: usesReferences)
+        }
+
+        // Lip sync.
+        request.params.forcedAudioPath = clip.audioPath
+        request.params.forcedAudioOffset = clip.audioPath == nil ? 0 : clip.audioOffset
+        draft.forcedAudio = clip.audioPath.map(stored)
+        draft.forcedAudioOffset = clip.audioPath == nil ? nil : clip.audioOffset
+
+        // Continuing the clip before.
+        if index > 0 {
+            request.params.continueLatentPath = nil
+            draft.continueFrom = nil
+            draft.continueFrames = nil
+            request.soundLateness = 0
+            if clip.continues, let previous = chain.clips.last {
+                let latent = ProjectFiles.latentURL(for: previous.url)
+                request.params.continueLatentPath = latent.path
+                request.params.continueFrames = Int32(continuationFrames)
+                request.soundLateness = continuationSoundLateness(
+                    source: previous.record, latentURL: latent, forced: clip.audioPath != nil)
+                draft.continueFrom = stored(previous.url.path)
+                draft.continueFrames = continuationFrames
+            }
+        }
+
+        request.prompt = chainClipPrompt(common: chain.request.prompt, clip: clip.text)
+        request.referenceNames = referenceNames(draft)
+        // The clip's record holds what it was made from; the joined video's
+        // keeps the form's prompt and the clips' own settings.
         draft.prompt = request.prompt
         draft.clipPrompts = nil
         draft.clipReferences = nil
@@ -319,7 +329,7 @@ extension GenerationViewModel {
             video: "", completedAt: completedAt, seed: String(chain.baseSeed),
             seedWasRandom: chain.seedWasRandom,
             generationSeconds: completedAt.timeIntervalSince(chain.startedAt),
-            actualFrameCount: chainTotalFrames(clips.map(\.record.actualFrameCount)),
+            actualFrameCount: joinedFrameCount(clips.map(\.record)),
             fps: last.record.fps,
             effectiveDenoiseReuse: last.record.effectiveDenoiseReuse,
             ccvAttentionCalls: clips.reduce(0) { $0 + $1.record.ccvAttentionCalls },
@@ -365,7 +375,7 @@ extension GenerationViewModel {
             let leads = soundLeads(clips)
             try await JoinedVideoExporter.export(clips.enumerated().map { index, clip in
                 JoinedVideoExporter.Clip(url: clip.url,
-                                         overlapFrames: index == 0 ? 0 : (clip.record?.draft.continueFrames ?? continuationFrames),
+                                         overlapFrames: joinOverlap(clip.record, index: index),
                                          soundLead: leads[index])
             }, to: output)
             var stored = record
@@ -381,6 +391,19 @@ extension GenerationViewModel {
             try? FileManager.default.removeItem(at: output)
             return .failure(error)
         }
+    }
+
+    /// How many frames a clip overlaps the one before when joined: what it
+    /// carried over if it continues it, none at a cut.
+    func joinOverlap(_ record: ProjectVideoRecord?, index: Int) -> Int {
+        guard index > 0 else { return 0 }
+        if let record, record.draft.continueFrom == nil { return 0 }
+        return record?.draft.continueFrames ?? continuationFrames
+    }
+
+    /// The joined length of a chain's clips, in frames.
+    func joinedFrameCount(_ records: [ProjectVideoRecord]) -> Int {
+        records.enumerated().reduce(0) { $0 + $1.element.actualFrameCount - joinOverlap($1.element, index: $1.offset) }
     }
 
     /// How much earlier each clip's sound goes when joining: its recorded

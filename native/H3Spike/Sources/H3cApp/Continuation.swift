@@ -330,10 +330,14 @@ enum JoinedVideoExporter {
             let soundLength = CMTimeMinimum(CMTimeSubtract(CMTimeAdd(start, duration), soundAt), available)
             try audioTracks[index % 2].insertTimeRange(
                 CMTimeRange(start: soundSource, duration: soundLength), of: audio, at: soundAt)
-            if index > 0 {
+            if index > 0 && clip.overlapFrames > 0 {
                 let fade = CMTimeRange(start: start, end: ranges[index - 1].end)
                 audioParameters[(index - 1) % 2].setVolumeRamp(fromStartVolume: 1, toEndVolume: 0, timeRange: fade)
                 audioParameters[index % 2].setVolumeRamp(fromStartVolume: 0, toEndVolume: 1, timeRange: fade)
+            } else if index > 0 {
+                // A cut (a clip that starts from its own first frame): its
+                // track may have been faded out at an earlier cross-fade.
+                audioParameters[index % 2].setVolume(1, at: start)
             }
             ranges.append(CMTimeRange(start: start, duration: duration))
         }

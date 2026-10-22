@@ -382,6 +382,8 @@ struct ResolvedResult {
     /// What each clip added to the prompt (クリップごとの指示).
     var clipPrompts: [String]? = nil
     var clipReferences: [Bool]? = nil
+    /// カスタムクリップ: each clip's own settings.
+    var customClips: [ChainClipSpec]? = nil
 
     var seedDecimalString: String { String(seed) }
 
@@ -458,6 +460,40 @@ struct ResolvedResult {
                 lines.append(trimmed.isEmpty
                     ? String(localized: "  \(index + 1)本目: （共通の指示だけ）")
                     : String(localized: "  \(index + 1)本目: \(trimmed)"))
+            }
+        }
+        if let customClips {
+            lines.append(String(localized: "カスタムクリップ:"))
+            for (index, clip) in customClips.enumerated() {
+                var parts = [String(localized: "\(clip.seconds)秒")]
+                let text = clip.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                if index > 0 {
+                    switch clip.images {
+                    case .same: break
+                    case .references:
+                        let names = clip.references.map { URL(fileURLWithPath: $0.path).lastPathComponent }
+                        parts.append(names.isEmpty ? String(localized: "参照画像なし")
+                                                   : String(localized: "参照: \(names.joined(separator: ", "))"))
+                    case .frames:
+                        if let first = clip.firstFrame {
+                            parts.append(String(localized: "最初の画像: \(URL(fileURLWithPath: first).lastPathComponent)（カット）"))
+                        }
+                        if let last = clip.lastFrame {
+                            parts.append(String(localized: "最後の画像: \(URL(fileURLWithPath: last).lastPathComponent)"))
+                        }
+                    }
+                    switch clip.audio {
+                    case .carryOn: break
+                    case .none: parts.append(String(localized: "リップシンクなし"))
+                    case .file:
+                        if let path = clip.audioPath {
+                            let offset = formatAudioOffset(clip.audioOffset)
+                            parts.append(String(localized: "音声: \(URL(fileURLWithPath: path).lastPathComponent)（\(offset)秒から）"))
+                        }
+                    }
+                }
+                let head = String(localized: "  \(index + 1)本目（\(parts.joined(separator: "、"))）")
+                lines.append(text.isEmpty ? head : head + ": " + text)
             }
         }
         if let clipReferences, clipReferences.contains(false) {

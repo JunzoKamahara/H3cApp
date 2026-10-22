@@ -303,6 +303,10 @@ final class GenerationViewModel: ObservableObject {
     /// Whether each clip of a chain uses the reference images (missing:
     /// yes) - off for a scene the people don't appear in.
     @Published var clipReferences: [Bool] = []
+    /// カスタムクリップ (CustomClips.swift): while chainCustom, a chained
+    /// length is made of customClips.
+    @Published var chainCustom = false
+    @Published var customClips: [ChainClipSpec] = []
     /// The つなげて生成 running now: kept past a cancel, so the clips made so
     /// far are still joined.
     var chainRun: ChainRun?
@@ -758,6 +762,7 @@ final class GenerationViewModel: ObservableObject {
             }
         }
         if let continuationValidationMessage { return continuationValidationMessage }
+        if let customClipsValidationMessage { return customClipsValidationMessage }
         if let forcedAudioPath, !FileManager.default.fileExists(atPath: forcedAudioPath) {
             return String(localized: "合わせる音声のファイルが見つかりません: \(URL(fileURLWithPath: forcedAudioPath).lastPathComponent)")
         }
@@ -788,7 +793,10 @@ final class GenerationViewModel: ObservableObject {
 
     var draftSummaryText: String {
         var parts = [sizeProfile.label, durationLabel]
-        if isChained {
+        if usesCustomClips {
+            let total = String(format: "%.1f", customClipsTotalSeconds)
+            parts.append(String(localized: "\(customClips.count)本をつなぐ（計\(total)秒）"))
+        } else if isChained {
             parts.append(String(localized: "\(currentChainPlan.count)本をつなぐ（1本\(chainClipLength.label)）"))
         }
         if hasAdvancedChanges {
@@ -897,7 +905,7 @@ final class GenerationViewModel: ObservableObject {
         let request = makeRequest()
         chainRun = nil
         if isChained, let project {
-            let run = ChainRun(plan: currentChainPlan, projectURL: project.url,
+            let run = ChainRun(plans: chainClipPlans(), projectURL: project.url,
                                fixedSeed: seedFixed ? UInt64(seedText) : nil, request: request)
             chainRun = run
             total = run.plan.count
@@ -985,6 +993,7 @@ final class GenerationViewModel: ObservableObject {
             draft.forcedAudio = draft.forcedAudio.map { ProjectFiles.stored($0, in: projectURL) }
             draft.continueFrom = draft.continueFrom.map { ProjectFiles.stored($0, in: projectURL) }
             draft.references = draft.references.map { .init(kind: $0.kind, path: ProjectFiles.stored($0.path, in: projectURL)) }
+            draft = draft.mappingClipPaths { ProjectFiles.stored($0, in: projectURL) }
         }
         draft.fastAttention = params.fastAttention
         // Kept in the project for when the length is chained again, but not
@@ -992,6 +1001,14 @@ final class GenerationViewModel: ObservableObject {
         if !isChained {
             draft.clipPrompts = nil
             draft.clipReferences = nil
+            draft.chainCustom = nil
+            draft.customClips = nil
+        } else if usesCustomClips {
+            draft.clipPrompts = nil
+            draft.clipReferences = nil
+        } else {
+            draft.chainCustom = nil
+            draft.customClips = nil
         }
 
         return GenerationRequest(
