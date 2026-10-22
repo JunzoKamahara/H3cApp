@@ -1,5 +1,4 @@
 import AppKit
-import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -48,13 +47,6 @@ struct StoryboardFile: Codable {
         }
         let prompt = (object["prompt"] as? String) ?? (object["commonPrompt"] as? String)
         return (prompt, texts)
-    }
-}
-
-/// The audio file's length in seconds, if it can be read.
-func audioFileSeconds(_ path: String) -> Double? {
-    (try? AVAudioFile(forReading: URL(fileURLWithPath: path))).map {
-        Double($0.length) / $0.fileFormat.sampleRate
     }
 }
 

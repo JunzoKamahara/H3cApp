@@ -48,8 +48,7 @@ extension GenerationViewModel {
         }
         creationMethod = .text
         if let audio = forcedAudioPath {
-            let length = (try? AVAudioFile(forReading: URL(fileURLWithPath: audio)))
-                .map { Double($0.length) / $0.fileFormat.sampleRate }
+            let length = audioFileSeconds(audio)
             if let offset = continuationAudioOffset(after: video), offset < (length ?? .infinity) - 0.1 {
                 forcedAudioOffset = offset
             } else {

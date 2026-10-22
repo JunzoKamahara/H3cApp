@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import UniformTypeIdentifiers
 
 let imageTypes: [UTType] = [.image]
@@ -57,4 +58,23 @@ func isAudioFile(path: String) -> Bool {
     let ext = (path as NSString).pathExtension
     guard let type = UTType(filenameExtension: ext) else { return false }
     return type.conforms(to: .audio) && !type.conforms(to: .movie)
+}
+
+/// An audio file's length in seconds, nil if it can't be told. Read the way
+/// the engine reads the file (AVAsset), not with AVAudioFile, which gives 0
+/// frames for some files that play fine - Opus in .m4a, for one - and so
+/// made every clip after the first look past the end of the audio.
+func audioFileSeconds(_ path: String) -> Double? {
+    final class Result: @unchecked Sendable { var seconds: Double? }
+    let result = Result()
+    let done = DispatchSemaphore(value: 0)
+    let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+    Task.detached {
+        if let duration = try? await asset.load(.duration), duration.isNumeric, duration.seconds > 0 {
+            result.seconds = duration.seconds
+        }
+        done.signal()
+    }
+    done.wait()
+    return result.seconds
 }

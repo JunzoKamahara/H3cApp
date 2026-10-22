@@ -168,11 +168,7 @@ final class ChainRun {
         baseName = ProjectFiles.videoBaseName(completedAt: Date(), seed: baseSeed, in: projectURL)
         folder = chains.appendingPathComponent(baseName, isDirectory: true)
         self.request = request
-        forcedAudioSeconds = request.params.forcedAudioPath.flatMap { path in
-            (try? AVAudioFile(forReading: URL(fileURLWithPath: path))).map {
-                Double($0.length) / $0.fileFormat.sampleRate
-            }
-        }
+        forcedAudioSeconds = request.params.forcedAudioPath.flatMap(audioFileSeconds)
     }
 }
 
