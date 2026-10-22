@@ -381,6 +381,7 @@ struct ResolvedResult {
     var chainClipFrames: Int? = nil
     /// What each clip added to the prompt (クリップごとの指示).
     var clipPrompts: [String]? = nil
+    var clipReferences: [Bool]? = nil
 
     var seedDecimalString: String { String(seed) }
 
@@ -458,6 +459,10 @@ struct ResolvedResult {
                     ? String(localized: "  \(index + 1)本目: （共通の指示だけ）")
                     : String(localized: "  \(index + 1)本目: \(trimmed)"))
             }
+        }
+        if let clipReferences, clipReferences.contains(false) {
+            let off = clipReferences.indices.filter { !clipReferences[$0] }.map { String($0 + 1) }
+            lines.append(String(localized: "参照画像を使わないクリップ: \(off.joined(separator: ", "))本目"))
         }
         if let continuedFrom {
             lines.append(String(localized: "続き: \(continuedFrom)（最後の\(continueFrames)コマを引き継ぎ）"))

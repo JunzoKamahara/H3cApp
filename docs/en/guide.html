@@ -195,7 +195,7 @@
         <li><strong>Join them.</strong> With the continuation shown, “<span class="ui">Join and Export</span>” in the panel joins everything from the first original up to that clip into one video, saved in the project. “<span class="ui">More</span>” → “<span class="ui">Join Up to Here and Export</span>” in the list does the same. You can stack continuations of continuations and join them all at the end.</li>
       </ol>
       <ul>
-        <li><strong>Conditions</strong>: a continuation is made “<span class="ui">From text</span>” (no first image or references) at the same size as the original.</li>
+        <li><strong>Conditions</strong>: a continuation can't use a first or last frame, but it can use reference images, which keep the people looking the same. It is made at the same size as the original.</li>
         <li><strong>Seed</strong>: a continuation's seed isn't fixed; it changes each time.</li>
         <li><strong>Older videos</strong>: videos made before v0.5.0 don't have the data needed and can't be continued. From v0.5.0 on, each video keeps a small data file next to it (<code>.h3lt</code>, about 3.6 MB for 5 s at landscape medium).</li>
         <li><strong>Time</strong>: a continuation takes about 20% longer than a new clip (on a 24 GB M5, 5 s at landscape medium: 446 s against 364 s).</li>

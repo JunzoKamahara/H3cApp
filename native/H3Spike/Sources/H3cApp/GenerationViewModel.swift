@@ -300,6 +300,9 @@ final class GenerationViewModel: ObservableObject {
     @Published var chainClipLength: ChainClipLength = defaultChainClipLength
     /// What each clip of a chain adds to the prompt (chainClipPrompt).
     @Published var clipPrompts: [String] = []
+    /// Whether each clip of a chain uses the reference images (missing:
+    /// yes) - off for a scene the people don't appear in.
+    @Published var clipReferences: [Bool] = []
     /// The つなげて生成 running now: kept past a cancel, so the clips made so
     /// far are still joined.
     var chainRun: ChainRun?
@@ -986,7 +989,10 @@ final class GenerationViewModel: ObservableObject {
         draft.fastAttention = params.fastAttention
         // Kept in the project for when the length is chained again, but not
         // in the record of a video they didn't shape.
-        if !isChained { draft.clipPrompts = nil }
+        if !isChained {
+            draft.clipPrompts = nil
+            draft.clipReferences = nil
+        }
 
         return GenerationRequest(
             params: params,

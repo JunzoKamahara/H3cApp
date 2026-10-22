@@ -566,6 +566,15 @@ extension GenerationViewModel {
         } else {
             clipPrompts = []
         }
+        // With reference images: whether each clip uses them (default yes).
+        if let value = json["clip_references"] {
+            guard let list = value as? [Bool] else {
+                return .error(400, "\"clip_references\" must be an array of true/false")
+            }
+            clipReferences = list
+        } else {
+            clipReferences = []
+        }
 
         if let modeRaw = json["compute_mode"] as? String {
             guard let mode = ComputeMode(rawValue: modeRaw) else {
@@ -665,8 +674,8 @@ extension GenerationViewModel {
             guard canContinue(video), let record = video.record else {
                 return .error(400, "\(name) has no saved latents to continue from")
             }
-            if creationMethod == .image {
-                return .error(400, "continue_from cannot be combined with first/last frames or references")
+            if creationMethod == .image && imageInputMode == .firstLastFrame {
+                return .error(400, "continue_from cannot be combined with first/last frames (references are fine)")
             }
             continuation = ContinuationSource(videoURL: video.url, latentURL: ProjectFiles.latentURL(for: video.url),
                                               sizeProfileRaw: record.draft.sizeProfile)

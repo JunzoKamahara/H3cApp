@@ -15,6 +15,8 @@ struct StoryboardFile: Codable {
         var start: Double
         var seconds: Double
         var prompt: String
+        /// Whether the clip uses the reference images (omitted: yes).
+        var references: Bool? = nil
     }
 
     var version = 1
@@ -24,29 +26,33 @@ struct StoryboardFile: Codable {
 
     /// Reads the file written above, or looser forms: "clips" as plain
     /// strings, or the whole file one array of strings. Returns the common
-    /// prompt (nil if the file has none) and each clip's text.
-    static func read(_ data: Data) throws -> (prompt: String?, clips: [String]) {
+    /// prompt (nil if the file has none), each clip's text, and whether
+    /// each uses the reference images.
+    static func read(_ data: Data) throws -> (prompt: String?, clips: [String], references: [Bool]) {
         let json = try JSONSerialization.jsonObject(with: data)
-        func clipTexts(_ value: Any?) -> [String]? {
+        func clipTexts(_ value: Any?) -> (texts: [String], references: [Bool])? {
             guard let list = value as? [Any] else { return nil }
             var texts: [String] = []
+            var references: [Bool] = []
             for item in list {
                 if let text = item as? String {
                     texts.append(text)
+                    references.append(true)
                 } else if let object = item as? [String: Any], let text = object["prompt"] as? String {
                     texts.append(text)
+                    references.append((object["references"] as? Bool) ?? true)
                 } else {
                     return nil
                 }
             }
-            return texts
+            return (texts, references)
         }
-        if let texts = clipTexts(json) { return (nil, texts) }
-        guard let object = json as? [String: Any], let texts = clipTexts(object["clips"]) else {
+        if let clips = clipTexts(json) { return (nil, clips.texts, clips.references) }
+        guard let object = json as? [String: Any], let clips = clipTexts(object["clips"]) else {
             throw CocoaError(.fileReadCorruptFile)
         }
         let prompt = (object["prompt"] as? String) ?? (object["commonPrompt"] as? String)
-        return (prompt, texts)
+        return (prompt, clips.texts, clips.references)
     }
 }
 
@@ -60,17 +66,26 @@ struct ClipPromptsSection: View {
 
     var body: some View {
         Group {
-            if let stored = viewModel.storedClipPrompts {
+            if viewModel.storedClipPrompts != nil || viewModel.storedClipReferences != nil {
                 let plan = viewModel.currentChainPlan
-                let written = stored.prefix(plan.count).filter {
+                let written = (viewModel.storedClipPrompts ?? []).prefix(plan.count).filter {
                     !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 }.count
+                let withoutReferences = (viewModel.storedClipReferences ?? []).prefix(plan.count)
+                    .filter { !$0 }.count
                 HStack {
                     Image(systemName: "list.number").foregroundStyle(palette.textSecondary)
                     Text("クリップごとの指示：\(plan.count)本のうち\(written)本").font(.caption)
+                    if withoutReferences > 0 {
+                        Text("（参照画像なし\(withoutReferences)本）").font(.caption)
+                            .foregroundStyle(palette.textSecondary)
+                    }
                     Spacer()
                     Button("編集…") { showingSheet = true }
-                    Button("取り除く") { viewModel.clipPrompts = [] }
+                    Button("取り除く") {
+                        viewModel.clipPrompts = []
+                        viewModel.clipReferences = []
+                    }
                 }
                 .padding(H3Spacing.md)
                 .background(palette.surfaceMuted)
@@ -125,6 +140,13 @@ struct ClipPromptsSheet: View {
                                 if let audio = audioRange(start: starts[index], frames: plan[index]) {
                                     Text(audio).font(.caption).foregroundStyle(palette.textSecondary)
                                 }
+                                Spacer()
+                                if hasReferences {
+                                    Toggle("参照画像を使う", isOn: referenceBinding(index))
+                                        .toggleStyle(.checkbox)
+                                        .font(.caption)
+                                        .help("人物が出ない場面（背景だけの場面など）では外せます。外した動画は、前の動画の続きと文章だけでつくります")
+                                }
                             }
                             editor(clipBinding(index), placeholder: String(localized: "（共通の指示だけでつくります）"))
                         }
@@ -150,8 +172,11 @@ struct ClipPromptsSheet: View {
                     .help("書き出したファイルか、同じ形のJSONファイルから読み込みます")
                 Button("書き出す…") { exportFile() }
                 Spacer()
-                Button("すべて消す") { viewModel.clipPrompts = [] }
-                    .disabled(viewModel.storedClipPrompts == nil)
+                Button("すべて消す") {
+                    viewModel.clipPrompts = []
+                    viewModel.clipReferences = []
+                }
+                .disabled(viewModel.storedClipPrompts == nil && viewModel.storedClipReferences == nil)
                 Button("完了") { isPresented = false }
                     .keyboardShortcut(.defaultAction)
             }
@@ -182,6 +207,23 @@ struct ClipPromptsSheet: View {
         .background(palette.surface)
         .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
         .overlay(RoundedRectangle(cornerRadius: H3Radius.control).stroke(palette.border, lineWidth: 1))
+    }
+
+    /// The form's reference images are in use (画像から, 参照画像).
+    private var hasReferences: Bool {
+        viewModel.creationMethod == .image && viewModel.imageInputMode == .referenceImage
+            && !viewModel.referenceImages.isEmpty
+    }
+
+    private func referenceBinding(_ index: Int) -> Binding<Bool> {
+        Binding(
+            get: { viewModel.chainClipUsesReferences(viewModel.clipReferences, index: index) },
+            set: { on in
+                var flags = viewModel.clipReferences
+                if flags.count <= index { flags += Array(repeating: true, count: index + 1 - flags.count) }
+                flags[index] = on
+                viewModel.clipReferences = flags
+            })
     }
 
     private func clipBinding(_ index: Int) -> Binding<String> {
@@ -226,6 +268,7 @@ struct ClipPromptsSheet: View {
                 viewModel.prompt = prompt
             }
             viewModel.clipPrompts = file.clips
+            viewModel.clipReferences = file.references
         } catch {
             message = String(localized: "読み込めませんでした。クリップごとの指示を並べたJSONファイルを選んでください")
         }
@@ -246,7 +289,9 @@ struct ClipPromptsSheet: View {
                 StoryboardFile.Clip(clip: index + 1,
                                     start: (Double(starts[index]) / 24 * 100).rounded() / 100,
                                     seconds: (Double(plan[index]) / 24 * 100).rounded() / 100,
-                                    prompt: index < viewModel.clipPrompts.count ? viewModel.clipPrompts[index] : "")
+                                    prompt: index < viewModel.clipPrompts.count ? viewModel.clipPrompts[index] : "",
+                                    references: hasReferences
+                                        ? viewModel.chainClipUsesReferences(viewModel.clipReferences, index: index) : nil)
             })
         do {
             let encoder = JSONEncoder()

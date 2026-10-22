@@ -363,9 +363,6 @@ int h3_layout_build(const h3_layout_spec *spec, h3_layout *layout,
         spec->frame_count < 5) {
         return h3_builder_fail(&builder, "invalid target layout dimensions");
     }
-    if (spec->keyframe_count && spec->reference_count) {
-        return h3_builder_fail(&builder, "keyframes and references are mutually exclusive");
-    }
 
     h3_position *frame = NULL;
     double *w_axis = NULL;
@@ -388,6 +385,19 @@ int h3_layout_build(const h3_layout_spec *spec, h3_layout *layout,
     free(text);
 
     double cursor = (double)spec->text_len;
+    /* Ref2VA references pack between the keyframes and the targets, so the
+     * target timeline (which the keyframes are placed on) starts after
+     * their spans - as ComfyUI's PackedLayout does. Without references it
+     * starts right after the text, as before. */
+    double origin = cursor;
+    for (size_t index = 0; index < spec->reference_count; index++) {
+        const h3_layout_ref *reference = &spec->references[index];
+        if (reference->kind == H3_LAYOUT_REF_IMAGE) origin += 1.0;
+        else if (reference->kind == H3_LAYOUT_REF_AUDIO) origin += reference->audio_t;
+        else if (reference->kind == H3_LAYOUT_REF_VIDEO)
+            origin += fmax((double)reference->audio_t,
+                           h3_video_span_sum(reference->latent_t));
+    }
     /* A one-step condition latent sits at its pixel frame's time: the first
      * frame at the start of the clip, the last one span - rescale later,
      * and a continuation's pinned steps at their own frames in between. */
@@ -400,21 +410,16 @@ int h3_layout_build(const h3_layout_spec *spec, h3_layout *layout,
         /* The last frame keeps its original span-based form, so its
          * position stays bit-identical to earlier releases. */
         double condition_time = keyframe == spec->frame_count - 1
-            ? (double)spec->text_len + h3_video_span_sum(spec->latent_t) -
-                  h3_frame_rescale
-            : (double)spec->text_len + h3_frame_rescale * (double)keyframe;
+            ? origin + h3_video_span_sum(spec->latent_t) - h3_frame_rescale
+            : origin + h3_frame_rescale * (double)keyframe;
         for (size_t row = 0; row < frame_rows; row++) frame[row].t = condition_time;
         if (!h3_emit(&builder, H3_SEG_COND, frame, frame_rows)) goto fail;
         layout->img_cond_rows += frame_rows;
     }
     if (spec->keyframe_audio_t > 0) {
-        if (spec->reference_count) {
-            h3_builder_fail(&builder, "audio keyframes and references are mutually exclusive");
-            goto fail;
-        }
         size_t rows = 0;
         h3_position *audio = h3_audio_grid(
-            (double)spec->text_len + spec->keyframe_audio_start,
+            origin + spec->keyframe_audio_start,
             spec->keyframe_audio_t, w_axis[0], w_axis[w_count - 1], &rows);
         if (!audio) goto oom;
         int ok = h3_emit(&builder, H3_SEG_REF_AUDIO, audio, rows);

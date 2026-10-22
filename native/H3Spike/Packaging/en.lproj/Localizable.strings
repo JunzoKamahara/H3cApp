@@ -395,7 +395,6 @@
 "合わせる音声のファイルが見つかりません: %@" = "The audio file to match can't be found: %@";
 "この動画には続きを作るためのデータがありません（このバージョンより前に作った動画です）" = "This video has no data to continue from (it was made before this version)";
 "続きの元の動画のデータが見つかりません: %@" = "The data of the video to continue can't be found: %@";
-"続きを作るときは「文章から」でつくります（最初の画像や参照は使えません）" = "A continuation is made with From Text (no first frame or references)";
 "続きを作るには、元の動画と同じ大きさ（%@）にしてください" = "To continue a video, use the same size as the original (%@)";
 "%lld本の動画をつないで書き出しています…" = "Joining %lld videos and exporting…";
 "つないだ動画を書き出せませんでした（詳細: %@）" = "Couldn't export the joined video (details: %@)";
@@ -793,3 +792,8 @@
 "クリップごとの指示:" = "Directions for each clip:";
 "  %lld本目: （共通の指示だけ）" = "  Clip %lld: (common directions only)";
 "  %lld本目: %@" = "  Clip %1$lld: %2$@";
+"続きを作るときは、最初・最後の画像は使えません（参照画像は使えます）" = "A continuation can't use a first or last frame (reference images are fine)";
+"参照画像を使う" = "Use reference images";
+"人物が出ない場面（背景だけの場面など）では外せます。外した動画は、前の動画の続きと文章だけでつくります" = "Can be turned off for a scene the people don't appear in (only the background, say). A clip without them is made from the previous clip and the text alone";
+"（参照画像なし%lld本）" = "(%lld without reference images)";
+"参照画像を使わないクリップ: %@本目" = "Clips without reference images: %@";

@@ -46,7 +46,7 @@ extension GenerationViewModel {
             let names = missing.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", ")
             projectMessage = String(localized: "登録されていない追加モデル（LoRA）は使えません: \(names)")
         }
-        creationMethod = .text
+        if !keepsReferencesWhenContinuing { creationMethod = .text }
         if let audio = forcedAudioPath {
             let length = audioFileSeconds(audio)
             if let offset = continuationAudioOffset(after: video), offset < (length ?? .infinity) - 0.1 {
@@ -147,13 +147,22 @@ extension GenerationViewModel {
     }
 
     /// Why the continuation can't be generated as the form stands, if so.
+    /// Whether a continuation keeps the form's reference images (and so
+    /// its 画像から mode): only references, not a first or last frame.
+    var keepsReferencesWhenContinuing: Bool {
+        creationMethod == .image && imageInputMode == .referenceImage && !referenceImages.isEmpty
+    }
+
     var continuationValidationMessage: String? {
         guard let continuation else { return nil }
         if !FileManager.default.fileExists(atPath: continuation.latentURL.path) {
             return String(localized: "続きの元の動画のデータが見つかりません: \(continuation.name)")
         }
-        if creationMethod == .image {
-            return String(localized: "続きを作るときは「文章から」でつくります（最初の画像や参照は使えません）")
+        // Reference images are fine - they keep the people looking the same
+        // while the carried frames fix where the clip starts - but a first
+        // or last frame would fight those frames.
+        if creationMethod == .image && imageInputMode == .firstLastFrame {
+            return String(localized: "続きを作るときは、最初・最後の画像は使えません（参照画像は使えます）")
         }
         if sizeProfile.rawValue != continuation.sizeProfileRaw {
             let label = SizeProfile(rawValue: continuation.sizeProfileRaw)?.label ?? continuation.sizeProfileRaw

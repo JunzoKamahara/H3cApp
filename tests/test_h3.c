@@ -248,6 +248,38 @@ static void test_layout_continuation(void) {
     h3_layout_free(&layout);
 }
 
+/* Continuation with a Ref2VA reference (as ComfyUI's PackedLayout): the
+ * pinned steps and their sound pack first, then the reference, and the
+ * target timeline - which the pinned steps sit on - starts after the
+ * reference's span, so they still line up with the clip's first frames. */
+static void test_layout_continuation_ref2va(void) {
+    int keyframes[7];
+    for (int step = 0; step < 7; step++) keyframes[step] = h3_video_step_frame(step);
+    h3_layout_ref references[] = {{H3_LAYOUT_REF_IMAGE, 0, 16, 24, 0}};
+    h3_layout_spec spec = {128, 17, 30, 54, 93, 56,
+                           keyframes, 7, references, 1, 37, 0.0};
+    h3_layout layout;
+    char error[256];
+    CHECK(h3_layout_build(&spec, &layout, error, sizeof(error)));
+    CHECK(layout.segment_count == 1 + 7 + 1 + 1 + 2);
+    for (int step = 0; step < 7; step++) {
+        CHECK(layout.segments[1 + step].kind == H3_SEG_COND);
+        CHECK(close_enough(layout.positions[layout.segments[1 + step].start].t,
+                           129.0 + 5.0 / 3.0 * keyframes[step], 1e-12));
+    }
+    CHECK(layout.segments[8].kind == H3_SEG_REF_AUDIO);
+    CHECK(layout.positions[layout.segments[8].start].t == 129.0);
+    CHECK(layout.segments[9].kind == H3_SEG_REF_IMAGE);
+    CHECK(layout.positions[layout.segments[9].start].t == 128.0);
+    CHECK(layout.img_cond_rows == 7 * 405 + 96);
+    CHECK(layout.audio_cond_rows == 74);
+    size_t video = layout.segments[layout.segment_count - 1].start;
+    CHECK(layout.positions[video].t == layout.positions[layout.segments[1].start].t);
+    size_t audio = layout.segments[layout.segment_count - 2].start;
+    CHECK(layout.positions[audio].t == 129.0);
+    h3_layout_free(&layout);
+}
+
 static void test_layout_ref2va(void) {
     h3_layout_ref references[] = {
         {H3_LAYOUT_REF_IMAGE, 0, 16, 24, 0},
@@ -688,6 +720,7 @@ int main(void) {
     test_layout_tiny();
     test_layout_fl2va();
     test_layout_continuation();
+    test_layout_continuation_ref2va();
     test_layout_ref2va();
     test_safetensors();
     test_weight_fingerprint();

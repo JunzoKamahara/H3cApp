@@ -260,8 +260,11 @@ Good to know:
 - **Make the same run again.** With Randomness set to Fixed, the first clip
   uses that seed and each later one the next seed up, so the same settings
   make the same run.
-- **First image, references and lip sync.** A first image or references are
-  used by the first clip only. With lip sync, the audio's start moves on by
+- **First image, references and lip sync.** Reference images are used by
+  every clip, so the people look the same when they come back after leaving
+  the frame; “Different directions for each clip…” can turn them off for a
+  scene they don't appear in. A first or last frame is used by the first
+  clip only. With lip sync, the audio's start moves on by
   itself for each clip, and clips that start after the audio ends make their
   own sound.
 - **How long it takes.** On a 24 GB M5 at landscape medium, about 105 s per
@@ -763,7 +766,8 @@ plain filesystem paths, not uploads.
 | `first_frame_path` / `last_frame_path` | none | FL2VA anchors; cannot combine with `reference_paths`. |
 | `seconds` / `chained` / `chain_clip_seconds` | `5` / `false` / `7` | 1-15 s are made in one generation; 16-90 s (or 15 with `"chained": true`) by joined generation, from clips of 5 or 7 s, into one joined video. A joined length needs an open project and `count` 1. |
 | `clip_prompts` | none | Joined generation only: an array of strings, one per clip in order, each added after `prompt` for that clip (an empty string or a missing entry uses `prompt` alone). |
-| `continue_from` | none | A video of the open project (a file name from `GET /api/project`) to continue: its last 22 frames and their sound are carried over. Needs the same size; not with first/last frames or references. |
+| `clip_references` | none | Joined generation with reference images only: an array of true/false, one per clip in order, whether that clip uses the reference images (missing entries do). |
+| `continue_from` | none | A video of the open project (a file name from `GET /api/project`) to continue: its last 22 frames and their sound are carried over. Needs the same size; not with first/last frames (references are fine). |
 | `forced_audio_path` / `forced_audio_offset` | none / `0` | Lip sync: this file's audio (an audio file or a video's soundtrack), from `forced_audio_offset` seconds on, is held as the soundtrack while the picture is generated to match it, and the output carries that audio itself. Works with every creation method. |
 | `reference_paths` | `[]` | Ordered Ref2VA references; image/video/audio is auto-detected per path. At least one image or video is required if any audio path is included. |
 | `loras` | `[]` | The LoRA stack for this job: names from `GET /api/loras`, or `{"name": ..., "strength": 0.8}` objects (strength multiplies the adapter's trained scale; omitted keeps the entry's saved strength). An object may also set `"sampler"` (`"auto"`, `"euler"`, `"renoise"`) and `"audio_shift"` (0 = auto); like strength, these are saved to the entry. Omitting `loras` means no LoRA, even if some are switched on in the window. |

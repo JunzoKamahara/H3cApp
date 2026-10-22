@@ -343,6 +343,20 @@ static int h3_continuation_rows(const h3_params *params,
     return ok;
 }
 
+/* Puts `count` values of `front` before the `*elements` values of `*rows`. */
+static int h3_prepend_rows(float **rows, size_t *elements,
+                           const float *front, size_t count) {
+    if (!count) return 1;
+    float *joined = malloc((*elements + count) * sizeof(*joined));
+    if (!joined) return 0;
+    memcpy(joined, front, count * sizeof(*joined));
+    if (*elements) memcpy(joined + count, *rows, *elements * sizeof(*joined));
+    free(*rows);
+    *rows = joined;
+    *elements += count;
+    return 1;
+}
+
 static char *h3_conditioning_key(const char *prompt, const h3_params *params,
                                  int render_width, int render_height,
                                  int ref2va) {
@@ -561,27 +575,36 @@ static int h3_augment_conditions(const h3_params *params, int ref2va,
                                  int render_width, int render_height,
                                  const h3_layout_ref *references,
                                  size_t keyframe_count,
+                                 size_t keyframe_audio_elements,
                                  float *video, size_t video_elements,
                                  float *audio, size_t audio_elements) {
     size_t video_offset = 0;
     size_t audio_offset = 0;
+    /* One-step keyframes (first/last frame, a continuation's pinned steps)
+     * and a continuation's audio window come first, then any Ref2VA
+     * references (the order h3_layout_build packs them in). */
+    int latent_w, latent_h;
+    h3_latent_canvas(render_width, render_height, &latent_w, &latent_h);
+    size_t step_span = (size_t)h3_video_encoder_latent_t(1) *
+                       (size_t)latent_h * (size_t)latent_w / 4 * 96;
+    size_t count = keyframe_count;
+    if (count && (step_span > SIZE_MAX / count ||
+                  step_span * count > video_elements ||
+                  (!ref2va && step_span * count != video_elements)))
+        return 0;
+    for (size_t index = 0; index < count; index++) {
+        h3_augment_span(video + video_offset, step_span, params->seed);
+        video_offset += step_span;
+    }
     if (!ref2va) {
-        /* One-step keyframes (first/last frame, a continuation's pinned
-         * steps) and a continuation's audio window. */
-        int latent_w, latent_h;
-        h3_latent_canvas(render_width, render_height, &latent_w, &latent_h);
-        size_t span = (size_t)h3_video_encoder_latent_t(1) *
-                      (size_t)latent_h * (size_t)latent_w / 4 * 96;
-        size_t count = keyframe_count;
-        if (count && (span > SIZE_MAX / count || span * count != video_elements))
-            return 0;
-        for (size_t index = 0; index < count; index++) {
-            h3_augment_span(video + video_offset, span, params->seed);
-            video_offset += span;
-        }
         if (audio_elements)
             h3_augment_span(audio, audio_elements, params->seed + 1);
         return video_offset == video_elements;
+    }
+    if (keyframe_audio_elements) {
+        if (keyframe_audio_elements > audio_elements) return 0;
+        h3_augment_span(audio, keyframe_audio_elements, params->seed + 1);
+        audio_offset = keyframe_audio_elements;
     }
     for (size_t index = 0; index < params->reference_count; index++) {
         const h3_layout_ref *reference = &references[index];
@@ -897,9 +920,12 @@ static int h3_valid_params(h3_ctx *ctx, const h3_params *params) {
                               "or 56 frames, and 0-240 frames of sound");
             return 0;
         }
-        if (params->first_frame || params->reference_count) {
+        /* References are fine: they shape who and what appears, while the
+         * pinned steps fix where the clip starts (as ComfyUI combines
+         * keyframes with Ref2VA references). */
+        if (params->first_frame) {
             h3_set_error(ctx, "a continuation already fixes the start of the "
-                              "clip; it cannot take a first frame or references");
+                              "clip; it cannot take a first frame");
             return 0;
         }
     }
@@ -1523,10 +1549,10 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             if (params->first_frame) keyframes[keyframe_count++] = 0;
             if (params->last_frame)
                 keyframes[keyframe_count++] = temporal.frame_count - 1;
-            for (int step = 0; continuation.active &&
-                               step < continuation.steps; step++)
-                keyframes[keyframe_count++] = continuation.keyframes[step];
         }
+        for (int step = 0; continuation.active &&
+                           step < continuation.steps; step++)
+            keyframes[keyframe_count++] = continuation.keyframes[step];
         fprintf(stderr, "h3: conditioning cache hit\n");
     } else {
     if (visual_capacity) {
@@ -1978,15 +2004,27 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         }
     }
     if (continuation.active) {
+        /* The pinned steps go before any Ref2VA reference rows, the order
+         * h3_layout_build packs them in. */
+        float *pinned_video = NULL, *pinned_audio = NULL;
+        size_t pinned_video_elements = 0, pinned_audio_elements = 0;
+        detail[0] = '\0';
         if (!h3_continuation_rows(params, &continuation,
-                                  &condition_video_rows,
-                                  &condition_video_elements,
-                                  &condition_audio_rows,
-                                  &condition_audio_elements,
-                                  detail, sizeof(detail))) {
-            h3_set_error(ctx, "%s", detail);
+                                  &pinned_video, &pinned_video_elements,
+                                  &pinned_audio, &pinned_audio_elements,
+                                  detail, sizeof(detail)) ||
+            !h3_prepend_rows(&condition_video_rows, &condition_video_elements,
+                             pinned_video, pinned_video_elements) ||
+            !h3_prepend_rows(&condition_audio_rows, &condition_audio_elements,
+                             pinned_audio, pinned_audio_elements)) {
+            free(pinned_video);
+            free(pinned_audio);
+            h3_set_error(ctx, "%s", detail[0] ? detail :
+                         "out of memory pinning the continued clip");
             goto cleanup;
         }
+        free(pinned_video);
+        free(pinned_audio);
         for (int step = 0; step < continuation.steps; step++)
             keyframes[keyframe_count++] = continuation.keyframes[step];
         fprintf(stderr, "h3: continuing a %d-frame clip: %d frames pinned "
@@ -2016,7 +2054,9 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                   condition_audio_elements * sizeof(*condition_audio_rows));
     if (conditioned && !h3_augment_conditions(
             params, ref2va, render_width, render_height, layout_references,
-            keyframe_count, condition_video_rows, condition_video_elements,
+            keyframe_count,
+            continuation.active ? (size_t)continuation.audio_t * 2 * 32 : 0,
+            condition_video_rows, condition_video_elements,
             condition_audio_rows, condition_audio_elements)) {
         h3_set_error(ctx, "cannot apply seeded condition augmentation");
         goto cleanup;

@@ -104,6 +104,19 @@ extension GenerationViewModel {
         return Array(clipPrompts[...last])
     }
 
+    /// The per-clip reference switches as saved: up to the last one that is
+    /// off, none while every clip uses them.
+    var storedClipReferences: [Bool]? {
+        guard let last = clipReferences.lastIndex(of: false) else { return nil }
+        return Array(clipReferences[...last])
+    }
+
+    /// Whether clip `index` of a chain uses the reference images.
+    func chainClipUsesReferences(_ flags: [Bool]?, index: Int) -> Bool {
+        guard let flags, index < flags.count else { return true }
+        return flags[index]
+    }
+
     /// Picks a length from the duration menu or カスタム.
     func setDuration(seconds value: Int, chained wantsChain: Bool) {
         let chain = wantsChain || value > secondsRange.upperBound
@@ -197,9 +210,10 @@ extension GenerationViewModel {
 
     /// Clip `index` of a chain: the chain's request at the clip's length,
     /// with that clip's own prompt (chainClipPrompt); after the first,
-    /// continuing the clip before (text only - a first frame or references
-    /// only shape the first clip) with lip sync moved on by what the earlier
-    /// clips added.
+    /// continuing the clip before with lip sync moved on by what the earlier
+    /// clips added. Reference images go to every clip, so the people keep
+    /// looking the same even after leaving the frame; a first or last frame
+    /// only shapes the first clip.
     func chainClipRequest(_ chain: ChainRun, index: Int) -> GenerationRequest {
         var request = chain.request
         let frames = chain.plan[index]
@@ -219,13 +233,11 @@ extension GenerationViewModel {
             request.params.continueFrames = Int32(continuationFrames)
             request.params.firstFrame = nil
             request.params.lastFrame = nil
-            request.params.references = []
-            if request.params.attentionCachePath != nil {
-                request.params.attentionCachePath = attentionCachePath(usesReferences: false)
+            if request.params.references.isEmpty {
+                request.creationMethod = .text
+                request.imageInputMode = nil
+                request.referenceNames = []
             }
-            request.creationMethod = .text
-            request.imageInputMode = nil
-            request.referenceNames = []
             let carried = chain.plan[..<index].reduce(0) { $0 + $1 - continuationFrames }
             if request.params.forcedAudioPath != nil {
                 let offset = chain.request.params.forcedAudioOffset + Double(carried) / 24
@@ -246,9 +258,25 @@ extension GenerationViewModel {
                 draft.continueFrom = ProjectFiles.stored(previous.url.path, in: projectURL)
             }
             draft.continueFrames = continuationFrames
-            draft.creationMethod = CreationMethod.text.rawValue
+            if request.params.references.isEmpty {
+                draft.creationMethod = CreationMethod.text.rawValue
+                draft.references = []
+            }
             draft.firstFrame = nil
             draft.lastFrame = nil
+        }
+        // A clip switched off in クリップごとの指示 goes without the
+        // reference images (a scene the people don't appear in).
+        if !request.params.references.isEmpty,
+           !chainClipUsesReferences(chain.request.draft.clipReferences, index: index) {
+            request.params.references = []
+            if request.params.attentionCachePath != nil {
+                request.params.attentionCachePath = attentionCachePath(usesReferences: false)
+            }
+            request.creationMethod = .text
+            request.imageInputMode = nil
+            request.referenceNames = []
+            draft.creationMethod = CreationMethod.text.rawValue
             draft.references = []
         }
         let clipPrompts = chain.request.draft.clipPrompts ?? []
@@ -258,6 +286,7 @@ extension GenerationViewModel {
         // video's keeps the form's prompt and clipPrompts.
         draft.prompt = request.prompt
         draft.clipPrompts = nil
+        draft.clipReferences = nil
         request.draft = draft
         return request
     }

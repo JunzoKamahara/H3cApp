@@ -54,6 +54,9 @@ struct ProjectDraft: Codable, Equatable {
     /// つなげて生成: what each clip adds to the prompt, in plan order (an
     /// empty one makes that clip from the prompt alone). Absent without any.
     var clipPrompts: [String]? = nil
+    /// つなげて生成 with reference images: whether each clip uses them, in
+    /// plan order (missing ones do). Absent while every clip does.
+    var clipReferences: [Bool]? = nil
 }
 
 /// project.json
@@ -401,7 +404,8 @@ extension GenerationViewModel {
             continueFrames: continuation?.frames,
             chained: isChained ? true : nil,
             chainClipFrames: chainClipLength == defaultChainClipLength ? nil : chainClipLength.frames,
-            clipPrompts: storedClipPrompts)
+            clipPrompts: storedClipPrompts,
+            clipReferences: storedClipReferences)
     }
 
     /// Puts a draft into the form. Relative paths resolve against
@@ -432,6 +436,7 @@ extension GenerationViewModel {
         chained = draft.chained ?? false
         chainClipLength = draft.chainClipFrames.flatMap(ChainClipLength.init(rawValue:)) ?? defaultChainClipLength
         clipPrompts = draft.clipPrompts ?? []
+        clipReferences = draft.clipReferences ?? []
         seconds = draft.seconds.clamped(to: currentSecondsRange)
         if let speed = SpeedMode(rawValue: draft.speedMode) { speedMode = speed }
         denoiseReuse = draft.denoiseReuse.clamped(to: reuseRange)
@@ -932,7 +937,8 @@ extension ResolvedResult {
             joinedClipCount: record.joinedClips?.count,
             plannedClipCount: record.chainPlannedClips,
             chainClipFrames: (draft.chained ?? false) ? (draft.chainClipFrames ?? defaultChainClipLength.frames) : nil,
-            clipPrompts: (draft.chained ?? false) ? draft.clipPrompts : nil)
+            clipPrompts: (draft.chained ?? false) ? draft.clipPrompts : nil,
+            clipReferences: (draft.chained ?? false) ? draft.clipReferences : nil)
     }
 }
 
