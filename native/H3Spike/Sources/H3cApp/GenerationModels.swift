@@ -379,6 +379,8 @@ struct ResolvedResult {
     var joinedClipCount: Int? = nil
     var plannedClipCount: Int? = nil
     var chainClipFrames: Int? = nil
+    /// What each clip added to the prompt (クリップごとの指示).
+    var clipPrompts: [String]? = nil
 
     var seedDecimalString: String { String(seed) }
 
@@ -447,6 +449,15 @@ struct ResolvedResult {
                 line += String(localized: "（\(plannedClipCount)本の予定を途中で止めたもの）")
             }
             lines.append(line)
+        }
+        if let clipPrompts {
+            lines.append(String(localized: "クリップごとの指示:"))
+            for (index, text) in clipPrompts.enumerated() {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                lines.append(trimmed.isEmpty
+                    ? String(localized: "  \(index + 1)本目: （共通の指示だけ）")
+                    : String(localized: "  \(index + 1)本目: \(trimmed)"))
+            }
         }
         if let continuedFrom {
             lines.append(String(localized: "続き: \(continuedFrom)（最後の\(continueFrames)コマを引き継ぎ）"))

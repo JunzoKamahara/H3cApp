@@ -61,6 +61,29 @@ func chainTotalFrames(_ plan: [Int], overlap: Int = continuationFrames) -> Int {
     plan.enumerated().reduce(0) { $0 + ($1.offset == 0 ? $1.element : $1.element - overlap) }
 }
 
+/// Where each clip of a plan starts in the joined video, in frames.
+func chainClipStarts(_ plan: [Int], overlap: Int = continuationFrames) -> [Int] {
+    var starts: [Int] = []
+    var start = 0
+    for frames in plan {
+        starts.append(start)
+        start += frames - overlap
+    }
+    return starts
+}
+
+/// A clip's prompt in a つなげて生成 with クリップごとの指示: the form's
+/// prompt (what stays the same: the people, their clothes, the style), then
+/// what happens in this clip. Without a clip's text it is the prompt alone,
+/// so every clip repeats it as before.
+func chainClipPrompt(common: String, clip: String?) -> String {
+    let clip = (clip ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    // Unchanged, so a chain without them is made exactly as before.
+    if clip.isEmpty { return common }
+    let common = common.trimmingCharacters(in: .whitespacesAndNewlines)
+    return common.isEmpty ? clip : common + "\n\n" + clip
+}
+
 extension GenerationViewModel {
     /// Whether the form's length is made by joining clips.
     var isChained: Bool { chained && seconds >= chainedSecondsRange.lowerBound }
@@ -70,6 +93,15 @@ extension GenerationViewModel {
 
     var currentChainPlan: [Int] {
         chainPlan(seconds: seconds.clamped(to: chainedSecondsRange), clip: chainClipLength)
+    }
+
+    /// The クリップごとの指示 as saved: up to the last one with text, none
+    /// when all are empty.
+    var storedClipPrompts: [String]? {
+        guard let last = clipPrompts.lastIndex(where: {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }) else { return nil }
+        return Array(clipPrompts[...last])
     }
 
     /// Picks a length from the duration menu or カスタム.
@@ -167,10 +199,11 @@ extension GenerationViewModel {
                                                           overlapFrames: continuationFrames, fps: 24)
     }
 
-    /// Clip `index` of a chain: the chain's request at the clip's length;
-    /// after the first, continuing the clip before (text only - a first
-    /// frame or references only shape the first clip) with lip sync moved on
-    /// by what the earlier clips added.
+    /// Clip `index` of a chain: the chain's request at the clip's length,
+    /// with that clip's own prompt (chainClipPrompt); after the first,
+    /// continuing the clip before (text only - a first frame or references
+    /// only shape the first clip) with lip sync moved on by what the earlier
+    /// clips added.
     func chainClipRequest(_ chain: ChainRun, index: Int) -> GenerationRequest {
         var request = chain.request
         let frames = chain.plan[index]
@@ -222,6 +255,13 @@ extension GenerationViewModel {
             draft.lastFrame = nil
             draft.references = []
         }
+        let clipPrompts = chain.request.draft.clipPrompts ?? []
+        request.prompt = chainClipPrompt(common: chain.request.prompt,
+                                         clip: index < clipPrompts.count ? clipPrompts[index] : nil)
+        // The clip's record holds the prompt it was made from; the joined
+        // video's keeps the form's prompt and clipPrompts.
+        draft.prompt = request.prompt
+        draft.clipPrompts = nil
         request.draft = draft
         return request
     }

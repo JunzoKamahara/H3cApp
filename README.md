@@ -246,6 +246,14 @@ each continuing the one before, and joined into one at their overlaps.
 
 Good to know:
 
+- **Directions for each clip.** Given the same prompt, every clip tends to
+  start over from the prompt's first scene. With a joined length, “Different
+  directions for each clip…” lets you write what happens in each clip. The
+  prompt box is used for all of them (the people, their clothes, the style),
+  and each clip gets its own directions added after it. A clip left empty is
+  made from the prompt alone. Each clip's start time (and, with lip sync,
+  where it is in the audio) is listed, so scenes can be laid out along a
+  song. The directions can be saved to and read from a JSON file.
 - **Make it longer.** With the joined video shown, “Continue” in the panel
   makes one more clip; “Join and Export” then joins the whole run again.
 - **If you stop partway,** the clips made so far (two or more) are joined.
@@ -265,8 +273,8 @@ Good to know:
   `.json` records and `.h3lt` latents. Deleting the joined video moves its
   clips to the Trash too.
 
-Through the API, use `seconds` / `chained` / `chain_clip_seconds` on
-`POST /api/generate` (see [API](#api)).
+Through the API, use `seconds` / `chained` / `chain_clip_seconds` (and
+`clip_prompts` for directions for each clip) on `POST /api/generate` (see [API](#api)).
 
 ### How joined generation works
 
@@ -754,6 +762,7 @@ plain filesystem paths, not uploads.
 | `seed` | random | 0–18446744073709551615, as a number or a decimal string (a string keeps a large seed exact for clients whose JSON numbers are doubles). |
 | `first_frame_path` / `last_frame_path` | none | FL2VA anchors; cannot combine with `reference_paths`. |
 | `seconds` / `chained` / `chain_clip_seconds` | `5` / `false` / `7` | 1-15 s are made in one generation; 16-90 s (or 15 with `"chained": true`) by joined generation, from clips of 5 or 7 s, into one joined video. A joined length needs an open project and `count` 1. |
+| `clip_prompts` | none | Joined generation only: an array of strings, one per clip in order, each added after `prompt` for that clip (an empty string or a missing entry uses `prompt` alone). |
 | `continue_from` | none | A video of the open project (a file name from `GET /api/project`) to continue: its last 22 frames and their sound are carried over. Needs the same size; not with first/last frames or references. |
 | `forced_audio_path` / `forced_audio_offset` | none / `0` | Lip sync: this file's audio (an audio file or a video's soundtrack), from `forced_audio_offset` seconds on, is held as the soundtrack while the picture is generated to match it, and the output carries that audio itself. Works with every creation method. |
 | `reference_paths` | `[]` | Ordered Ref2VA references; image/video/audio is auto-detected per path. At least one image or video is required if any audio path is included. |

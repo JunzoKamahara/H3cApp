@@ -37,6 +37,9 @@ struct CreationFormView: View {
                     continuationSection
                 }
                 lipSyncSection
+                if viewModel.isChained {
+                    ClipPromptsSection(viewModel: viewModel)
+                }
                 promptSection
             }
             bottomBar

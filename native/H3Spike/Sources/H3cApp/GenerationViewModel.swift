@@ -298,6 +298,8 @@ final class GenerationViewModel: ObservableObject {
     /// joining clips of chainClipLength.
     @Published var chained = false
     @Published var chainClipLength: ChainClipLength = defaultChainClipLength
+    /// What each clip of a chain adds to the prompt (chainClipPrompt).
+    @Published var clipPrompts: [String] = []
     /// The つなげて生成 running now: kept past a cancel, so the clips made so
     /// far are still joined.
     var chainRun: ChainRun?
@@ -982,6 +984,9 @@ final class GenerationViewModel: ObservableObject {
             draft.references = draft.references.map { .init(kind: $0.kind, path: ProjectFiles.stored($0.path, in: projectURL)) }
         }
         draft.fastAttention = params.fastAttention
+        // Kept in the project for when the length is chained again, but not
+        // in the record of a video they didn't shape.
+        if !isChained { draft.clipPrompts = nil }
 
         return GenerationRequest(
             params: params,

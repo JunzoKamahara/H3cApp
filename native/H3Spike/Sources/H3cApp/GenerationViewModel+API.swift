@@ -557,6 +557,15 @@ extension GenerationViewModel {
         } else {
             chainClipLength = defaultChainClipLength
         }
+        // クリップごとの指示: what each clip adds to "prompt", in order.
+        if let value = json["clip_prompts"] {
+            guard let list = value as? [String] else {
+                return .error(400, "\"clip_prompts\" must be an array of strings")
+            }
+            clipPrompts = list
+        } else {
+            clipPrompts = []
+        }
 
         if let modeRaw = json["compute_mode"] as? String {
             guard let mode = ComputeMode(rawValue: modeRaw) else {
