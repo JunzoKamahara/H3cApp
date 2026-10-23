@@ -34,24 +34,39 @@ below.
 
 ## Requirements
 
-- Apple Silicon Mac, macOS 15 (Sequoia) or later: the engine uses
-  MPSGraph's scaled dot-product attention (macOS 15) and BF16 (macOS 14).
-  Releases up to 0.4.3 listed macOS 13, but their engine already needed
-  these APIs. An M5-class GPU (Metal 4 TensorOps) unlocks the fastest int8
-  paths; older Apple Silicon works but falls back to BF16/MPSGraph
-  automatically.
-- Xcode Command Line Tools (`clang`, `swift`, `ar`) — only needed when
-  building from source; not required for the prebuilt `.dmg`.
-- The MiniMax-H3 checkpoint from Hugging Face
-  ([`MiniMaxAI/MiniMax-H3`](https://huggingface.co/MiniMaxAI/MiniMax-H3)) —
-  `FL2VA/` alone is ~134 GiB (a ~37 GiB BF16 transformer plus the Qwen3-VL
-  text encoder and video/audio VAEs); adding `Ref2VA/` for reference-
-  conditioned generation brings it to ~268 GiB combined. The app's model
-  manager can download either or both directly.
-  Or, from v0.6.0, a quantized model (GGUF): about 35–45 GB, downloaded
-  and imported from the same wizard — see
-  [Downloading and importing GGUF models](GGUF.md).
-- Nothing else at runtime.
+H3cApp runs locally on Macs with Apple Silicon.
+
+| Item | Requirement |
+|---|---|
+| Supported Macs | MacBook Air, MacBook Pro, Mac mini, iMac, Mac Studio, and Mac Pro with Apple Silicon |
+| Chip | Apple M-series (M1 or later). M5 or later recommended |
+| Memory | **24 GB or more recommended** |
+| macOS | macOS 15 (Sequoia) or later |
+| Additional software | None. No Python or Xcode required for the prebuilt app |
+
+**Memory:** Tested on an M5 Mac with 24 GB of unified memory. Macs with 16 GB have not been tested and are not guaranteed to work. Macs with less than 16 GB have not been tested either.
+
+M5 and later Macs can use faster compute modes. M1–M4 Macs can also generate videos, although performance varies. Intel Macs are not supported.
+
+### Model Storage Requirements
+
+MiniMax H3 model files must be downloaded separately from the app.
+
+| Model | Approx. storage | Description |
+|---|---:|---|
+| **GGUF Standard (recommended)** | 45 GB | Balanced model size and precision |
+| GGUF Compact | 35 GB | Lower storage requirements |
+| Official BF16 | 145 GB | Original, unquantized model |
+| Official BF16 (full) | 290 GB | Includes reference-conditioned generation |
+
+- The standard configurations support text-to-video and first/last-frame video generation.
+- Reference image, video, and audio conditioning requires an additional Ref2VA model: approximately 11–21 GB for GGUF, or the full official model configuration.
+- Fast int8 cache acceleration on supported M5-class GPUs requires approximately 19 GB of additional storage per model. Using Ref2VA as well adds another cache of about 19 GB for it.
+- Actual storage requirements depend on the selected model files. Allow additional space for downloads and generated videos.
+
+Models can be downloaded from within H3cApp and stored on an external SSD.
+
+For details, see the [GGUF guide](GGUF.md) and [Compute modes](#compute-modes).
 
 ## Quick start
 
@@ -603,6 +618,9 @@ native/H3Spike/                 Native macOS app (SwiftPM)
 ```
 
 ## Building from source
+
+Building from source needs the Xcode Command Line Tools (`clang`, `swift`,
+`ar`); the prebuilt `.dmg` doesn't.
 
 ### Library
 
