@@ -70,7 +70,8 @@ struct PreviewPane: View {
                              nativeSize: viewModel.lastResult.map {
                                  CGSize(width: CGFloat($0.sizeProfile.dimensions.width),
                                         height: CGFloat($0.sizeProfile.dimensions.height))
-                             } ?? .zero)
+                             } ?? .zero,
+                             zoomsHere: { [weak viewModel] in !(viewModel?.isPointerOverComposer ?? false) })
                 // The player is created once per view; a new identity per
                 // video makes showing another saved video (or a new result)
                 // load it instead of keeping the previous one.

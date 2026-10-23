@@ -106,8 +106,13 @@ struct ResultPlayerView: View {
     // a larger stage), scaled down to fit, then zoomed by pinch / mouse
     // wheel. Double-click resets to the fitted size.
     let nativeSize: CGSize
+    /// False while the pointer is over something floating on the video
+    /// (the composer): pinch and scroll-wheel don't zoom there.
+    let zoomsHere: () -> Bool
     @State private var zoom: CGFloat = 1
     @State private var pinchBase: CGFloat?
+    /// A pinch that began over the composer, left alone until it ends.
+    @State private var pinchIgnored = false
     @State private var pan: CGSize = .zero
     @State private var panBase: CGSize?
     private static let zoomRange: ClosedRange<CGFloat> = 0.25 ... 8
@@ -118,9 +123,10 @@ struct ResultPlayerView: View {
     @State private var isScrubbing = false
     @State private var scrubTime: Double = 0
 
-    init(url: URL, aspectRatio: CGFloat, nativeSize: CGSize) {
+    init(url: URL, aspectRatio: CGFloat, nativeSize: CGSize, zoomsHere: @escaping () -> Bool = { true }) {
         self.aspectRatio = aspectRatio
         self.nativeSize = nativeSize
+        self.zoomsHere = zoomsHere
         _model = StateObject(wrappedValue: VideoPlaybackModel(url: url))
     }
 
@@ -195,11 +201,16 @@ struct ResultPlayerView: View {
                             .gesture(
                                 MagnificationGesture()
                                     .onChanged { value in
+                                        if pinchBase == nil && !pinchIgnored && !zoomsHere() { pinchIgnored = true }
+                                        guard !pinchIgnored else { return }
                                         let base = pinchBase ?? zoom
                                         pinchBase = base
                                         setZoom(base * value)
                                     }
-                                    .onEnded { _ in pinchBase = nil }
+                                    .onEnded { _ in
+                                        pinchBase = nil
+                                        pinchIgnored = false
+                                    }
                             )
                             .simultaneousGesture(
                                 DragGesture(minimumDistance: 2)
@@ -222,7 +233,7 @@ struct ResultPlayerView: View {
                                     })
                             )
                     )
-                    .background(ScrollWheelMonitor { deltaY in
+                    .background(ScrollWheelMonitor(isActive: zoomsHere) { deltaY in
                         setZoom(zoom * exp(deltaY * 0.01))
                     })
             }
@@ -237,20 +248,25 @@ struct ResultPlayerView: View {
 /// view (as a background, it doesn't take any other events), and consumes
 /// them so they zoom instead of scrolling anything else.
 struct ScrollWheelMonitor: NSViewRepresentable {
+    /// False lets the events through (the pointer is over something on top).
+    var isActive: () -> Bool = { true }
     let onScroll: (CGFloat) -> Void
 
     func makeNSView(context: Context) -> MonitorView {
         let view = MonitorView()
         view.onScroll = onScroll
+        view.isActive = isActive
         return view
     }
 
     func updateNSView(_ nsView: MonitorView, context: Context) {
         nsView.onScroll = onScroll
+        nsView.isActive = isActive
     }
 
     final class MonitorView: NSView {
         var onScroll: ((CGFloat) -> Void)?
+        var isActive: () -> Bool = { true }
         private var monitor: Any?
 
         override func viewDidMoveToWindow() {
@@ -260,7 +276,8 @@ struct ScrollWheelMonitor: NSViewRepresentable {
             guard window != nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
                 guard let self, event.window === self.window,
-                      self.bounds.contains(self.convert(event.locationInWindow, from: nil)) else {
+                      self.bounds.contains(self.convert(event.locationInWindow, from: nil)),
+                      self.isActive() else {
                     return event
                 }
                 let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY * 8

@@ -33,6 +33,7 @@ struct ContentView: View {
                     bounds: geometry.size
                 )
                 .offset(composerOffset)
+                .onHover { viewModel.isPointerOverComposer = $0 }
                 .padding(.bottom, 20)
             }
         }

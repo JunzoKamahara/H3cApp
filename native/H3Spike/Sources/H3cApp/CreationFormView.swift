@@ -17,6 +17,9 @@ struct CreationFormView: View {
     var bounds: CGSize
     @Environment(\.colorScheme) private var colorScheme
     @State private var dragBase: CGSize?
+    /// The panel's own height, so moving it (and opening it once moved)
+    /// keeps all of it inside the window.
+    @State private var panelHeight: CGFloat = 0
     /// The input file shown in Quick Look (clicking its name).
     @State private var quickLookURL: URL?
     @State private var showingClipEditor = false
@@ -51,6 +54,14 @@ struct CreationFormView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(palette.border, lineWidth: 1))
         .shadow(color: .black.opacity(0.25), radius: 18, y: 6)
+        .background(GeometryReader { geometry in
+            Color.clear
+                .onAppear { panelHeight = geometry.size.height }
+                .onChange(of: geometry.size.height) { _, height in panelHeight = height }
+        })
+        // Opened (taller) or the window made smaller: back inside.
+        .onChange(of: panelHeight) { _, _ in offset = clamped(offset) }
+        .onChange(of: bounds) { _, _ in offset = clamped(offset) }
         .quickLookPreview($quickLookURL)
         .sheet(isPresented: $showingClipEditor) {
             CustomClipsSheet(viewModel: viewModel, isPresented: $showingClipEditor)
@@ -88,7 +99,10 @@ struct CreationFormView: View {
         .frame(height: 22)
         .contentShape(Rectangle())
         .gesture(
-            DragGesture(minimumDistance: 2)
+            // Measured in the window: in the handle's own space the
+            // translation shrinks as the panel moves under the pointer,
+            // and the panel falls behind it.
+            DragGesture(minimumDistance: 2, coordinateSpace: .global)
                 .onChanged { value in
                     let base = dragBase ?? offset
                     dragBase = base
@@ -101,9 +115,12 @@ struct CreationFormView: View {
         .help("ドラッグで移動、ダブルクリックで元の位置へ")
     }
 
+    /// The panel sits 20 pt above the window's bottom edge (ContentView);
+    /// it may go up until its top is 8 pt below the window's top.
     private func clamped(_ proposed: CGSize) -> CGSize {
         let maxX = max(0, (bounds.width - Self.panelWidth) / 2 - 8)
-        let maxUp = max(0, bounds.height - 160)
+        let height = panelHeight > 0 ? panelHeight : 140
+        let maxUp = max(0, bounds.height - 20 - height - 8)
         return CGSize(width: min(max(proposed.width, -maxX), maxX),
                       height: min(max(proposed.height, -maxUp), 0))
     }
