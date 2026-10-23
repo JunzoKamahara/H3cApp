@@ -2,7 +2,9 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-[MiniMax-H3](https://huggingface.co/lightx2v/Minimax-h3-Turbo)
+**Powered by [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3)** — MiniMax の公式製品ではない、独立したアプリです。
+
+[MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3)
 （テキスト／画像／動画から、音声付き動画を生成する拡散トランスフォーマー）を
 Apple Siliconだけで動かすネイティブmacOSアプリ、H3cAppです。すべて
 Metal/MPSGraph上でプロセス内実行され、Python・PyTorch・クラウド通信は一切不要です — メディアの

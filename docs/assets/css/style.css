@@ -318,6 +318,13 @@ code {
   margin-bottom: 8px;
 }
 
+.powered {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin: 0 0 4px;
+}
+
 .cta-note {
   font-size: 15px;
   color: var(--text-muted);

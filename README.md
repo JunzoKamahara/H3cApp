@@ -2,8 +2,10 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
+**Powered by [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3)** — an independent app, not an official MiniMax product.
+
 H3cApp is a native macOS app that runs
-[MiniMax-H3](https://huggingface.co/lightx2v/Minimax-h3-Turbo) — a
+[MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) — a
 text/image/video-to-video-with-audio diffusion transformer — entirely on
 Apple Silicon. Everything runs in-process against Metal/MPSGraph: no
 Python, no PyTorch, no cloud calls — media in and out goes through native
