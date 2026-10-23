@@ -641,6 +641,30 @@ public final class H3Engine: @unchecked Sendable {
         currentCacheBuildCancelFlag?.cancel()
     }
 
+    /// For continuing a video that wasn't generated here: writes a latent
+    /// file like a generation's own (h3_continuation_latent_from_video)
+    /// from the end of `videoPath`, for a generation at renderWidth x
+    /// renderHeight to continue. On the engine's queue, after any
+    /// generation in flight.
+    public func makeContinuationLatent(videoPath: String, renderWidth: Int, renderHeight: Int,
+                                       latentPath: String) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Self.workQueue.async { [self] in
+                var errorBuffer = [CChar](repeating: 0, count: 512)
+                let ok = errorBuffer.withUnsafeMutableBufferPointer { errorBuf in
+                    h3_continuation_latent_from_video(modelDirectory, videoPath, Int32(renderWidth),
+                                                      Int32(renderHeight), latentPath,
+                                                      errorBuf.baseAddress, errorBuf.count)
+                }
+                if ok != 0 {
+                    continuation.resume()
+                } else {
+                    continuation.resume(throwing: H3EngineError.generationFailed(String(cString: errorBuffer)))
+                }
+            }
+        }
+    }
+
     /// Makes sure `path` holds a curve-form AdaLN file built from
     /// `transformerDirectory`, building it if not. Progress goes to the
     /// generation's own stream (phase "AdaLN curve"), whose cancel flag

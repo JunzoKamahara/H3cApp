@@ -54,6 +54,9 @@ struct ProjectMenuItems: View {
             if let video = viewModel.continuableDisplayedVideo { viewModel.continueFromProjectVideo(video) }
         }
         .disabled(viewModel.continuableDisplayedVideo == nil || viewModel.isGenerating)
+        Button("動画ファイルの続きを作る…") { viewModel.pickVideoToContinue() }
+            .disabled(viewModel.project == nil || viewModel.isGenerating || viewModel.isImportingVideo)
+            .help("ほかで作った動画や撮影した動画を、今の大きさでプロジェクトに取り込み、その続きをつくります")
         Button("プロジェクトをFinderで表示") {
             if let url = viewModel.project?.url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         }

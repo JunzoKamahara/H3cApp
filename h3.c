@@ -1380,6 +1380,120 @@ static int h3_stream_encode_chunk(void *opaque, const float *rgb,
     return 1;
 }
 
+int h3_continuation_latent_from_video(const char *model_dir,
+                                      const char *video_path,
+                                      int render_width, int render_height,
+                                      const char *latent_path,
+                                      char *error, size_t error_size) {
+    enum { CHUNK_FRAMES = 17 };
+    if (error && error_size) error[0] = '\0';
+    if (!model_dir || !video_path || !latent_path ||
+        render_width < 16 || render_height < 16) {
+        snprintf(error, error_size, "invalid continuation source arguments");
+        return 0;
+    }
+    int latent_w, latent_h;
+    h3_latent_canvas(render_width, render_height, &latent_w, &latent_h);
+    const int width = latent_w * H3_VAE_SPATIAL_RATIO;
+    const int height = latent_h * H3_VAE_SPATIAL_RATIO;
+    const int steps = 7;
+    const int frames = h3_video_step_frame(steps);        /* 22 */
+    const h3_temporal_shape temporal = h3_temporal(frames);
+    const int audio_t = temporal.audio_t;                 /* 37 */
+    const size_t area = (size_t)width * height;
+    const size_t plane = (size_t)latent_w * latent_h;
+
+    char *vae_path = h3_path(model_dir, "FL2VA/video_vae/source");
+    char *audio_vae_path = h3_path(model_dir, "FL2VA/audio_vae");
+    float *pixels = NULL, *chunk = NULL, *video = NULL, *pcm = NULL, *audio = NULL;
+    h3_audio_latent sound;
+    memset(&sound, 0, sizeof(sound));
+    int ok = 0;
+    double start = 0;
+    if (!vae_path || !audio_vae_path) {
+        snprintf(error, error_size, "out of memory resolving model paths");
+        goto done;
+    }
+    if (!h3_av_read_video_tail_f32(video_path, width, height, frames, &pixels,
+                                   &start, error, error_size)) goto done;
+
+    /* Generated clips are 17-frame chunks of 1 + 4 + 4 + 4 + 4 frames per
+     * latent step (h3_video_step_frame), each decoded on its own: encode
+     * the 22 frames as one such chunk and the start of the next. */
+    video = malloc((size_t)24 * steps * plane * sizeof(*video));
+    chunk = malloc((size_t)3 * CHUNK_FRAMES * area * sizeof(*chunk));
+    if (!video || !chunk) {
+        snprintf(error, error_size, "out of memory encoding the video's end");
+        goto done;
+    }
+    for (int first = 0, step = 0; first < frames; ) {
+        int count = frames - first < CHUNK_FRAMES ? frames - first : CHUNK_FRAMES;
+        for (int channel = 0; channel < 3; channel++)
+            memcpy(chunk + (size_t)channel * count * area,
+                   pixels + ((size_t)channel * frames + first) * area,
+                   (size_t)count * area * sizeof(*chunk));
+        h3_video_latent latent;
+        memset(&latent, 0, sizeof(latent));
+        if (!h3_video_vae_encode(vae_path, "h3_shaders.metal", chunk, count,
+                                 height, width, NULL, NULL, &latent,
+                                 error, error_size)) {
+            h3_video_latent_free(&latent);
+            goto done;
+        }
+        int chunk_steps = h3_video_encoder_latent_t(count);
+        if (latent.time != chunk_steps || latent.height != latent_h ||
+            latent.width != latent_w || step + chunk_steps > steps) {
+            h3_video_latent_free(&latent);
+            snprintf(error, error_size, "the video VAE gave an unexpected latent shape");
+            goto done;
+        }
+        for (int channel = 0; channel < 24; channel++)
+            memcpy(video + ((size_t)channel * steps + step) * plane,
+                   latent.values + (size_t)channel * chunk_steps * plane,
+                   (size_t)chunk_steps * plane * sizeof(*video));
+        h3_video_latent_free(&latent);
+        first += count;
+        step += chunk_steps;
+    }
+
+    /* The sound under those frames, with up to 2 s before it as context
+     * for the encoder; only the last audio_t steps are kept. */
+    int lead = (int)floor(fmin(start, 2.0) * H3_AUDIO_LATENT_FPS);
+    int samples = (lead + audio_t) * 800;
+    char audio_error[512];
+    if (!h3_av_read_audio_range_f32(video_path, start - (double)lead / H3_AUDIO_LATENT_FPS,
+                                    samples, &pcm, audio_error, sizeof(audio_error))) {
+        fprintf(stderr, "h3: continuing %s without its sound (%s)\n", video_path, audio_error);
+        pcm = calloc((size_t)2 * samples, sizeof(*pcm));
+        if (!pcm) {
+            snprintf(error, error_size, "out of memory for silence");
+            goto done;
+        }
+    }
+    if (!h3_audio_vae_encode(audio_vae_path, "h3_shaders.metal", pcm, samples,
+                             NULL, NULL, &sound, error, error_size)) goto done;
+    if (sound.channels != 32 || sound.stereo != 2 || sound.length < audio_t) {
+        snprintf(error, error_size, "the audio VAE gave an unexpected latent shape");
+        goto done;
+    }
+    audio = malloc((size_t)64 * audio_t * sizeof(*audio));
+    if (!audio) {
+        snprintf(error, error_size, "out of memory encoding the sound");
+        goto done;
+    }
+    for (int row = 0; row < 64; row++)
+        memcpy(audio + (size_t)row * audio_t,
+               sound.values + (size_t)row * sound.length + (sound.length - audio_t),
+               (size_t)audio_t * sizeof(*audio));
+    ok = h3_latent_file_write(latent_path, video, steps, latent_h, latent_w,
+                              audio, audio_t, frames, error, error_size);
+done:
+    h3_audio_latent_free(&sound);
+    free(audio); free(pcm); free(video); free(chunk); free(pixels);
+    free(vae_path); free(audio_vae_path);
+    return ok;
+}
+
 int h3_fast_attention_available(void) {
     return h3_gpu_ccv_dense_attention_available() &&
            h3_gpu_ccv_attention_supported();

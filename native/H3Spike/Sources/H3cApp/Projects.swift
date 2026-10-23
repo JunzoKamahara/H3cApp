@@ -113,6 +113,9 @@ struct ProjectVideoRecord: Codable {
     /// how many a つなげて生成 planned (more than joined if it was stopped).
     var joinedClips: [String]? = nil
     var chainPlannedClips: Int? = nil
+    /// A video brought in to be continued (動画ファイルの続きを作る): the
+    /// file it came from. Not generated - its settings are the form's then.
+    var importedFrom: String? = nil
 }
 
 struct OpenProject: Equatable {
@@ -954,6 +957,7 @@ extension ResolvedResult {
             continueFrames: draft.continueFrames ?? continuationFrames,
             chained: draft.chained ?? false,
             joinedClipCount: record.joinedClips?.count,
+            importedFrom: record.importedFrom,
             plannedClipCount: record.chainPlannedClips,
             chainClipFrames: (draft.chained ?? false) ? (draft.chainClipFrames ?? defaultChainClipLength.frames) : nil,
             clipPrompts: (draft.chained ?? false) ? draft.clipPrompts : nil,

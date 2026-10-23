@@ -256,8 +256,8 @@ int h3_av_read_image_f32(const char *path, int width, int height,
  * A plain non-uniform scale then reaches the exact target size (see the
  * file header comment for why a plain stretch, not a further aspect-fit
  * crop, is correct here). */
-static CGAffineTransform h3_video_render_transform(AVAssetTrack *track,
-                                                    int width, int height) {
+static CGAffineTransform h3_video_fit_transform(AVAssetTrack *track,
+                                                 int width, int height, int cover) {
     CGAffineTransform preferred = track.preferredTransform;
     CGSize natural = track.naturalSize;
     CGAffineTransform rotate;
@@ -276,9 +276,25 @@ static CGAffineTransform h3_video_render_transform(AVAssetTrack *track,
         displaySize = natural;
     }
     if (displaySize.width < 1 || displaySize.height < 1) return rotate;
+    if (cover) {
+        /* Uniform scale to fill, centred: the overflow is cropped. */
+        double scale = fmax((double)width / displaySize.width,
+                            (double)height / displaySize.height);
+        CGAffineTransform fit = CGAffineTransformConcat(
+            CGAffineTransformMakeScale(scale, scale),
+            CGAffineTransformMakeTranslation(
+                ((double)width - displaySize.width * scale) / 2,
+                ((double)height - displaySize.height * scale) / 2));
+        return CGAffineTransformConcat(rotate, fit);
+    }
     CGAffineTransform scale = CGAffineTransformMakeScale(
         (double)width / displaySize.width, (double)height / displaySize.height);
     return CGAffineTransformConcat(rotate, scale);
+}
+
+static CGAffineTransform h3_video_render_transform(AVAssetTrack *track,
+                                                    int width, int height) {
+    return h3_video_fit_transform(track, width, height, 0);
 }
 
 int h3_av_read_video_f32(const char *path, int width, int height,
@@ -426,6 +442,145 @@ int h3_av_read_video_f32(const char *path, int width, int height,
         free(rgb);
         *pixels = channelMajor;
         *frames = frameCount;
+        return 1;
+    }
+}
+
+int h3_av_read_video_tail_f32(const char *path, int width, int height,
+                              int frames, float **pixels, double *start_seconds,
+                              char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (pixels) *pixels = NULL;
+    if (start_seconds) *start_seconds = 0;
+    if (!path || !*path || !pixels || width < 1 || height < 1 || frames < 1 ||
+        frames > 24 * 60 || (size_t)width > SIZE_MAX / (size_t)height / 3) {
+        h3_av_set_error(error, error_size, @"invalid video tail arguments");
+        return 0;
+    }
+    size_t area = (size_t)width * (size_t)height;
+    size_t frameBytes = area * 3;
+    @autoreleasepool {
+        NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
+        AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        /* Synchronous for the same reason as h3_av_read_video_f32. */
+        NSArray<AVAssetTrack *> *tracks = [asset tracksWithMediaType:AVMediaTypeVideo];
+        CMTime duration = asset.duration;
+#pragma clang diagnostic pop
+        if (tracks.count == 0) {
+            h3_av_set_error(error, error_size,
+                [NSString stringWithFormat:@"%s has no video track", path]);
+            return 0;
+        }
+        AVAssetTrack *track = tracks.firstObject;
+        double total = CMTimeGetSeconds(duration);
+        if (!isfinite(total) || total * 24.0 < frames - 0.5) {
+            h3_av_set_error(error, error_size,
+                [NSString stringWithFormat:@"%s is shorter than %d frames", path, frames]);
+            return 0;
+        }
+        AVMutableVideoComposition *composition = [AVMutableVideoComposition videoComposition];
+        composition.renderSize = CGSizeMake(width, height);
+        composition.frameDuration = CMTimeMake(1, 24); /* resample to 24 fps */
+        AVMutableVideoCompositionInstruction *instruction =
+            [AVMutableVideoCompositionInstruction videoCompositionInstruction];
+        instruction.timeRange = CMTimeRangeMake(kCMTimeZero, duration);
+        AVMutableVideoCompositionLayerInstruction *layerInstruction =
+            [AVMutableVideoCompositionLayerInstruction
+                videoCompositionLayerInstructionWithAssetTrack:track];
+        [layerInstruction setTransform:h3_video_fit_transform(track, width, height, 1)
+                                atTime:kCMTimeZero];
+        instruction.layerInstructions = @[layerInstruction];
+        composition.instructions = @[instruction];
+
+        NSError *readerError = nil;
+        AVAssetReader *reader = [[AVAssetReader alloc] initWithAsset:asset error:&readerError];
+        if (!reader) {
+            h3_av_set_error(error, error_size,
+                readerError.localizedDescription ? readerError.localizedDescription
+                                                  : @"cannot open video for reading");
+            return 0;
+        }
+        /* A little before the wanted frames, so the last `frames` of the
+         * stream are all inside the range. */
+        double from = fmax(0.0, total - (double)frames / 24.0 - 1.0);
+        reader.timeRange = CMTimeRangeMake(CMTimeMakeWithSeconds(from, 600),
+                                           CMTimeMakeWithSeconds(total - from, 600));
+        AVAssetReaderVideoCompositionOutput *output = [AVAssetReaderVideoCompositionOutput
+            assetReaderVideoCompositionOutputWithVideoTracks:@[track]
+                                               videoSettings:@{
+                (id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_24RGB),
+            }];
+        output.videoComposition = composition;
+        if (![reader canAddOutput:output]) {
+            h3_av_set_error(error, error_size, @"cannot add video composition output");
+            return 0;
+        }
+        [reader addOutput:output];
+        if (![reader startReading]) {
+            h3_av_set_error(error, error_size,
+                reader.error.localizedDescription ? reader.error.localizedDescription
+                                                   : @"cannot start reading video");
+            return 0;
+        }
+        /* A ring of the last `frames` frames and their times. */
+        uint8_t *ring = malloc((size_t)frames * frameBytes);
+        double *times = malloc((size_t)frames * sizeof(*times));
+        if (!ring || !times) {
+            free(ring); free(times);
+            [reader cancelReading];
+            h3_av_set_error(error, error_size, @"out of memory decoding video");
+            return 0;
+        }
+        long count = 0;
+        for (;;) {
+            CMSampleBufferRef sampleBuffer = [output copyNextSampleBuffer];
+            if (!sampleBuffer) break;
+            CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+            if (!imageBuffer) {
+                CFRelease(sampleBuffer);
+                continue;
+            }
+            size_t slot = (size_t)(count % frames);
+            times[slot] = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer));
+            CVPixelBufferLockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+            const uint8_t *base = (const uint8_t *)CVPixelBufferGetBaseAddress(imageBuffer);
+            size_t bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer);
+            uint8_t *dest = ring + slot * frameBytes;
+            size_t rowBytes = (size_t)width * 3;
+            for (int y = 0; y < height; y++)
+                memcpy(dest + (size_t)y * rowBytes, base + (size_t)y * bytesPerRow, rowBytes);
+            CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+            CFRelease(sampleBuffer);
+            count++;
+        }
+        if (reader.status == AVAssetReaderStatusFailed || count < frames) {
+            free(ring); free(times);
+            h3_av_set_error(error, error_size,
+                reader.status == AVAssetReaderStatusFailed && reader.error.localizedDescription
+                    ? reader.error.localizedDescription
+                    : [NSString stringWithFormat:@"%s has fewer than %d frames", path, frames]);
+            return 0;
+        }
+        float *channelMajor = malloc((size_t)frames * frameBytes * sizeof(*channelMajor));
+        if (!channelMajor) {
+            free(ring); free(times);
+            h3_av_set_error(error, error_size, @"out of memory converting video");
+            return 0;
+        }
+        const float scale = 1.0f / 255.0f;
+        for (int time = 0; time < frames; time++) {
+            size_t slot = (size_t)((count - frames + time) % frames);
+            const uint8_t *source = ring + slot * frameBytes;
+            for (size_t pixel = 0; pixel < area; pixel++)
+                for (size_t channel = 0; channel < 3; channel++)
+                    channelMajor[(channel * (size_t)frames + (size_t)time) * area + pixel] =
+                        (float)source[pixel * 3 + channel] * scale;
+        }
+        if (start_seconds) *start_seconds = times[(size_t)((count - frames) % frames)];
+        free(ring); free(times);
+        *pixels = channelMajor;
         return 1;
     }
 }

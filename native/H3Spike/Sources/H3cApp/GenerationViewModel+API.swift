@@ -170,6 +170,7 @@ extension GenerationViewModel {
         case ("GET", "/api/project"):
             return projectResponse()
         case ("POST", "/api/project/new"), ("POST", "/api/project/open"), ("POST", "/api/project/close"),
+             ("POST", "/api/project/import-video"),
              ("POST", "/api/project/restore"), ("POST", "/api/project/use-as-reference"),
              ("POST", "/api/project/delete-video"):
             return handleProjectRequest(request)
@@ -368,6 +369,10 @@ extension GenerationViewModel {
             "name": project.name,
             "path": project.url.path,
             "batch_count": batchCount,
+            // What the window last said about the project (an import's
+            // progress or failure), and whether a video is being imported.
+            "message": projectMessage as Any,
+            "importing_video": isImportingVideo,
             "videos": projectVideos.map { video -> [String: Any] in
                 var item: [String: Any] = ["file": video.url.lastPathComponent, "path": video.url.path]
                 if let record = video.record {
@@ -426,6 +431,27 @@ extension GenerationViewModel {
         case "/api/project/close":
             closeProject()
             return .json(200, ["ok": true])
+        case "/api/project/import-video":
+            // 動画ファイルの続きを作る: {"path": "/…/video.mp4"} brings the
+            // video into the open project at the current size_profile and
+            // sets the form to continue it. Answers at once with the name
+            // it will have; it is listed by GET /api/project (and usable as
+            // "continue_from") once converted.
+            guard let path = json["path"] as? String, FileManager.default.fileExists(atPath: path) else {
+                return .error(400, "\"path\" must name an existing video file")
+            }
+            guard project != nil else { return .error(400, "no project is open") }
+            guard !isImportingVideo else { return .error(409, "a video is already being imported") }
+            if let sizeRaw = json["size_profile"] as? String {
+                guard let profile = SizeProfile(rawValue: sizeRaw) else {
+                    return .error(400, "unknown size_profile \(sizeRaw)")
+                }
+                sizeProfile = profile
+            }
+            let source = URL(fileURLWithPath: path)
+            guard let name = importedVideoName(for: source) else { return .error(400, "no project is open") }
+            Task { await importVideoToContinue(source, as: name) }
+            return .json(202, ["ok": true, "video": name])
         default:
             guard project != nil else { return .error(400, "no project is open") }
             guard let video = video() else { return .error(400, "\"video\" must name a file listed by GET /api/project") }

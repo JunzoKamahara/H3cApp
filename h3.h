@@ -325,6 +325,20 @@ void h3_cache_set_enabled(h3_ctx *ctx, int enabled);
 void h3_cache_clear(h3_ctx *ctx);
 void h3_cache_get_info(const h3_ctx *ctx, h3_cache_info *info);
 
+/* Continuing a video that wasn't generated here: writes a latent file like
+ * the one save_latent_path writes, from the end of the video at
+ * video_path, for a generation at render_width x render_height to continue
+ * (continue_latent_path, 22 frames). Its last 22 frames (24 fps, scaled to
+ * fill the canvas and centred) are encoded with the model's video VAE in
+ * the layout generated clips have - a 17-frame chunk and a 5-frame one,
+ * each starting afresh - and the sound under them (silence without an
+ * audio track) with the audio VAE. Returns 1 on success. */
+int h3_continuation_latent_from_video(const char *model_dir,
+                                      const char *video_path,
+                                      int render_width, int render_height,
+                                      const char *latent_path,
+                                      char *error, size_t error_size);
+
 /* 1 when h3_params.fast_attention can be used: the engine was built with
  * the ccv backend (CCV_DIR) and this Mac's GPU has the neural matrix
  * accelerators it needs (M5 class). */

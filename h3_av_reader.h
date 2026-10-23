@@ -25,6 +25,14 @@ int h3_av_read_video_f32(const char *path, int width, int height,
                          int max_frames, float **pixels, int *frames,
                          char *error, size_t error_size);
 
+/* The last `frames` frames of a video at 24 fps, scaled to fill width x
+ * height and centred (the overflow cropped), as channel-major F32
+ * [3,frames,H,W] in [0,1]; *start_seconds is where the first of them is.
+ * Used to continue a video that wasn't generated here. */
+int h3_av_read_video_tail_f32(const char *path, int width, int height,
+                              int frames, float **pixels, double *start_seconds,
+                              char *error, size_t error_size);
+
 /* Decode the first audio stream as channel-major stereo F32 at 32 kHz.
  * max_samples bounds allocation. truncate_at_limit is used for a video's
  * soundtrack; standalone clips report an error instead of silently trimming. */

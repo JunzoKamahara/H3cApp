@@ -36,6 +36,19 @@ struct ContentView: View {
                 .onHover { viewModel.isPointerOverComposer = $0 }
                 .padding(.bottom, 20)
             }
+            .overlay(alignment: .top) {
+                // 動画ファイルの続きを作る: converting takes a little while.
+                if viewModel.isImportingVideo {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("動画を取り込んでいます（\(viewModel.importingVideoName)）…").font(.callout)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.top, 12)
+                }
+            }
         }
         .frame(minWidth: 760, minHeight: 600)
         // Once a generation starts (button, Return, ⌘Return or the HTTP

@@ -41,13 +41,19 @@ extension GenerationViewModel {
         }
         var draft = record.draft
         draft.seedFixed = false
+        // An imported video has no lip sync of its own: keep the form's.
+        if record.importedFrom != nil {
+            draft.forcedAudio = forcedAudioPath.map { ProjectFiles.stored($0, in: project.url) }
+            draft.forcedAudioOffset = forcedAudioPath == nil ? nil : forcedAudioOffset
+        }
         let missing = applyDraft(draft, projectURL: project.url)
         if !missing.isEmpty {
             let names = missing.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", ")
             projectMessage = String(localized: "登録されていない追加モデル（LoRA）は使えません: \(names)")
         }
         if !keepsReferencesWhenContinuing { creationMethod = .text }
-        if let audio = forcedAudioPath {
+        // An imported video's lip sync starts where the form had it.
+        if let audio = forcedAudioPath, record.importedFrom == nil {
             let length = audioFileSeconds(audio)
             if let offset = continuationAudioOffset(after: video), offset < (length ?? .infinity) - 0.1 {
                 forcedAudioOffset = offset

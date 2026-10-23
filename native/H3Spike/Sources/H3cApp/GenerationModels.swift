@@ -377,6 +377,8 @@ struct ResolvedResult {
     /// the clip length asked for.
     var chained = false
     var joinedClipCount: Int? = nil
+    /// Brought in to be continued, from this file (not generated).
+    var importedFrom: String? = nil
     var plannedClipCount: Int? = nil
     var chainClipFrames: Int? = nil
     /// What each clip added to the prompt (クリップごとの指示).
@@ -410,6 +412,9 @@ struct ResolvedResult {
         let seedLine = seedWasRandom
             ? String(localized: "シード: \(seedDecimalString)（毎回変える設定で決定）")
             : String(localized: "シード: \(seedDecimalString)（固定）")
+        if let importedFrom {
+            return String(localized: "取り込んだ動画: \(importedFrom)（H3cAppで生成したものではありません。続きをつくるために、今の大きさと24fpsに変換して取り込みました）")
+        }
         var lines = [
             String(localized: "動画の内容: \(prompt)"),
             String(localized: "作り方: \(method)"),

@@ -40,6 +40,7 @@ plain filesystem paths, not uploads.
 | `POST` | `/api/project/use-as-reference` | `{"video"}` adds that video to the form as a reference video. |
 | `POST` | `/api/project/delete-video` | `{"video"}` moves the video and its record to the Trash. |
 | `POST` | `/api/project/join` | `{"video"}` joins the chain of continuations ending at that video into `<name>_joined.mp4` in the project, with a record, (cross-fading each carried-over stretch) and returns `{"path", "clips"}` when done. |
+| `POST` | `/api/project/import-video` | `{"path", "size_profile"?}` brings a video made elsewhere into the open project to continue it: converted to the current size (or `size_profile`) and 24 fps, with the form set to continue it. Answers at once with `{"video"}`, the name it will have; once converted it is listed by `GET /api/project` and usable as `continue_from`. |
 
 `POST /api/generate` body fields, all optional except `prompt`:
 

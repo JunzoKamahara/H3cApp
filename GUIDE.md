@@ -49,6 +49,13 @@ Good to know:
   clip in Custom Clips moves the story on (a clip left empty is made from
   the prompt alone). With 15 s Joined, “Edit the clips one by one…” in the
   panel switches to Custom Clips.
+- **Continuing a video made elsewhere.** In the menu bar, Project → “Continue a
+  Video File…” takes a video not made in H3cApp (from another tool, or one you
+  filmed). It is converted to the current size and 24 fps and brought into the
+  project, and its last 0.9 s or so of picture and sound are turned into the
+  model's own data. Then it continues and joins like a video made in H3cApp.
+  A video of another aspect ratio is cropped to the centre. Because it is
+  converted, the seam differs slightly from the original.
 - **Make it longer.** With the joined video shown, “Continue” in the panel
   makes one more clip; “Join and Export” then joins the whole run again.
 - **If you stop partway,** the clips made so far (two or more) are joined.

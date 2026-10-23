@@ -310,6 +310,9 @@ final class GenerationViewModel: ObservableObject {
     /// The pointer is over the floating composer: the preview's pinch and
     /// scroll-wheel zoom leave it alone (ContentView, ResultPlayerView).
     var isPointerOverComposer = false
+    /// 動画ファイルの続きを作る is converting a video (ExternalContinuation).
+    @Published var isImportingVideo = false
+    var importingVideoName = ""
     /// The form before カスタムクリップ's editor opened (its キャンセル).
     var clipEditSnapshot: ClipEditSnapshot?
     /// The つなげて生成 running now: kept past a cancel, so the clips made so
@@ -545,7 +548,7 @@ final class GenerationViewModel: ObservableObject {
     var failedReferenceImports: Set<String> = []
     private var batchState: BatchState?
 
-    private var engine: H3Engine?
+    private(set) var engine: H3Engine?
     private var generationTask: Task<Void, Never>?
 
     // MARK: Local automation API (see GenerationViewModel+API.swift) -
