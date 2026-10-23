@@ -233,9 +233,9 @@ each continuing the one before, and joined into one at their overlaps.
    - **15 s Joined**: three clips of about 7 s (“Clip length for joined
      generation” in Advanced Settings can make them about 5 s).
    - **Custom Clips**: an editor opens with one clip; “Add a Clip” adds the
-     next one below. Each clip gets a length (1-15 s, 2 s or more for a
-     continuation) and what happens in it. From the second clip on, turning
-     off “Use the same reference images” lets that clip use its own
+     next one below. Each clip gets a length (3-15 s) and what happens in
+     it. From the second clip on, turning off “Use the same reference
+     images” lets that clip use its own
      reference images, or a first and/or last frame. A clip with a first
      frame doesn't continue the one before: it starts from that image and is
      joined with a cut. With only a last frame it still continues and is
@@ -777,7 +777,7 @@ plain filesystem paths, not uploads.
 | `seconds` / `chained` / `chain_clip_seconds` | `5` / `false` / `7` | 1-15 s are made in one generation; 16-90 s (or 15 with `"chained": true`) by joined generation, from clips of 5 or 7 s, into one joined video. A joined length needs an open project and `count` 1. |
 | `clip_prompts` | none | Joined generation only: an array of strings, one per clip in order, each added after `prompt` for that clip (an empty string or a missing entry uses `prompt` alone). |
 | `clip_references` | none | Joined generation with reference images only: an array of true/false, one per clip in order, whether that clip uses the reference images (missing entries do). |
-| `clips` | none | Custom Clips: an array of objects, one per clip: `seconds` (1-15, 2+ for a continuation; default 7), `prompt` (added after `prompt`), and from the second clip `images` (`same` / `references` / `frames`), `reference_paths`, `first_frame_path` (the clip then starts from it, joined with a cut), `last_frame_path`, `audio` (`carry_on` / `file` / `none`), `audio_path`, `audio_offset`. The first clip uses the request's own images and lip sync. Needs an open project. |
+| `clips` | none | Custom Clips: an array of objects, one per clip: `seconds` (3-15; default 7), `prompt` (added after `prompt`), and from the second clip `images` (`same` / `references` / `frames`), `reference_paths`, `first_frame_path` (the clip then starts from it, joined with a cut), `last_frame_path`, `audio` (`carry_on` / `file` / `none`), `audio_path`, `audio_offset`. The first clip uses the request's own images and lip sync. Needs an open project. |
 | `continue_from` | none | A video of the open project (a file name from `GET /api/project`) to continue: its last 22 frames and their sound are carried over. Needs the same size; not with first/last frames (references are fine). |
 | `forced_audio_path` / `forced_audio_offset` | none / `0` | Lip sync: this file's audio (an audio file or a video's soundtrack), from `forced_audio_offset` seconds on, is held as the soundtrack while the picture is generated to match it, and the output carries that audio itself. Works with every creation method. |
 | `reference_paths` | `[]` | Ordered Ref2VA references; image/video/audio is auto-detected per path. At least one image or video is required if any audio path is included. |

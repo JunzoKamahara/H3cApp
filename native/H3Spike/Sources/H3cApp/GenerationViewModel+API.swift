@@ -582,9 +582,9 @@ extension GenerationViewModel {
             for (index, item) in list.enumerated() {
                 var clip = ChainClipSpec()
                 if let seconds = item["seconds"] {
-                    let range = index == 0 ? ChainClipSpec.secondsRange : ChainClipSpec.continuingSecondsRange
-                    guard let value = jsonInteger(seconds), value >= 1, value <= range.upperBound else {
-                        return .error(400, "clip \(index + 1): \"seconds\" must be an integer from 1 to \(range.upperBound)")
+                    let range = ChainClipSpec.secondsRange
+                    guard let value = jsonInteger(seconds), range.contains(value) else {
+                        return .error(400, "clip \(index + 1): \"seconds\" must be an integer from \(range.lowerBound) to \(range.upperBound)")
                     }
                     clip.seconds = value
                 }
@@ -610,9 +610,6 @@ extension GenerationViewModel {
                 }
                 clip.audioPath = item["audio_path"] as? String
                 clip.audioOffset = (item["audio_offset"] as? NSNumber)?.doubleValue ?? 0
-                if index > 0 && clip.seconds < 2 && !clip.startsFresh {
-                    return .error(400, "clip \(index + 1): a continuing clip needs 2 seconds or more")
-                }
                 clips.append(clip)
             }
             customClips = clips

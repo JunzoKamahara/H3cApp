@@ -450,7 +450,7 @@ struct CreationFormView: View {
             Toggle("カスタムクリップ…", isOn: Binding(
                 get: { viewModel.usesCustomClips },
                 set: { _ in
-                    viewModel.useCustomClips()
+                    viewModel.beginEditingClips()
                     showingClipEditor = true
                 }))
         } label: {

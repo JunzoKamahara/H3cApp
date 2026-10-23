@@ -96,14 +96,17 @@ struct ClipPromptsSection: View {
                 let total = String(format: "%.1f", viewModel.customClipsTotalSeconds)
                 Text("カスタムクリップ：\(viewModel.customClips.count)本・計\(total)秒").font(.caption)
                 Spacer()
-                Button("編集…") { showingEditor = true }
+                Button("編集…") {
+                    viewModel.beginEditingClips()
+                    showingEditor = true
+                }
             }
             .padding(H3Spacing.md)
             .background(palette.surfaceMuted)
             .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
         } else {
             Button {
-                viewModel.useCustomClips()
+                viewModel.beginEditingClips()
                 showingEditor = true
             } label: {
                 Label("クリップを1本ずつ編集する…", systemImage: "list.number")
@@ -145,7 +148,7 @@ struct CustomClipsSheet: View {
                     }
                     Button {
                         var clip = ChainClipSpec()
-                        if let last = viewModel.customClips.last { clip.seconds = max(2, last.seconds) }
+                        if let last = viewModel.customClips.last { clip.seconds = last.seconds }
                         viewModel.customClips.append(clip)
                     } label: {
                         Label("クリップを足す", systemImage: "plus")
@@ -162,12 +165,23 @@ struct CustomClipsSheet: View {
                     .help("書き出したファイルか、同じ形のJSONファイルから読み込みます")
                 Button("書き出す…") { exportFile(starts: starts) }
                 Spacer()
-                Button("完了") { isPresented = false }
-                    .keyboardShortcut(.defaultAction)
+                Button("キャンセル") {
+                    viewModel.cancelEditingClips()
+                    isPresented = false
+                }
+                .keyboardShortcut(.cancelAction)
+                .help("この画面で変えたことを取り消して閉じます")
+                Button("完了") {
+                    viewModel.endEditingClips()
+                    isPresented = false
+                }
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(H3Spacing.lg)
-        .frame(width: 640, height: 700)
+        // Fits a window at its minimum height (640); the clips scroll.
+        .frame(width: 640)
+        .frame(minHeight: 420, idealHeight: 560)
     }
 
     private func importFile() {
@@ -231,9 +245,7 @@ private struct CustomClipRow: View {
     @Environment(\.colorScheme) private var colorScheme
     private var palette: H3Palette { H3Palette(colorScheme) }
 
-    private var secondsRange: ClosedRange<Int> {
-        index == 0 || clip.startsFresh ? ChainClipSpec.secondsRange : ChainClipSpec.continuingSecondsRange
-    }
+    private var secondsRange: ClosedRange<Int> { ChainClipSpec.secondsRange }
 
     var body: some View {
         VStack(alignment: .leading, spacing: H3Spacing.sm) {
@@ -261,7 +273,6 @@ private struct CustomClipRow: View {
                     .help("このクリップを取り除く")
                 }
             }
-            ClipTextEditor(text: $clip.prompt, placeholder: String(localized: "（共通の指示だけでつくります）"))
             if index == 0 {
                 Text("1本目は、パネルの画像（画像から）とリップシンクの設定でつくります。")
                     .font(.caption)
@@ -270,6 +281,7 @@ private struct CustomClipRow: View {
                 imagesSection
                 audioSection
             }
+            ClipTextEditor(text: $clip.prompt, placeholder: String(localized: "（共通の指示だけでつくります）"))
         }
     }
 

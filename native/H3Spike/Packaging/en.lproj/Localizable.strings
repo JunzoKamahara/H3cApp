@@ -807,7 +807,6 @@
 "%lld本目のファイルが見つかりません: %@" = "Clip %1$lld: file not found: %2$@";
 "%lld本目：音声だけの参照はできません。画像か動画の参照も追加してください" = "Clip %lld: audio alone can't be a reference. Add an image or video reference too";
 "%lld本目のリップシンクの音声を選んでください" = "Clip %lld: choose the lip-sync audio";
-"%lld本目は、前の動画の続きなので2秒以上にしてください" = "Clip %lld continues the clip before, so make it 2 seconds or longer";
 "カスタムクリップ:" = "Custom Clips:";
 "参照画像なし" = "no reference images";
 "最初の画像: %@（カット）" = "first frame: %@ (cut)";
@@ -838,3 +837,5 @@
 "途中の様子のプレビュー用デコーダ（" = "Progress preview decoder (";
 "量子化モデル（GGUF）の使い方" = "Quantized Models (GGUF) Guide";
 "）：MIT License。" = "): MIT License.";
+"%lld本目の長さは3〜15秒にしてください" = "Make clip %lld 3 to 15 seconds long";
+"この画面で変えたことを取り消して閉じます" = "Closes without the changes made here";

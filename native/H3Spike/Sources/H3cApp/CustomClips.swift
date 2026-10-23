@@ -40,9 +40,9 @@ struct ChainClipSpec: Codable, Equatable, Identifiable {
     var audioPath: String? = nil
     var audioOffset = 0.0
 
-    static let secondsRange = 1 ... 15
-    /// A continuation must be longer than the 22 frames it carries over.
-    static let continuingSecondsRange = 2 ... 15
+    /// Shorter clips leave too little to happen in them (a continuation
+    /// also carries over its first 0.9 s).
+    static let secondsRange = 3 ... 15
 
     var frames: Int { Int(h3AlignedFrameCount(seconds: Double(seconds))) }
 
@@ -179,8 +179,7 @@ extension GenerationViewModel {
         let plan = isChained ? currentChainPlan : [Int(h3AlignedFrameCount(seconds: Double(seconds)))]
         return plan.enumerated().map { index, frames in
             var clip = ChainClipSpec()
-            clip.seconds = max(index == 0 ? 1 : 2, Int((Double(frames) / 24).rounded()))
-                .clamped(to: ChainClipSpec.secondsRange)
+            clip.seconds = Int((Double(frames) / 24).rounded()).clamped(to: ChainClipSpec.secondsRange)
             clip.prompt = index < clipPrompts.count ? clipPrompts[index] : ""
             if !chainClipUsesReferences(clipReferences, index: index) {
                 clip.images = .references
@@ -188,6 +187,35 @@ extension GenerationViewModel {
             return clip
         }
     }
+
+    /// What the editor may change, as it was before it opened (キャンセル
+    /// puts it back).
+    struct ClipEditSnapshot {
+        var prompt: String
+        var chained: Bool
+        var chainCustom: Bool
+        var customClips: [ChainClipSpec]
+    }
+
+    /// Opens カスタムクリップ's editor: remembers the form for キャンセル,
+    /// then switches the length to カスタムクリップ.
+    func beginEditingClips() {
+        clipEditSnapshot = ClipEditSnapshot(prompt: prompt, chained: chained,
+                                            chainCustom: chainCustom, customClips: customClips)
+        useCustomClips()
+    }
+
+    /// キャンセル: the form as it was before the editor opened.
+    func cancelEditingClips() {
+        guard let snapshot = clipEditSnapshot else { return }
+        prompt = snapshot.prompt
+        chained = snapshot.chained
+        chainCustom = snapshot.chainCustom
+        customClips = snapshot.customClips
+        clipEditSnapshot = nil
+    }
+
+    func endEditingClips() { clipEditSnapshot = nil }
 
     /// Switches the length to カスタムクリップ (one clip if there were none).
     func useCustomClips() {
@@ -212,9 +240,9 @@ extension GenerationViewModel {
             if clip.audio == .file && clip.audioPath == nil {
                 return String(localized: "\(number)本目のリップシンクの音声を選んでください")
             }
-            if !clip.startsFresh && clip.seconds < ChainClipSpec.continuingSecondsRange.lowerBound {
-                return String(localized: "\(number)本目は、前の動画の続きなので2秒以上にしてください")
-            }
+        }
+        if let short = customClips.firstIndex(where: { !ChainClipSpec.secondsRange.contains($0.seconds) }) {
+            return String(localized: "\(short + 1)本目の長さは3〜15秒にしてください")
         }
         return nil
     }

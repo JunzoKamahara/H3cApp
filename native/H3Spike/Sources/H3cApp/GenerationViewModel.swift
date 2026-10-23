@@ -307,6 +307,8 @@ final class GenerationViewModel: ObservableObject {
     /// length is made of customClips.
     @Published var chainCustom = false
     @Published var customClips: [ChainClipSpec] = []
+    /// The form before カスタムクリップ's editor opened (its キャンセル).
+    var clipEditSnapshot: ClipEditSnapshot?
     /// The つなげて生成 running now: kept past a cancel, so the clips made so
     /// far are still joined.
     var chainRun: ChainRun?
