@@ -791,3 +791,20 @@ MIT — [LICENSE](LICENSE)を参照。サードパーティ表示（`h3_shaders.
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)にあります。推論エンジンは
 Salvatore Sanfilippo氏による
 [antirez/h3.c](https://github.com/antirez/h3.c)を起源としています。
+
+**生成した動画を公開するとき。** MiniMax H3のライセンス（利用方針の12項）
+では、AIで生成したことをはっきり示す必要があります。アプリの「動画を書き
+出す…」は、右下に「AI-generated with MiniMax H3」と入れられます（最初は
+オン）。外したときは、投稿先のAI生成ラベルや説明欄で示してください。アプリ
+が書くMP4には、いつもファイルの情報（メタデータ）にも同じことを記録します。
+
+**動画に記録する情報。** 生成した動画、つないだ動画、書き出した動画には、
+XMP（MP4の`uuid`ボックス）で次を記録します。IPTCの標準の項目（Photo
+Metadata 2025.1／Video Metadata Hub 1.7）の`Iptc4xmpExt:AIPromptInformation`
+（プロンプト。つないだ動画は1本ずつの指示も）、`AISystemUsed`（MiniMax H3）、
+`AISystemVersionUsed`（FL2VA／Ref2VA）、`DigitalSourceType`
+（trainedAlgorithmicMedia）、`xmp:CreatorTool`、それに作り直すための設定一式
+（記録の`.json`と同じ内容。絶対パスはファイル名だけ）を
+`h3capp:GenerationSettings`にJSONで入れます。「動画を書き出す…」で「プロンプト
+と生成の設定をファイルに記録する」を外すと、AI生成であることと使ったモデル
+だけを記録します。`exiftool -XMP:all 動画.mp4`などで読めます。

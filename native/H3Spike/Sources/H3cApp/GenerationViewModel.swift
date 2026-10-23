@@ -1165,6 +1165,7 @@ final class GenerationViewModel: ObservableObject {
             audioSigmaShift: request.sampling.audioShift > 0 ? Double(request.sampling.audioShift) : nil,
             soundLateness: request.soundLateness,
             latentSoundLateness: request.soundLateness)
+        GenerationMetadata.tag(url, record: record)
         if let projectURL = request.projectURL {
             if let stored = storeInProject(videoAt: url, projectURL: projectURL, record: record,
                                            completedAt: completedAt, seed: result.seed,

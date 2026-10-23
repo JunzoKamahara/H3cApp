@@ -217,12 +217,14 @@ private struct ResultActionsView: View {
     @State private var showingSettings = false
     @State private var exportConfirmation: String?
     @State private var lastExportedURL: URL?
+    @State private var isExporting = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: H3Spacing.xs) {
             HStack(spacing: H3Spacing.sm) {
                 Button("動画を書き出す…") { exportVideo() }
                     .keyboardShortcut("s", modifiers: .command)
+                    .disabled(isExporting)
 
                 Button("使用した設定…") { showingSettings = true }
                     .popover(isPresented: $showingSettings) {
@@ -268,24 +270,76 @@ private struct ResultActionsView: View {
         return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
     }
 
+    /// Saves the video somewhere of the user's choosing, saying it is
+    /// AI-generated: always in its metadata, and in the picture's lower
+    /// right unless the save panel's switch is off (AIDisclosure).
     private func exportVideo() {
         guard let sourceURL = viewModel.resultURLForExport else { return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = sourceURL.lastPathComponent
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.directoryURL = Self.initialExportDirectory
+        let options = ExportOptions()
+        let accessory = NSHostingView(rootView: ExportOptionsView(options: options))
+        accessory.frame.size = accessory.fittingSize
+        panel.accessoryView = accessory
         guard panel.runModal() == .OK, let destination = panel.url else { return }
-        try? FileManager.default.removeItem(at: destination)
-        do {
-            try FileManager.default.copyItem(at: sourceURL, to: destination)
-            // Remembered only once something was actually saved there.
-            UserDefaults.standard.set(destination.deletingLastPathComponent().path,
-                                      forKey: Self.exportDirectoryKey)
-            lastExportedURL = destination
-            exportConfirmation = String(localized: "保存しました: \(destination.lastPathComponent)")
-        } catch {
-            exportConfirmation = String(localized: "選んだ場所に保存できませんでした（詳細: \(error.localizedDescription)）")
+        AIDisclosure.addsLabel = options.addsLabel
+        GenerationMetadata.exportsSettings = options.includesSettings
+        let made = viewModel.recordForExport(sourceURL)
+        isExporting = true
+        exportConfirmation = String(localized: "書き出しています…")
+        Task {
+            do {
+                try await AIDisclosure.export(sourceURL, to: destination, withLabel: options.addsLabel)
+                if let made {
+                    GenerationMetadata.tag(destination, record: made.record, clips: made.clips,
+                                           includeSettings: options.includesSettings)
+                }
+                // Remembered only once something was actually saved there.
+                UserDefaults.standard.set(destination.deletingLastPathComponent().path,
+                                          forKey: Self.exportDirectoryKey)
+                lastExportedURL = destination
+                exportConfirmation = options.addsLabel
+                    ? String(localized: "保存しました: \(destination.lastPathComponent)")
+                    : String(localized: "保存しました: \(destination.lastPathComponent)（公開するときは、投稿先のAI生成ラベルや説明欄で、AIで生成したことを示してください）")
+            } catch {
+                exportConfirmation = String(localized: "選んだ場所に保存できませんでした（詳細: \(error.localizedDescription)）")
+            }
+            isExporting = false
         }
+    }
+}
+
+/// The save panel's switch for the AI label (AIDisclosure).
+private final class ExportOptions: ObservableObject {
+    @Published var addsLabel = AIDisclosure.addsLabel
+    @Published var includesSettings = GenerationMetadata.exportsSettings
+}
+
+private struct ExportOptionsView: View {
+    @ObservedObject var options: ExportOptions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("AI生成の表示を入れる（右下に「\(AIDisclosure.label)」）", isOn: $options.addsLabel)
+                .toggleStyle(.checkbox)
+            Text(options.addsLabel
+                 ? String(localized: "MiniMax H3のライセンスでは、生成した動画を公開するときに、AIで生成したことをはっきり示す必要があります。ファイルの情報（メタデータ）にも、いつも記録します。")
+                 : String(localized: "公開するときは、投稿先のAI生成ラベルや説明欄で、AIで生成したことを示してください（例：AI-generated video created with MiniMax H3）。ファイルの情報（メタデータ）には記録します。"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("プロンプトと生成の設定をファイルに記録する", isOn: $options.includesSettings)
+                .toggleStyle(.checkbox)
+                .padding(.top, 4)
+            Text("動画の情報（XMP）に、IPTCの標準の項目でプロンプトと使ったモデルを、あわせて作り直すための設定を記録します。外すと、AIで生成したことと使ったモデルだけを記録します。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(width: 460, alignment: .leading)
+        .padding(12)
     }
 }
 
@@ -294,6 +348,22 @@ private extension GenerationViewModel {
     // otherwise exposed as a stable public URL (design spec: distinguish
     // the engine's temp output from a user-chosen save location).
     var resultURLForExport: URL? { resultURL }
+
+    /// The record of the video at `url` (the .json next to it, or the temp
+    /// result's), and for a joined video its clips' records.
+    func recordForExport(_ url: URL) -> (record: ProjectVideoRecord, clips: [ProjectVideoRecord])? {
+        func load(_ video: URL) -> ProjectVideoRecord? {
+            (try? Data(contentsOf: video.deletingPathExtension().appendingPathExtension("json")))
+                .flatMap { try? ProjectFiles.decoder.decode(ProjectVideoRecord.self, from: $0) }
+        }
+        guard let record = load(url)
+            ?? temporaryResultRecord.flatMap({ $0.video == url.lastPathComponent ? $0 : nil }) else { return nil }
+        let projectURL = project?.url
+        let clips = (record.joinedClips ?? []).compactMap { stored in
+            projectURL.flatMap { load(URL(fileURLWithPath: ProjectFiles.resolved(stored, in: $0))) }
+        }
+        return (record, clips)
+    }
 }
 
 private struct SettingsDetailView: View {

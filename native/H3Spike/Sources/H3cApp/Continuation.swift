@@ -377,6 +377,7 @@ enum JoinedVideoExporter {
         }
         session.videoComposition = videoComposition
         session.audioMix = audioMix
+        session.metadata = AIDisclosure.metadata()
         try await session.export(to: output, as: .mp4)
     }
 }

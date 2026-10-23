@@ -382,6 +382,7 @@ extension GenerationViewModel {
             stored.video = output.lastPathComponent
             try ProjectFiles.encoder.encode(stored)
                 .write(to: output.deletingPathExtension().appendingPathExtension("json"), options: .atomic)
+            GenerationMetadata.tag(output, record: stored, clips: clips.compactMap(\.record))
             if let last = clips.last {
                 try? FileManager.default.copyItem(at: ProjectFiles.latentURL(for: last.url),
                                                   to: ProjectFiles.latentURL(for: output))

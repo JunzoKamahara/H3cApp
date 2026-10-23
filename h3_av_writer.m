@@ -26,6 +26,34 @@ static void h3_av_set_error(char *error, size_t error_size, NSString *message) {
     error[error_size - 1] = '\0';
 }
 
+/* Every MP4 says what it is (MiniMax H3 Community License §III.3(b)
+ * encourages an AI-generation identifier on generated files): a
+ * description and the software that made it, in the file's metadata. Not
+ * a visible label - publishing still needs a clear disclosure (its
+ * Acceptable Use Policy, item 12). */
+static AVMetadataItem *h3_av_metadata_item(AVMetadataKeySpace space,
+                                            NSString *key, NSString *value) {
+    AVMutableMetadataItem *item = [AVMutableMetadataItem metadataItem];
+    item.keySpace = space;
+    item.key = key;
+    item.value = value;
+    return item;
+}
+
+/* In the common keys (MP4 user data, read by AVFoundation) and the iTunes
+ * ones (description, comment, encoder - what ffmpeg and most players show). */
+static NSArray<AVMetadataItem *> *h3_av_ai_metadata(void) {
+    NSString *label = @"AI-generated with MiniMax H3";
+    NSString *software = @"h3.c (MiniMax H3)";
+    return @[
+        h3_av_metadata_item(AVMetadataKeySpaceCommon, AVMetadataCommonKeyDescription, label),
+        h3_av_metadata_item(AVMetadataKeySpaceCommon, AVMetadataCommonKeySoftware, software),
+        h3_av_metadata_item(AVMetadataKeySpaceiTunes, AVMetadataiTunesMetadataKeyDescription, label),
+        h3_av_metadata_item(AVMetadataKeySpaceiTunes, AVMetadataiTunesMetadataKeyUserComment, label),
+        h3_av_metadata_item(AVMetadataKeySpaceiTunes, AVMetadataiTunesMetadataKeyEncodingTool, software),
+    ];
+}
+
 static NSDictionary *h3_av_video_settings(int width, int height) {
     int64_t bitrate = (int64_t)width * (int64_t)height * 5;
     if (bitrate < 9500000) bitrate = 9500000;
@@ -157,6 +185,7 @@ static h3_av_writer *h3_open_writer(
             return NULL;
         }
         writer.shouldOptimizeForNetworkUse = YES;
+        writer.metadata = h3_av_ai_metadata();
 
         AVAssetWriterInput *videoInput = [AVAssetWriterInput
             assetWriterInputWithMediaType:AVMediaTypeVideo

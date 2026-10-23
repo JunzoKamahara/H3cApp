@@ -808,3 +808,22 @@ adapted from ccv's FlashAttention implementation) are in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The inference engine
 originates from [antirez/h3.c](https://github.com/antirez/h3.c) by
 Salvatore Sanfilippo.
+
+**Publishing generated videos.** MiniMax H3's license (its Acceptable Use
+Policy, item 12) requires a clear disclosure that a video is AI-generated.
+The app's “Export Video…” can put “AI-generated with MiniMax H3” in the
+lower right (on by default); without it, use the platform's AI label or the
+description. Every MP4 the app writes also records it in the file's
+metadata.
+
+**What a video records about itself.** Generated, joined and exported videos
+carry an XMP packet (an MP4 `uuid` box) with IPTC's standard fields (Photo
+Metadata 2025.1 / Video Metadata Hub 1.7): `Iptc4xmpExt:AIPromptInformation`
+(the prompt, and each clip's directions for a joined video), `AISystemUsed`
+(MiniMax H3), `AISystemVersionUsed` (FL2VA / Ref2VA) and `DigitalSourceType`
+(trainedAlgorithmicMedia), plus `xmp:CreatorTool` and the settings to make it
+again (the same as its `.json` record, absolute paths cut to file names) as
+JSON in `h3capp:GenerationSettings`. Turning off “Record the prompt and
+generation settings in the file” in Export Video… records only that it is
+AI-generated and which model made it. Tools such as `exiftool -XMP:all
+video.mp4` read it.

@@ -839,3 +839,11 @@
 "）：MIT License。" = "): MIT License.";
 "%lld本目の長さは3〜15秒にしてください" = "Make clip %lld 3 to 15 seconds long";
 "この画面で変えたことを取り消して閉じます" = "Closes without the changes made here";
+"AI生成の表示を入れる（右下に「%@」）" = "Add an AI-generated label (“%@” in the lower right)";
+"MiniMax H3のライセンスでは、生成した動画を公開するときに、AIで生成したことをはっきり示す必要があります。ファイルの情報（メタデータ）にも、いつも記録します。" = "MiniMax H3's license requires a clear disclosure that a video is AI-generated when you publish it. The file's metadata always records it too.";
+"保存しました: %@（公開するときは、投稿先のAI生成ラベルや説明欄で、AIで生成したことを示してください）" = "Saved: %@ (when you publish it, say it is AI-generated with the platform's AI label or in the description)";
+"公開するときは、投稿先のAI生成ラベルや説明欄で、AIで生成したことを示してください（例：AI-generated video created with MiniMax H3）。ファイルの情報（メタデータ）には記録します。" = "When you publish it, say it is AI-generated with the platform's AI label or in the description (for example, “AI-generated video created with MiniMax H3”). The file's metadata still records it.";
+"書き出しています…" = "Exporting…";
+"書き出しの準備ができませんでした" = "Couldn't prepare the export";
+"プロンプトと生成の設定をファイルに記録する" = "Record the prompt and generation settings in the file";
+"動画の情報（XMP）に、IPTCの標準の項目でプロンプトと使ったモデルを、あわせて作り直すための設定を記録します。外すと、AIで生成したことと使ったモデルだけを記録します。" = "Records the prompt and the model in the video's metadata (XMP) with IPTC's standard fields, along with the settings to make it again. Off, it records only that the video is AI-generated and which model made it.";
