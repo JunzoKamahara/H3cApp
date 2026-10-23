@@ -35,8 +35,10 @@ struct H3cApp: App {
             WindowRoot()
         }
         .commands {
+            AboutCommand()
             AdvancedSettingsCommand()
             ProjectCommands()
+            HelpCommands()
         }
         // Design spec section 3: 1180x780 initial content area, 920x640
         // minimum. .automatic lets the window be resized by hand within
