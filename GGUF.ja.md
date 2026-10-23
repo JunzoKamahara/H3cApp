@@ -228,7 +228,7 @@ GGUF の取り込みは、同じディスク上のファイルを APFS の複製
   既存の行列演算で計算します。量子化のまま行列演算をするわけではありません。
   SSD ストリーミングでは量子化されたまま読み込むので、読み込む量が減ります。
 
-エンジン側の詳細は [README の曲線形の AdaLN](README.ja.md#曲線形のadaln試験的h3_adaln_curve) と
+エンジン側の詳細は [技術資料の曲線形の AdaLN](TECHNICAL.ja.md#曲線形のadaln試験的h3_adaln_curve) と
 `h3_gguf.c`・`h3_quant.c`・`h3_shaders.metal` を参照してください。
 
 ## API

@@ -24,7 +24,7 @@ enum AppLinks {
     }
 
     static var apiGuide: URL {
-        URL(string: "https://github.com/JunzoKamahara/H3cApp/blob/main/" + (isJapanese ? "README.ja.md" : "README.md") + "#api")!
+        URL(string: "https://github.com/JunzoKamahara/H3cApp/blob/main/" + (isJapanese ? "API.ja.md" : "API.md") + "#api")!
     }
 
     /// A text file in the app's Resources (the licenses), in TextEdit;

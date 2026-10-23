@@ -238,7 +238,7 @@ Model Manager's "…" → "Delete…":
   multiplied in the quantized form. SSD streaming reads them still quantized,
   so less is read.
 
-For the engine side see [curve-form AdaLN in the README](README.md#curve-form-adaln-experimental-h3_adaln_curve)
+For the engine side see [curve-form AdaLN in the technical reference](TECHNICAL.md#curve-form-adaln-experimental-h3_adaln_curve)
 and `h3_gguf.c`, `h3_quant.c`, `h3_shaders.metal`.
 
 ## API
