@@ -313,6 +313,8 @@ final class GenerationViewModel: ObservableObject {
     /// 動画ファイルの続きを作る is converting a video (ExternalContinuation).
     @Published var isImportingVideo = false
     var importingVideoName = ""
+    /// A chosen video waiting for its size to be picked (ImportVideoSheet).
+    @Published var pendingVideoImport: PendingVideoImport?
     /// The form before カスタムクリップ's editor opened (its キャンセル).
     var clipEditSnapshot: ClipEditSnapshot?
     /// The つなげて生成 running now: kept past a cancel, so the clips made so
@@ -746,6 +748,10 @@ final class GenerationViewModel: ObservableObject {
 
     var validationMessage: String? {
         guard case .ready = engineState else { return nil } // covered by engine status instead
+        // The form is set to continue the video only once it is in.
+        if isImportingVideo {
+            return String(localized: "動画を取り込んでいます。終わると、その続きをつくれます")
+        }
         if promptIsEmpty {
             return String(localized: "動画の内容を入力してください")
         }
@@ -794,7 +800,8 @@ final class GenerationViewModel: ObservableObject {
     }
 
     var canGenerate: Bool {
-        engineState == .ready && !isGenerating && !isBuildingCache && validationMessage == nil
+        engineState == .ready && !isGenerating && !isBuildingCache && !isImportingVideo
+            && validationMessage == nil
     }
 
     // MARK: Summary text shown above the primary button, and in "設定を見る"
@@ -991,7 +998,7 @@ final class GenerationViewModel: ObservableObject {
             let source = (try? Data(contentsOf: recordURL))
                 .flatMap { try? ProjectFiles.decoder.decode(ProjectVideoRecord.self, from: $0) }
             lateness = continuationSoundLateness(source: source, latentURL: continuation.latentURL,
-                                                 forced: forcedAudioPath != nil)
+                                                 forced: forcedAudioPath != nil, overlap: continuation.frames)
         }
 
         var draft = currentDraft()

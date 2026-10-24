@@ -718,6 +718,142 @@ kernel void h3_vae_encoder_group_norm_silu_f32(
     }
 }
 
+/* GroupNorm + SiLU for the fast video encoder, in three passes that each
+ * read the frame in order: neighbouring threads read neighbouring channels
+ * (h3_vae_encoder_group_norm_silu_f32 gives a whole threadgroup to one
+ * group's 4-32 channels, then steps over the other groups' channels, so
+ * most of every memory read is wasted). Each frame is cut into `chunks`
+ * runs of `chunk_pixels` pixels, one threadgroup each: the first pass sums
+ * each group's values in its run, the second the squares about the mean,
+ * the third normalizes. The same two-pass mean and variance in F32; only
+ * the order of the sums differs. 256 threads; channels / 4 divides 256 and
+ * each group has a multiple of 4 channels. */
+struct vae_encoder_norm_chunk_args {
+    uint frames;
+    uint pixels;
+    uint channels;
+    uint groups;
+    uint chunks;
+    uint chunk_pixels;
+    float epsilon;
+};
+
+/* A run's per-group sum of `value(x)` into partial[frame][chunk][group]. */
+static void h3_norm_chunk_sums(device const float4 *input,
+                               device float *partial,
+                               threadgroup float *shared,
+                               constant vae_encoder_norm_chunk_args &args,
+                               uint chunk, uint frame, uint tid,
+                               threadgroup const float *mean) {
+    uint vectors = args.channels / 4;
+    uint lanes = 256 / vectors;
+    uint vector = tid % vectors;
+    uint first = chunk * args.chunk_pixels;
+    uint last = min(first + args.chunk_pixels, args.pixels);
+    uint group = vector * 4 / (args.channels / args.groups);
+    float centre = mean ? mean[group] : 0.0f;
+    float4 local = 0.0f;
+    device const float4 *plane = input + (size_t)frame * args.pixels * vectors;
+    for (uint pixel = first + tid / vectors; pixel < last; pixel += lanes) {
+        float4 value = plane[(size_t)pixel * vectors + vector];
+        if (mean) {
+            value -= centre;
+            local = fma(value, value, local);
+        } else {
+            local += value;
+        }
+    }
+    shared[tid] = local.x + local.y + local.z + local.w;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid < args.groups) {
+        uint per_group = args.channels / args.groups / 4;
+        float sum = 0.0f;
+        for (uint lane = 0; lane < lanes; lane++)
+            for (uint item = 0; item < per_group; item++)
+                sum += shared[lane * vectors + tid * per_group + item];
+        partial[((size_t)frame * args.chunks + chunk) * args.groups + tid] = sum;
+    }
+}
+
+/* Each group's mean (and, with `squares`, inverse deviation) of `frame`. */
+static void h3_norm_chunk_stats(device const float *sums,
+                                device const float *squares,
+                                threadgroup float *mean,
+                                threadgroup float *inverse,
+                                constant vae_encoder_norm_chunk_args &args,
+                                uint frame, uint tid) {
+    if (tid < args.groups) {
+        float count = float(args.pixels) * float(args.channels / args.groups);
+        float sum = 0.0f;
+        for (uint chunk = 0; chunk < args.chunks; chunk++)
+            sum += sums[((size_t)frame * args.chunks + chunk) * args.groups + tid];
+        mean[tid] = sum / count;
+        if (squares) {
+            float square = 0.0f;
+            for (uint chunk = 0; chunk < args.chunks; chunk++)
+                square += squares[((size_t)frame * args.chunks + chunk) *
+                                  args.groups + tid];
+            inverse[tid] = rsqrt(square / count + args.epsilon);
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+}
+
+kernel void h3_vae_encoder_norm_chunk_sum_f32(
+                            device const float4 *input [[buffer(0)]],
+                            device float *sums [[buffer(1)]],
+                            constant vae_encoder_norm_chunk_args &args [[buffer(2)]],
+                            uint2 position [[threadgroup_position_in_grid]],
+                            uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float shared[256];
+    h3_norm_chunk_sums(input, sums, shared, args, position.x, position.y, tid,
+                       nullptr);
+}
+
+kernel void h3_vae_encoder_norm_chunk_square_f32(
+                            device const float4 *input [[buffer(0)]],
+                            device const float *sums [[buffer(1)]],
+                            device float *squares [[buffer(2)]],
+                            constant vae_encoder_norm_chunk_args &args [[buffer(3)]],
+                            uint2 position [[threadgroup_position_in_grid]],
+                            uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float shared[256];
+    threadgroup float mean[64];
+    h3_norm_chunk_stats(sums, nullptr, mean, nullptr, args, position.y, tid);
+    h3_norm_chunk_sums(input, squares, shared, args, position.x, position.y, tid,
+                       mean);
+}
+
+kernel void h3_vae_encoder_norm_chunk_apply_silu_f32(
+                            device const float4 *input [[buffer(0)]],
+                            device const float *sums [[buffer(1)]],
+                            device const float *squares [[buffer(2)]],
+                            device const float4 *weight [[buffer(3)]],
+                            device const float4 *bias [[buffer(4)]],
+                            device float4 *output [[buffer(5)]],
+                            constant vae_encoder_norm_chunk_args &args [[buffer(6)]],
+                            uint2 position [[threadgroup_position_in_grid]],
+                            uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float mean[64];
+    threadgroup float inverse[64];
+    h3_norm_chunk_stats(sums, squares, mean, inverse, args, position.y, tid);
+    uint vectors = args.channels / 4;
+    uint lanes = 256 / vectors;
+    uint vector = tid % vectors;
+    uint group = vector * 4 / (args.channels / args.groups);
+    float centre = mean[group];
+    float4 scale = weight[vector] * inverse[group];
+    float4 shift = bias[vector];
+    uint first = position.x * args.chunk_pixels;
+    uint last = min(first + args.chunk_pixels, args.pixels);
+    size_t plane = (size_t)position.y * args.pixels * vectors;
+    for (uint pixel = first + tid / vectors; pixel < last; pixel += lanes) {
+        size_t at = plane + (size_t)pixel * vectors + vector;
+        float4 value = fma(input[at] - centre, scale, shift);
+        output[at] = value / (1.0f + exp(-value));
+    }
+}
+
 struct weight_norm_args {
     uint outer;
     uint inner;

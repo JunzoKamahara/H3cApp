@@ -647,13 +647,13 @@ public final class H3Engine: @unchecked Sendable {
     /// renderHeight to continue. On the engine's queue, after any
     /// generation in flight.
     public func makeContinuationLatent(videoPath: String, renderWidth: Int, renderHeight: Int,
-                                       latentPath: String) async throws {
+                                       carryFrames: Int = 22, latentPath: String) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             Self.workQueue.async { [self] in
                 var errorBuffer = [CChar](repeating: 0, count: 512)
                 let ok = errorBuffer.withUnsafeMutableBufferPointer { errorBuf in
                     h3_continuation_latent_from_video(modelDirectory, videoPath, Int32(renderWidth),
-                                                      Int32(renderHeight), latentPath,
+                                                      Int32(renderHeight), Int32(carryFrames), latentPath,
                                                       errorBuf.baseAddress, errorBuf.count)
                 }
                 if ok != 0 {

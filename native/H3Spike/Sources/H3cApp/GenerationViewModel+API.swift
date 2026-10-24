@@ -433,8 +433,9 @@ extension GenerationViewModel {
             return .json(200, ["ok": true])
         case "/api/project/import-video":
             // 動画ファイルの続きを作る: {"path": "/…/video.mp4"} brings the
-            // video into the open project at the current size_profile and
-            // sets the form to continue it. Answers at once with the name
+            // video into the open project (at the size closest to its own
+            // unless "size_profile" says otherwise) and sets the form to
+            // continue it. Answers at once with the name
             // it will have; it is listed by GET /api/project (and usable as
             // "continue_from") once converted.
             guard let path = json["path"] as? String, FileManager.default.fileExists(atPath: path) else {
@@ -442,15 +443,29 @@ extension GenerationViewModel {
             }
             guard project != nil else { return .error(400, "no project is open") }
             guard !isImportingVideo else { return .error(409, "a video is already being imported") }
-            if let sizeRaw = json["size_profile"] as? String {
-                guard let profile = SizeProfile(rawValue: sizeRaw) else {
-                    return .error(400, "unknown size_profile \(sizeRaw)")
+            // "size_profile": omitted (or "video") is the size closest to the
+            // video's own, "current" the form's, or a size_profile name.
+            var size: SizeProfile?
+            switch json["size_profile"] as? String {
+            case nil, "video"?: size = nil
+            case "current"?: size = sizeProfile
+            case let raw?:
+                guard let profile = SizeProfile(rawValue: raw) else {
+                    return .error(400, "unknown size_profile \(raw)")
                 }
-                sizeProfile = profile
+                size = profile
+            }
+            // "carry_frames": 22 (default), 39 or 56 frames carried over.
+            var carry = continuationFrames
+            if let value = json["carry_frames"] {
+                guard let frames = jsonInteger(value), Self.importCarryFrames.contains(frames) else {
+                    return .error(400, "\"carry_frames\" must be 22, 39 or 56")
+                }
+                carry = frames
             }
             let source = URL(fileURLWithPath: path)
             guard let name = importedVideoName(for: source) else { return .error(400, "no project is open") }
-            Task { await importVideoToContinue(source, as: name) }
+            Task { await importVideoToContinue(source, as: name, size: size, carryFrames: carry) }
             return .json(202, ["ok": true, "video": name])
         default:
             guard project != nil else { return .error(400, "no project is open") }
@@ -753,8 +768,12 @@ extension GenerationViewModel {
             if creationMethod == .image && imageInputMode == .firstLastFrame {
                 return .error(400, "continue_from cannot be combined with first/last frames (references are fine)")
             }
-            continuation = ContinuationSource(videoURL: video.url, latentURL: ProjectFiles.latentURL(for: video.url),
-                                              sizeProfileRaw: record.draft.sizeProfile)
+            // An imported video carries over what its latent file was made for.
+            let latent = ProjectFiles.latentURL(for: video.url)
+            let frames = record.importedFrom != nil
+                ? (ProjectFiles.latentFrames(latent) ?? continuationFrames) : continuationFrames
+            continuation = ContinuationSource(videoURL: video.url, latentURL: latent,
+                                              sizeProfileRaw: record.draft.sizeProfile, frames: frames)
         } else {
             continuation = nil
         }

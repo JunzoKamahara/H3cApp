@@ -329,6 +329,27 @@ int h3_gpu_conv3d_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                       uint32_t kernel_depth, uint32_t kernel_height,
                       uint32_t kernel_width, uint32_t stride_depth,
                       uint32_t stride_height, uint32_t stride_width);
+/* The same Conv3d as one 2D convolution per time tap, summed - about 4.6x
+ * faster in MPSGraph, equal up to the order of the F32 sums. */
+int h3_gpu_conv3d_as_2d_f32(h3_gpu *gpu, h3_gpu_tensor *output,
+                            const h3_gpu_tensor *input,
+                            const h3_gpu_tensor *weight,
+                            const h3_gpu_tensor *bias, uint32_t batch,
+                            uint32_t depth, uint32_t height, uint32_t width,
+                            uint32_t input_channels, uint32_t output_channels,
+                            uint32_t kernel_depth, uint32_t kernel_height,
+                            uint32_t kernel_width, uint32_t stride_depth,
+                            uint32_t stride_height, uint32_t stride_width);
+/* The same GroupNorm + SiLU in three passes that each read the frame in
+ * order, much faster on large frames; equal up to the order of the F32
+ * sums. Shapes it doesn't cover fall back to the one-pass kernel. */
+int h3_gpu_vae_encoder_group_norm_silu_chunked_f32(
+                      h3_gpu *gpu, h3_gpu_tensor *output,
+                      const h3_gpu_tensor *input,
+                      const h3_gpu_tensor *weight,
+                      const h3_gpu_tensor *bias, uint32_t batch,
+                      uint32_t depth, uint32_t height, uint32_t width,
+                      uint32_t channels, uint32_t groups, float epsilon);
 int h3_gpu_vae_encoder_group_norm_silu_f32(
                       h3_gpu *gpu, h3_gpu_tensor *output,
                       const h3_gpu_tensor *input,

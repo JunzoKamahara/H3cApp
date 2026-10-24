@@ -1383,12 +1383,14 @@ static int h3_stream_encode_chunk(void *opaque, const float *rgb,
 int h3_continuation_latent_from_video(const char *model_dir,
                                       const char *video_path,
                                       int render_width, int render_height,
+                                      int carry_frames,
                                       const char *latent_path,
                                       char *error, size_t error_size) {
     enum { CHUNK_FRAMES = 17 };
     if (error && error_size) error[0] = '\0';
     if (!model_dir || !video_path || !latent_path ||
-        render_width < 16 || render_height < 16) {
+        render_width < 16 || render_height < 16 ||
+        (carry_frames != 22 && carry_frames != 39 && carry_frames != 56)) {
         snprintf(error, error_size, "invalid continuation source arguments");
         return 0;
     }
@@ -1396,10 +1398,10 @@ int h3_continuation_latent_from_video(const char *model_dir,
     h3_latent_canvas(render_width, render_height, &latent_w, &latent_h);
     const int width = latent_w * H3_VAE_SPATIAL_RATIO;
     const int height = latent_h * H3_VAE_SPATIAL_RATIO;
-    const int steps = 7;
-    const int frames = h3_video_step_frame(steps);        /* 22 */
+    const int frames = carry_frames;
+    const int steps = h3_video_latent_t(frames);          /* 7, 12 or 17 */
     const h3_temporal_shape temporal = h3_temporal(frames);
-    const int audio_t = temporal.audio_t;                 /* 37 */
+    const int audio_t = temporal.audio_t;                 /* 37, 65 or 93 */
     const size_t area = (size_t)width * height;
     const size_t plane = (size_t)latent_w * latent_h;
 
@@ -1419,7 +1421,7 @@ int h3_continuation_latent_from_video(const char *model_dir,
 
     /* Generated clips are 17-frame chunks of 1 + 4 + 4 + 4 + 4 frames per
      * latent step (h3_video_step_frame), each decoded on its own: encode
-     * the 22 frames as one such chunk and the start of the next. */
+     * the frames as such chunks and the start (5 frames) of the next. */
     video = malloc((size_t)24 * steps * plane * sizeof(*video));
     chunk = malloc((size_t)3 * CHUNK_FRAMES * area * sizeof(*chunk));
     if (!video || !chunk) {
@@ -1434,9 +1436,9 @@ int h3_continuation_latent_from_video(const char *model_dir,
                    (size_t)count * area * sizeof(*chunk));
         h3_video_latent latent;
         memset(&latent, 0, sizeof(latent));
-        if (!h3_video_vae_encode(vae_path, "h3_shaders.metal", chunk, count,
-                                 height, width, NULL, NULL, &latent,
-                                 error, error_size)) {
+        if (!h3_video_vae_encode_fast(vae_path, "h3_shaders.metal", chunk, count,
+                                      height, width, NULL, NULL, &latent,
+                                      error, error_size)) {
             h3_video_latent_free(&latent);
             goto done;
         }
@@ -1456,9 +1458,14 @@ int h3_continuation_latent_from_video(const char *model_dir,
         step += chunk_steps;
     }
 
-    /* The sound under those frames, with up to 2 s before it as context
-     * for the encoder; only the last audio_t steps are kept. */
-    int lead = (int)floor(fmin(start, 2.0) * H3_AUDIO_LATENT_FPS);
+    /* The sound under those frames, encoded with as much before them as a
+     * generated clip has (175 frames, about 7.3 s) where the video is that
+     * long: the audio VAE's latents depend on the whole stretch it encodes,
+     * and a generated clip's come from the clip as a whole. Only the last
+     * audio_t steps are kept. */
+    int window_t = h3_temporal(frames > 175 ? frames : 175).audio_t;
+    int lead = (int)floor(start * H3_AUDIO_LATENT_FPS);
+    if (lead > window_t - audio_t) lead = window_t - audio_t;
     int samples = (lead + audio_t) * 800;
     char audio_error[512];
     if (!h3_av_read_audio_range_f32(video_path, start - (double)lead / H3_AUDIO_LATENT_FPS,

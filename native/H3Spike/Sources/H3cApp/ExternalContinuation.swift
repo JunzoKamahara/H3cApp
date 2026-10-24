@@ -23,10 +23,49 @@ extension GenerationViewModel {
         }
     }
 
-    /// 動画ファイルの続きを作る…: picks a video and imports it.
+    /// What a continuation of an imported video can carry over, in frames.
+    static let importCarryFrames = [22, 39, 56]
+
+    /// A video about to be imported, for the sheet that picks the size to
+    /// make its continuation at (ImportVideoSheet).
+    struct PendingVideoImport: Identifiable {
+        let id = UUID()
+        let url: URL
+        let width: Int
+        let height: Int
+        let fps: Double
+        let seconds: Double
+        /// The size closest to the video's own (SizeProfile.matching).
+        let suggested: SizeProfile
+    }
+
+    /// The video's shown size (rotation applied), frame rate and length.
+    static func videoInfo(_ url: URL) async throws -> (width: Int, height: Int, fps: Double, seconds: Double) {
+        let asset = AVURLAsset(url: url)
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+            throw ImportError.noVideoTrack
+        }
+        let (natural, preferred, fps) = try await track.load(.naturalSize, .preferredTransform, .nominalFrameRate)
+        let shown = CGRect(origin: .zero, size: natural).applying(preferred)
+        let seconds = try await asset.load(.duration).seconds
+        return (Int(abs(shown.width).rounded()), Int(abs(shown.height).rounded()), Double(fps), seconds)
+    }
+
+    /// 動画ファイルの続きを作る…: picks a video and asks which size to
+    /// bring it in at (the video's own first).
     func pickVideoToContinue() {
         guard let path = chooseFile(allowedContentTypes: [.movie]) else { return }
-        Task { await importVideoToContinue(URL(fileURLWithPath: path)) }
+        let url = URL(fileURLWithPath: path)
+        Task {
+            do {
+                let info = try await Self.videoInfo(url)
+                pendingVideoImport = PendingVideoImport(
+                    url: url, width: info.width, height: info.height, fps: info.fps, seconds: info.seconds,
+                    suggested: .matching(videoWidth: info.width, height: info.height))
+            } catch {
+                projectMessage = String(localized: "動画を取り込めませんでした（詳細: \(error.localizedDescription)）")
+            }
+        }
     }
 
     /// The name the imported copy of `source` gets in the project (for the
@@ -49,8 +88,13 @@ extension GenerationViewModel {
     /// Imports `source` into the project at the form's size and sets the
     /// form to continue it. Returns whether it worked (projectMessage says
     /// what happened either way).
+    /// With `size`, the form is set to it first (a continuation is made at
+    /// its source's size); without, to the size closest to the video's own.
+    /// `carryFrames` (22, 39 or 56) is how much of its end the continuation
+    /// carries over: longer reads its motion better but costs time.
     @discardableResult
-    func importVideoToContinue(_ source: URL, as name: String? = nil) async -> Bool {
+    func importVideoToContinue(_ source: URL, as name: String? = nil, size: SizeProfile? = nil,
+                               carryFrames: Int = continuationFrames) async -> Bool {
         guard let project, let engine, !isGenerating, !isImportingVideo,
               let name = name ?? importedVideoName(for: source) else {
             NSLog("H3cApp: cannot import %@ now (project %d, engine %d, generating %d, importing %d)",
@@ -60,6 +104,11 @@ extension GenerationViewModel {
         importingVideoName = source.lastPathComponent
         isImportingVideo = true
         defer { isImportingVideo = false }
+        if let size {
+            sizeProfile = size
+        } else if let info = try? await Self.videoInfo(source) {
+            sizeProfile = .matching(videoWidth: info.width, height: info.height)
+        }
         let dimensions = sizeProfile.dimensions
         let destination = project.url.appendingPathComponent(name)
         let latent = ProjectFiles.latentURL(for: destination)
@@ -72,7 +121,7 @@ extension GenerationViewModel {
             let renderHeight = dimensions.renderHeight > 0 ? dimensions.renderHeight : dimensions.height
             try await engine.makeContinuationLatent(
                 videoPath: destination.path, renderWidth: Int(renderWidth),
-                renderHeight: Int(renderHeight), latentPath: latent.path)
+                renderHeight: Int(renderHeight), carryFrames: carryFrames, latentPath: latent.path)
             var draft = currentDraft()
             draft.firstFrame = draft.firstFrame.map { ProjectFiles.stored($0, in: project.url) }
             draft.lastFrame = draft.lastFrame.map { ProjectFiles.stored($0, in: project.url) }

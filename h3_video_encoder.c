@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 enum {
     RGB_CHANNELS = 3,
@@ -72,7 +73,39 @@ typedef struct {
     encoder_conv quant;
     float latent_mean[LATENT_CHANNELS];
     float latent_std[LATENT_CHANNELS];
+    /* Conv3d as 2D convolutions (h3_video_vae_encode_fast). */
+    int fast;
+    /* H3_ENCODER_PROFILE=1: where the time goes (see checkpoint). */
+    double profile_mark;
 } encoder_context;
+
+enum { PROFILE_LOAD, PROFILE_UPLOAD, PROFILE_PAD, PROFILE_CONV, PROFILE_NORM,
+       PROFILE_ADD, PROFILE_READBACK, PROFILE_STITCH, PROFILE_COUNT };
+static const char *const profile_names[PROFILE_COUNT] = {
+    "weights", "pixels in", "padding", "Conv3d", "GroupNorm+SiLU",
+    "residual add", "latent out", "tiles stitch"};
+static double profile_seconds[PROFILE_COUNT];
+
+static int profiling(void) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv("H3_ENCODER_PROFILE");
+        enabled = value && *value == '1';
+    }
+    return enabled;
+}
+
+static double profile_now(void) {
+    struct timespec time;
+    clock_gettime(CLOCK_MONOTONIC, &time);
+    return (double)time.tv_sec + (double)time.tv_nsec * 1e-9;
+}
+
+static void profile_charge(encoder_context *encoder, int category) {
+    double now = profile_now();
+    profile_seconds[category] += now - encoder->profile_mark;
+    encoder->profile_mark = now;
+}
 
 typedef struct {
     int count;
@@ -94,6 +127,19 @@ static int gpu_op(encoder_context *encoder, int ok, char *error,
     if (ok) return 1;
     fail(error, error_size, "%s: %s", operation, h3_gpu_error(encoder->gpu));
     return 0;
+}
+
+/* Profiling only: ends the command buffer so far, waits for it, charges
+ * its time to `category` and starts another - so each kind of GPU work is
+ * timed on its own (slower overall than the normal run). */
+static int checkpoint(encoder_context *encoder, int category, char *error,
+                      size_t error_size) {
+    if (!profiling()) return 1;
+    if (!gpu_op(encoder, h3_gpu_submit(encoder->gpu), error, error_size,
+                "profile submit")) return 0;
+    profile_charge(encoder, category);
+    return gpu_op(encoder, h3_gpu_begin(encoder->gpu), error, error_size,
+                  "profile begin");
 }
 
 static void free_tensor(h3_gpu_tensor **tensor) {
@@ -360,17 +406,19 @@ static int conv_op(encoder_context *encoder, h3_gpu_tensor *output,
                 conv->input_channels, conv->depth_front, conv->height_before,
                 conv->height_after, conv->width_before, conv->width_after),
                 error, error_size, "visual encoder causal padding")) return 0;
+        if (!checkpoint(encoder, PROFILE_PAD, error, error_size)) return 0;
         source = padded;
         source_depth += conv->depth_front;
         source_height += conv->height_before + conv->height_after;
         source_width += conv->width_before + conv->width_after;
     }
-    return gpu_op(encoder, h3_gpu_conv3d_f32(
+    return gpu_op(encoder, (encoder->fast ? h3_gpu_conv3d_as_2d_f32 : h3_gpu_conv3d_f32)(
         encoder->gpu, output, source, conv->weight, conv->bias, 1,
         source_depth, source_height, source_width, conv->input_channels,
         conv->output_channels, conv->kernel, conv->kernel, conv->kernel,
         conv->stride_t, conv->stride_h, conv->stride_w), error, error_size,
-        "visual encoder Conv3d");
+        "visual encoder Conv3d") &&
+        checkpoint(encoder, PROFILE_CONV, error, error_size);
 }
 
 static h3_gpu_tensor *run_conv(encoder_context *encoder,
@@ -401,6 +449,7 @@ static h3_gpu_tensor *run_conv(encoder_context *encoder,
     if (!ok) {
         fail(error, error_size, "cannot allocate visual encoder convolution");
     } else {
+        if (profiling()) encoder->profile_mark = profile_now();
         ok = gpu_op(encoder, h3_gpu_begin(encoder->gpu), error, error_size,
                     "begin visual encoder convolution") &&
              conv_op(encoder, output, input, conv, depth, height, width, padded,
@@ -443,18 +492,21 @@ static h3_gpu_tensor *run_block(encoder_context *encoder,
         fail(error, error_size, "cannot allocate visual encoder residual block");
         goto done;
     }
+    if (profiling()) encoder->profile_mark = profile_now();
     ok = gpu_op(encoder, h3_gpu_begin(encoder->gpu), error, error_size,
                 "begin visual encoder residual block") &&
-         gpu_op(encoder, h3_gpu_vae_encoder_group_norm_silu_f32(
+         gpu_op(encoder, (encoder->fast ? h3_gpu_vae_encoder_group_norm_silu_chunked_f32 : h3_gpu_vae_encoder_group_norm_silu_f32)(
              encoder->gpu, norm1, input, block->norm1.weight, block->norm1.bias,
              1, depth, height, width, input_channels, GROUPS, 1e-6f),
              error, error_size, "visual encoder group norm 1") &&
+         checkpoint(encoder, PROFILE_NORM, error, error_size) &&
          conv_op(encoder, hidden, norm1, &block->conv1, depth, height, width,
                  pad1, error, error_size) &&
-         gpu_op(encoder, h3_gpu_vae_encoder_group_norm_silu_f32(
+         gpu_op(encoder, (encoder->fast ? h3_gpu_vae_encoder_group_norm_silu_chunked_f32 : h3_gpu_vae_encoder_group_norm_silu_f32)(
              encoder->gpu, norm2, hidden, block->norm2.weight, block->norm2.bias,
              1, depth, height, width, output_channels, GROUPS, 1e-6f),
              error, error_size, "visual encoder group norm 2") &&
+         checkpoint(encoder, PROFILE_NORM, error, error_size) &&
          conv_op(encoder, output, norm2, &block->conv2, depth, height, width,
                  pad2, error, error_size);
     const h3_gpu_tensor *residual = input;
@@ -467,6 +519,7 @@ static h3_gpu_tensor *run_block(encoder_context *encoder,
         encoder->gpu, output, residual, output, 1.0f, 1.0f,
         (uint32_t)output_count), error, error_size,
         "visual encoder residual add");
+    if (ok) ok = checkpoint(encoder, PROFILE_ADD, error, error_size);
     if (ok) ok = gpu_op(encoder, h3_gpu_submit(encoder->gpu), error, error_size,
                         "submit visual encoder residual block");
 
@@ -487,6 +540,7 @@ done:
 static float *encode_tile(encoder_context *encoder, const float *pixels,
                           int frames, int height, int width,
                           int *latent_time, char *error, size_t error_size) {
+    if (profiling()) encoder->profile_mark = profile_now();
     size_t pixel_count = (size_t)frames * height * width * RGB_CHANNELS;
     float *normalized = malloc(pixel_count * sizeof(*normalized));
     if (!normalized) {
@@ -512,6 +566,7 @@ static float *encode_tile(encoder_context *encoder, const float *pixels,
         fail(error, error_size, "cannot allocate visual encoder pixels");
         return NULL;
     }
+    if (profiling()) profile_charge(encoder, PROFILE_UPLOAD);
     uint32_t depth = (uint32_t)frames, h = (uint32_t)height, w = (uint32_t)width;
     uint32_t next_d, next_h, next_w;
     h3_gpu_tensor *next = run_conv(encoder, hidden, &encoder->conv_in,
@@ -555,12 +610,14 @@ static float *encode_tile(encoder_context *encoder, const float *pixels,
     if (!ok) {
         fail(error, error_size, "cannot allocate visual encoder output");
     } else {
+        if (profiling()) encoder->profile_mark = profile_now();
         ok = gpu_op(encoder, h3_gpu_begin(encoder->gpu), error, error_size,
                     "begin visual encoder output") &&
-             gpu_op(encoder, h3_gpu_vae_encoder_group_norm_silu_f32(
+             gpu_op(encoder, (encoder->fast ? h3_gpu_vae_encoder_group_norm_silu_chunked_f32 : h3_gpu_vae_encoder_group_norm_silu_f32)(
                  encoder->gpu, norm, hidden, encoder->norm_out.weight,
                  encoder->norm_out.bias, 1, depth, h, w, 1024, GROUPS, 1e-6f),
                  error, error_size, "visual encoder output norm") &&
+             checkpoint(encoder, PROFILE_NORM, error, error_size) &&
              conv_op(encoder, moments, norm, &encoder->conv_out, depth, h, w,
                      padded, error, error_size) &&
              conv_op(encoder, quant, moments, &encoder->quant, depth, h, w,
@@ -568,6 +625,7 @@ static float *encode_tile(encoder_context *encoder, const float *pixels,
              gpu_op(encoder, h3_gpu_submit(encoder->gpu), error, error_size,
                     "submit visual encoder output");
     }
+    if (profiling()) encoder->profile_mark = profile_now();
     float *raw = ok ? malloc(moment_count * sizeof(*raw)) : NULL;
     size_t latent_count = (size_t)LATENT_CHANNELS * depth * h * w;
     float *latent = ok ? malloc(latent_count * sizeof(*latent)) : NULL;
@@ -588,6 +646,7 @@ static float *encode_tile(encoder_context *encoder, const float *pixels,
                                      encoder->latent_std[channel];
                 }
     free(raw);
+    if (profiling()) profile_charge(encoder, PROFILE_READBACK);
     free_tensor(&hidden);
     h3_gpu_tensor_free(norm);
     h3_gpu_tensor_free(padded);
@@ -742,11 +801,11 @@ static int stitch_latents(float **tiles, int latent_time,
     return 1;
 }
 
-int h3_video_vae_encode(const char *weight_directory,
+static int encode_video(const char *weight_directory,
                         const char *shader_source_path,
                         const float *pixels, int frames, int height, int width,
                         h3_video_encoder_progress progress, void *progress_opaque,
-                        h3_video_latent *output,
+                        h3_video_latent *output, int fast,
                         char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
     if (output) memset(output, 0, sizeof(*output));
@@ -756,7 +815,7 @@ int h3_video_vae_encode(const char *weight_directory,
         fail(error, error_size, "invalid visual encoder arguments");
         return 0;
     }
-    tile_axis y_axis, x_axis;
+    tile_axis y_axis = {0}, x_axis = {0};
     int ok = tile_axis_build(height, &y_axis, error, error_size) &&
              tile_axis_build(width, &x_axis, error, error_size);
     if (!ok) {
@@ -765,6 +824,14 @@ int h3_video_vae_encode(const char *weight_directory,
         return 0;
     }
     encoder_context encoder = {0};
+    /* Diagnostic: H3_ENCODER_FAST=1 uses the 2D convolutions everywhere. */
+    const char *force_fast = getenv("H3_ENCODER_FAST");
+    encoder.fast = fast || (force_fast && *force_fast == '1');
+    double started = 0;
+    if (profiling()) {
+        memset(profile_seconds, 0, sizeof(profile_seconds));
+        started = encoder.profile_mark = profile_now();
+    }
     encoder.gpu = h3_gpu_create(shader_source_path, error, error_size);
     if (encoder.gpu)
         h3_gpu_profile_set_label(encoder.gpu, "video VAE encoder");
@@ -773,6 +840,7 @@ int h3_video_vae_encode(const char *weight_directory,
     ok = encoder.gpu && encoder.store &&
          load_normalization(&encoder, weight_directory, error, error_size) &&
          load_weights(&encoder, error, error_size);
+    if (profiling()) profile_charge(&encoder, PROFILE_LOAD);
     int tile_count = y_axis.count * x_axis.count;
     float **tiles = ok ? calloc((size_t)tile_count, sizeof(*tiles)) : NULL;
     if (ok && !tiles) {
@@ -795,9 +863,23 @@ int h3_video_vae_encode(const char *weight_directory,
             if (ok) latent_time = current_time;
             if (ok && progress) progress(completed + 1, tile_count, progress_opaque);
         }
+    if (profiling()) encoder.profile_mark = profile_now();
     if (ok) ok = stitch_latents(tiles, latent_time, &y_axis, &x_axis,
                                 output, error, error_size) &&
                  h3_gpu_get_stats(encoder.gpu, &output->gpu_stats);
+    if (profiling()) {
+        profile_charge(&encoder, PROFILE_STITCH);
+        double total = profile_now() - started, counted = 0;
+        fprintf(stderr, "h3 encoder profile: %dx%d, %d frames, %d tiles, %s, %.2f s\n",
+                width, height, frames, tile_count, encoder.fast ? "2D convs" : "Conv3d", total);
+        for (int index = 0; index < PROFILE_COUNT; index++) {
+            counted += profile_seconds[index];
+            fprintf(stderr, "  %-16s %7.2f s  %5.1f%%\n", profile_names[index],
+                    profile_seconds[index], 100 * profile_seconds[index] / total);
+        }
+        fprintf(stderr, "  %-16s %7.2f s  %5.1f%%\n", "other", total - counted,
+                100 * (total - counted) / total);
+    }
     if (tiles) for (int index = 0; index < tile_count; index++) free(tiles[index]);
     free(tiles);
     cleanup(&encoder);
@@ -805,6 +887,28 @@ int h3_video_vae_encode(const char *weight_directory,
     tile_axis_free(&x_axis);
     if (!ok) h3_video_latent_free(output);
     return ok;
+}
+
+int h3_video_vae_encode(const char *weight_directory,
+                        const char *shader_source_path,
+                        const float *pixels, int frames, int height, int width,
+                        h3_video_encoder_progress progress, void *progress_opaque,
+                        h3_video_latent *output,
+                        char *error, size_t error_size) {
+    return encode_video(weight_directory, shader_source_path, pixels, frames,
+                        height, width, progress, progress_opaque, output, 0,
+                        error, error_size);
+}
+
+int h3_video_vae_encode_fast(const char *weight_directory,
+                             const char *shader_source_path,
+                             const float *pixels, int frames, int height, int width,
+                             h3_video_encoder_progress progress, void *progress_opaque,
+                             h3_video_latent *output,
+                             char *error, size_t error_size) {
+    return encode_video(weight_directory, shader_source_path, pixels, frames,
+                        height, width, progress, progress_opaque, output, 1,
+                        error, error_size);
 }
 
 void h3_video_latent_free(h3_video_latent *latent) {

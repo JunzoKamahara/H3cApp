@@ -36,6 +36,9 @@ struct ContentView: View {
                 .onHover { viewModel.isPointerOverComposer = $0 }
                 .padding(.bottom, 20)
             }
+            .sheet(item: $viewModel.pendingVideoImport) { pending in
+                ImportVideoSheet(viewModel: viewModel, pending: pending)
+            }
             .overlay(alignment: .top) {
                 // 動画ファイルの続きを作る: converting takes a little while.
                 if viewModel.isImportingVideo {

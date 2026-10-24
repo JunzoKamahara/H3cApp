@@ -193,12 +193,13 @@ extension GenerationViewModel {
     /// How late a continuation's sound will run (ProjectVideoRecord
     /// .soundLateness): the source's lateness plus the engine's snapping.
     /// None with forced audio, whose sound is the file's own.
-    func continuationSoundLateness(source: ProjectVideoRecord?, latentURL: URL, forced: Bool) -> Double {
+    func continuationSoundLateness(source: ProjectVideoRecord?, latentURL: URL, forced: Bool,
+                                   overlap: Int = continuationFrames) -> Double {
         guard !forced else { return 0 }
         let inherited = source?.latentSoundLateness ?? source?.soundLateness ?? 0
         let frames = ProjectFiles.latentFrames(latentURL) ?? source?.actualFrameCount ?? 0
         return inherited + JoinedVideoExporter.soundDelay(previousFrames: frames,
-                                                          overlapFrames: continuationFrames, fps: 24)
+                                                          overlapFrames: overlap, fps: 24)
     }
 
     /// Clip `index` of a chain (its ChainClipPlan): the chain's request at

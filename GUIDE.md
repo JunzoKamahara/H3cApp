@@ -51,8 +51,14 @@ Good to know:
   panel switches to Custom Clips.
 - **Continuing a video made elsewhere.** In the menu bar, Project → “Continue a
   Video File…” takes a video not made in H3cApp (from another tool, or one you
-  filmed). It is converted to the current size and 24 fps and brought into the
-  project, and its last 0.9 s or so of picture and sound are turned into the
+  filmed). A sheet then shows the video's size and the size to generate at:
+  the one closest to the video's own by default (for a large video, generated
+  at half and upscaled), or the current one or a preset. The video is
+  converted to that size and 24 fps (the panel's size becomes it too) and
+  brought into the project; how much of its end is carried over (about 0.9,
+  1.6 or 2.3 s) can be chosen too - longer shows the model more of its motion,
+  but importing and generating take longer and the continuation adds less -
+  and its last 0.9 s or so of picture and sound are turned into the
   model's own data. Then it continues and joins like a video made in H3cApp.
   A video of another aspect ratio is cropped to the centre. Because it is
   converted, the seam differs slightly from the original.

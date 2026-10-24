@@ -39,7 +39,7 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `POST` | `/api/project/use-as-reference` | `{"video"}` その動画を参照動画としてフォームに追加する。 |
 | `POST` | `/api/project/delete-video` | `{"video"}` 動画と記録をゴミ箱に移す。 |
 | `POST` | `/api/project/join` | `{"video"}` その動画で終わる続きの連なりを、引き継いだ部分のクロスフェードでプロジェクトの`<名前>_joined.mp4`（記録つき）につなぎ、終わったら`{"path", "clips"}`を返す。 |
-| `POST` | `/api/project/import-video` | `{"path", "size_profile"?}` ほかで作った動画の続きをつくるため、その動画を今の大きさ（`size_profile`を指定すればその大きさ）と24fpsに変換してプロジェクトに取り込み、フォームをその続きにする。取り込む前に`{"video"}`（付く名前）を返し、変換が終わると`GET /api/project`に並んで`continue_from`に使える。 |
+| `POST` | `/api/project/import-video` | `{"path", "size_profile"?, "carry_frames"?}` ほかで作った動画の続きをつくるため、その動画を、動画の大きさに近い大きさ（`size_profile`が`"current"`なら今の大きさ、大きさの名前ならその大きさ）と24fpsに変換してプロジェクトに取り込み、フォームをその続きにする。`carry_frames`は引き継ぐコマ数（22・39・56、省略時22）。取り込む前に`{"video"}`（付く名前）を返し、変換が終わると`GET /api/project`に並んで`continue_from`に使える。 |
 
 `POST /api/generate`のボディフィールド（`prompt`以外はすべて省略可）:
 

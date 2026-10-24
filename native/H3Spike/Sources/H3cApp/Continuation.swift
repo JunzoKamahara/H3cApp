@@ -65,8 +65,12 @@ extension GenerationViewModel {
                 projectMessage = String(localized: "音声の終わりを過ぎるので、続きはリップシンクなしで作ります")
             }
         }
+        // An imported video's latent file is just its end, as long as it
+        // was made to carry over.
+        let frames = record.importedFrom != nil
+            ? (ProjectFiles.latentFrames(latent) ?? continuationFrames) : continuationFrames
         continuation = ContinuationSource(videoURL: video.url, latentURL: latent,
-                                          sizeProfileRaw: draft.sizeProfile)
+                                          sizeProfileRaw: draft.sizeProfile, frames: frames)
     }
 
     /// Where lip sync carries on after `video`: where its last clip's audio
@@ -220,8 +224,7 @@ extension GenerationViewModel {
         var record = lastRecord
         record.completedAt = Date()
         record.generationSeconds = chain.reduce(0) { $0 + ($1.record?.generationSeconds ?? 0) }
-        record.actualFrameCount = chainTotalFrames(chain.map { $0.record?.actualFrameCount ?? 0 },
-                                                   overlap: lastRecord.draft.continueFrames ?? continuationFrames)
+        record.actualFrameCount = joinedFrameCount(chain.compactMap(\.record))
         record.draft.continueFrom = chain[0].record?.draft.continueFrom
         record.draft.seconds = Int((Double(record.actualFrameCount) / Double(max(record.fps, 1))).rounded())
         record.soundLateness = 0

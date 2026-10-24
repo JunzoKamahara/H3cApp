@@ -143,6 +143,45 @@ struct SizeProfile: Hashable, Identifiable {
                         : (canvas.width, canvas.height, 0, 0)
     }
 
+    /// The size closest to a video's own, for continuing it: the video's
+    /// size if it can be generated directly; else that size as the finished
+    /// one, generated at half and upscaled; and if even half is too much, the
+    /// largest canvas within the limits at the video's aspect. A preset when
+    /// it comes out as one.
+    static func matching(videoWidth: Int, height videoHeight: Int) -> SizeProfile {
+        let width = Double(max(videoWidth, 1)), height = Double(max(videoHeight, 1))
+        let maxSide = Double(customCanvasSideRange.upperBound), minSide = Double(customCanvasSideRange.lowerBound)
+        let limit = Double(customMaxPixels)
+        func side(_ value: Double, step: Int32, factor: Int32) -> Int32 {
+            let range = customSideRange(upscaled: factor == 2)
+            let rounded = Int32((value / Double(step)).rounded()) * step
+            return min(max(rounded, range.lowerBound), range.upperBound)
+        }
+        var profile: SizeProfile
+        if width * height <= limit && width <= maxSide && height <= maxSide {
+            profile = .custom(width: side(max(width, minSide), step: 32, factor: 1),
+                              height: side(max(height, minSide), step: 32, factor: 1), upscaled: false)
+        } else {
+            let half = (width / 2, height / 2)
+            let scale = min(1, (limit / (half.0 * half.1)).squareRoot(), maxSide / half.0, maxSide / half.1)
+            profile = .custom(width: side(width * scale, step: 64, factor: 2),
+                              height: side(height * scale, step: 64, factor: 2), upscaled: true)
+        }
+        // Rounding up may cross the limit: a step down on the longer side.
+        while profile.ditPixels > customMaxPixels, case .custom(var w, var h) = profile.base {
+            let step = customSideStep(upscaled: profile.upscaled)
+            if w >= h { w -= step } else { h -= step }
+            profile = .custom(width: w, height: h, upscaled: profile.upscaled)
+        }
+        for shape in AspectShape.allCases {
+            for tier in SizeTier.allCases {
+                let preset = SizeProfile.preset(shape, tier, upscaled: profile.upscaled)
+                if preset.canvas == profile.canvas { return preset }
+            }
+        }
+        return profile
+    }
+
     var ditPixels: Int { Int(canvas.width) * Int(canvas.height) }
     var outputPixels: Int { Int(dimensions.width) * Int(dimensions.height) }
 

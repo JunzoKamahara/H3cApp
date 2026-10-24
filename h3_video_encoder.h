@@ -25,6 +25,16 @@ int h3_video_vae_encode(const char *weight_directory,
                         h3_video_encoder_progress progress, void *progress_opaque,
                         h3_video_latent *output,
                         char *error, size_t error_size);
+/* The same with each Conv3d run as 2D convolutions per time tap (about
+ * 4.6x faster on an M5): equal up to the order of the F32 sums, so not
+ * bit-identical to h3_video_vae_encode - kept for paths whose earlier
+ * results needn't be reproduced exactly (continuing an imported video). */
+int h3_video_vae_encode_fast(const char *weight_directory,
+                             const char *shader_source_path,
+                             const float *pixels, int frames, int height, int width,
+                             h3_video_encoder_progress progress, void *progress_opaque,
+                             h3_video_latent *output,
+                             char *error, size_t error_size);
 void h3_video_latent_free(h3_video_latent *latent);
 
 #endif
