@@ -280,10 +280,8 @@ private struct ResultActionsView: View {
         panel.nameFieldStringValue = sourceURL.lastPathComponent
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.directoryURL = Self.initialExportDirectory
-        let options = ExportOptions()
-        let accessory = NSHostingView(rootView: ExportOptionsView(options: options))
-        accessory.frame.size = accessory.fittingSize
-        panel.accessoryView = accessory
+        let options = ExportOptionsAccessory()
+        panel.accessoryView = options.view
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         AIDisclosure.addsLabel = options.addsLabel
         GenerationMetadata.exportsSettings = options.includesSettings
@@ -312,35 +310,67 @@ private struct ResultActionsView: View {
     }
 }
 
-/// The save panel's switch for the AI label (AIDisclosure).
-private final class ExportOptions: ObservableObject {
-    @Published var addsLabel = AIDisclosure.addsLabel
-    @Published var includesSettings = GenerationMetadata.exportsSettings
-}
+/// The save panel's switches: the AI label (AIDisclosure) and the settings
+/// in the file (GenerationMetadata). AppKit controls, not SwiftUI: the panel
+/// shows its accessory view from another process (NSAccessoryViewWindow),
+/// and SwiftUI checkboxes there don't take clicks - they stayed on.
+private final class ExportOptionsAccessory: NSObject {
+    let view: NSStackView
+    private let labelBox: NSButton
+    private let settingsBox: NSButton
+    private let labelNote: NSTextField
 
-private struct ExportOptionsView: View {
-    @ObservedObject var options: ExportOptions
+    var addsLabel: Bool { labelBox.state == .on }
+    var includesSettings: Bool { settingsBox.state == .on }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle("AI生成の表示を入れる（右下に「\(AIDisclosure.label)」）", isOn: $options.addsLabel)
-                .toggleStyle(.checkbox)
-            Text(options.addsLabel
-                 ? String(localized: "MiniMax H3のライセンスでは、生成した動画を公開するときに、AIで生成したことをはっきり示す必要があります。ファイルの情報（メタデータ）にも、いつも記録します。")
-                 : String(localized: "公開するときは、投稿先のAI生成ラベルや説明欄で、AIで生成したことを示してください（例：AI-generated video created with MiniMax H3）。ファイルの情報（メタデータ）には記録します。"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Toggle("プロンプトと生成の設定をファイルに記録する", isOn: $options.includesSettings)
-                .toggleStyle(.checkbox)
-                .padding(.top, 4)
-            Text("動画の情報（XMP）に、IPTCの標準の項目でプロンプトと使ったモデルを、あわせて作り直すための設定を記録します。外すと、AIで生成したことと使ったモデルだけを記録します。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+    private static func labelNoteText(_ addsLabel: Bool) -> String {
+        addsLabel
+            ? String(localized: "MiniMax H3のライセンスでは、生成した動画を公開するときに、AIで生成したことをはっきり示す必要があります。ファイルの情報（メタデータ）にも、いつも記録します。")
+            : String(localized: "公開するときは、投稿先のAI生成ラベルや説明欄で、AIで生成したことを示してください（例：AI-generated video created with MiniMax H3）。ファイルの情報（メタデータ）には記録します。")
+    }
+
+    private static func caption(_ text: String) -> NSTextField {
+        let field = NSTextField(wrappingLabelWithString: text)
+        field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        field.textColor = .secondaryLabelColor
+        field.preferredMaxLayoutWidth = 460
+        field.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        return field
+    }
+
+    override init() {
+        labelBox = NSButton(checkboxWithTitle: String(localized: "AI生成の表示を入れる（右下に「\(AIDisclosure.label)」）"),
+                            target: nil, action: nil)
+        labelBox.state = AIDisclosure.addsLabel ? .on : .off
+        settingsBox = NSButton(checkboxWithTitle: String(localized: "プロンプトと生成の設定をファイルに記録する"),
+                               target: nil, action: nil)
+        settingsBox.state = GenerationMetadata.exportsSettings ? .on : .off
+        labelNote = Self.caption(Self.labelNoteText(AIDisclosure.addsLabel))
+        let settingsNote = Self.caption(String(localized: "動画の情報（XMP）に、IPTCの標準の項目でプロンプトと使ったモデルを、あわせて作り直すための設定を記録します。外すと、AIで生成したことと使ったモデルだけを記録します。"))
+        view = NSStackView(views: [labelBox, labelNote, settingsBox, settingsNote])
+        view.orientation = .vertical
+        view.alignment = .leading
+        view.spacing = 4
+        view.setCustomSpacing(8, after: labelNote)
+        view.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        super.init()
+        labelBox.target = self
+        labelBox.action = #selector(labelChanged)
+        // Tall enough for the longer of the label's two notes, so switching
+        // it never clips the text.
+        let shown = labelNote.stringValue
+        var size = NSSize.zero
+        for text in [Self.labelNoteText(true), Self.labelNoteText(false)] {
+            labelNote.stringValue = text
+            let fitting = view.fittingSize
+            size = NSSize(width: max(size.width, fitting.width), height: max(size.height, fitting.height))
         }
-        .frame(width: 460, alignment: .leading)
-        .padding(12)
+        labelNote.stringValue = shown
+        view.frame = NSRect(origin: .zero, size: size)
+    }
+
+    @objc private func labelChanged() {
+        labelNote.stringValue = Self.labelNoteText(addsLabel)
     }
 }
 
