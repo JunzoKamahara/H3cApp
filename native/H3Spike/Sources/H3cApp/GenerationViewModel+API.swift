@@ -463,9 +463,20 @@ extension GenerationViewModel {
                 }
                 carry = frames
             }
+            // "crop_position": [x, y], 0-1 each, where the kept part sits
+            // across what is cut off when the shapes differ (default centred).
+            var position = CGPoint(x: 0.5, y: 0.5)
+            if let value = json["crop_position"] {
+                guard let pair = value as? [NSNumber], pair.count == 2,
+                      pair.allSatisfy({ (0 ... 1).contains($0.doubleValue) }) else {
+                    return .error(400, "\"crop_position\" must be [x, y] with each from 0 to 1")
+                }
+                position = CGPoint(x: pair[0].doubleValue, y: pair[1].doubleValue)
+            }
             let source = URL(fileURLWithPath: path)
             guard let name = importedVideoName(for: source) else { return .error(400, "no project is open") }
-            Task { await importVideoToContinue(source, as: name, size: size, carryFrames: carry) }
+            Task { await importVideoToContinue(source, as: name, size: size, carryFrames: carry,
+                                               cropPosition: position) }
             return .json(202, ["ok": true, "video": name])
         default:
             guard project != nil else { return .error(400, "no project is open") }

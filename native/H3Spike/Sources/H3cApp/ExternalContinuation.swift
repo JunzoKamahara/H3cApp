@@ -91,10 +91,12 @@ extension GenerationViewModel {
     /// With `size`, the form is set to it first (a continuation is made at
     /// its source's size); without, to the size closest to the video's own.
     /// `carryFrames` (22, 39 or 56) is how much of its end the continuation
-    /// carries over: longer reads its motion better but costs time.
+    /// carries over: longer costs time. `cropPosition` places the part kept
+    /// when the shapes differ, 0-1 across what is cut off (0.5 centred).
     @discardableResult
     func importVideoToContinue(_ source: URL, as name: String? = nil, size: SizeProfile? = nil,
-                               carryFrames: Int = continuationFrames) async -> Bool {
+                               carryFrames: Int = continuationFrames,
+                               cropPosition: CGPoint = CGPoint(x: 0.5, y: 0.5)) async -> Bool {
         guard let project, let engine, !isGenerating, !isImportingVideo,
               let name = name ?? importedVideoName(for: source) else {
             NSLog("H3cApp: cannot import %@ now (project %d, engine %d, generating %d, importing %d)",
@@ -115,7 +117,8 @@ extension GenerationViewModel {
         do {
             let seconds = try await Self.convertForContinuing(
                 source, to: destination,
-                size: CGSize(width: CGFloat(dimensions.width), height: CGFloat(dimensions.height)))
+                size: CGSize(width: CGFloat(dimensions.width), height: CGFloat(dimensions.height)),
+                position: cropPosition)
             // The size the DiT works at: 0 means the finished size (no x2).
             let renderWidth = dimensions.renderWidth > 0 ? dimensions.renderWidth : dimensions.width
             let renderHeight = dimensions.renderHeight > 0 ? dimensions.renderHeight : dimensions.height
@@ -162,9 +165,11 @@ extension GenerationViewModel {
         return true
     }
 
-    /// `source` at `size` (scaled to fill it, centred) and 24 fps, with its
-    /// sound. Returns its length in seconds.
-    private static func convertForContinuing(_ source: URL, to destination: URL, size: CGSize) async throws -> Double {
+    /// `source` at `size` (scaled to fill it; `position` places it, 0-1
+    /// across what is cut off, 0.5 centred) and 24 fps, with its sound.
+    /// Returns its length in seconds.
+    private static func convertForContinuing(_ source: URL, to destination: URL, size: CGSize,
+                                             position: CGPoint) async throws -> Double {
         let asset = AVURLAsset(url: source)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw ImportError.noVideoTrack
@@ -178,8 +183,9 @@ extension GenerationViewModel {
         let transform = preferred
             .concatenating(CGAffineTransform(translationX: -shown.minX, y: -shown.minY))
             .concatenating(CGAffineTransform(scaleX: scale, y: scale))
-            .concatenating(CGAffineTransform(translationX: (size.width - shown.width * scale) / 2,
-                                             y: (size.height - shown.height * scale) / 2))
+            .concatenating(CGAffineTransform(
+                translationX: (size.width - shown.width * scale) * min(max(position.x, 0), 1),
+                y: (size.height - shown.height * scale) * min(max(position.y, 0), 1)))
         let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
         layer.setTransform(transform, at: .zero)
         let instruction = AVMutableVideoCompositionInstruction()

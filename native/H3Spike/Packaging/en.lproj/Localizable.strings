@@ -859,12 +859,15 @@
 "%@：%lld×%lld、%@fps、%@秒" = "%1$@: %2$lld×%3$lld, %4$@ fps, %5$@ s";
 "この大きさと24fpsに変換して取り込み、その続きも同じ大きさでつくります。パネルの大きさの設定も、この大きさになります。" = "The video is converted to this size and 24 fps, and its continuation is made at the same size. The panel's size setting becomes this size too.";
 "今の設定：%@" = "Current setting: %@";
-"動画と縦横比が違うので、中央を切り抜いて取り込みます。" = "The video's aspect ratio differs, so its centre is cropped.";
 "動画に合わせる：%@" = "Match the video: %@";
 "動画を取り込む" = "Bring In a Video";
 "大きい動画なので、半分の大きさで生成して2倍に拡大します。" = "The video is large, so it is generated at half size and upscaled 2x.";
 "生成する大きさ" = "Size to generate";
 "動画を取り込んでいます。終わると、その続きをつくれます" = "Bringing in the video. Once it's in, you can continue it";
+"取り込まれる範囲（動画の最後のフレーム）" = "What is imported (the video’s last frame)";
+"プレビューを表示できません" = "Can’t show a preview";
+"動画と縦横比が違うので、枠の範囲を切り抜いて取り込みます。" = "The video's aspect ratio differs, so the framed part is cropped out.";
+"取り込まれる範囲（動画の最後のフレーム）。枠はドラッグで動かせます（ダブルクリックで中央）" = "What is imported (the video’s last frame). Drag the frame to move it; double-click to centre it.";
 "引き継ぐ長さ" = "Carry over";
 "引き継ぐ長さを長くすると、取り込みと続きの生成に時間がかかり、続きで新しくつくれる部分が短くなります。" = "Carrying over more makes importing and generating take longer, and the continuation adds less that is new.";
 "約%@秒（%lldコマ、標準）" = "About %1$@ s (%2$lld frames, standard)";

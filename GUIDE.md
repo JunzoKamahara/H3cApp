@@ -53,14 +53,17 @@ Good to know:
   Video File…” takes a video not made in H3cApp (from another tool, or one you
   filmed). A sheet then shows the video's size and the size to generate at:
   the one closest to the video's own by default (for a large video, generated
-  at half and upscaled), or the current one or a preset. The video is
-  converted to that size and 24 fps (the panel's size becomes it too) and
-  brought into the project; how much of its end is carried over (about 0.9,
-  1.6 or 2.3 s) can be chosen too - longer makes importing and generating
-  take longer, and the continuation adds less - and that much of its end,
-  picture and sound, is turned into the model's own data. Then it continues and joins like a video made in H3cApp.
-  A video of another aspect ratio is cropped to the centre. Because it is
-  converted, the seam differs slightly from the original.
+  at half and upscaled), or the current one or a preset. The sheet shows
+  the video's last frame with the part that size keeps outlined (what gets
+  cropped is darkened); for a video of another aspect ratio, drag the frame
+  to choose what to keep (double-click centres it). The video is converted
+  to that size and 24 fps (the panel's size becomes it too) and brought into
+  the project; how much of its end is carried over (about 0.9, 1.6 or 2.3 s)
+  can be chosen too - longer makes importing and generating take longer, and
+  the continuation adds less - and that much of its end, picture and sound,
+  is turned into the model's own data. Then it continues and joins like a
+  video made in H3cApp. Because it is converted, the seam differs slightly
+  from the original.
 - **Make it longer.** With the joined video shown, “Continue” in the panel
   makes one more clip; “Join and Export” then joins the whole run again.
 - **If you stop partway,** the clips made so far (two or more) are joined.
