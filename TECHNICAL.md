@@ -144,6 +144,13 @@ Related documentation: [Local API](API.md) Â· [Building and testing](BUILD.md) Â
 - **int8 video VAE on M5**: the video VAE decoder's transformer linears run
   on the int8 TensorOps kernels, about 3x faster decode than F32 at 46 dB
   PSNR against it (`H3_VAE_INT8=0` restores F32).
+- **Patch-edge smoothing**: the video VAE decoder turns each latent cell
+  straight into its own 16x16-pixel patch, so the step between pixels is
+  larger across patch edges (1.2-1.4x elsewhere's): a faint square grid,
+  plain once sharpened. After decoding, only that excess jump at each
+  edge is softened (a quarter of it), which makes the grid much fainter and brings
+  decoded real video slightly closer to the original (+0.13 dB);
+  `H3_VAE_DEBLOCK` sets the strength (0 turns it off).
 - **Model manager**: register and switch between several H3 checkpoint
   directories and LoRA files instead of one fixed path, and download
   FL2VA/Ref2VA directly from Hugging Face with no external dependency (no

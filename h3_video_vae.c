@@ -881,6 +881,52 @@ static float *extract_latent_tile(const float *latent, int full_t,
     return tile;
 }
 
+/* The decoder's proj_out turns each latent token straight into its own
+ * 16x16-pixel patch, and nothing joins neighbouring patches, so the step
+ * from one pixel to the next is larger across a patch edge than elsewhere
+ * (1.2-1.3x on generated video): a faint square grid, plain once
+ * sharpened. This softens only that excess jump: at each edge, the step
+ * between its two pixels beyond the mean of the steps on either side, a
+ * `strength` part of it split between the two (columns first, then rows).
+ * 0.25 brings the edges back to the rest of the picture and decoded real
+ * video closer to the original; H3_VAE_DEBLOCK sets it, 0 turns it off. */
+static float deblock_strength(void) {
+    const char *value = getenv("H3_VAE_DEBLOCK");
+    if (!value || !*value) return 0.25f;
+    float strength = strtof(value, NULL);
+    return strength > 0.0f && strength <= 1.0f ? strength : 0.0f;
+}
+
+static void deblock_patch_edges(float *rgb, int frame_count, int height,
+                                int width) {
+    float strength = deblock_strength();
+    if (strength <= 0.0f) return;
+    size_t row = (size_t)width * 3;
+    for (int frame = 0; frame < frame_count; frame++) {
+        float *plane = rgb + (size_t)frame * (size_t)height * row;
+        for (int y = 0; y < height; y++)
+            for (int edge = SPATIAL_RATIO; edge + 1 < width; edge += SPATIAL_RATIO)
+                for (int channel = 0; channel < 3; channel++) {
+                    float *at = plane + (size_t)y * row + (size_t)edge * 3 + channel;
+                    float before = at[-6], left = at[-3], right = at[0], after = at[3];
+                    float excess = (right - left) - 0.5f * ((left - before) + (after - right));
+                    float shift = strength * excess * 0.5f;
+                    at[-3] = fminf(fmaxf(left + shift, 0.0f), 1.0f);
+                    at[0] = fminf(fmaxf(right - shift, 0.0f), 1.0f);
+                }
+        for (int edge = SPATIAL_RATIO; edge + 1 < height; edge += SPATIAL_RATIO)
+            for (size_t index = 0; index < row; index++) {
+                float *at = plane + (size_t)edge * row + index;
+                float before = at[-2 * (ptrdiff_t)row], left = at[-(ptrdiff_t)row];
+                float right = at[0], after = at[row];
+                float excess = (right - left) - 0.5f * ((left - before) + (after - right));
+                float shift = strength * excess * 0.5f;
+                at[-(ptrdiff_t)row] = fminf(fmaxf(left + shift, 0.0f), 1.0f);
+                at[0] = fminf(fmaxf(right - shift, 0.0f), 1.0f);
+            }
+    }
+}
+
 static int stitch_tiles(float **tiles, const tile_axis *y_axis,
                         const tile_axis *x_axis, int frame_count,
                         h3_video_frames *output,
@@ -944,6 +990,7 @@ static int stitch_tiles(float **tiles, const tile_axis *y_axis,
                             rgb[destination] = value;
                         }
         }
+    deblock_patch_edges(rgb, frame_count, full_h, full_w);
     output->frames = frame_count;
     output->height = full_h;
     output->width = full_w;
@@ -1452,6 +1499,8 @@ int h3_video_vae_decode(const char *weight_directory,
         allocate_activations(&vae, error, error_size) &&
         run_decoder(&vae, progress, progress_opaque, error, error_size) &&
         unpack_frames(&vae, output, error, error_size);
+    if (ok) deblock_patch_edges(output->rgb, output->frames, output->height,
+                                output->width);
     if (!ok) h3_video_frames_free(output);
     cleanup(&vae);
     return ok;
