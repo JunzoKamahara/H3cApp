@@ -866,6 +866,6 @@
 "生成する大きさ" = "Size to generate";
 "動画を取り込んでいます。終わると、その続きをつくれます" = "Bringing in the video. Once it's in, you can continue it";
 "引き継ぐ長さ" = "Carry over";
-"引き継ぐ長さを長くすると、元の動画の終わりをより長く見て続きをつくるので、つなぎ目で動きが急に変わりにくくなる可能性があります。そのかわり、取り込みと続きの生成に時間がかかり、続きで新しくつくれる部分が短くなります。" = "Carrying over more lets the continuation see more of the video's end, which may keep the motion from changing suddenly at the seam. Importing and generating take longer, though, and the continuation adds less that is new.";
+"引き継ぐ長さを長くすると、取り込みと続きの生成に時間がかかり、続きで新しくつくれる部分が短くなります。" = "Carrying over more makes importing and generating take longer, and the continuation adds less that is new.";
 "約%@秒（%lldコマ、標準）" = "About %1$@ s (%2$lld frames, standard)";
 "約%@秒（%lldコマ）" = "About %1$@ s (%2$lld frames)";

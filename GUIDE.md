@@ -56,10 +56,9 @@ Good to know:
   at half and upscaled), or the current one or a preset. The video is
   converted to that size and 24 fps (the panel's size becomes it too) and
   brought into the project; how much of its end is carried over (about 0.9,
-  1.6 or 2.3 s) can be chosen too - longer shows the model more of its motion,
-  but importing and generating take longer and the continuation adds less -
-  and its last 0.9 s or so of picture and sound are turned into the
-  model's own data. Then it continues and joins like a video made in H3cApp.
+  1.6 or 2.3 s) can be chosen too - longer makes importing and generating
+  take longer, and the continuation adds less - and that much of its end,
+  picture and sound, is turned into the model's own data. Then it continues and joins like a video made in H3cApp.
   A video of another aspect ratio is cropped to the centre. Because it is
   converted, the seam differs slightly from the original.
 - **Make it longer.** With the joined video shown, “Continue” in the panel
