@@ -55,6 +55,7 @@
           <li><a href="#projects">Projects and batches</a></li>
           <li><a href="#speed">The three speed settings</a></li>
           <li><a href="#size">Sizes and 2x upscaling</a></li>
+          <li><a href="#upscale">Enlarging afterwards</a></li>
           <li><a href="#continue">Continuing a video</a></li>
           <li><a href="#chain">Making longer videos (joined generation)</a></li>
           <li><a href="#prompts">Writing prompts</a></li>
@@ -180,9 +181,37 @@
         </table>
       </div>
       <ul>
-        <li><strong>2x upscale</strong>: turn on “<span class="ui">Upscale 2x</span>” in the Size menu to enlarge the generated video 2x in each direction with high-quality resampling. It is not AI super-resolution that draws in detail. The upscale itself takes very little time. Example: Landscape, Large upscaled 2x is 1920×1088 (not exactly 1920×1080).</li>
+        <li><strong>2x upscale</strong>: turn on “<span class="ui">Upscale 2x</span>” in the Size menu to enlarge the generated video 2x in each direction with high-quality resampling. It is not AI super-resolution that draws in detail. The upscale itself takes very little time. Example: Landscape, Large upscaled 2x is 1920×1088 (not exactly 1920×1080). A finished video can also be <a href="#upscale">enlarged afterwards</a>, AI upscaling included.</li>
         <li><strong>Custom size</strong>: turn on “<span class="ui">Use a custom size</span>” under “<span class="ui">Size</span>” in the advanced settings to enter the finished width and height. The generated size is limited to 600,000 pixels.</li>
         <li><strong>Length</strong>: 1 to 15 seconds in one generation. Because of how the model works, the actual length comes out a little longer (choosing 5 s gives about 5.2 s). Longer videos come from <a href="#chain">joined generation</a>.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="upscale" aria-labelledby="upscale-title">
+      <h2 id="upscale-title">Enlarging afterwards</h2>
+      <p>A finished video can be enlarged afterwards to 1.5x, 2x, 3x or 4x (from v0.6.8). It works on other video files too, not only on videos made in H3cApp. Every method runs inside the app, with no other program.</p>
+      <ol class="steps">
+        <li><strong>Pick the video.</strong> For a project video, choose “<span class="ui">More</span>” → “<span class="ui">Make an Enlarged Copy…</span>” in “<span class="ui">Project Videos…</span>”. For any other video file, choose “<span class="ui">Project</span>” → “<span class="ui">Enlarge a Video File…</span>” in the menu bar.</li>
+        <li><strong>Choose the scale and the upscaler.</strong> Each scale shows the size it makes; a scale past 4096 pixels a side can't be chosen.</li>
+        <li><strong>Click “<span class="ui">Enlarge</span>”.</strong> A project video gets a new copy in the project, its name ending in the scale (for example <code>_x2</code>); for another file you choose where to save it. While it runs, the top of the window shows how far it has got, with “<span class="ui">Cancel</span>”.</li>
+      </ol>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Upscaler</th><th scope="col">How it works</th><th scope="col">Suits</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Standard (high-quality resize)</th><td>The same high-quality resampling as “<span class="ui">Upscale 2x</span>”</td><td>Anything, keeping the look as it is. Closest to the original, with the least flicker</td></tr>
+            <tr><th scope="row">MetalFX (edge-preserving)</th><td>Apple's MetalFX, enlarging along the edges and sharpening a little</td><td>A little sharper than Standard</td></tr>
+            <tr><th scope="row">Real-ESRGAN General (AI upscaling)</th><td>AI that fills in detail while enlarging</td><td>Live action and general footage; since it draws in detail, patterns the original doesn't have can appear</td></tr>
+            <tr><th scope="row">Real-ESRGAN Anime (AI upscaling)</th><td>AI that crisps up lines and flat colours</td><td>Anime and illustration-style video</td></tr>
+          </tbody>
+          <caption>Upscalers (v0.6.8). Every upscaler takes every scale.</caption>
+        </table>
+      </div>
+      <ul>
+        <li><strong>Time</strong>: Standard and MetalFX take a few seconds. Real-ESRGAN takes longer: on a 24 GB M5, about 0.08 s a frame (General) and 0.05 s (Anime) for an 800×544 video, or about 0.32 s and 0.18 s at 1620×1080.</li>
+        <li><strong>Sound and records</strong>: the sound and the file's AI-generated information stay as they are. An enlarged copy can't be continued (continue the original).</li>
+        <li><strong>Where it saves</strong>: the video replaces the file only once complete, so a file already there survives a failure or a cancel. It can't be saved over the original video itself.</li>
+        <li><strong>License</strong>: the app includes Real-ESRGAN's pretrained weights (BSD-3-Clause).</li>
       </ul>
     </section>
 

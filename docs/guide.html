@@ -56,6 +56,7 @@
           <li><a href="#projects">プロジェクトと複数生成</a></li>
           <li><a href="#speed">速度に関わる3つの設定</a></li>
           <li><a href="#size">サイズと2倍拡大</a></li>
+          <li><a href="#upscale">あとから拡大する</a></li>
           <li><a href="#continue">動画の続きを作る</a></li>
           <li><a href="#chain">長い動画をつくる（つなげて生成）</a></li>
           <li><a href="#prompts">プロンプトの書き方</a></li>
@@ -181,9 +182,37 @@
         </table>
       </div>
       <ul>
-        <li><strong>2倍に拡大</strong>：「<span class="ui">大きさ</span>」メニューの「<span class="ui">2倍に拡大</span>」をオンにすると、生成した動画を高品質なリサンプリングで縦横2倍にします。AIで細部を描き足す超解像ではありません。拡大にかかる時間はわずかです。例：横長・大を2倍にすると1920×1088になります（1920×1080ちょうどではありません）。</li>
+        <li><strong>2倍に拡大</strong>：「<span class="ui">大きさ</span>」メニューの「<span class="ui">2倍に拡大</span>」をオンにすると、生成した動画を高品質なリサンプリングで縦横2倍にします。AIで細部を描き足す超解像ではありません。拡大にかかる時間はわずかです。例：横長・大を2倍にすると1920×1088になります（1920×1080ちょうどではありません）。できあがった動画を<a href="#upscale">あとから拡大する</a>こともでき、AIの超解像も選べます。</li>
         <li><strong>カスタムサイズ</strong>：「<span class="ui">詳細設定</span>」の「<span class="ui">サイズ</span>」で「<span class="ui">カスタムサイズを使う</span>」をオンにすると、完成サイズを幅と高さで指定できます。生成するサイズは60万ピクセル以下という上限があります。</li>
         <li><strong>長さ</strong>：1回の生成では1〜15秒です。モデルの仕組み上、実際の長さは少し長めになります（例：5秒を選ぶと約5.2秒）。15秒より長い動画は、<a href="#chain">つなげて生成</a>でつくります。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="upscale" aria-labelledby="upscale-title">
+      <h2 id="upscale-title">あとから拡大する</h2>
+      <p>できあがった動画を、あとから1.5倍・2倍・3倍・4倍に拡大できます（v0.6.8から）。H3cAppで作った動画だけでなく、ほかの動画ファイルにも使えます。どの方法もアプリの中で処理し、ほかのプログラムは使いません。</p>
+      <ol class="steps">
+        <li><strong>拡大する動画を選びます。</strong>プロジェクトの動画は、「<span class="ui">プロジェクトの動画…</span>」で動画の「<span class="ui">その他</span>」→「<span class="ui">拡大した動画をつくる…</span>」を選びます。ほかの動画ファイルは、メニューバーの「<span class="ui">プロジェクト</span>」→「<span class="ui">動画ファイルを拡大…</span>」で選びます。</li>
+        <li><strong>倍率と拡大の方法を選びます。</strong>倍率ごとに、できあがる大きさが表示されます。一辺が4096ピクセルを超える倍率は選べません。</li>
+        <li><strong>「<span class="ui">拡大する</span>」を押します。</strong>プロジェクトの動画は、名前の最後に倍率（例：<code>_x2</code>）を付けた動画としてプロジェクトに加わります。ほかの動画ファイルは、保存先を選びます。処理中は画面の上に進み具合が出て、「<span class="ui">中止</span>」で止められます。</li>
+      </ol>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">拡大の方法</th><th scope="col">しくみ</th><th scope="col">向いている映像</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">標準（高品質な拡大）</th><td>「<span class="ui">2倍に拡大</span>」と同じ、高品質なリサンプリング</td><td>どれでも。元の見た目をそのまま大きくしたいとき。いちばん元の映像に近く、ちらつきも少ない</td></tr>
+            <tr><th scope="row">MetalFX（輪郭を保つ拡大）</th><td>AppleのMetalFXで、輪郭を見ながら拡大し、少しくっきりさせる</td><td>標準より少しシャープにしたいとき</td></tr>
+            <tr><th scope="row">Real-ESRGAN 汎用（AI超解像）</th><td>AIで細部を補いながら拡大する</td><td>実写や一般の映像。細部を描き足すので、元にない模様が出ることがある</td></tr>
+            <tr><th scope="row">Real-ESRGAN アニメ（AI超解像）</th><td>AIで線や色の面をくっきりさせる</td><td>アニメやイラスト調の映像</td></tr>
+          </tbody>
+          <caption>拡大の方法（v0.6.8）。どの方法もどの倍率にも使えます。</caption>
+        </table>
+      </div>
+      <ul>
+        <li><strong>時間</strong>：標準とMetalFXは数秒で終わります。Real-ESRGANは時間がかかり、M5・24GBで、800×544の動画の1フレームに汎用で約0.08秒、アニメで約0.05秒です（1620×1080なら約0.32秒と約0.18秒）。</li>
+        <li><strong>音声と記録</strong>：音声と、AIで生成したというファイルの情報は、そのまま残ります。拡大した動画の続きはつくれません（続きは元の動画からつくります）。</li>
+        <li><strong>保存先</strong>：書き終えてから置き換えるので、途中で失敗したり中止したりしても、保存先に元からあったファイルは消えません。元の動画そのものには保存できません。</li>
+        <li><strong>ライセンス</strong>：Real-ESRGAN（BSD-3-Clause）の学習済みの重みをアプリに含めています。</li>
       </ul>
     </section>
 
