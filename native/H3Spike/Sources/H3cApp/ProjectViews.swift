@@ -57,6 +57,9 @@ struct ProjectMenuItems: View {
         Button("動画ファイルの続きを作る…") { viewModel.pickVideoToContinue() }
             .disabled(viewModel.project == nil || viewModel.isGenerating || viewModel.isImportingVideo)
             .help("ほかで作った動画や撮影した動画を、今の大きさでプロジェクトに取り込み、その続きをつくります")
+        Button("動画ファイルを拡大…") { viewModel.pickVideoToUpscale() }
+            .disabled(viewModel.isUpscalingVideo)
+            .help("動画ファイルを選んで、拡大した動画（1.5〜4倍）を保存します")
         Button("プロジェクトをFinderで表示") {
             if let url = viewModel.project?.url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         }
@@ -316,6 +319,8 @@ struct ProjectVideosSheet: View {
     @Binding var isPresented: Bool
     @State private var pendingDelete: ProjectVideo?
     @State private var tree: [VideoNode] = []
+    /// 2倍に拡大した動画をつくる…: shown from here, this being a sheet.
+    @State private var upscaleRequest: GenerationViewModel.PendingUpscale?
 
     var body: some View {
         VStack(alignment: .leading, spacing: H3Spacing.md) {
@@ -349,6 +354,9 @@ struct ProjectVideosSheet: View {
             tree = buildTree()
         }
         .onChange(of: viewModel.projectVideos) { _, _ in tree = buildTree() }
+        .sheet(item: $upscaleRequest) { pending in
+            UpscaleSheet(viewModel: viewModel, pending: pending) { upscaleRequest = nil }
+        }
         .confirmationDialog("この動画を削除しますか？", isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
         ), presenting: pendingDelete) { video in
@@ -434,11 +442,11 @@ struct ProjectVideosSheet: View {
                     viewModel.exportJoined(endingAt: video)
                 }
                 .disabled(viewModel.continuationChain(endingAt: video) == nil || viewModel.isExportingJoined)
-                Button("2倍に拡大した動画をつくる") {
-                    Task { await viewModel.upscaleProjectVideo(video) }
+                Button("拡大した動画をつくる…") {
+                    Task { upscaleRequest = await viewModel.upscaleRequest(for: video) }
                 }
                 .disabled(!viewModel.canUpscale(video))
-                .help("この動画を2倍の大きさに拡大した動画を、プロジェクトに新しくつくります（音声はそのまま）")
+                .help("この動画を拡大した動画（1.5〜4倍）を、プロジェクトに新しくつくります（音声はそのまま）")
                 Divider()
                 Button("参照に使う") {
                     viewModel.useVideoAsReference(video.url)

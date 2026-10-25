@@ -39,7 +39,9 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `POST` | `/api/project/use-as-reference` | `{"video"}` その動画を参照動画としてフォームに追加する。 |
 | `POST` | `/api/project/delete-video` | `{"video"}` 動画と記録をゴミ箱に移す。 |
 | `POST` | `/api/project/join` | `{"video"}` その動画で終わる続きの連なりを、引き継いだ部分のクロスフェードでプロジェクトの`<名前>_joined.mp4`（記録つき）につなぎ、終わったら`{"path", "clips"}`を返す。 |
-| `POST` | `/api/project/upscale-video` | `{"video"}` そのプロジェクトの動画を2倍に拡大した動画（`<名前>_x2.mp4`、音声とメタデータはそのまま、大きさの×2と同じ高品質な拡大）をつくる。拡大する前に`{"video"}`（付く名前）を返す。一辺が4096ピクセルを超えるときは`400`、ほかの拡大中は`409`。一覧に並ぶまで、`GET /api/project`の`upscaling_video`が`true`。 |
+| `POST` | `/api/project/upscale-video` | `{"video", "upscaler"?, "scale"?}` そのプロジェクトの動画を拡大した動画（2倍なら`<名前>_x2.mp4`、音声とメタデータはそのまま）をつくる。`scale`は1.5・2（省略時）・3・4。`upscaler`は`standard`（省略時。大きさの×2と同じ高品質な拡大）、`metalFX`（MetalFXの拡大）、`realESRGANGeneral`・`realESRGANAnime`（Real-ESRGANのAI超解像、アプリに同梱）。拡大する前に`{"video"}`（付く名前）を返す。一辺が4096ピクセルを超えるときは`400`、ほかの拡大中は`409`。`GET /api/status`（と`GET /api/project`）の`upscaling_video`・`upscale_progress`（0〜1）・`message`で進み具合と結果が分かる。 |
+| `POST` | `/api/upscale-file` | `{"path", "output", "upscaler"?, "scale"?}` どの動画ファイルでも、拡大して`output`（`.mp4`のパス）に書き出す。拡大の方法と倍率は上と同じ。すぐに返り、進み具合と結果は上と同じく分かる。 |
+| `POST` | `/api/upscale/cancel` | 実行中の拡大を止める。書きかけのファイルは消す。実行中でなければ`409`。 |
 | `POST` | `/api/project/import-video` | `{"path", "size_profile"?, "carry_frames"?, "crop_position"?}` ほかで作った動画の続きをつくるため、その動画を、動画の大きさに近い大きさ（`size_profile`が`"current"`なら今の大きさ、大きさの名前ならその大きさ）と24fpsに変換してプロジェクトに取り込み、フォームをその続きにする。`carry_frames`は引き継ぐコマ数（22・39・56、省略時22）。`crop_position`（`[x, y]`、それぞれ0〜1、省略時`[0.5, 0.5]`）は、縦横比が違うときに残す部分の位置（`[0, 0.5]`で左端）。取り込む前に`{"video"}`（付く名前）を返し、変換が終わると`GET /api/project`に並んで`continue_from`に使える。 |
 
 `POST /api/generate`のボディフィールド（`prompt`以外はすべて省略可）:

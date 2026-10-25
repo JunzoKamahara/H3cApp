@@ -120,8 +120,10 @@ struct ProjectVideoRecord: Codable {
     /// made from and the upscaler (VideoUpscaler). The rest is that video's.
     var upscaledFrom: String? = nil
     var upscaler: String? = nil
-    /// Its frame size then, [width, height] (the draft keeps the generated one).
+    /// Its frame size then, [width, height] (the draft keeps the generated
+    /// one), and how many times the original's.
     var upscaledSize: [Int]? = nil
+    var upscaleFactor: Double? = nil
 }
 
 struct OpenProject: Equatable {
@@ -966,6 +968,7 @@ extension ResolvedResult {
             importedFrom: record.importedFrom,
             upscaledFrom: record.upscaledFrom,
             upscaler: record.upscaler.flatMap(VideoUpscaler.init(rawValue:)),
+            upscaleFactor: record.upscaleFactor.flatMap(UpscaleFactor.init(rawValue:)),
             plannedClipCount: record.chainPlannedClips,
             chainClipFrames: (draft.chained ?? false) ? (draft.chainClipFrames ?? defaultChainClipLength.frames) : nil,
             clipPrompts: (draft.chained ?? false) ? draft.clipPrompts : nil,

@@ -1,26 +1,116 @@
 import Accelerate
+import AppKit
 import AVFoundation
+import CoreVideo
 import Foundation
+import Metal
+import MetalFX
 
-// 2倍に拡大した動画をつくる: a finished video, enlarged after the fact into a
-// new project video next to it. It needs nothing from the generation - the
-// "×2" sizes enlarge the decoded frames the same way - so it works on any
-// project video, its sound copied as it is.
+// 拡大した動画をつくる / 動画ファイルを拡大: a finished video, enlarged
+// after the fact (1.5x to 4x). It needs nothing from the generation - the "×2"
+// sizes enlarge the decoded frames the same way - so it works on any video,
+// its sound copied as it is.
 
-/// How the frames are enlarged. One for now; this is where other
-/// upscalers go.
+/// How the frames are enlarged (the choice in UpscaleSheet). Each runs in
+/// the app, frame by frame; this is where other upscalers go.
 enum VideoUpscaler: String, CaseIterable, Identifiable {
     /// vImage's high-quality (Lanczos) resampling, as the engine uses for
-    /// the ×2 sizes (h3_resize_rgb24_high_quality).
+    /// the ×2 sizes (h3_resize_rgb24_high_quality). On the CPU.
     case standard
+    /// MetalFX's spatial scaler: edge-aware enlargement with sharpening,
+    /// made for games, on the GPU. Not AI super-resolution either.
+    case metalFX
+    /// Real-ESRGAN's SRVGGNetCompact (RealESRGANNetwork), AI
+    /// super-resolution on the GPU: realesr-general-x4v3 (at the default
+    /// denoise strength 0.5) and realesr-animevideov3, bundled.
+    case realESRGANGeneral
+    case realESRGANAnime
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .standard: return String(localized: "標準（高品質な拡大）")
+        case .metalFX: return String(localized: "MetalFX（輪郭を保つ拡大）")
+        case .realESRGANGeneral: return String(localized: "Real-ESRGAN 汎用（AI超解像）")
+        case .realESRGANAnime: return String(localized: "Real-ESRGAN アニメ（AI超解像）")
         }
     }
+
+    /// The bundled weights of an AI upscaler (Resources/Upscalers).
+    var weightsURL: URL? {
+        switch self {
+        case .standard, .metalFX: return nil
+        case .realESRGANGeneral:
+            return Bundle.main.url(forResource: "realesr-general-x4v3", withExtension: "safetensors", subdirectory: "Upscalers")
+        case .realESRGANAnime:
+            return Bundle.main.url(forResource: "realesr-animevideov3", withExtension: "safetensors", subdirectory: "Upscalers")
+        }
+    }
+
+    /// What it is and what it suits, for the sheet.
+    var detail: String {
+        switch self {
+        case .standard:
+            return String(localized: "大きさの「×2」と同じ拡大です。なめらかで、元の動画の見た目をそのまま大きくします。CPUで処理します。")
+        case .metalFX:
+            return String(localized: "AppleのMetalFXで、輪郭を見ながら拡大し、少しくっきりさせます。GPUで処理します。AIによる高画質化ではありません。")
+        case .realESRGANGeneral:
+            return String(localized: "AIで細部を補いながら拡大します（Real-ESRGAN realesr-general-x4v3）。実写や一般の映像向けです。細部を描き足すので、元にない模様が出ることがあります。標準より時間がかかります（GPUで、5秒の動画に数十秒〜数分）。")
+        case .realESRGANAnime:
+            return String(localized: "AIで線や色の面をくっきりさせながら拡大します（Real-ESRGAN realesr-animevideov3）。アニメやイラスト調の映像向けで、汎用より速く処理します。")
+        }
+    }
+
+    /// Whether this Mac can run it.
+    var isAvailable: Bool {
+        switch self {
+        case .standard: return true
+        case .metalFX:
+            guard let device = MTLCreateSystemDefaultDevice() else { return false }
+            return MTLFXSpatialScalerDescriptor.supportsDevice(device)
+        case .realESRGANGeneral, .realESRGANAnime:
+            return weightsURL != nil && MTLCreateSystemDefaultDevice() != nil
+        }
+    }
+}
+
+/// How much bigger (the sheet's 倍率). Every upscaler takes each of them.
+enum UpscaleFactor: Double, CaseIterable, Identifiable {
+    case oneAndHalf = 1.5
+    case two = 2
+    case three = 3
+    case four = 4
+
+    var id: Double { rawValue }
+
+    /// "1.5倍", "2倍".
+    var label: String {
+        rawValue == rawValue.rounded()
+            ? String(localized: "\(Int(rawValue))倍")
+            : String(localized: "\(String(format: "%.1f", rawValue))倍")
+    }
+
+    /// "x1.5", "x2" (file names).
+    var suffix: String {
+        rawValue == rawValue.rounded() ? "x\(Int(rawValue))" : "x" + String(format: "%.1f", rawValue)
+    }
+
+    /// The size `width` x `height` becomes, rounded to even numbers (H.264).
+    func size(width: Int, height: Int) -> (width: Int, height: Int) {
+        (Int((Double(width) * rawValue / 2).rounded()) * 2, Int((Double(height) * rawValue / 2).rounded()) * 2)
+    }
+
+    /// Whether the result stays within VideoUpscale.maximumSide.
+    func fits(width: Int, height: Int) -> Bool {
+        let result = size(width: width, height: height)
+        return result.width <= VideoUpscale.maximumSide && result.height <= VideoUpscale.maximumSide
+    }
+}
+
+/// One frame in, the same frame enlarged out (both 32BGRA).
+private protocol FrameScaler {
+    func scale(_ source: CVPixelBuffer, into destination: CVPixelBuffer) throws
 }
 
 enum VideoUpscale {
@@ -29,6 +119,8 @@ enum VideoUpscale {
         case tooLarge(width: Int, height: Int)
         case cannotRead
         case cannotWrite(String)
+        case unavailable(String)
+        case cancelled
         var errorDescription: String? {
             switch self {
             case .noVideoTrack: return String(localized: "映像のトラックがありません")
@@ -36,6 +128,8 @@ enum VideoUpscale {
                 return String(localized: "拡大すると\(width)×\(height)になり、書き出せる大きさ（一辺4096ピクセル）を超えます")
             case .cannotRead: return String(localized: "動画を読み込めませんでした")
             case .cannotWrite(let detail): return String(localized: "拡大した動画を書き出せませんでした（\(detail)）")
+            case .unavailable(let name): return String(localized: "このMacでは\(name)を使えません")
+            case .cancelled: return String(localized: "拡大を中止しました")
             }
         }
     }
@@ -43,34 +137,57 @@ enum VideoUpscale {
     /// The largest side H.264 is written at here.
     static let maximumSide = 4096
 
-    /// The size `factor` makes of the video at `url` (its stored frame size).
-    static func enlargedSize(of url: URL, factor: Int = 2) async throws -> (width: Int, height: Int) {
+    /// The video's stored frame size (before any rotation).
+    static func frameSize(of url: URL) async throws -> (width: Int, height: Int) {
         guard let track = try await AVURLAsset(url: url).loadTracks(withMediaType: .video).first else {
             throw UpscaleError.noVideoTrack
         }
         let size = try await track.load(.naturalSize)
-        return (Int(size.width.rounded()) * factor, Int(size.height.rounded()) * factor)
+        return (Int(size.width.rounded()), Int(size.height.rounded()))
     }
 
-    /// Writes `source` enlarged `factor` times to `destination` (H.264 at
+    /// Writes `source` enlarged by `factor` to `destination` (H.264 at
     /// the engine's bitrate rule, the sound and metadata as they are).
-    static func upscale(_ source: URL, to destination: URL, factor: Int = 2,
-                        upscaler: VideoUpscaler = .standard) async throws {
+    /// `progress` gets the share of frames done (on the main queue);
+    /// `isCancelled` is asked before each frame.
+    static func upscale(_ source: URL, to destination: URL, factor: UpscaleFactor = .two,
+                        upscaler: VideoUpscaler = .standard,
+                        progress: @escaping (Double) -> Void = { _ in },
+                        isCancelled: @escaping () -> Bool = { false }) async throws {
         let asset = AVURLAsset(url: source)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw UpscaleError.noVideoTrack
         }
         let audioTrack = try await asset.loadTracks(withMediaType: .audio).first
-        let (natural, transform) = try await videoTrack.load(.naturalSize, .preferredTransform)
-        let width = Int(natural.width.rounded()) * factor
-        let height = Int(natural.height.rounded()) * factor
+        let (natural, transform, frameRate, timeRange) = try await videoTrack.load(
+            .naturalSize, .preferredTransform, .nominalFrameRate, .timeRange)
+        let inputWidth = Int(natural.width.rounded()), inputHeight = Int(natural.height.rounded())
+        let (width, height) = factor.size(width: inputWidth, height: inputHeight)
         guard width <= maximumSide, height <= maximumSide else {
             throw UpscaleError.tooLarge(width: width, height: height)
         }
+        let scaler: FrameScaler
+        switch upscaler {
+        case .standard: scaler = VImageScaler()
+        case .metalFX:
+            guard let made = MetalFXScaler(inputWidth: inputWidth, inputHeight: inputHeight,
+                                           outputWidth: width, outputHeight: height) else {
+                throw UpscaleError.unavailable(upscaler.label)
+            }
+            scaler = made
+        case .realESRGANGeneral, .realESRGANAnime:
+            guard let weights = upscaler.weightsURL else { throw UpscaleError.unavailable(upscaler.label) }
+            scaler = try RealESRGANScaler(network: RealESRGANNetwork(weights: weights, width: inputWidth,
+                                                                     height: inputHeight,
+                                                                     scale: factor == .two ? 2 : 4),
+                                          outputWidth: width, outputHeight: height)
+        }
+        let expectedFrames = max(1, Int((timeRange.duration.seconds * Double(frameRate)).rounded()))
 
         let reader = try AVAssetReader(asset: asset)
         let videoOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferMetalCompatibilityKey as String: true,
         ])
         videoOutput.alwaysCopiesSampleData = false
         reader.add(videoOutput)
@@ -102,12 +219,19 @@ enum VideoUpscale {
         ])
         videoInput.expectsMediaDataInRealTime = false
         // A rotation keeps its meaning at the larger size.
+        // (Its offsets are the frame's width or height.)
+        func scaled(_ offset: CGFloat) -> CGFloat {
+            if abs(offset - CGFloat(inputWidth)) < 0.5 { return CGFloat(width) }
+            if abs(offset - CGFloat(inputHeight)) < 0.5 { return CGFloat(height) }
+            return offset * CGFloat(factor.rawValue)
+        }
         videoInput.transform = CGAffineTransform(a: transform.a, b: transform.b, c: transform.c, d: transform.d,
-                                                 tx: transform.tx * CGFloat(factor), ty: transform.ty * CGFloat(factor))
+                                                 tx: scaled(transform.tx), ty: scaled(transform.ty))
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: width,
             kCVPixelBufferHeightKey as String: height,
+            kCVPixelBufferMetalCompatibilityKey as String: true,
         ])
         writer.add(videoInput)
         var audioInput: AVAssetWriterInput?
@@ -128,19 +252,36 @@ enum VideoUpscale {
         let failure = Failure()
         await withTaskGroup(of: Void.self) { group in
             group.addTask {
+                var done = 0
                 await pump(videoInput, on: DispatchQueue(label: "h3c.upscale.video")) {
+                    if failure.error != nil { return false }
+                    if isCancelled() {
+                        failure.set(UpscaleError.cancelled)
+                        return false
+                    }
                     guard let sample = videoOutput.copyNextSampleBuffer() else { return false }
                     guard let frame = CMSampleBufferGetImageBuffer(sample),
                           let pool = adaptor.pixelBufferPool else { return true }
                     var enlarged: CVPixelBuffer?
                     CVPixelBufferPoolCreatePixelBuffer(nil, pool, &enlarged)
-                    guard let enlarged, scale(frame, into: enlarged, upscaler: upscaler) else {
+                    guard let enlarged else {
                         failure.set(UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした")))
+                        return false
+                    }
+                    do {
+                        try scaler.scale(frame, into: enlarged)
+                    } catch {
+                        failure.set(error)
                         return false
                     }
                     if !adaptor.append(enlarged, withPresentationTime: CMSampleBufferGetPresentationTimeStamp(sample)) {
                         failure.set(UpscaleError.cannotWrite(writer.error?.localizedDescription ?? ""))
                         return false
+                    }
+                    done += 1
+                    if done % 4 == 0 {
+                        let share = min(Double(done) / Double(expectedFrames), 1)
+                        DispatchQueue.main.async { progress(share) }
                     }
                     return true
                 }
@@ -148,6 +289,7 @@ enum VideoUpscale {
             if let audioInput, let audioOutput {
                 group.addTask {
                     await pump(audioInput, on: DispatchQueue(label: "h3c.upscale.audio")) {
+                        if failure.error != nil { return false }
                         guard let sample = audioOutput.copyNextSampleBuffer() else { return false }
                         if !audioInput.append(sample) {
                             failure.set(UpscaleError.cannotWrite(writer.error?.localizedDescription ?? ""))
@@ -169,6 +311,7 @@ enum VideoUpscale {
             try? FileManager.default.removeItem(at: destination)
             throw UpscaleError.cannotWrite(writer.error?.localizedDescription ?? "")
         }
+        DispatchQueue.main.async { progress(1) }
     }
 
     /// Feeds `input` from `next` (false: no more) whenever it wants data.
@@ -188,8 +331,26 @@ enum VideoUpscale {
         }
     }
 
-    private static func scale(_ source: CVPixelBuffer, into destination: CVPixelBuffer,
-                              upscaler: VideoUpscaler) -> Bool {
+    /// The first error from either track's queue.
+    private final class Failure: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: Error?
+        var error: Error? {
+            lock.lock()
+            defer { lock.unlock() }
+            return stored
+        }
+        func set(_ error: Error) {
+            lock.lock()
+            if stored == nil { stored = error }
+            lock.unlock()
+        }
+    }
+}
+
+/// VideoUpscaler.standard: vImage's Lanczos on the CPU.
+private struct VImageScaler: FrameScaler {
+    func scale(_ source: CVPixelBuffer, into destination: CVPixelBuffer) throws {
         CVPixelBufferLockBaseAddress(source, .readOnly)
         CVPixelBufferLockBaseAddress(destination, [])
         defer {
@@ -197,7 +358,9 @@ enum VideoUpscale {
             CVPixelBufferUnlockBaseAddress(destination, [])
         }
         guard let input = CVPixelBufferGetBaseAddress(source),
-              let output = CVPixelBufferGetBaseAddress(destination) else { return false }
+              let output = CVPixelBufferGetBaseAddress(destination) else {
+            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
+        }
         var from = vImage_Buffer(data: input,
                                  height: vImagePixelCount(CVPixelBufferGetHeight(source)),
                                  width: vImagePixelCount(CVPixelBufferGetWidth(source)),
@@ -206,77 +369,267 @@ enum VideoUpscale {
                                height: vImagePixelCount(CVPixelBufferGetHeight(destination)),
                                width: vImagePixelCount(CVPixelBufferGetWidth(destination)),
                                rowBytes: CVPixelBufferGetBytesPerRow(destination))
-        switch upscaler {
-        case .standard:
-            // Four 8-bit channels in any order: BGRA scales as ARGB does.
-            return vImageScale_ARGB8888(&from, &to, nil,
-                                        vImage_Flags(kvImageHighQualityResampling | kvImageEdgeExtend)) == kvImageNoError
+        // Four 8-bit channels in any order: BGRA scales as ARGB does.
+        guard vImageScale_ARGB8888(&from, &to, nil,
+                                   vImage_Flags(kvImageHighQualityResampling | kvImageEdgeExtend)) == kvImageNoError else {
+            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
+        }
+    }
+}
+
+/// VideoUpscaler.realESRGAN*: RealESRGANNetwork on each frame - its 2x
+/// straight into the output, or its 4x resized to the size asked for
+/// (Lanczos, as Real-ESRGAN does an outscale other than its own).
+private final class RealESRGANScaler: FrameScaler {
+    let network: RealESRGANNetwork
+    private let outputWidth: Int
+    private let outputHeight: Int
+    /// The network's whole output when it isn't the output's size.
+    private var full: UnsafeMutableRawPointer?
+
+    init(network: RealESRGANNetwork, outputWidth: Int, outputHeight: Int) {
+        self.network = network
+        self.outputWidth = outputWidth
+        self.outputHeight = outputHeight
+        if network.outputWidth != outputWidth || network.outputHeight != outputHeight {
+            full = UnsafeMutableRawPointer.allocate(byteCount: network.outputWidth * network.outputHeight * 4,
+                                                    alignment: 64)
         }
     }
 
-    /// The first error from either track's queue.
-    private final class Failure: @unchecked Sendable {
-        private let lock = NSLock()
-        private(set) var error: Error?
-        func set(_ error: Error) {
-            lock.lock()
-            if self.error == nil { self.error = error }
-            lock.unlock()
+    deinit { full?.deallocate() }
+
+    func scale(_ source: CVPixelBuffer, into destination: CVPixelBuffer) throws {
+        CVPixelBufferLockBaseAddress(source, .readOnly)
+        CVPixelBufferLockBaseAddress(destination, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(source, .readOnly)
+            CVPixelBufferUnlockBaseAddress(destination, [])
+        }
+        guard let input = CVPixelBufferGetBaseAddress(source),
+              let output = CVPixelBufferGetBaseAddress(destination) else {
+            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
+        }
+        guard let full else {
+            try network.upscale(input, sourceRowBytes: CVPixelBufferGetBytesPerRow(source),
+                                into: output, destinationRowBytes: CVPixelBufferGetBytesPerRow(destination))
+            return
+        }
+        try network.upscale(input, sourceRowBytes: CVPixelBufferGetBytesPerRow(source),
+                            into: full, destinationRowBytes: network.outputWidth * 4)
+        var from = vImage_Buffer(data: full, height: vImagePixelCount(network.outputHeight),
+                                 width: vImagePixelCount(network.outputWidth), rowBytes: network.outputWidth * 4)
+        var to = vImage_Buffer(data: output, height: vImagePixelCount(outputHeight),
+                               width: vImagePixelCount(outputWidth),
+                               rowBytes: CVPixelBufferGetBytesPerRow(destination))
+        guard vImageScale_ARGB8888(&from, &to, nil,
+                                   vImage_Flags(kvImageHighQualityResampling | kvImageEdgeExtend)) == kvImageNoError else {
+            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
+        }
+    }
+}
+
+/// VideoUpscaler.metalFX: MetalFX's spatial scaler on the GPU, reading and
+/// writing the frames' own memory (CVMetalTextureCache). The scaler writes
+/// a private texture, copied into the output frame.
+private final class MetalFXScaler: FrameScaler {
+    private let queue: MTLCommandQueue
+    private let scaler: MTLFXSpatialScaler
+    private let cache: CVMetalTextureCache
+    private let scaled: MTLTexture
+
+    init?(inputWidth: Int, inputHeight: Int, outputWidth: Int, outputHeight: Int) {
+        guard let device = MTLCreateSystemDefaultDevice(),
+              MTLFXSpatialScalerDescriptor.supportsDevice(device),
+              let queue = device.makeCommandQueue() else { return nil }
+        let descriptor = MTLFXSpatialScalerDescriptor()
+        descriptor.inputWidth = inputWidth
+        descriptor.inputHeight = inputHeight
+        descriptor.outputWidth = outputWidth
+        descriptor.outputHeight = outputHeight
+        descriptor.colorTextureFormat = .bgra8Unorm
+        descriptor.outputTextureFormat = .bgra8Unorm
+        // Video is gamma-encoded, not linear light.
+        descriptor.colorProcessingMode = .perceptual
+        guard let scaler = descriptor.makeSpatialScaler(device: device) else { return nil }
+        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm, width: outputWidth, height: outputHeight, mipmapped: false)
+        textureDescriptor.usage = scaler.outputTextureUsage
+        textureDescriptor.storageMode = .private
+        var cache: CVMetalTextureCache?
+        guard let scaled = device.makeTexture(descriptor: textureDescriptor),
+              CVMetalTextureCacheCreate(nil, nil, device, nil, &cache) == kCVReturnSuccess,
+              let cache else { return nil }
+        self.queue = queue
+        self.scaler = scaler
+        self.cache = cache
+        self.scaled = scaled
+    }
+
+    private func texture(_ buffer: CVPixelBuffer) throws -> (CVMetalTexture, MTLTexture) {
+        var made: CVMetalTexture?
+        let status = CVMetalTextureCacheCreateTextureFromImage(
+            nil, cache, buffer, nil, .bgra8Unorm,
+            CVPixelBufferGetWidth(buffer), CVPixelBufferGetHeight(buffer), 0, &made)
+        guard status == kCVReturnSuccess, let made, let texture = CVMetalTextureGetTexture(made) else {
+            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
+        }
+        return (made, texture)
+    }
+
+    func scale(_ source: CVPixelBuffer, into destination: CVPixelBuffer) throws {
+        // The CVMetalTextures are held until the GPU is done with them.
+        let (sourceRef, input) = try texture(source)
+        let (destinationRef, output) = try texture(destination)
+        guard let command = queue.makeCommandBuffer() else {
+            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
+        }
+        scaler.colorTexture = input
+        scaler.outputTexture = scaled
+        scaler.encode(commandBuffer: command)
+        guard let blit = command.makeBlitCommandEncoder() else {
+            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
+        }
+        blit.copy(from: scaled, to: output)
+        blit.endEncoding()
+        command.commit()
+        command.waitUntilCompleted()
+        withExtendedLifetime((sourceRef, destinationRef)) {}
+        if command.status != .completed {
+            throw VideoUpscale.UpscaleError.cannotWrite(command.error?.localizedDescription ?? "")
         }
     }
 }
 
 extension GenerationViewModel {
-    /// Whether `video` can be enlarged 2x (within the 4096-pixel limit):
-    /// its size is an enlarged copy's own, or else the size it was made at.
-    func canUpscale(_ video: ProjectVideo) -> Bool {
+    /// A video waiting for its upscaler to be picked (UpscaleSheet): a
+    /// project video, or a file to enlarge into a file of the user's choosing.
+    struct PendingUpscale: Identifiable {
+        let id = UUID()
+        let url: URL
+        let projectVideo: ProjectVideo?
+        let width: Int
+        let height: Int
+    }
+
+    /// Whether `video` can be enlarged by `factor` (within the 4096-pixel
+    /// limit): its size is an enlarged copy's own, or else the size it was
+    /// made at.
+    func canUpscale(_ video: ProjectVideo, by factor: UpscaleFactor = .oneAndHalf) -> Bool {
         guard !isUpscalingVideo, let record = video.record else { return false }
         var size = record.upscaledSize
         if size == nil, let dimensions = SizeProfile(rawValue: record.draft.sizeProfile)?.dimensions {
             size = [Int(dimensions.width), Int(dimensions.height)]
         }
         guard let size, size.count == 2 else { return true }
-        return size[0] * 2 <= VideoUpscale.maximumSide && size[1] * 2 <= VideoUpscale.maximumSide
+        return factor.fits(width: size[0], height: size[1])
     }
 
-    /// The name the enlarged copy of `video` gets: "<name>_x2.mp4", numbered
-    /// if that is taken.
-    func upscaledVideoName(for video: ProjectVideo) -> String? {
+    /// 拡大した動画をつくる…: `video` for the upscaler sheet (shown by
+    /// the project video list itself, being a sheet already).
+    func upscaleRequest(for video: ProjectVideo) async -> PendingUpscale? {
+        do {
+            let size = try await VideoUpscale.frameSize(of: video.url)
+            return PendingUpscale(url: video.url, projectVideo: video, width: size.width, height: size.height)
+        } catch {
+            projectMessage = String(localized: "動画を拡大できませんでした（詳細: \(error.localizedDescription)）")
+            return nil
+        }
+    }
+
+    /// The sheet's 拡大する: a project video into the project, a file into a
+    /// file chosen now.
+    func startUpscale(_ pending: PendingUpscale, upscaler: VideoUpscaler, factor: UpscaleFactor) {
+        if let video = pending.projectVideo {
+            Task { await upscaleProjectVideo(video, upscaler: upscaler, factor: factor) }
+            return
+        }
+        let panel = NSSavePanel()
+        let folder = project?.url ?? pending.url.deletingLastPathComponent()
+        panel.directoryURL = folder
+        panel.nameFieldStringValue = Self.freeName(for: pending.url, in: folder, factor: factor)
+        panel.allowedContentTypes = [.mpeg4Movie]
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        Task { await upscaleVideoFile(pending.url, to: destination, upscaler: upscaler, factor: factor) }
+    }
+
+    /// 動画ファイルを拡大…: picks any video and asks which upscaler.
+    func pickVideoToUpscale() {
+        guard let path = chooseFile(allowedContentTypes: [.movie]) else { return }
+        let url = URL(fileURLWithPath: path)
+        Task {
+            do {
+                let size = try await VideoUpscale.frameSize(of: url)
+                pendingUpscale = PendingUpscale(url: url, projectVideo: nil,
+                                                width: size.width, height: size.height)
+            } catch {
+                projectMessage = String(localized: "動画を拡大できませんでした（詳細: \(error.localizedDescription)）")
+            }
+        }
+    }
+
+    /// The name the enlarged copy of `video` gets: "<name>_x2.mp4" (by the
+    /// factor), numbered if that is taken.
+    func upscaledVideoName(for video: ProjectVideo, factor: UpscaleFactor = .two) -> String? {
         guard let project else { return nil }
-        let base = video.url.deletingPathExtension().lastPathComponent + "_x2"
+        return Self.freeName(for: video.url, in: project.url, factor: factor)
+    }
+
+    /// "<name>_x2.mp4" next to the others in `folder`, numbered if taken.
+    static func freeName(for source: URL, in folder: URL, factor: UpscaleFactor) -> String {
+        let base = source.deletingPathExtension().lastPathComponent + "_" + factor.suffix
         var name = base
         var counter = 2
-        while FileManager.default.fileExists(atPath: project.url.appendingPathComponent(name + ".mp4").path) {
+        while FileManager.default.fileExists(atPath: folder.appendingPathComponent(name + ".mp4").path) {
             name = "\(base)-\(counter)"
             counter += 1
         }
         return name + ".mp4"
     }
 
-    /// 2倍に拡大した動画をつくる: `video` enlarged 2x into a new project
+    /// 中止 on the progress banner (and POST /api/upscale/cancel).
+    func cancelUpscale() {
+        upscaleCancel.request()
+    }
+
+    /// Runs one upscale with the banner's progress and 中止.
+    private func runUpscale(_ source: URL, to destination: URL, upscaler: VideoUpscaler,
+                            factor: UpscaleFactor) async throws {
+        upscalingVideoName = source.lastPathComponent
+        upscalingFactor = factor
+        upscaleProgress = 0
+        upscaleCancel.reset()
+        isUpscalingVideo = true
+        defer { isUpscalingVideo = false }
+        let cancel = upscaleCancel
+        try await VideoUpscale.upscale(source, to: destination, factor: factor, upscaler: upscaler,
+                                       progress: { [weak self] share in self?.upscaleProgress = share },
+                                       isCancelled: { cancel.isRequested })
+    }
+
+    /// 拡大した動画をつくる: `video` enlarged by `factor` into a new project
     /// video with its record (marked as enlarged; it can't be continued, as
     /// its latents are the original's size). Returns whether it worked;
     /// projectMessage says what happened either way.
     @discardableResult
     func upscaleProjectVideo(_ video: ProjectVideo, as name: String? = nil,
-                             upscaler: VideoUpscaler = .standard) async -> Bool {
-        guard let project, !isUpscalingVideo, let name = name ?? upscaledVideoName(for: video) else {
+                             upscaler: VideoUpscaler = .standard, factor: UpscaleFactor = .two) async -> Bool {
+        guard let project, !isUpscalingVideo,
+              let name = name ?? upscaledVideoName(for: video, factor: factor) else {
             return false
         }
-        upscalingVideoName = video.url.lastPathComponent
-        isUpscalingVideo = true
-        defer { isUpscalingVideo = false }
         let destination = project.url.appendingPathComponent(name)
         let started = Date()
         do {
-            try await VideoUpscale.upscale(video.url, to: destination, upscaler: upscaler)
+            try await runUpscale(video.url, to: destination, upscaler: upscaler, factor: factor)
             if var record = video.record {
+                record.upscaleFactor = factor.rawValue
                 record.video = name
                 record.completedAt = Date()
                 record.upscaledFrom = video.url.lastPathComponent
                 record.upscaler = upscaler.rawValue
-                let enlarged = try await VideoUpscale.enlargedSize(of: video.url, factor: 2)
-                record.upscaledSize = [enlarged.width, enlarged.height]
+                let size = try await VideoUpscale.frameSize(of: destination)
+                record.upscaledSize = [size.width, size.height]
                 // Not continuable or joinable as itself: its latents (not
                 // copied) are the original's size.
                 record.joinedClips = nil
@@ -288,13 +641,60 @@ extension GenerationViewModel {
             }
         } catch {
             try? FileManager.default.removeItem(at: destination)
-            NSLog("H3cApp: upscaling %@ failed: %@", video.url.path, String(describing: error))
-            projectMessage = String(localized: "動画を拡大できませんでした（詳細: \(error.localizedDescription)）")
+            reportUpscaleFailure(error, source: video.url)
             return false
         }
         reloadProjectVideos()
-        let seconds = Date().timeIntervalSince(started)
-        projectMessage = String(localized: "\(video.url.lastPathComponent)を2倍に拡大して、\(name)をつくりました（\(formatElapsed(seconds))）")
+        projectMessage = String(localized: "\(video.url.lastPathComponent)を\(factor.label)に拡大して、\(name)をつくりました（\(upscaler.label)、\(formatElapsed(Date().timeIntervalSince(started)))）")
         return true
+    }
+
+    /// 動画ファイルを拡大: `source` enlarged by `factor` into `destination`.
+    @discardableResult
+    func upscaleVideoFile(_ source: URL, to destination: URL, upscaler: VideoUpscaler = .standard,
+                          factor: UpscaleFactor = .two) async -> Bool {
+        guard !isUpscalingVideo else { return false }
+        let started = Date()
+        do {
+            try await runUpscale(source, to: destination, upscaler: upscaler, factor: factor)
+        } catch {
+            reportUpscaleFailure(error, source: source)
+            return false
+        }
+        if let project, destination.deletingLastPathComponent().standardizedFileURL == project.url.standardizedFileURL {
+            reloadProjectVideos()
+        }
+        projectMessage = String(localized: "\(source.lastPathComponent)を\(factor.label)に拡大して、\(destination.lastPathComponent)に保存しました（\(upscaler.label)、\(formatElapsed(Date().timeIntervalSince(started)))）")
+        return true
+    }
+
+    private func reportUpscaleFailure(_ error: Error, source: URL) {
+        if case VideoUpscale.UpscaleError.cancelled = error {
+            projectMessage = String(localized: "拡大を中止しました")
+            return
+        }
+        NSLog("H3cApp: upscaling %@ failed: %@", source.path, String(describing: error))
+        projectMessage = String(localized: "動画を拡大できませんでした（詳細: \(error.localizedDescription)）")
+    }
+}
+
+/// The 中止 request for the upscale running now, read from the video queue.
+final class UpscaleCancel: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requested = false
+    var isRequested: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return requested
+    }
+    func request() {
+        lock.lock()
+        requested = true
+        lock.unlock()
+    }
+    func reset() {
+        lock.lock()
+        requested = false
+        lock.unlock()
     }
 }

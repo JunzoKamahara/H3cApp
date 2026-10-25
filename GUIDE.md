@@ -66,12 +66,33 @@ Good to know:
   from the original.
 - **Make it longer.** With the joined video shown, “Continue” in the panel
   makes one more clip; “Join and Export” then joins the whole run again.
-- **Enlarge 2x afterwards.** In “Project Videos…”, “More” → “Make a 2x
-  Enlarged Copy” adds the video at twice the size to the project
-  (`<name>_x2.mp4`), with its sound and its AI-generated record as they
-  are. It is the same high-quality resize as the ×2 sizes (not AI
-  upscaling) and works on joined videos too. An enlarged copy can't be
-  continued (continue the original), and no side may go past 4096 pixels.
+- **Enlarge afterwards.** In “Project Videos…”, “More” → “Make an Enlarged
+  Copy…” adds the video enlarged to the project (`<name>_x2.mp4` at 2x).
+  Any other video file can be enlarged with Project → “Enlarge a Video
+  File…”, saved where you choose. The scale is 1.5x, 2x, 3x or 4x, each
+  shown with the size it makes (a scale past 4096 pixels a side can't be
+  chosen), and every upscaler takes each of them. There are four
+  upscalers:
+  - Standard: the same high-quality resize as the ×2 sizes, smooth, keeping
+    the look as it is.
+  - MetalFX: Apple's MetalFX, enlarging along the edges and sharpening a
+    little.
+  - Real-ESRGAN General (AI upscaling): fills in detail while enlarging, for
+    live action and general footage. Since it draws in detail, patterns the
+    original doesn't have can appear. On a 24 GB M5 it takes about 0.08 s a
+    frame at 800x544 and 0.32 s at 1620x1080. The AI enlarges 4x and
+    reaches the chosen size by averaging each 2x2 block (for 2x) or by a
+    high-quality resize (other scales).
+  - Real-ESRGAN Anime (AI upscaling): crisps up lines and flat colours, for
+    anime and illustration-style video, in about half General's time.
+
+  All of them run inside the app, with no other program. Real-ESRGAN's
+  pretrained weights (BSD-3-Clause) are included in the app.
+
+  The sound and the AI-generated record stay as they are, and joined videos
+  work too. While it runs, the top of the window shows how far it has got,
+  with “Cancel”. An enlarged copy can't be continued (continue the original),
+  and no side may go past 4096 pixels.
 - **If you stop partway,** the clips made so far (two or more) are joined.
 - **Make the same run again.** With Randomness set to Fixed, the first clip
   uses that seed and each later one the next seed up, so the same settings

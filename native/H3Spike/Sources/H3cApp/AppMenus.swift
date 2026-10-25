@@ -14,6 +14,7 @@ enum AppLinks {
     static let releases = URL(string: "https://github.com/JunzoKamahara/H3cApp/releases")!
     static let issues = URL(string: "https://github.com/JunzoKamahara/H3cApp/issues")!
     static let taehv = URL(string: "https://github.com/madebyollin/taehv")!
+    static let realESRGAN = URL(string: "https://github.com/xinntao/Real-ESRGAN")!
 
     /// The UI is in Japanese unless the app runs in English.
     static var isJapanese: Bool { Bundle.main.preferredLocalizations.first?.hasPrefix("ja") ?? true }
@@ -86,7 +87,10 @@ struct AboutCommand: Commands {
         add(String(localized: "途中の様子のプレビュー用デコーダ（"))
         add("taeh3", link: AppLinks.taehv)
         add(String(localized: "）：MIT License。") + "\n")
-        add(String(localized: "シェーダーの一部の設計（ccv）：BSD-3-Clause。") + "\n\n")
+        add(String(localized: "シェーダーの一部の設計（ccv）：BSD-3-Clause。") + "\n")
+        add(String(localized: "AI超解像による2倍の拡大（"))
+        add("Real-ESRGAN", link: AppLinks.realESRGAN)
+        add(String(localized: "）：BSD-3-Clause。学習済みの重みをアプリに含めています。") + "\n\n")
         add(String(localized: "ライセンスの本文と第三者のライセンス表示は、ヘルプメニューから開けます。"))
         return text
     }

@@ -65,6 +65,48 @@ extension GenerationViewModel {
         case ("POST", "/api/cancel"):
             cancel()
             return .json(200, ["ok": true])
+        case ("POST", "/api/upscale-file"):
+            // 動画ファイルを2倍に拡大: {"path", "output", "upscaler"?} writes
+            // the video at "path" enlarged 2x to "output" (an .mp4 path).
+            // Answers at once; GET /api/project reports upscaling_video and
+            // upscale_progress, and its message when done.
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard let path = json["path"] as? String, FileManager.default.fileExists(atPath: path) else {
+                return .error(400, "\"path\" must name an existing video file")
+            }
+            guard let output = json["output"] as? String, output.lowercased().hasSuffix(".mp4") else {
+                return .error(400, "\"output\" must be an .mp4 path")
+            }
+            guard !isUpscalingVideo else { return .error(409, "a video is already being enlarged") }
+            var upscaler = VideoUpscaler.standard
+            if let raw = json["upscaler"] {
+                guard let name = raw as? String, let chosen = VideoUpscaler(rawValue: name), chosen.isAvailable else {
+                    return .error(400, "\"upscaler\" must be one of: " + VideoUpscaler.allCases.filter(\.isAvailable).map(\.rawValue).joined(separator: ", "))
+                }
+                upscaler = chosen
+            }
+            var factor = UpscaleFactor.two
+            if let raw = json["scale"] {
+                guard let number = raw as? NSNumber, let chosen = UpscaleFactor(rawValue: number.doubleValue) else {
+                    return .error(400, "\"scale\" must be one of 1.5, 2, 3, 4")
+                }
+                factor = chosen
+            }
+            let source = URL(fileURLWithPath: path)
+            do {
+                let size = try await VideoUpscale.frameSize(of: source)
+                guard factor.fits(width: size.width, height: size.height) else {
+                    return .error(400, "\(source.lastPathComponent) can't be enlarged \(factor.suffix) (larger than \(VideoUpscale.maximumSide) pixels a side)")
+                }
+            } catch {
+                return .error(400, "cannot read \(source.lastPathComponent): \(error.localizedDescription)")
+            }
+            Task { await upscaleVideoFile(source, to: URL(fileURLWithPath: output), upscaler: upscaler, factor: factor) }
+            return .json(202, ["ok": true, "output": output])
+        case ("POST", "/api/upscale/cancel"):
+            guard isUpscalingVideo else { return .error(409, "no video is being enlarged") }
+            cancelUpscale()
+            return .json(200, ["ok": true])
         case ("GET", "/api/result/video"):
             return resultVideoResponse()
         case ("GET", "/api/preview"):
@@ -172,6 +214,8 @@ extension GenerationViewModel {
         case ("POST", "/api/project/new"), ("POST", "/api/project/open"), ("POST", "/api/project/close"),
              ("POST", "/api/project/import-video"),
             ("POST", "/api/project/upscale-video"),
+            ("POST", "/api/upscale-file"),
+            ("POST", "/api/upscale/cancel"),
              ("POST", "/api/project/restore"), ("POST", "/api/project/use-as-reference"),
              ("POST", "/api/project/delete-video"):
             return handleProjectRequest(request)
@@ -336,6 +380,11 @@ extension GenerationViewModel {
             "engine_state": engineStateText,
             "device": deviceLine,
             "is_generating": isGenerating,
+            // 2倍に拡大 (project video or file): running, how far, and the
+            // window's last word on it (also in GET /api/project).
+            "upscaling_video": isUpscalingVideo,
+            "upscale_progress": upscaleProgress,
+            "message": projectMessage as Any,
             "is_cancelling": isCancelling,
             "phase": phase,
             "elapsed_seconds": elapsedSeconds,
@@ -375,6 +424,7 @@ extension GenerationViewModel {
             "message": projectMessage as Any,
             "importing_video": isImportingVideo,
             "upscaling_video": isUpscalingVideo,
+            "upscale_progress": upscaleProgress,
             "videos": projectVideos.map { video -> [String: Any] in
                 var item: [String: Any] = ["file": video.url.lastPathComponent, "path": video.url.path]
                 if let record = video.record {
@@ -440,10 +490,24 @@ extension GenerationViewModel {
             guard project != nil else { return .error(400, "no project is open") }
             guard let video = video() else { return .error(400, "\"video\" must name a file listed by GET /api/project") }
             guard !isUpscalingVideo else { return .error(409, "a video is already being enlarged") }
-            guard canUpscale(video), let name = upscaledVideoName(for: video) else {
-                return .error(400, "\(video.url.lastPathComponent) can't be enlarged 2x (larger than \(VideoUpscale.maximumSide) pixels a side, or no record)")
+            var factor = UpscaleFactor.two
+            if let raw = json["scale"] {
+                guard let number = raw as? NSNumber, let chosen = UpscaleFactor(rawValue: number.doubleValue) else {
+                    return .error(400, "\"scale\" must be one of 1.5, 2, 3, 4")
+                }
+                factor = chosen
             }
-            Task { await upscaleProjectVideo(video, as: name) }
+            guard canUpscale(video, by: factor), let name = upscaledVideoName(for: video, factor: factor) else {
+                return .error(400, "\(video.url.lastPathComponent) can't be enlarged \(factor.suffix) (larger than \(VideoUpscale.maximumSide) pixels a side, or no record)")
+            }
+            var upscaler = VideoUpscaler.standard
+            if let raw = json["upscaler"] {
+                guard let name = raw as? String, let chosen = VideoUpscaler(rawValue: name), chosen.isAvailable else {
+                    return .error(400, "\"upscaler\" must be one of: " + VideoUpscaler.allCases.filter(\.isAvailable).map(\.rawValue).joined(separator: ", "))
+                }
+                upscaler = chosen
+            }
+            Task { await upscaleProjectVideo(video, as: name, upscaler: upscaler, factor: factor) }
             return .json(202, ["ok": true, "video": name])
         case "/api/project/import-video":
             // 動画ファイルの続きを作る: {"path": "/…/video.mp4"} brings the

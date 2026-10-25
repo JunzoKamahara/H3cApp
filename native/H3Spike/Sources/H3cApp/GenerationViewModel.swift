@@ -316,6 +316,12 @@ final class GenerationViewModel: ObservableObject {
     /// 2倍に拡大した動画をつくる is enlarging a project video (VideoUpscale).
     @Published var isUpscalingVideo = false
     var upscalingVideoName = ""
+    var upscalingFactor = UpscaleFactor.two
+    /// The share of frames enlarged so far (the banner), and its 中止.
+    @Published var upscaleProgress = 0.0
+    let upscaleCancel = UpscaleCancel()
+    /// 動画ファイルを2倍に拡大…: a chosen file waiting for its upscaler.
+    @Published var pendingUpscale: PendingUpscale?
     /// A chosen video waiting for its size to be picked (ImportVideoSheet).
     @Published var pendingVideoImport: PendingVideoImport?
     /// The form before カスタムクリップ's editor opened (its キャンセル).

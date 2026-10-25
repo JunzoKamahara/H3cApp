@@ -39,6 +39,12 @@ struct ContentView: View {
             .sheet(item: $viewModel.pendingVideoImport) { pending in
                 ImportVideoSheet(viewModel: viewModel, pending: pending)
             }
+            .background {
+                // 動画ファイルを2倍に拡大… (a second sheet, on its own view).
+                Color.clear.sheet(item: $viewModel.pendingUpscale) { pending in
+                    UpscaleSheet(viewModel: viewModel, pending: pending) { viewModel.pendingUpscale = nil }
+                }
+            }
             .overlay(alignment: .top) {
                 // 動画ファイルの続きを作る: converting takes a little while.
                 if viewModel.isImportingVideo || viewModel.isUpscalingVideo {
@@ -47,7 +53,11 @@ struct ContentView: View {
                         if viewModel.isImportingVideo {
                             Text("動画を取り込んでいます（\(viewModel.importingVideoName)）…").font(.callout)
                         } else {
-                            Text("動画を2倍に拡大しています（\(viewModel.upscalingVideoName)）…").font(.callout)
+                            Text("動画を\(viewModel.upscalingFactor.label)に拡大しています（\(viewModel.upscalingVideoName)、\(Int((viewModel.upscaleProgress * 100).rounded()))%）…")
+                                .font(.callout)
+                                .monospacedDigit()
+                            Button("中止") { viewModel.cancelUpscale() }
+                                .controlSize(.small)
                         }
                     }
                     .padding(.horizontal, 14)

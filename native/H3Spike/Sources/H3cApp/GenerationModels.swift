@@ -421,6 +421,7 @@ struct ResolvedResult {
     /// Enlarged 2x after it was made, from this project video.
     var upscaledFrom: String? = nil
     var upscaler: VideoUpscaler? = nil
+    var upscaleFactor: UpscaleFactor? = nil
     var plannedClipCount: Int? = nil
     var chainClipFrames: Int? = nil
     /// What each clip added to the prompt (クリップごとの指示).
@@ -472,7 +473,7 @@ struct ResolvedResult {
             seedLine,
         ]
         if let upscaledFrom {
-            lines.insert(String(localized: "あとから拡大: \(upscaledFrom)を2倍に拡大（\((upscaler ?? .standard).label)）。下の設定は元の動画のものです"), at: 0)
+            lines.insert(String(localized: "あとから拡大: \(upscaledFrom)を\((upscaleFactor ?? .two).label)に拡大（\((upscaler ?? .standard).label)）。下の設定は元の動画のものです"), at: 0)
         }
         for lora in loras {
             let file = URL(fileURLWithPath: lora.path).lastPathComponent
