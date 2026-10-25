@@ -8,6 +8,8 @@ ordered dicts (anything else in it is refused).
 
   python3 -E tools/convert_realesrgan.py general  realesr-general-x4v3.pth realesr-general-wdn-x4v3.pth out.safetensors
   python3 -E tools/convert_realesrgan.py anime    realesr-animevideov3.pth out.safetensors
+  python3 -E tools/convert_realesrgan.py rrdb 2    RealESRGAN_x2plus.pth out.safetensors
+  python3 -E tools/convert_realesrgan.py rrdb 4    RealESRGAN_x4plus.pth out.safetensors
 
 "general" blends the two checkpoints as inference_realesrgan.py does by
 default (denoise strength 0.5: 0.5 * general + 0.5 * wdn, per tensor).
@@ -85,8 +87,18 @@ def main():
     elif kind == 'anime':
         tensors = {k: v.astype(np.float32) for k, v in load_pth(sys.argv[2]).items()}
         out, num_conv = sys.argv[3], 16
+    elif kind == 'rrdb':
+        # RRDBNet (RealESRGAN_x2plus / x4plus): 23 RRDB blocks, kept as they are.
+        scale = sys.argv[2]
+        tensors = {k: v.astype(np.float32) for k, v in load_pth(sys.argv[3]).items()}
+        blocks = len({k.split('.')[1] for k in tensors if k.startswith('body.')})
+        save_safetensors(sys.argv[4], tensors, {'arch': 'RRDBNet', 'num_feat': '64', 'num_grow_ch': '32',
+                                                'num_block': str(blocks), 'scale': scale,
+                                                'source': 'https://github.com/xinntao/Real-ESRGAN (BSD-3-Clause)'})
+        print('wrote', sys.argv[4], len(tensors), 'tensors,', blocks, 'blocks, conv_first', tensors['conv_first.weight'].shape)
+        return
     else:
-        raise SystemExit('kind must be general or anime')
+        raise SystemExit('kind must be general, anime or rrdb')
     convs = [k for k in tensors if k.endswith('.weight') and tensors[k].ndim == 4]
     assert len(convs) == num_conv + 2, (len(convs), num_conv)
     save_safetensors(out, tensors, {'arch': 'SRVGGNetCompact', 'num_feat': '64', 'num_conv': str(num_conv),
