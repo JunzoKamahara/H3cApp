@@ -31,6 +31,34 @@ final class RealESRGANNetwork {
     let height: Int
     let outputWidth: Int
     let outputHeight: Int
+    let scale: Int
+    /// The size the graph runs at: the frame, or a tile of it - a core of
+    /// `tile` pixels with `context` more on each side, so each core sees
+    /// everything its output depends on (each 3x3 convolution reaches one
+    /// pixel further) and the tiles give the frame's own result.
+    private let graphWidth: Int
+    private let graphHeight: Int
+    private let context: Int
+
+    /// The largest core of a tile, in input pixels (H3_ESRGAN_TILE sets it,
+    /// for measuring; 0 runs whole frames). An axis no longer than a core
+    /// and its context runs whole; a longer one is cut into equal cores.
+    /// 1024 keeps the usual sizes whole or in two (1620x1080: two windows,
+    /// about 9% more work) and bounds the largest frames' memory.
+    static var tile: Int {
+        if let value = ProcessInfo.processInfo.environment["H3_ESRGAN_TILE"], let tile = Int(value), tile >= 0 {
+            return tile
+        }
+        return 1024
+    }
+
+    /// The graph's length along an axis of `length`: the whole axis, or an
+    /// equal share of it with `context` on each side.
+    private static func window(length: Int, tile: Int, context: Int) -> Int {
+        guard tile > 0, length > tile + 2 * context else { return length }
+        let pieces = (length + tile - 1) / tile
+        return min((length + pieces - 1) / pieces + 2 * context, length)
+    }
     private let device: MTLDevice
     private let queue: MTLCommandQueue
     private let graph: MPSGraph
@@ -50,9 +78,16 @@ final class RealESRGANNetwork {
         self.queue = queue
         self.width = width
         self.height = height
+        self.scale = scale
         outputWidth = width * scale
         outputHeight = height * scale
         let tensors = try Self.readSafetensors(weights)
+        // One pixel of reach per convolution, and a little more.
+        context = tensors.values.filter { $0.1.count == 4 }.count + 2
+        let tile = Self.tile
+        graphWidth = Self.window(length: width, tile: tile, context: context)
+        graphHeight = Self.window(length: height, tile: tile, context: context)
+        let width = graphWidth, height = graphHeight
         let graph = MPSGraph()
 
         let input = graph.placeholder(shape: [1, height, width, 4].map { NSNumber(value: $0) },
@@ -123,23 +158,44 @@ final class RealESRGANNetwork {
         self.output = output
     }
 
-    /// One BGRA frame (`width` x `height`) to its enlargement (rows of any stride).
+    /// Where the graph's window sits along one axis of `length` for each
+    /// core: (core start, core end, window start), the window kept inside
+    /// the frame.
+    private func windows(length: Int, window: Int) -> [(Int, Int, Int)] {
+        guard window < length else { return [(0, length, 0)] }
+        let core = window - 2 * context
+        return stride(from: 0, to: length, by: core).map { start in
+            (start, min(start + core, length), min(max(start - context, 0), length - window))
+        }
+    }
+
+    /// One BGRA frame (`width` x `height`) to its enlargement (rows of any
+    /// stride), tile by tile when the graph is smaller than the frame.
     func upscale(_ source: UnsafeRawPointer, sourceRowBytes: Int,
                  into destination: UnsafeMutableRawPointer, destinationRowBytes: Int) throws {
-        let row = width * 4
-        for y in 0..<height {
-            inputBuffer.contents().advanced(by: y * row).copyMemory(from: source.advanced(by: y * sourceRowBytes),
-                                                                    byteCount: row)
-        }
-        let feed = MPSGraphTensorData(inputBuffer, shape: [1, height, width, 4].map { NSNumber(value: $0) },
+        let row = graphWidth * 4
+        let graphOutputWidth = graphWidth * scale
+        let feed = MPSGraphTensorData(inputBuffer, shape: [1, graphHeight, graphWidth, 4].map { NSNumber(value: $0) },
                                       dataType: .uInt8)
-        let result = MPSGraphTensorData(outputBuffer, shape: [1, outputHeight, outputWidth, 4].map { NSNumber(value: $0) },
+        let result = MPSGraphTensorData(outputBuffer,
+                                        shape: [1, graphHeight * scale, graphOutputWidth, 4].map { NSNumber(value: $0) },
                                         dataType: .uInt8)
-        graph.run(with: queue, feeds: [input: feed], targetOperations: nil, resultsDictionary: [output: result])
-        let outputRow = outputWidth * 4
-        for y in 0..<outputHeight {
-            destination.advanced(by: y * destinationRowBytes).copyMemory(
-                from: outputBuffer.contents().advanced(by: y * outputRow), byteCount: outputRow)
+        for (top, bottom, windowY) in windows(length: height, window: graphHeight) {
+            for (left, right, windowX) in windows(length: width, window: graphWidth) {
+                for y in 0..<graphHeight {
+                    inputBuffer.contents().advanced(by: y * row).copyMemory(
+                        from: source.advanced(by: (windowY + y) * sourceRowBytes + windowX * 4), byteCount: row)
+                }
+                graph.run(with: queue, feeds: [input: feed], targetOperations: nil, resultsDictionary: [output: result])
+                // The core's part of the window's output.
+                let bytes = (right - left) * scale * 4
+                for y in (top * scale)..<(bottom * scale) {
+                    destination.advanced(by: y * destinationRowBytes + left * scale * 4).copyMemory(
+                        from: outputBuffer.contents().advanced(by: ((y - windowY * scale) * graphOutputWidth
+                                                                   + (left - windowX) * scale) * 4),
+                        byteCount: bytes)
+                }
+            }
         }
     }
 
