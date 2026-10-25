@@ -434,6 +434,11 @@ struct ProjectVideosSheet: View {
                     viewModel.exportJoined(endingAt: video)
                 }
                 .disabled(viewModel.continuationChain(endingAt: video) == nil || viewModel.isExportingJoined)
+                Button("2倍に拡大した動画をつくる") {
+                    Task { await viewModel.upscaleProjectVideo(video) }
+                }
+                .disabled(!viewModel.canUpscale(video))
+                .help("この動画を2倍の大きさに拡大した動画を、プロジェクトに新しくつくります（音声はそのまま）")
                 Divider()
                 Button("参照に使う") {
                     viewModel.useVideoAsReference(video.url)

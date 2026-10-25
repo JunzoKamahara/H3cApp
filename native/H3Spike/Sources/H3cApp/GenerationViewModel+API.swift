@@ -171,6 +171,7 @@ extension GenerationViewModel {
             return projectResponse()
         case ("POST", "/api/project/new"), ("POST", "/api/project/open"), ("POST", "/api/project/close"),
              ("POST", "/api/project/import-video"),
+            ("POST", "/api/project/upscale-video"),
              ("POST", "/api/project/restore"), ("POST", "/api/project/use-as-reference"),
              ("POST", "/api/project/delete-video"):
             return handleProjectRequest(request)
@@ -373,6 +374,7 @@ extension GenerationViewModel {
             // progress or failure), and whether a video is being imported.
             "message": projectMessage as Any,
             "importing_video": isImportingVideo,
+            "upscaling_video": isUpscalingVideo,
             "videos": projectVideos.map { video -> [String: Any] in
                 var item: [String: Any] = ["file": video.url.lastPathComponent, "path": video.url.path]
                 if let record = video.record {
@@ -431,6 +433,18 @@ extension GenerationViewModel {
         case "/api/project/close":
             closeProject()
             return .json(200, ["ok": true])
+        case "/api/project/upscale-video":
+            // 2倍に拡大した動画をつくる: {"video": "<name>.mp4"} enlarges that
+            // project video 2x into a new one. Answers at once with the name
+            // it will have; it is listed by GET /api/project once written.
+            guard project != nil else { return .error(400, "no project is open") }
+            guard let video = video() else { return .error(400, "\"video\" must name a file listed by GET /api/project") }
+            guard !isUpscalingVideo else { return .error(409, "a video is already being enlarged") }
+            guard canUpscale(video), let name = upscaledVideoName(for: video) else {
+                return .error(400, "\(video.url.lastPathComponent) can't be enlarged 2x (larger than \(VideoUpscale.maximumSide) pixels a side, or no record)")
+            }
+            Task { await upscaleProjectVideo(video, as: name) }
+            return .json(202, ["ok": true, "video": name])
         case "/api/project/import-video":
             // 動画ファイルの続きを作る: {"path": "/…/video.mp4"} brings the
             // video into the open project (at the size closest to its own

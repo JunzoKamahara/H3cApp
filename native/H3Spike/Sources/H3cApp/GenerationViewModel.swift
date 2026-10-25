@@ -313,6 +313,9 @@ final class GenerationViewModel: ObservableObject {
     /// 動画ファイルの続きを作る is converting a video (ExternalContinuation).
     @Published var isImportingVideo = false
     var importingVideoName = ""
+    /// 2倍に拡大した動画をつくる is enlarging a project video (VideoUpscale).
+    @Published var isUpscalingVideo = false
+    var upscalingVideoName = ""
     /// A chosen video waiting for its size to be picked (ImportVideoSheet).
     @Published var pendingVideoImport: PendingVideoImport?
     /// The form before カスタムクリップ's editor opened (its キャンセル).

@@ -66,6 +66,12 @@ Good to know:
   from the original.
 - **Make it longer.** With the joined video shown, “Continue” in the panel
   makes one more clip; “Join and Export” then joins the whole run again.
+- **Enlarge 2x afterwards.** In “Project Videos…”, “More” → “Make a 2x
+  Enlarged Copy” adds the video at twice the size to the project
+  (`<name>_x2.mp4`), with its sound and its AI-generated record as they
+  are. It is the same high-quality resize as the ×2 sizes (not AI
+  upscaling) and works on joined videos too. An enlarged copy can't be
+  continued (continue the original), and no side may go past 4096 pixels.
 - **If you stop partway,** the clips made so far (two or more) are joined.
 - **Make the same run again.** With Randomness set to Fixed, the first clip
   uses that seed and each later one the next seed up, so the same settings

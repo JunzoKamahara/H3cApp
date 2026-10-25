@@ -41,10 +41,14 @@ struct ContentView: View {
             }
             .overlay(alignment: .top) {
                 // 動画ファイルの続きを作る: converting takes a little while.
-                if viewModel.isImportingVideo {
+                if viewModel.isImportingVideo || viewModel.isUpscalingVideo {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text("動画を取り込んでいます（\(viewModel.importingVideoName)）…").font(.callout)
+                        if viewModel.isImportingVideo {
+                            Text("動画を取り込んでいます（\(viewModel.importingVideoName)）…").font(.callout)
+                        } else {
+                            Text("動画を2倍に拡大しています（\(viewModel.upscalingVideoName)）…").font(.callout)
+                        }
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)

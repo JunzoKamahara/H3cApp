@@ -39,6 +39,7 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `POST` | `/api/project/use-as-reference` | `{"video"}` その動画を参照動画としてフォームに追加する。 |
 | `POST` | `/api/project/delete-video` | `{"video"}` 動画と記録をゴミ箱に移す。 |
 | `POST` | `/api/project/join` | `{"video"}` その動画で終わる続きの連なりを、引き継いだ部分のクロスフェードでプロジェクトの`<名前>_joined.mp4`（記録つき）につなぎ、終わったら`{"path", "clips"}`を返す。 |
+| `POST` | `/api/project/upscale-video` | `{"video"}` そのプロジェクトの動画を2倍に拡大した動画（`<名前>_x2.mp4`、音声とメタデータはそのまま、大きさの×2と同じ高品質な拡大）をつくる。拡大する前に`{"video"}`（付く名前）を返す。一辺が4096ピクセルを超えるときは`400`、ほかの拡大中は`409`。一覧に並ぶまで、`GET /api/project`の`upscaling_video`が`true`。 |
 | `POST` | `/api/project/import-video` | `{"path", "size_profile"?, "carry_frames"?, "crop_position"?}` ほかで作った動画の続きをつくるため、その動画を、動画の大きさに近い大きさ（`size_profile`が`"current"`なら今の大きさ、大きさの名前ならその大きさ）と24fpsに変換してプロジェクトに取り込み、フォームをその続きにする。`carry_frames`は引き継ぐコマ数（22・39・56、省略時22）。`crop_position`（`[x, y]`、それぞれ0〜1、省略時`[0.5, 0.5]`）は、縦横比が違うときに残す部分の位置（`[0, 0.5]`で左端）。取り込む前に`{"video"}`（付く名前）を返し、変換が終わると`GET /api/project`に並んで`continue_from`に使える。 |
 
 `POST /api/generate`のボディフィールド（`prompt`以外はすべて省略可）:

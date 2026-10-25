@@ -872,3 +872,16 @@
 "引き継ぐ長さを長くすると、取り込みと続きの生成に時間がかかり、続きで新しくつくれる部分が短くなります。" = "Carrying over more makes importing and generating take longer, and the continuation adds less that is new.";
 "約%@秒（%lldコマ、標準）" = "About %1$@ s (%2$lld frames, standard)";
 "約%@秒（%lldコマ）" = "About %1$@ s (%2$lld frames)";
+
+/* 2倍に拡大した動画をつくる (VideoUpscale.swift) */
+"動画を2倍に拡大しています（%@）…" = "Enlarging the video 2x (%@)…";
+"あとから拡大: %@を2倍に拡大（%@）。下の設定は元の動画のものです" = "Enlarged afterwards: %1$@ at 2x (%2$@). The settings below are the original's.";
+"2倍に拡大した動画をつくる" = "Make a 2x Enlarged Copy";
+"この動画を2倍の大きさに拡大した動画を、プロジェクトに新しくつくります（音声はそのまま）" = "Makes a new project video: this one enlarged to twice the size (the sound stays as it is).";
+"標準（高品質な拡大）" = "Standard (high-quality resize)";
+"%@を2倍に拡大して、%@をつくりました（%@）" = "Enlarged %1$@ 2x into %2$@ (%3$@).";
+"動画を拡大できませんでした（詳細: %@）" = "Couldn't enlarge the video (details: %@)";
+"拡大すると%lld×%lldになり、書き出せる大きさ（一辺4096ピクセル）を超えます" = "Enlarged, it would be %lld×%lld, larger than can be written (4096 pixels a side)";
+"動画を読み込めませんでした" = "Couldn't read the video";
+"拡大した動画を書き出せませんでした（%@）" = "Couldn't write the enlarged video (%@)";
+"フレームを拡大できませんでした" = "Couldn't enlarge a frame";

@@ -116,6 +116,12 @@ struct ProjectVideoRecord: Codable {
     /// A video brought in to be continued (動画ファイルの続きを作る): the
     /// file it came from. Not generated - its settings are the form's then.
     var importedFrom: String? = nil
+    /// An enlarged copy (2倍に拡大した動画をつくる): the project video it was
+    /// made from and the upscaler (VideoUpscaler). The rest is that video's.
+    var upscaledFrom: String? = nil
+    var upscaler: String? = nil
+    /// Its frame size then, [width, height] (the draft keeps the generated one).
+    var upscaledSize: [Int]? = nil
 }
 
 struct OpenProject: Equatable {
@@ -958,6 +964,8 @@ extension ResolvedResult {
             chained: draft.chained ?? false,
             joinedClipCount: record.joinedClips?.count,
             importedFrom: record.importedFrom,
+            upscaledFrom: record.upscaledFrom,
+            upscaler: record.upscaler.flatMap(VideoUpscaler.init(rawValue:)),
             plannedClipCount: record.chainPlannedClips,
             chainClipFrames: (draft.chained ?? false) ? (draft.chainClipFrames ?? defaultChainClipLength.frames) : nil,
             clipPrompts: (draft.chained ?? false) ? draft.clipPrompts : nil,
