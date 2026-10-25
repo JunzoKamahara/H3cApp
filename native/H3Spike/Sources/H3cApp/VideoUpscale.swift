@@ -121,6 +121,7 @@ enum VideoUpscale {
         case cannotWrite(String)
         case unavailable(String)
         case cancelled
+        case overSource
         var errorDescription: String? {
             switch self {
             case .noVideoTrack: return String(localized: "映像のトラックがありません")
@@ -130,6 +131,7 @@ enum VideoUpscale {
             case .cannotWrite(let detail): return String(localized: "拡大した動画を書き出せませんでした（\(detail)）")
             case .unavailable(let name): return String(localized: "このMacでは\(name)を使えません")
             case .cancelled: return String(localized: "拡大を中止しました")
+            case .overSource: return String(localized: "拡大した動画を、元の動画と同じファイルには保存できません")
             }
         }
     }
@@ -146,14 +148,46 @@ enum VideoUpscale {
         return (Int(size.width.rounded()), Int(size.height.rounded()))
     }
 
+    /// `url` with its symbolic links resolved - for a file not made yet,
+    /// its folder's, with the name after it.
+    private static func resolved(_ url: URL) -> URL {
+        let standard = url.standardizedFileURL
+        if FileManager.default.fileExists(atPath: standard.path) { return standard.resolvingSymlinksInPath() }
+        return standard.deletingLastPathComponent().resolvingSymlinksInPath()
+            .appendingPathComponent(standard.lastPathComponent)
+    }
+
+    /// Whether writing `destination` would write `source` itself: the same
+    /// path once "..", symbolic links and the like are resolved, or the same
+    /// file under another name (a hard link).
+    static func isSameFile(_ source: URL, _ destination: URL) -> Bool {
+        let from = resolved(source), to = resolved(destination)
+        if from.path == to.path { return true }
+        let keys: Set<URLResourceKey> = [.fileResourceIdentifierKey, .volumeIdentifierKey]
+        guard let a = try? from.resourceValues(forKeys: keys), let b = try? to.resourceValues(forKeys: keys),
+              let fileA = a.fileResourceIdentifier, let fileB = b.fileResourceIdentifier,
+              let volumeA = a.volumeIdentifier, let volumeB = b.volumeIdentifier else { return false }
+        return volumeA.isEqual(volumeB) && fileA.isEqual(fileB)
+    }
+
     /// Writes `source` enlarged by `factor` to `destination` (H.264 at
     /// the engine's bitrate rule, the sound and metadata as they are).
     /// `progress` gets the share of frames done (on the main queue);
     /// `isCancelled` is asked before each frame.
+    ///
+    /// The video is written to a hidden file next to `destination` and put
+    /// in its place only once it is complete, so a file already there stays
+    /// as it was if this fails or is cancelled. Writing over `source` itself
+    /// is refused.
     static func upscale(_ source: URL, to destination: URL, factor: UpscaleFactor = .two,
                         upscaler: VideoUpscaler = .standard,
                         progress: @escaping (Double) -> Void = { _ in },
                         isCancelled: @escaping () -> Bool = { false }) async throws {
+        guard !isSameFile(source, destination) else { throw UpscaleError.overSource }
+        // Same folder, so the finished file moves into place, not copies.
+        let staging = destination.deletingLastPathComponent()
+            .appendingPathComponent(".h3c-upscale-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: staging) }
         let asset = AVURLAsset(url: source)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw UpscaleError.noVideoTrack
@@ -198,8 +232,7 @@ enum VideoUpscale {
             audioOutput = output
         }
 
-        try? FileManager.default.removeItem(at: destination)
-        let writer = try AVAssetWriter(outputURL: destination, fileType: .mp4)
+        let writer = try AVAssetWriter(outputURL: staging, fileType: .mp4)
         writer.metadata = (try? await asset.load(.metadata)) ?? []
         // The engine's settings (h3_av_writer.m): 5 bits a pixel, at least
         // 9.5 Mbps, High profile, a key frame every 30 frames.
@@ -303,13 +336,19 @@ enum VideoUpscale {
         if let error = failure.error ?? (reader.status == .failed ? reader.error : nil) {
             reader.cancelReading()
             writer.cancelWriting()
-            try? FileManager.default.removeItem(at: destination)
             throw error
         }
         await writer.finishWriting()
         if writer.status != .completed {
-            try? FileManager.default.removeItem(at: destination)
             throw UpscaleError.cannotWrite(writer.error?.localizedDescription ?? "")
+        }
+        // Checked again: the names could have changed while it was written.
+        guard !isSameFile(source, destination) else { throw UpscaleError.overSource }
+        let manager = FileManager.default
+        if manager.fileExists(atPath: destination.path) {
+            _ = try manager.replaceItemAt(destination, withItemAt: staging)
+        } else {
+            try manager.moveItem(at: staging, to: destination)
         }
         DispatchQueue.main.async { progress(1) }
     }

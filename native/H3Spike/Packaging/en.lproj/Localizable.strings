@@ -912,3 +912,4 @@
 "拡大した動画をつくる…" = "Make an Enlarged Copy…";
 "%@（%@、4096ピクセルを超えるため選べません）" = "%1$@ (%2$@, too large: a side passes 4096 pixels)";
 "%@：%@ → %@" = "%1$@: %2$@ → %3$@";
+"拡大した動画を、元の動画と同じファイルには保存できません" = "The enlarged video can't be saved over the original video itself";

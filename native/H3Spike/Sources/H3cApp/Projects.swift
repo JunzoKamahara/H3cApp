@@ -364,7 +364,8 @@ enum ProjectFiles {
 
     static func videos(in projectURL: URL) -> [ProjectVideo] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: projectURL.path)) ?? []
-        let videos = names.filter { $0.lowercased().hasSuffix(".mp4") }.map { name -> ProjectVideo in
+        // Not hidden files: an enlargement being written (VideoUpscale).
+        let videos = names.filter { !$0.hasPrefix(".") && $0.lowercased().hasSuffix(".mp4") }.map { name -> ProjectVideo in
             let url = projectURL.appendingPathComponent(name)
             let recordURL = url.deletingPathExtension().appendingPathExtension("json")
             let record = (try? Data(contentsOf: recordURL)).flatMap { try? decoder.decode(ProjectVideoRecord.self, from: $0) }

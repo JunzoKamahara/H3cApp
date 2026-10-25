@@ -78,6 +78,9 @@ extension GenerationViewModel {
                 return .error(400, "\"output\" must be an .mp4 path")
             }
             guard !isUpscalingVideo else { return .error(409, "a video is already being enlarged") }
+            guard !VideoUpscale.isSameFile(URL(fileURLWithPath: path), URL(fileURLWithPath: output)) else {
+                return .error(400, "\"output\" is the input video itself")
+            }
             var upscaler = VideoUpscaler.standard
             if let raw = json["upscaler"] {
                 guard let name = raw as? String, let chosen = VideoUpscaler(rawValue: name), chosen.isAvailable else {
