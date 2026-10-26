@@ -191,9 +191,9 @@
       <h2 id="upscale-title">Enlarging afterwards</h2>
       <p>A finished video can be enlarged afterwards to 1.5x, 2x, 3x or 4x (from v0.6.8). It works on other video files too, not only on videos made in H3cApp. Every method runs inside the app, with no other program.</p>
       <ol class="steps">
-        <li><strong>Pick the video.</strong> For a project video, choose “<span class="ui">More</span>” → “<span class="ui">Make an Enlarged Copy…</span>” in “<span class="ui">Project Videos…</span>”. For any other video file, choose “<span class="ui">Project</span>” → “<span class="ui">Enlarge a Video File…</span>” in the menu bar.</li>
+        <li><strong>Pick the video.</strong> For the video shown in the window, choose “<span class="ui">Video</span>” → “<span class="ui">Enlarge the Video Shown…</span>” in the menu bar. A project video can also be picked with “<span class="ui">More</span>” → “<span class="ui">Make an Enlarged Copy…</span>” in “<span class="ui">Project Videos…</span>”. For any other video file, choose “<span class="ui">Video</span>” → “<span class="ui">Enlarge a Video File…</span>”.</li>
         <li><strong>Choose the scale and the upscaler.</strong> Each scale shows the size it makes; a scale past 4096 pixels a side can't be chosen.</li>
-        <li><strong>Click “<span class="ui">Enlarge</span>”.</strong> A project video gets a new copy in the project, its name ending in the scale (for example <code>_x2</code>); for another file you choose where to save it. While it runs, the top of the window shows how far it has got, with “<span class="ui">Cancel</span>”.</li>
+        <li><strong>Click “<span class="ui">Enlarge</span>”.</strong> A project video gets a new copy in the project, its name ending in the scale (for example <code>_x2</code>); for another video you choose where to save it, and “<span class="ui">Show in Finder</span>” in the message at the end opens where it went. While it runs, the top of the window shows how far it has got, with “<span class="ui">Cancel</span>”.</li>
       </ol>
       <div class="table-wrap">
         <table>
@@ -208,8 +208,9 @@
         </table>
       </div>
       <ul>
-        <li><strong>Time</strong>: Standard and MetalFX take a few seconds. Real-ESRGAN takes longer: on a 24 GB M5, about 0.08 s a frame (General) and 0.05 s (Anime) for an 800×544 video, or about 0.32 s and 0.18 s at 1620×1080.</li>
-        <li><strong>Sound and records</strong>: the sound and the file's AI-generated information stay as they are. An enlarged copy can't be continued (continue the original).</li>
+        <li><strong>Time</strong>: Standard and MetalFX take a few seconds. Real-ESRGAN takes longer: on a 24 GB M5, about 0.08 s a frame (General) and 0.05 s (Anime) for an 800×544 video, or about 0.32 s and 0.18 s at 1620×1080. Large videos are processed in pieces, which keeps memory use down (from v0.6.9).</li>
+        <li><strong>Sound and records</strong>: the sound and the file's AI-generated information stay as they are.</li>
+        <li><strong>Continuing</strong> (from v0.6.9): an enlarged copy can be continued like any video. The continuation is made at the original's size, then enlarged the same way, with the same scale and upscaler, into a copy of its own; “<span class="ui">Join and Export</span>” joins the enlarged copies. A copy of an enlarged copy can't be continued, nor can an enlarged copy with a joined length.</li>
         <li><strong>Where it saves</strong>: the video replaces the file only once complete, so a file already there survives a failure or a cancel. It can't be saved over the original video itself.</li>
         <li><strong>License</strong>: the app includes Real-ESRGAN's pretrained weights (BSD-3-Clause).</li>
       </ul>
