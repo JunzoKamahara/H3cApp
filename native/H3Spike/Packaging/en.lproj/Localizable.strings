@@ -918,3 +918,6 @@
 "拡大した動画の続きです。続きは元の大きさでつくってから、同じように%@に拡大します（%@）。" = "This continues an enlarged video. The continuation is made at the original's size, then enlarged %1$@ the same way (%2$@).";
 "動画を拡大しています。終わってから生成してください" = "A video is being enlarged. Generate once it's done";
 "続きを%@に拡大して、%@をつくりました。「つないで書き出す」で、拡大した動画どうしをつなげます" = "Enlarged the continuation %1$@ into %2$@. “Join and Export” joins the enlarged videos";
+"書き出しに失敗しました（%@）" = "The export failed (%@)";
+"H.264で書き出す（互換性重視）" = "Export as H.264 (most compatible)";
+"動画はHEVCで保存しています。古いWindowsなど、HEVCを再生できない相手に渡すときにオンにすると、H.264に変換して書き出します（画質は少し下がり、ファイルは大きくなることがあります）。" = "Videos are kept in HEVC. Turn this on to convert to H.264 for players that can't play HEVC, such as older Windows (a little lower quality, and the file may be larger).";

@@ -54,7 +54,22 @@ static NSArray<AVMetadataItem *> *h3_av_ai_metadata(void) {
     ];
 }
 
-static NSDictionary *h3_av_video_settings(int width, int height) {
+static NSDictionary *h3_av_video_settings(int width, int height, int hevc) {
+    /* Quality 0.85: against the uncompressed frames, a dark 1920x1088 clip
+     * went 47.3 -> 48.2 dB at 2.0 -> 2.4 Mbps and a bright 1600x1088 one
+     * 40.5 -> 41.0 dB at 8.0 -> 5.7 Mbps, with far fewer 8-pixel blocks
+     * in the dark. */
+    if (hevc)
+        return @{
+            AVVideoCodecKey: AVVideoCodecTypeHEVC,
+            AVVideoWidthKey: @(width),
+            AVVideoHeightKey: @(height),
+            AVVideoCompressionPropertiesKey: @{
+                AVVideoQualityKey: @0.85,
+                AVVideoMaxKeyFrameIntervalKey: @30,
+                AVVideoAllowFrameReorderingKey: @YES,
+            },
+        };
     int64_t bitrate = (int64_t)width * (int64_t)height * 5;
     if (bitrate < 9500000) bitrate = 9500000;
     /* Level 4.1 caps a frame at 8192 macroblocks (1920x1088 fits); larger
@@ -159,7 +174,7 @@ static int h3_av_append_whole_audio_track(
 static h3_av_writer *h3_open_writer(
         const char *path, int width, int height, int fps,
         const float *pcm, int samples, int channels, int sample_rate,
-        char *error, size_t error_size) {
+        int hevc, char *error, size_t error_size) {
     @autoreleasepool {
         NSString *nsPath = [NSString stringWithUTF8String:path];
         NSFileManager *fm = [NSFileManager defaultManager];
@@ -189,7 +204,7 @@ static h3_av_writer *h3_open_writer(
 
         AVAssetWriterInput *videoInput = [AVAssetWriterInput
             assetWriterInputWithMediaType:AVMediaTypeVideo
-                            outputSettings:h3_av_video_settings(width, height)];
+                            outputSettings:h3_av_video_settings(width, height, hevc)];
         videoInput.expectsMediaDataInRealTime = NO;
         if (![writer canAddInput:videoInput]) {
             h3_av_set_error(error, error_size, @"cannot add video input to AVAssetWriter");
@@ -371,7 +386,7 @@ int h3_av_write_rgb24(const char *path, const uint8_t *frames,
         return 0;
     }
     h3_av_writer *ctx = h3_open_writer(path, width, height, fps, NULL, 0, 0, 0,
-                                       error, error_size);
+                                       0, error, error_size);
     if (!ctx) return 0;
     int ok = h3_append_frames(ctx, frames, frame_count, error, error_size);
     return h3_close_writer(ctx, ok ? error : NULL, ok ? error_size : 0) && ok;
@@ -380,7 +395,7 @@ int h3_av_write_rgb24(const char *path, const uint8_t *frames,
 int h3_av_write_rgb24_f32(const char *path, const uint8_t *frames,
                           int frame_count, int width, int height,
                           int fps, const float *pcm, int samples,
-                          int channels, int sample_rate,
+                          int channels, int sample_rate, int hevc,
                           char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
     if (!path || !*path || !frames || frame_count < 1 || width < 2 ||
@@ -390,7 +405,8 @@ int h3_av_write_rgb24_f32(const char *path, const uint8_t *frames,
         return 0;
     }
     h3_av_writer *ctx = h3_open_writer(path, width, height, fps, pcm, samples,
-                                       channels, sample_rate, error, error_size);
+                                       channels, sample_rate, hevc, error,
+                                       error_size);
     if (!ctx) return 0;
     int ok = h3_append_frames(ctx, frames, frame_count, error, error_size);
     return h3_close_writer(ctx, ok ? error : NULL, ok ? error_size : 0) && ok;
@@ -399,7 +415,7 @@ int h3_av_write_rgb24_f32(const char *path, const uint8_t *frames,
 h3_av_writer *h3_av_writer_open(const char *path, int width,
                                 int height, int fps,
                                 const float *pcm, int samples,
-                                int channels, int sample_rate,
+                                int channels, int sample_rate, int hevc,
                                 char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
     if (!path || !*path || width < 2 || height < 2 || fps < 1 ||
@@ -409,7 +425,7 @@ h3_av_writer *h3_av_writer_open(const char *path, int width,
         return NULL;
     }
     return h3_open_writer(path, width, height, fps, pcm, samples, channels,
-                          sample_rate, error, error_size);
+                          sample_rate, hevc, error, error_size);
 }
 
 int h3_av_writer_write_video(h3_av_writer *writer,

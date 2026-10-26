@@ -195,7 +195,7 @@ extension GenerationViewModel {
         composition.renderSize = size
         composition.frameDuration = CMTime(value: 1, timescale: 24)
         composition.instructions = [instruction]
-        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
+        guard let session = AVAssetExportSession(asset: asset, presetName: VideoCodec.masterExportPreset) else {
             throw ImportError.cannotExport
         }
         session.videoComposition = composition

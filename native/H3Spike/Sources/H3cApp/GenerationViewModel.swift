@@ -1004,6 +1004,7 @@ final class GenerationViewModel: ObservableObject {
         // Decided here, once, for this generation: the value is copied into
         // params, so later toggles in the form can't affect a running job.
         params.fastAttention = useFastAttention
+        params.videoHEVC = true
         let sampling = samplingSettings
         params.renoise = sampling.renoise
         params.audioSigmaShift = sampling.audioShift

@@ -179,6 +179,9 @@ public struct H3GenerationParams: Sendable {
     // (and H3_INT8_STREAM_MLP) don't apply - generate() clears those
     // instead of passing along a combination the engine would ignore.
     public var ssdStreaming = false
+    // h3_params.video_hevc: the MP4's video in HEVC at a constant quality
+    // instead of H.264 at an average bitrate.
+    public var videoHEVC = false
     // h3_params.fast_attention: opt-in fast mode (experimental) - ccv's int8
     // attention on M5-class GPUs; see H3Engine.fastAttentionAvailable. The
     // same seed gives a different video than the standard mode. Separate
@@ -549,6 +552,7 @@ public final class H3Engine: @unchecked Sendable {
                 cParams.ssd_streaming = params.ssdStreaming ? 1 : 0
                 cParams.cancel_requested = UnsafePointer(cancelFlag.engineFlag)
                 cParams.fast_attention = params.fastAttention ? 1 : 0
+                cParams.video_hevc = params.videoHEVC ? 1 : 0
                 cParams.sampler = params.renoise ? Int32(H3_SAMPLER_RENOISE)
                                                  : Int32(H3_SAMPLER_EULER)
                 cParams.audio_sigma_shift = params.audioSigmaShift

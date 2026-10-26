@@ -419,7 +419,7 @@ enum JoinedVideoExporter {
         audioMix.inputParameters = audioParameters
 
         guard let session = AVAssetExportSession(asset: composition,
-                                                 presetName: AVAssetExportPresetHighestQuality) else {
+                                                 presetName: VideoCodec.masterExportPreset) else {
             throw JoinError.exportFailed
         }
         session.videoComposition = videoComposition

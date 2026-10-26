@@ -234,22 +234,9 @@ enum VideoUpscale {
 
         let writer = try AVAssetWriter(outputURL: staging, fileType: .mp4)
         writer.metadata = (try? await asset.load(.metadata)) ?? []
-        // The engine's settings (h3_av_writer.m): 5 bits a pixel, at least
-        // 9.5 Mbps, High profile, a key frame every 30 frames.
-        let bitrate = max(width * height * 5, 9_500_000)
-        let macroblocks = ((width + 15) / 16) * ((height + 15) / 16)
-        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: width,
-            AVVideoHeightKey: height,
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: bitrate,
-                AVVideoProfileLevelKey: macroblocks > 8192 ? AVVideoProfileLevelH264HighAutoLevel
-                                                           : AVVideoProfileLevelH264High41,
-                AVVideoMaxKeyFrameIntervalKey: 30,
-                AVVideoAllowFrameReorderingKey: true,
-            ],
-        ])
+        // The engine's settings (h3_av_writer.m).
+        let videoInput = AVAssetWriterInput(mediaType: .video,
+                                            outputSettings: VideoCodec.hevc.writerSettings(width: width, height: height))
         videoInput.expectsMediaDataInRealTime = false
         // A rotation keeps its meaning at the larger size.
         // (Its offsets are the frame's width or height.)
@@ -354,7 +341,7 @@ enum VideoUpscale {
     }
 
     /// Feeds `input` from `next` (false: no more) whenever it wants data.
-    private static func pump(_ input: AVAssetWriterInput, on queue: DispatchQueue,
+    static func pump(_ input: AVAssetWriterInput, on queue: DispatchQueue,
                              _ next: @escaping () -> Bool) async {
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
             var finished = false
@@ -371,7 +358,7 @@ enum VideoUpscale {
     }
 
     /// The first error from either track's queue.
-    private final class Failure: @unchecked Sendable {
+    final class Failure: @unchecked Sendable {
         private let lock = NSLock()
         private var stored: Error?
         var error: Error? {
