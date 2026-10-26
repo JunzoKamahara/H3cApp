@@ -236,7 +236,8 @@ enum VideoUpscale {
         writer.metadata = (try? await asset.load(.metadata)) ?? []
         // The engine's settings (h3_av_writer.m).
         let videoInput = AVAssetWriterInput(mediaType: .video,
-                                            outputSettings: VideoCodec.hevc.writerSettings(width: width, height: height))
+                                            outputSettings: VideoCodec.hevc.writerSettings(width: width, height: height,
+                                                                                           quality: VideoQuality.saved.value))
         videoInput.expectsMediaDataInRealTime = false
         // A rotation keeps its meaning at the larger size.
         // (Its offsets are the frame's width or height.)
@@ -704,6 +705,7 @@ extension GenerationViewModel {
         }
         reloadProjectVideos()
         projectMessage = String(localized: "\(video.url.lastPathComponent)を\(factor.label)に拡大して、\(name)をつくりました（\(upscaler.label)、\(formatElapsed(Date().timeIntervalSince(started)))）")
+        projectMessageFile = destination
         return true
     }
 
@@ -733,6 +735,7 @@ extension GenerationViewModel {
         showProjectVideo(video)
         let factor = pending[0].enlargement.factor
         projectMessage = String(localized: "続きを\(factor.label)に拡大して、\(made.joined(separator: "、"))をつくりました。「つないで書き出す」で、拡大した動画どうしをつなげます")
+        projectMessageFile = video.url
     }
 
     /// 動画ファイルを拡大: `source` enlarged by `factor` into `destination`.

@@ -159,13 +159,21 @@ Related documentation: [Local API](API.md) Â· [Building and testing](BUILD.md) Â
   as a staircase of blocks on dark edges. `H3_VAE_TILE_PIXELS` still picks
   another size.
 - **Video compression**: every video the app keeps (generated, joined,
-  enlarged, imported) is HEVC at a constant quality (0.85). H.264 at an
+  enlarged, imported) is HEVC at a constant quality: Advanced Settings'
+  Quality of Saved Videos, Standard (0.85), High (0.90, the default) or
+  Highest (0.95). Bright, smooth skin needs High: at 0.85 a 768x768
+  close-up got 2.2 Mbps and its 16-pixel blocks showed, at 0.90 6.4 Mbps
+  (as much as the old H.264) with fewer than H.264 had. Files say their
+  colours are BT.709; left unsaid, a decoder taking BT.601 shifted red and
+  green by about 3 levels in 255. H.264 at an
   average bitrate (5 bits a pixel, at least 9.5 Mbps) gave dark scenes
   about a fifth of it - 2.0 Mbps for a dark 1920x1088 clip - and they broke
   into 8-pixel blocks; HEVC there took 2.4 Mbps and came 0.8 dB closer to
   the uncompressed frames, and on a bright 1600x1088 clip 5.7 Mbps instead
-  of 8.0 at 0.5 dB closer. Export can make an H.264 copy for players
-  without HEVC ("Export as H.264"): written at a constant quality too
+  of 8.0 at 0.5 dB closer (at 0.85). Export can make an H.264 copy for
+  players without HEVC ("Export as H.264"), and re-encodes it, or a copy
+  with the AI label, at its own Export quality: written at a constant
+  quality too
   (3.4 Mbps for the dark clip, 0.5 dB below the HEVC master), as
   AVFoundation's H.264 preset starved it again (1.7 Mbps). Videos made
   before this stay H.264 and are exported as they are. The engine's own

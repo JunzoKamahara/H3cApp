@@ -285,6 +285,7 @@ private struct ResultActionsView: View {
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         AIDisclosure.addsLabel = options.addsLabel
         AIDisclosure.exportsH264 = options.makesH264
+        VideoQuality.export = options.quality
         GenerationMetadata.exportsSettings = options.includesSettings
         let made = viewModel.recordForExport(sourceURL)
         isExporting = true
@@ -292,7 +293,7 @@ private struct ResultActionsView: View {
         Task {
             do {
                 try await AIDisclosure.export(sourceURL, to: destination, withLabel: options.addsLabel,
-                                              h264: options.makesH264)
+                                              h264: options.makesH264, quality: options.quality)
                 if let made {
                     GenerationMetadata.tag(destination, record: made.record, clips: made.clips,
                                            includeSettings: options.includesSettings)
@@ -313,7 +314,8 @@ private struct ResultActionsView: View {
 }
 
 /// The save panel's switches: the AI label (AIDisclosure), the settings in
-/// the file (GenerationMetadata) and H.264 for players without HEVC. AppKit controls, not SwiftUI: the panel
+/// the file (GenerationMetadata), H.264 for players without HEVC, and the
+/// quality a re-encoded export is written at. AppKit controls, not SwiftUI: the panel
 /// shows its accessory view from another process (NSAccessoryViewWindow),
 /// and SwiftUI checkboxes there don't take clicks - they stayed on.
 private final class ExportOptionsAccessory: NSObject {
@@ -321,11 +323,13 @@ private final class ExportOptionsAccessory: NSObject {
     private let labelBox: NSButton
     private let settingsBox: NSButton
     private let h264Box: NSButton
+    private let qualityMenu: NSPopUpButton
     private let labelNote: NSTextField
 
     var addsLabel: Bool { labelBox.state == .on }
     var includesSettings: Bool { settingsBox.state == .on }
     var makesH264: Bool { h264Box.state == .on }
+    var quality: VideoQuality { VideoQuality.allCases[max(qualityMenu.indexOfSelectedItem, 0)] }
 
     private static func labelNoteText(_ addsLabel: Bool) -> String {
         addsLabel
@@ -354,12 +358,20 @@ private final class ExportOptionsAccessory: NSObject {
         h264Box = NSButton(checkboxWithTitle: String(localized: "H.264で書き出す（互換性重視）"), target: nil, action: nil)
         h264Box.state = AIDisclosure.exportsH264 ? .on : .off
         let h264Note = Self.caption(String(localized: "動画はHEVCで保存しています。古いWindowsなど、HEVCを再生できない相手に渡すときにオンにすると、H.264に変換して書き出します（画質は少し下がり、ファイルは大きくなることがあります）。"))
-        view = NSStackView(views: [labelBox, labelNote, settingsBox, settingsNote, h264Box, h264Note])
+        qualityMenu = NSPopUpButton(frame: .zero, pullsDown: false)
+        qualityMenu.addItems(withTitles: VideoQuality.allCases.map(\.label))
+        qualityMenu.selectItem(at: VideoQuality.allCases.firstIndex(of: VideoQuality.export) ?? 1)
+        let qualityRow = NSStackView(views: [NSTextField(labelWithString: String(localized: "書き出しの画質:")), qualityMenu])
+        qualityRow.spacing = 6
+        let qualityNote = Self.caption(String(localized: "AI生成の表示を入れるときと、H.264に変換するときに、この画質で書き直します。どちらもしないときは、保存した動画をそのまま写します。"))
+        view = NSStackView(views: [labelBox, labelNote, settingsBox, settingsNote, h264Box, h264Note,
+                                   qualityRow, qualityNote])
         view.orientation = .vertical
         view.alignment = .leading
         view.spacing = 4
         view.setCustomSpacing(8, after: labelNote)
         view.setCustomSpacing(8, after: settingsNote)
+        view.setCustomSpacing(8, after: h264Note)
         view.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
         super.init()
         labelBox.target = self

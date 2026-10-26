@@ -54,7 +54,19 @@ static NSArray<AVMetadataItem *> *h3_av_ai_metadata(void) {
     ];
 }
 
-static NSDictionary *h3_av_video_settings(int width, int height, int hevc) {
+/* HD's colours (BT.709), said in the file: left unsaid, players guess, and
+ * a decoder taking BT.601 shifted a skin close-up's red and green by about
+ * 3 levels in 255. */
+static NSDictionary *h3_av_color_properties(void) {
+    return @{
+        AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+        AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+        AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+    };
+}
+
+static NSDictionary *h3_av_video_settings(int width, int height, int hevc,
+                                          float quality) {
     /* Quality 0.85: against the uncompressed frames, a dark 1920x1088 clip
      * went 47.3 -> 48.2 dB at 2.0 -> 2.4 Mbps and a bright 1600x1088 one
      * 40.5 -> 41.0 dB at 8.0 -> 5.7 Mbps, with far fewer 8-pixel blocks
@@ -64,8 +76,9 @@ static NSDictionary *h3_av_video_settings(int width, int height, int hevc) {
             AVVideoCodecKey: AVVideoCodecTypeHEVC,
             AVVideoWidthKey: @(width),
             AVVideoHeightKey: @(height),
+            AVVideoColorPropertiesKey: h3_av_color_properties(),
             AVVideoCompressionPropertiesKey: @{
-                AVVideoQualityKey: @0.85,
+                AVVideoQualityKey: @(quality > 0.0f && quality <= 1.0f ? quality : 0.85f),
                 AVVideoMaxKeyFrameIntervalKey: @30,
                 AVVideoAllowFrameReorderingKey: @YES,
             },
@@ -81,6 +94,7 @@ static NSDictionary *h3_av_video_settings(int width, int height, int hevc) {
         AVVideoCodecKey: AVVideoCodecTypeH264,
         AVVideoWidthKey: @(width),
         AVVideoHeightKey: @(height),
+        AVVideoColorPropertiesKey: h3_av_color_properties(),
         AVVideoCompressionPropertiesKey: @{
             AVVideoAverageBitRateKey: @(bitrate),
             AVVideoProfileLevelKey: level,
@@ -174,7 +188,7 @@ static int h3_av_append_whole_audio_track(
 static h3_av_writer *h3_open_writer(
         const char *path, int width, int height, int fps,
         const float *pcm, int samples, int channels, int sample_rate,
-        int hevc, char *error, size_t error_size) {
+        int hevc, float quality, char *error, size_t error_size) {
     @autoreleasepool {
         NSString *nsPath = [NSString stringWithUTF8String:path];
         NSFileManager *fm = [NSFileManager defaultManager];
@@ -204,7 +218,7 @@ static h3_av_writer *h3_open_writer(
 
         AVAssetWriterInput *videoInput = [AVAssetWriterInput
             assetWriterInputWithMediaType:AVMediaTypeVideo
-                            outputSettings:h3_av_video_settings(width, height, hevc)];
+                            outputSettings:h3_av_video_settings(width, height, hevc, quality)];
         videoInput.expectsMediaDataInRealTime = NO;
         if (![writer canAddInput:videoInput]) {
             h3_av_set_error(error, error_size, @"cannot add video input to AVAssetWriter");
@@ -386,7 +400,7 @@ int h3_av_write_rgb24(const char *path, const uint8_t *frames,
         return 0;
     }
     h3_av_writer *ctx = h3_open_writer(path, width, height, fps, NULL, 0, 0, 0,
-                                       0, error, error_size);
+                                       0, 0.0f, error, error_size);
     if (!ctx) return 0;
     int ok = h3_append_frames(ctx, frames, frame_count, error, error_size);
     return h3_close_writer(ctx, ok ? error : NULL, ok ? error_size : 0) && ok;
@@ -396,7 +410,7 @@ int h3_av_write_rgb24_f32(const char *path, const uint8_t *frames,
                           int frame_count, int width, int height,
                           int fps, const float *pcm, int samples,
                           int channels, int sample_rate, int hevc,
-                          char *error, size_t error_size) {
+                          float quality, char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
     if (!path || !*path || !frames || frame_count < 1 || width < 2 ||
         height < 2 || fps < 1 || width % 2 || height % 2 || !pcm ||
@@ -405,8 +419,8 @@ int h3_av_write_rgb24_f32(const char *path, const uint8_t *frames,
         return 0;
     }
     h3_av_writer *ctx = h3_open_writer(path, width, height, fps, pcm, samples,
-                                       channels, sample_rate, hevc, error,
-                                       error_size);
+                                       channels, sample_rate, hevc, quality,
+                                       error, error_size);
     if (!ctx) return 0;
     int ok = h3_append_frames(ctx, frames, frame_count, error, error_size);
     return h3_close_writer(ctx, ok ? error : NULL, ok ? error_size : 0) && ok;
@@ -416,7 +430,7 @@ h3_av_writer *h3_av_writer_open(const char *path, int width,
                                 int height, int fps,
                                 const float *pcm, int samples,
                                 int channels, int sample_rate, int hevc,
-                                char *error, size_t error_size) {
+                                float quality, char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
     if (!path || !*path || width < 2 || height < 2 || fps < 1 ||
         width % 2 || height % 2 || !pcm || samples < 1 || channels < 1 ||
@@ -425,7 +439,7 @@ h3_av_writer *h3_av_writer_open(const char *path, int width,
         return NULL;
     }
     return h3_open_writer(path, width, height, fps, pcm, samples, channels,
-                          sample_rate, hevc, error, error_size);
+                          sample_rate, hevc, quality, error, error_size);
 }
 
 int h3_av_writer_write_video(h3_av_writer *writer,

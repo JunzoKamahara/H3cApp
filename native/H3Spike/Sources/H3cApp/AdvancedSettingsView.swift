@@ -44,6 +44,7 @@ struct AdvancedSettingsView: View {
                     reuseSection
                     layersSection
                     chainSection
+                    videoQualitySection
                     seedSection
                     loraSection
                 }
@@ -354,6 +355,24 @@ struct AdvancedSettingsView: View {
             Text("15秒を超える長さ（と「つないで15秒」）は、この長さの動画を前の動画の続きとして順につくり、重なり（約0.9秒）でつないで1本にします。長いほど、つなぎ目が少なくなります。")
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
+        }
+    }
+
+    private var videoQualitySection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("保存する動画の画質").font(.caption).foregroundStyle(palette.textSecondary)
+            Picker("保存する動画の画質", selection: $viewModel.savedVideoQuality) {
+                ForEach(VideoQuality.allCases) { quality in
+                    Text(quality == .high ? String(localized: "\(quality.label)（標準）") : quality.label).tag(quality)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 320)
+            Text("生成・つないで書き出す・拡大・取り込みの動画を、この画質のHEVCで保存します。あとから画質を上げることはできません。「標準」はファイルが小さく（高画質の約3分の1）、明るくなめらかな肌などに細かなブロックが出ることがあります。「最高画質」はブロックがほぼ消えますが、ファイルは高画質の約3倍になります。")
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

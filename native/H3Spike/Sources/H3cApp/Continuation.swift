@@ -418,13 +418,8 @@ enum JoinedVideoExporter {
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters
 
-        guard let session = AVAssetExportSession(asset: composition,
-                                                 presetName: VideoCodec.masterExportPreset) else {
-            throw JoinError.exportFailed
-        }
-        session.videoComposition = videoComposition
-        session.audioMix = audioMix
-        session.metadata = AIDisclosure.metadata()
-        try await session.export(to: output, as: .mp4)
+        try await VideoRewriter.write(composition, to: output, codec: .hevc, quality: VideoQuality.saved.value,
+                                      composition: videoComposition, audioMix: audioMix,
+                                      metadata: AIDisclosure.metadata())
     }
 }

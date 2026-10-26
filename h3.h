@@ -124,6 +124,10 @@ typedef struct {
      * scenes from falling apart into blocks (H.264's rate control gives
      * them a fifth of the bitrate). */
     int video_hevc;
+    /* HEVC's constant quality, 0-1 (0 = 0.85). Bright, smooth skin needs
+     * about 0.9: at 0.85 the encoder spent 2.2 Mbps on a 768x768 close-up
+     * and the 16-pixel blocks showed. */
+    float video_quality;
     const char *first_frame;
     const char *last_frame;
     const h3_reference *references;

@@ -13,12 +13,10 @@ extension GenerationViewModel {
     enum ImportError: LocalizedError {
         case noVideoTrack
         case tooShort
-        case cannotExport
         var errorDescription: String? {
             switch self {
             case .noVideoTrack: return String(localized: "映像のトラックがありません")
             case .tooShort: return String(localized: "動画が短すぎます（1秒以上必要です）")
-            case .cannotExport: return String(localized: "動画を変換できませんでした")
             }
         }
     }
@@ -195,12 +193,9 @@ extension GenerationViewModel {
         composition.renderSize = size
         composition.frameDuration = CMTime(value: 1, timescale: 24)
         composition.instructions = [instruction]
-        guard let session = AVAssetExportSession(asset: asset, presetName: VideoCodec.masterExportPreset) else {
-            throw ImportError.cannotExport
-        }
-        session.videoComposition = composition
         try? FileManager.default.removeItem(at: destination)
-        try await session.export(to: destination, as: .mp4)
+        try await VideoRewriter.write(asset, to: destination, codec: .hevc, quality: VideoQuality.saved.value,
+                                      composition: composition, metadata: AIDisclosure.metadata())
         return duration.seconds
     }
 }

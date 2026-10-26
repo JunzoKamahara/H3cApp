@@ -156,6 +156,10 @@ final class GenerationViewModel: ObservableObject {
     /// 途中の様子: show what the video is turning into while it denoises
     /// (DenoisePreview.swift). An app-wide preference; off until turned on,
     /// since it needs the 22.7 MB decoder downloaded first.
+    /// 保存する動画の画質 (VideoQuality.saved, kept across launches).
+    @Published var savedVideoQuality: VideoQuality = VideoQuality.saved {
+        didSet { VideoQuality.saved = savedVideoQuality }
+    }
     @Published var showDenoisePreview: Bool =
         UserDefaults.standard.bool(forKey: "h3c-app.showDenoisePreview") {
         didSet { UserDefaults.standard.set(showDenoisePreview, forKey: "h3c-app.showDenoisePreview") }
@@ -424,14 +428,23 @@ final class GenerationViewModel: ObservableObject {
     }
 
     /// "目安 約25分" for the summary under the prompt: how long the current
-    /// settings should take on this Mac, once there is a prompt to run.
+    /// settings should take on this Mac, once there is a prompt to run: for
+    /// a つなげて生成, all its clips (their number after it); for a batch of
+    /// several, one video's with "×3本" after it. A つなげて生成 makes one
+    /// video whatever 本数 holds (its menu is off then).
     var draftEstimateText: String? {
         guard !promptIsEmpty, !isGenerating, let seconds = draftEstimatedSeconds else { return nil }
         let minutes = max(Int((seconds / 60).rounded(.up)), 1)
-        if minutes < 60 { return String(localized: "目安 約\(minutes)分") }
         let hours = minutes / 60, rest = minutes % 60
-        return rest == 0 ? String(localized: "目安 約\(hours)時間")
-                         : String(localized: "目安 約\(hours)時間\(rest)分")
+        var text = minutes < 60 ? String(localized: "目安 約\(minutes)分")
+            : rest == 0 ? String(localized: "目安 約\(hours)時間")
+            : String(localized: "目安 約\(hours)時間\(rest)分")
+        if isChained {
+            text += String(localized: "（\(currentChainPlan.count)クリップ）")
+        } else if batchCount > 1 {
+            text += String(localized: "×\(batchCount)本")
+        }
+        return text
     }
 
     /// Estimates past this are flagged in 詳細設定.
@@ -542,8 +555,8 @@ final class GenerationViewModel: ObservableObject {
     @Published var projectMessage: String? {
         didSet { projectMessageFile = nil }
     }
-    /// A file the message is about (an enlarged video saved to a file),
-    /// for the alert's Finderで表示. Set after projectMessage.
+    /// A file the message is about (an enlarged video, in the project or
+    /// a file), for the alert's Finderで表示. Set after projectMessage.
     @Published var projectMessageFile: URL?
     // The new-project dialog and the video list, opened from the toolbar
     // menu and from the menu bar's プロジェクト menu.
@@ -1005,6 +1018,7 @@ final class GenerationViewModel: ObservableObject {
         // params, so later toggles in the form can't affect a running job.
         params.fastAttention = useFastAttention
         params.videoHEVC = true
+        params.videoQuality = Float(VideoQuality.saved.value)
         let sampling = samplingSettings
         params.renoise = sampling.renoise
         params.audioSigmaShift = sampling.audioShift
