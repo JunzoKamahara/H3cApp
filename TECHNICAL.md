@@ -151,6 +151,13 @@ Related documentation: [Local API](API.md) Â· [Building and testing](BUILD.md) Â
   edge is softened (a quarter of it), which makes the grid much fainter and brings
   decoded real video slightly closer to the original (+0.13 dB);
   `H3_VAE_DEBLOCK` sets the strength (0 turns it off).
+- **Reference VAE tiles**: the decoder runs on the reference decoder's
+  256-pixel tiles (with 64-pixel overlaps), and so matches MiniMax's
+  reference decoder (diffusers) at about 85 dB in F32. Larger tiles (up to
+  320 pixels, picked before for ~10% faster decoding) change the output
+  (about 37 dB from the reference at 800x544) and show the 16-pixel patches
+  as a staircase of blocks on dark edges. `H3_VAE_TILE_PIXELS` still picks
+  another size.
 - **Model manager**: register and switch between several H3 checkpoint
   directories and LoRA files instead of one fixed path, and download
   FL2VA/Ref2VA directly from Hugging Face with no external dependency (no

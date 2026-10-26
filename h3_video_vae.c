@@ -794,22 +794,13 @@ static int configured_tile_pixels(int pixel_height, int pixel_width) {
         if (end && !*end && pixels >= TILE_PIXELS && pixels <= 512 &&
             pixels % SPATIAL_RATIO == 0) return (int)pixels;
     }
-    int best = TILE_PIXELS;
-    uint64_t best_score = UINT64_MAX;
-    for (int pixels = TILE_PIXELS; pixels <= 320;
-         pixels += SPATIAL_RATIO) {
-        uint64_t tiles = (uint64_t)tile_count_for_extent(pixel_height, pixels) *
-            (uint64_t)tile_count_for_extent(pixel_width, pixels);
-        /* The resident VAE is dominated by linears and activation traffic;
-         * measured tile cost follows area more closely than cubic sequence
-         * growth at these shapes. Attention is still included in each tile. */
-        uint64_t score = tiles * (uint64_t)pixels * (uint64_t)pixels;
-        if (score < best_score) {
-            best = pixels;
-            best_score = score;
-        }
-    }
-    return best;
+    /* The reference decoder's 256-pixel tiles. Larger ones (up to 320 were
+     * picked by cost here before) decode ~10% faster but change the output
+     * (~37 dB from the reference at 800x544) and show the 16-pixel patches
+     * as a staircase of blocks on dark edges. */
+    (void)pixel_height;
+    (void)pixel_width;
+    return TILE_PIXELS;
 }
 
 static int tile_axis_build(int extent, int tile_pixels, tile_axis *axis,
