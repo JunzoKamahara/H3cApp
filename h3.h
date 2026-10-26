@@ -119,6 +119,11 @@ typedef struct {
     int steps;
     uint64_t seed;
     const char *output_path;
+    /* The MP4's video: 0 is H.264 at an average bitrate (width*height*5,
+     * at least 9.5 Mbps), 1 is HEVC at a constant quality, which keeps dark
+     * scenes from falling apart into blocks (H.264's rate control gives
+     * them a fifth of the bitrate). */
+    int video_hevc;
     const char *first_frame;
     const char *last_frame;
     const h3_reference *references;

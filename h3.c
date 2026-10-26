@@ -2480,7 +2480,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             writer = h3_av_writer_open(
                 params->output_path, output_width, output_height, H3_FPS,
                 waveform.pcm, waveform.samples, waveform.channels,
-                waveform.sample_rate, detail, sizeof(detail));
+                waveform.sample_rate, params->video_hevc, detail,
+                sizeof(detail));
             if (!writer) {
                 h3_set_error(ctx, "%s", detail);
                 goto cleanup;
@@ -2587,7 +2588,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                     params->output_path, rgb8, frames.frames, output_width,
                     output_height, H3_FPS, waveform.pcm, waveform.samples,
                     waveform.channels, waveform.sample_rate,
-                    detail, sizeof(detail))) {
+                    params->video_hevc, detail, sizeof(detail))) {
                 h3_set_error(ctx, "%s", detail);
                 goto cleanup;
             }

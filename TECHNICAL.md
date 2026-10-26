@@ -13,7 +13,7 @@ Related documentation: [Local API](API.md) · [Building and testing](BUILD.md) �
   repository or URL) or import GGUF files you have, and use them like the
   official model — see [GGUF.md](GGUF.md).
 - **Text-to-video+audio** (T2VA): a prompt alone produces a synchronized
-  H.264 + AAC clip.
+  HEVC (or H.264) + AAC clip.
 - **First/last-frame conditioning** (FL2VA): anchor a generation's opening
   and/or closing frame (the app's first/last-image mode, or the API's
   `first_frame_path`/`last_frame_path`).
@@ -116,7 +116,7 @@ Related documentation: [Local API](API.md) · [Building and testing](BUILD.md) �
   is a temp file, as before; Save as Project names a project from the
   current form and moves that video into it with its record (its input
   files are copied in too). The same request and seed give the same
-  frames, bit for bit; the H.264 file itself can still differ invisibly
+  frames, bit for bit; the MP4 file itself can still differ invisibly
   (around 57-60 dB PSNR) because the hardware encoder isn't bit-exact.
 - **Sizes**: the composer picks a shape (landscape / square / portrait)
   and a size 小/中/大 (small / medium / large), each optionally upscaled 2x
@@ -151,6 +151,18 @@ Related documentation: [Local API](API.md) · [Building and testing](BUILD.md) �
   edge is softened (a quarter of it), which makes the grid much fainter and brings
   decoded real video slightly closer to the original (+0.13 dB);
   `H3_VAE_DEBLOCK` sets the strength (0 turns it off).
+- **Video compression**: every video the app keeps (generated, joined,
+  enlarged, imported) is HEVC at a constant quality (0.85). H.264 at an
+  average bitrate (5 bits a pixel, at least 9.5 Mbps) gave dark scenes
+  about a fifth of it - 2.0 Mbps for a dark 1920x1088 clip - and they broke
+  into 8-pixel blocks; HEVC there took 2.4 Mbps and came 0.8 dB closer to
+  the uncompressed frames, and on a bright 1600x1088 clip 5.7 Mbps instead
+  of 8.0 at 0.5 dB closer. Export can make an H.264 copy for players
+  without HEVC ("Export as H.264"): written at a constant quality too
+  (3.4 Mbps for the dark clip, 0.5 dB below the HEVC master), as
+  AVFoundation's H.264 preset starved it again (1.7 Mbps). Videos made
+  before this stay H.264 and are exported as they are. The engine's own
+  default for `libh3.a` callers is still H.264 (`h3_params.video_hevc`).
 - **Model manager**: register and switch between several H3 checkpoint
   directories and LoRA files instead of one fixed path, and download
   FL2VA/Ref2VA directly from Hugging Face with no external dependency (no

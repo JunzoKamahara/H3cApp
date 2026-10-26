@@ -45,17 +45,44 @@ enum AIDisclosure {
         ]
     }
 
-    enum ExportError: LocalizedError {
-        case cannotExport
-        var errorDescription: String? { String(localized: "書き出しの準備ができませんでした") }
+    static let h264SettingKey = "h3c-app.exportH264"
+
+    /// 動画を書き出す… makes H.264 when the user turned that on.
+    static var exportsH264: Bool {
+        get { UserDefaults.standard.bool(forKey: h264SettingKey) }
+        set { UserDefaults.standard.set(newValue, forKey: h264SettingKey) }
     }
 
-    /// Writes `source` to `destination` with the metadata, and with the
-    /// label in the lower right when `withLabel` (re-encoded then; otherwise
-    /// the tracks are copied as they are).
-    static func export(_ source: URL, to destination: URL, withLabel: Bool) async throws {
+    enum ExportError: LocalizedError {
+        case cannotExport
+        case cannotWrite(String)
+        var errorDescription: String? {
+            switch self {
+            case .cannotExport: return String(localized: "書き出しの準備ができませんでした")
+            case .cannotWrite(let detail): return String(localized: "書き出しに失敗しました（\(detail)）")
+            }
+        }
+    }
+
+    /// Writes `source` to `destination` with the metadata, with the label in
+    /// the lower right when `withLabel`, and as H.264 when `h264` (for
+    /// players without HEVC). Re-encoded only for those: otherwise the
+    /// tracks are copied as they are (an H.264 video from before HEVC stays
+    /// H.264 either way).
+    static func export(_ source: URL, to destination: URL, withLabel: Bool, h264: Bool) async throws {
         let asset = AVURLAsset(url: source)
-        let preset = withLabel ? AVAssetExportPresetHighestQuality : AVAssetExportPresetPassthrough
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+            throw ExportError.cannotExport
+        }
+        let codec = await VideoCodec.of(track)
+        let toH264 = h264 && (withLabel || codec != .h264)
+        try? FileManager.default.removeItem(at: destination)
+        if toH264 {
+            try await writeH264(asset, video: track, to: destination,
+                                composition: withLabel ? try await labelComposition(for: asset) : nil)
+            return
+        }
+        let preset = withLabel ? VideoCodec.masterExportPreset : AVAssetExportPresetPassthrough
         guard let session = AVAssetExportSession(asset: asset, presetName: preset) else {
             throw ExportError.cannotExport
         }
@@ -63,8 +90,95 @@ enum AIDisclosure {
         if withLabel {
             session.videoComposition = try await labelComposition(for: asset)
         }
-        try? FileManager.default.removeItem(at: destination)
         try await session.export(to: destination, as: .mp4)
+    }
+
+    /// `asset` re-encoded as H.264 at a constant quality (VideoCodec), through
+    /// `composition` when given; the sound is copied as it is.
+    private static func writeH264(_ asset: AVAsset, video track: AVAssetTrack, to destination: URL,
+                                  composition: AVVideoComposition?) async throws {
+        let reader = try AVAssetReader(asset: asset)
+        let pixels: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String:
+                                        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
+        let videoOutput: AVAssetReaderOutput
+        let size: CGSize
+        var transform = CGAffineTransform.identity
+        if let composition {
+            // In HD's colours (BT.709), as the export session renders it;
+            // left unsaid, the frames came out of the composition shifted.
+            let composition = composition.mutableCopy() as! AVMutableVideoComposition
+            composition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+            composition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+            composition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
+            let output = AVAssetReaderVideoCompositionOutput(videoTracks: [track], videoSettings: pixels)
+            output.videoComposition = composition
+            videoOutput = output
+            size = composition.renderSize
+        } else {
+            videoOutput = AVAssetReaderTrackOutput(track: track, outputSettings: pixels)
+            (size, transform) = try await track.load(.naturalSize, .preferredTransform)
+        }
+        reader.add(videoOutput)
+        var audioOutput: AVAssetReaderTrackOutput?
+        let audioTrack = try await asset.loadTracks(withMediaType: .audio).first
+        if let audioTrack {
+            let output = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
+            reader.add(output)
+            audioOutput = output
+        }
+
+        let writer = try AVAssetWriter(outputURL: destination, fileType: .mp4)
+        writer.metadata = metadata()
+        var settings = VideoCodec.h264.writerSettings(width: Int(size.width.rounded()), height: Int(size.height.rounded()))
+        settings[AVVideoColorPropertiesKey] = [
+            AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+            AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+            AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+        ]
+        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+        videoInput.expectsMediaDataInRealTime = false
+        videoInput.transform = transform
+        writer.add(videoInput)
+        var audioInput: AVAssetWriterInput?
+        if let audioTrack {
+            let hint = try await audioTrack.load(.formatDescriptions).first
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: hint)
+            input.expectsMediaDataInRealTime = false
+            writer.add(input)
+            audioInput = input
+        }
+        guard reader.startReading(), writer.startWriting() else {
+            throw ExportError.cannotWrite(writer.error?.localizedDescription ?? reader.error?.localizedDescription ?? "")
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        let failure = VideoUpscale.Failure()
+        func copy(_ output: AVAssetReaderOutput, into input: AVAssetWriterInput, label: String) async {
+            await VideoUpscale.pump(input, on: DispatchQueue(label: label)) {
+                guard failure.error == nil, let sample = output.copyNextSampleBuffer() else { return false }
+                if !input.append(sample) {
+                    failure.set(ExportError.cannotWrite(writer.error?.localizedDescription ?? ""))
+                    return false
+                }
+                return true
+            }
+        }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await copy(videoOutput, into: videoInput, label: "h3c.export.video") }
+            if let audioInput, let audioOutput {
+                group.addTask { await copy(audioOutput, into: audioInput, label: "h3c.export.audio") }
+            }
+        }
+        if let error = failure.error ?? (reader.status == .failed ? reader.error : nil) {
+            reader.cancelReading()
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+        await writer.finishWriting()
+        if writer.status != .completed {
+            throw ExportError.cannotWrite(writer.error?.localizedDescription ?? "")
+        }
     }
 
     /// The video as it is, with the label drawn over its lower right: the
