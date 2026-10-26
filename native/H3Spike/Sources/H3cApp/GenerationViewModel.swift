@@ -322,6 +322,9 @@ final class GenerationViewModel: ObservableObject {
     let upscaleCancel = UpscaleCancel()
     /// 動画ファイルを2倍に拡大…: a chosen file waiting for its upscaler.
     @Published var pendingUpscale: PendingUpscale?
+    /// Continuations of enlarged copies made in this run, to enlarge once
+    /// it ends (enlargeContinuations).
+    var pendingEnlargements: [PendingEnlargement] = []
     /// A chosen video waiting for its size to be picked (ImportVideoSheet).
     @Published var pendingVideoImport: PendingVideoImport?
     /// The form before カスタムクリップ's editor opened (its キャンセル).
@@ -536,7 +539,12 @@ final class GenerationViewModel: ObservableObject {
     @Published var batchCount: Int = 1
     @Published var batchProgress: BatchProgress?
     @Published private(set) var batchTiming: BatchTiming?
-    @Published var projectMessage: String?
+    @Published var projectMessage: String? {
+        didSet { projectMessageFile = nil }
+    }
+    /// A file the message is about (an enlarged video saved to a file),
+    /// for the alert's Finderで表示. Set after projectMessage.
+    @Published var projectMessageFile: URL?
     // The new-project dialog and the video list, opened from the toolbar
     // menu and from the menu bar's プロジェクト menu.
     @Published var showingNewProject = false
@@ -761,6 +769,9 @@ final class GenerationViewModel: ObservableObject {
         if isImportingVideo {
             return String(localized: "動画を取り込んでいます。終わると、その続きをつくれます")
         }
+        if isUpscalingVideo {
+            return String(localized: "動画を拡大しています。終わってから生成してください")
+        }
         if promptIsEmpty {
             return String(localized: "動画の内容を入力してください")
         }
@@ -874,6 +885,8 @@ final class GenerationViewModel: ObservableObject {
         var storeFolder: URL? = nil
         /// How late the video's sound will run (ProjectVideoRecord.soundLateness).
         var soundLateness: Double = 0
+        /// Continuing an enlarged copy: how to enlarge the new clip after.
+        var enlargeAfter: ContinuationSource.Enlargement? = nil
     }
 
     private struct BatchState {
@@ -1057,7 +1070,8 @@ final class GenerationViewModel: ObservableObject {
                                  steps: steps.clamped(to: stepsRange), reuse: effectiveDenoiseReuse),
             projectURL: project?.url,
             draft: draft,
-            soundLateness: lateness)
+            soundLateness: lateness,
+            enlargeAfter: continuation?.enlargement)
     }
 
     private func runBatchItem(index: Int) {
@@ -1155,6 +1169,11 @@ final class GenerationViewModel: ObservableObject {
                     self.chainRun = nil
                     Task { await self.finishChain(chain) }
                 }
+                if !self.pendingEnlargements.isEmpty {
+                    let enlargements = self.pendingEnlargements
+                    self.pendingEnlargements = []
+                    Task { await self.enlargeContinuations(enlargements) }
+                }
             }
         }
     }
@@ -1175,6 +1194,13 @@ final class GenerationViewModel: ObservableObject {
         var url = URL(fileURLWithPath: result.outputPath)
         var draft = request.draft
         draft.seed = String(result.seed)
+        // Continuing an enlarged copy: the clip continues the original (its
+        // latents are the original's); its enlarged copy, made next,
+        // continues the enlarged one.
+        let enlargedPrevious = request.enlargeAfter == nil ? nil : draft.continueFrom
+        if let enlargement = request.enlargeAfter, let projectURL = request.projectURL {
+            draft.continueFrom = ProjectFiles.stored(enlargement.originalURL.path, in: projectURL)
+        }
         let record = ProjectVideoRecord(
             video: url.lastPathComponent, completedAt: completedAt, seed: String(result.seed),
             seedWasRandom: seedWasRandom, generationSeconds: generationSeconds,
@@ -1193,6 +1219,10 @@ final class GenerationViewModel: ObservableObject {
                                            completedAt: completedAt, seed: result.seed,
                                            folder: request.storeFolder) {
                 url = stored
+                if let enlargement = request.enlargeAfter {
+                    pendingEnlargements.append(.init(video: stored, previous: enlargedPrevious,
+                                                     enlargement: enlargement))
+                }
                 if request.storeFolder != nil, let chain = chainRun {
                     var storedRecord = record
                     storedRecord.video = stored.lastPathComponent

@@ -907,9 +907,14 @@
 "動画を%@に拡大しています（%@、%lld%%）…" = "Enlarging the video %1$@ (%2$@, %3$lld%%)…";
 "動画を拡大" = "Enlarge a Video";
 "動画ファイルを拡大…" = "Enlarge a Video File…";
-"動画ファイルを選んで、拡大した動画（1.5〜4倍）を保存します" = "Choose a video file and save it enlarged 1.5x to 4x";
 "拡大した動画は、プロジェクトに新しく加わります（名前の最後に「_%@」）。音声とAIで生成したという記録は、そのままです。" = "The enlarged video is added to the project (its name ends in “_%@”), with its sound and its AI-generated record as they are.";
 "拡大した動画をつくる…" = "Make an Enlarged Copy…";
 "%@（%@、4096ピクセルを超えるため選べません）" = "%1$@ (%2$@, too large: a side passes 4096 pixels)";
 "%@：%@ → %@" = "%1$@: %2$@ → %3$@";
 "拡大した動画を、元の動画と同じファイルには保存できません" = "The enlarged video can't be saved over the original video itself";
+"動画" = "Video";
+"表示中の動画を拡大…" = "Enlarge the Video Shown…";
+"拡大した動画の続きは、つないだ長さでは作れません。1本の長さにしてください" = "An enlarged video can't be continued with a joined length. Choose a single clip's length";
+"拡大した動画の続きです。続きは元の大きさでつくってから、同じように%@に拡大します（%@）。" = "This continues an enlarged video. The continuation is made at the original's size, then enlarged %1$@ the same way (%2$@).";
+"動画を拡大しています。終わってから生成してください" = "A video is being enlarged. Generate once it's done";
+"続きを%@に拡大して、%@をつくりました。「つないで書き出す」で、拡大した動画どうしをつなげます" = "Enlarged the continuation %1$@ into %2$@. “Join and Export” joins the enlarged videos";

@@ -11,8 +11,20 @@ struct ContinuationSource: Equatable {
     /// The source's size; a continuation must be made at the same one.
     var sizeProfileRaw: String
     var frames: Int = continuationFrames
+    /// Set when continuing an enlarged copy (拡大した動画をつくる): the new
+    /// clip is made at the original's size from the latents copied with
+    /// the copy, then enlarged the same way, to join the enlarged copy.
+    var enlargement: Enlargement? = nil
 
     var name: String { videoURL.lastPathComponent }
+
+    struct Enlargement: Equatable {
+        var upscaler: VideoUpscaler
+        var factor: UpscaleFactor
+        /// What the enlarged copy was made from: the clip itself continues
+        /// that, the latents it carries being the original's.
+        var originalURL: URL
+    }
 }
 
 /// Frames a continuation carries over (about 0.9 s) - the ComfyUI H3 Motion
@@ -25,6 +37,12 @@ extension ProjectFiles {
     static func latentURL(for videoURL: URL) -> URL {
         videoURL.deletingPathExtension().appendingPathExtension("h3lt")
     }
+
+    /// The record saved next to a video, if any.
+    static func record(for videoURL: URL) -> ProjectVideoRecord? {
+        let recordURL = videoURL.deletingPathExtension().appendingPathExtension("json")
+        return (try? Data(contentsOf: recordURL)).flatMap { try? decoder.decode(ProjectVideoRecord.self, from: $0) }
+    }
 }
 
 extension GenerationViewModel {
@@ -34,8 +52,7 @@ extension GenerationViewModel {
     /// carried-over frames.
     func continueFromProjectVideo(_ video: ProjectVideo) {
         guard let record = video.record, let project else { return }
-        let latent = ProjectFiles.latentURL(for: video.url)
-        guard FileManager.default.fileExists(atPath: latent.path) else {
+        guard let latent = continuationLatent(of: video) else {
             projectMessage = String(localized: "この動画には続きを作るためのデータがありません（このバージョンより前に作った動画です）")
             return
         }
@@ -70,7 +87,28 @@ extension GenerationViewModel {
         let frames = record.importedFrom != nil
             ? (ProjectFiles.latentFrames(latent) ?? continuationFrames) : continuationFrames
         continuation = ContinuationSource(videoURL: video.url, latentURL: latent,
-                                          sizeProfileRaw: draft.sizeProfile, frames: frames)
+                                          sizeProfileRaw: draft.sizeProfile, frames: frames,
+                                          enlargement: enlargement(of: video))
+    }
+
+    /// How an enlarged copy was enlarged, for continuing it the same way.
+    func enlargement(of video: ProjectVideo) -> ContinuationSource.Enlargement? {
+        guard let record = video.record, let original = record.upscaledFrom else { return nil }
+        return .init(upscaler: record.upscaler.flatMap(VideoUpscaler.init(rawValue:)) ?? .standard,
+                     factor: record.upscaleFactor.flatMap(UpscaleFactor.init(rawValue:)) ?? .two,
+                     originalURL: video.url.deletingLastPathComponent().appendingPathComponent(original))
+    }
+
+    /// The latents a continuation of `video` carries over from: its own, or
+    /// for a copy enlarged before they were copied along, its original's
+    /// (when that isn't an enlarged copy itself).
+    func continuationLatent(of video: ProjectVideo) -> URL? {
+        let own = ProjectFiles.latentURL(for: video.url)
+        if FileManager.default.fileExists(atPath: own.path) { return own }
+        guard let original = enlargement(of: video)?.originalURL,
+              ProjectFiles.record(for: original).map({ $0.upscaledFrom == nil }) == true else { return nil }
+        let latent = ProjectFiles.latentURL(for: original)
+        return FileManager.default.fileExists(atPath: latent.path) ? latent : nil
     }
 
     /// Where lip sync carries on after `video`: where its last clip's audio
@@ -128,10 +166,7 @@ extension GenerationViewModel {
         guard let project else { return nil }
         let url = URL(fileURLWithPath: ProjectFiles.resolved(path, in: project.url))
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let recordURL = url.deletingPathExtension().appendingPathExtension("json")
-        let record = (try? Data(contentsOf: recordURL))
-            .flatMap { try? ProjectFiles.decoder.decode(ProjectVideoRecord.self, from: $0) }
-        return ProjectVideo(url: url, record: record)
+        return ProjectVideo(url: url, record: ProjectFiles.record(for: url))
     }
 
     /// The folder a つなげて生成's clips live in (chains/<name>), if all of a
@@ -153,7 +188,7 @@ extension GenerationViewModel {
     }
 
     func canContinue(_ video: ProjectVideo) -> Bool {
-        video.record != nil && FileManager.default.fileExists(atPath: ProjectFiles.latentURL(for: video.url).path)
+        video.record != nil && continuationLatent(of: video) != nil
     }
 
     /// Why the continuation can't be generated as the form stands, if so.
@@ -173,6 +208,9 @@ extension GenerationViewModel {
         // or last frame would fight those frames.
         if creationMethod == .image && imageInputMode == .firstLastFrame {
             return String(localized: "続きを作るときは、最初・最後の画像は使えません（参照画像は使えます）")
+        }
+        if continuation.enlargement != nil && isChained {
+            return String(localized: "拡大した動画の続きは、つないだ長さでは作れません。1本の長さにしてください")
         }
         if sizeProfile.rawValue != continuation.sizeProfileRaw {
             let label = SizeProfile(rawValue: continuation.sizeProfileRaw)?.label ?? continuation.sizeProfileRaw

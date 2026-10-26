@@ -584,7 +584,10 @@ extension GenerationViewModel {
             return
         }
         let panel = NSSavePanel()
-        let folder = project?.url ?? pending.url.deletingLastPathComponent()
+        // A temporary result's own folder is the temp folder: Downloads instead.
+        let folder = project?.url ?? (isTemporaryResult(pending.url)
+            ? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+            : pending.url.deletingLastPathComponent())
         panel.directoryURL = folder
         panel.nameFieldStringValue = Self.freeName(for: pending.url, in: folder, factor: factor)
         panel.allowedContentTypes = [.mpeg4Movie]
@@ -595,11 +598,32 @@ extension GenerationViewModel {
     /// 動画ファイルを拡大…: picks any video and asks which upscaler.
     func pickVideoToUpscale() {
         guard let path = chooseFile(allowedContentTypes: [.movie]) else { return }
-        let url = URL(fileURLWithPath: path)
+        askForUpscale(URL(fileURLWithPath: path), projectVideo: nil)
+    }
+
+    /// 表示中の動画を拡大…: the video in the preview - a project video
+    /// (with its record) into the project, any other into a file.
+    func upscaleDisplayedVideo() {
+        guard canUpscaleDisplayedVideo, let resultURL else { return }
+        askForUpscale(resultURL, projectVideo: displayedProjectVideoWithRecord)
+    }
+
+    var canUpscaleDisplayedVideo: Bool {
+        guard !isUpscalingVideo, resultURL != nil else { return false }
+        if let video = displayedProjectVideoWithRecord { return canUpscale(video) }
+        return true
+    }
+
+    private var displayedProjectVideoWithRecord: ProjectVideo? {
+        projectVideos.first { $0.url == resultURL && $0.record != nil }
+    }
+
+    /// Opens the upscaler sheet for `url`.
+    private func askForUpscale(_ url: URL, projectVideo: ProjectVideo?) {
         Task {
             do {
                 let size = try await VideoUpscale.frameSize(of: url)
-                pendingUpscale = PendingUpscale(url: url, projectVideo: nil,
+                pendingUpscale = PendingUpscale(url: url, projectVideo: projectVideo,
                                                 width: size.width, height: size.height)
             } catch {
                 projectMessage = String(localized: "動画を拡大できませんでした（詳細: \(error.localizedDescription)）")
@@ -647,12 +671,17 @@ extension GenerationViewModel {
     }
 
     /// 拡大した動画をつくる: `video` enlarged by `factor` into a new project
-    /// video with its record (marked as enlarged; it can't be continued, as
-    /// its latents are the original's size). Returns whether it worked;
-    /// projectMessage says what happened either way.
+    /// video with its record, marked as enlarged. The original's latents
+    /// come along (unless it is an enlarged copy itself), so it can be
+    /// continued: at the original's size, then enlarged the same way
+    /// (ContinuationSource.enlargement). `previous` is the enlarged copy
+    /// that continues (stored path), when `video` is such a continuation.
+    /// Returns whether it worked; projectMessage says what happened either
+    /// way.
     @discardableResult
     func upscaleProjectVideo(_ video: ProjectVideo, as name: String? = nil,
-                             upscaler: VideoUpscaler = .standard, factor: UpscaleFactor = .two) async -> Bool {
+                             upscaler: VideoUpscaler = .standard, factor: UpscaleFactor = .two,
+                             continuing previous: String? = nil) async -> Bool {
         guard let project, !isUpscalingVideo,
               let name = name ?? upscaledVideoName(for: video, factor: factor) else {
             return false
@@ -669,14 +698,17 @@ extension GenerationViewModel {
                 record.upscaler = upscaler.rawValue
                 let size = try await VideoUpscale.frameSize(of: destination)
                 record.upscaledSize = [size.width, size.height]
-                // Not continuable or joinable as itself: its latents (not
-                // copied) are the original's size.
+                // Joins only other enlarged copies: the one it continues.
                 record.joinedClips = nil
                 record.chainPlannedClips = nil
-                record.draft.continueFrom = nil
-                record.draft.continueFrames = nil
+                record.draft.continueFrom = previous
+                if previous == nil { record.draft.continueFrames = nil }
                 try ProjectFiles.encoder.encode(record)
                     .write(to: destination.deletingPathExtension().appendingPathExtension("json"), options: .atomic)
+                if video.record?.upscaledFrom == nil {
+                    try? FileManager.default.copyItem(at: ProjectFiles.latentURL(for: video.url),
+                                                      to: ProjectFiles.latentURL(for: destination))
+                }
             }
         } catch {
             try? FileManager.default.removeItem(at: destination)
@@ -686,6 +718,34 @@ extension GenerationViewModel {
         reloadProjectVideos()
         projectMessage = String(localized: "\(video.url.lastPathComponent)を\(factor.label)に拡大して、\(name)をつくりました（\(upscaler.label)、\(formatElapsed(Date().timeIntervalSince(started)))）")
         return true
+    }
+
+    /// A continuation of an enlarged copy, to enlarge the same way.
+    struct PendingEnlargement {
+        let video: URL
+        /// The enlarged copy it continues (stored path).
+        let previous: String?
+        let enlargement: ContinuationSource.Enlargement
+    }
+
+    /// Enlarges the continuations of enlarged copies a run made, each into
+    /// an enlarged copy that continues the one its clip continued, and
+    /// shows the last.
+    func enlargeContinuations(_ pending: [PendingEnlargement]) async {
+        var made: [String] = []
+        for item in pending {
+            guard let video = projectVideos.first(where: { $0.url == item.video }),
+                  let name = upscaledVideoName(for: video, factor: item.enlargement.factor),
+                  await upscaleProjectVideo(video, as: name, upscaler: item.enlargement.upscaler,
+                                            factor: item.enlargement.factor, continuing: item.previous) else {
+                return
+            }
+            made.append(name)
+        }
+        guard let last = made.last, let video = projectVideos.first(where: { $0.url.lastPathComponent == last }) else { return }
+        showProjectVideo(video)
+        let factor = pending[0].enlargement.factor
+        projectMessage = String(localized: "続きを\(factor.label)に拡大して、\(made.joined(separator: "、"))をつくりました。「つないで書き出す」で、拡大した動画どうしをつなげます")
     }
 
     /// 動画ファイルを拡大: `source` enlarged by `factor` into `destination`.
@@ -704,6 +764,7 @@ extension GenerationViewModel {
             reloadProjectVideos()
         }
         projectMessage = String(localized: "\(source.lastPathComponent)を\(factor.label)に拡大して、\(destination.lastPathComponent)に保存しました（\(upscaler.label)、\(formatElapsed(Date().timeIntervalSince(started)))）")
+        projectMessageFile = destination
         return true
     }
 

@@ -263,6 +263,12 @@ struct CreationFormView: View {
                 Text("この動画の続きをつくります。最後の\(continuation.frames)コマ（約0.9秒）を引き継ぐので、できる動画の最初の部分は元の動画の終わりと同じになります。つなぐときは「プロジェクトの動画」の「ここまでをつないで書き出す」を使います。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
+                if let enlargement = continuation.enlargement {
+                    Text("拡大した動画の続きです。続きは元の大きさでつくってから、同じように\(enlargement.factor.label)に拡大します（\(enlargement.upscaler.label)）。")
+                        .font(.caption)
+                        .foregroundStyle(palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack {
                     Image(systemName: "arrow.turn.down.right").foregroundStyle(palette.textSecondary)
                     Text("続き").font(.caption)

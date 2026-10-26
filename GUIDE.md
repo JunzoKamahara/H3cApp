@@ -68,8 +68,10 @@ Good to know:
   makes one more clip; “Join and Export” then joins the whole run again.
 - **Enlarge afterwards.** In “Project Videos…”, “More” → “Make an Enlarged
   Copy…” adds the video enlarged to the project (`<name>_x2.mp4` at 2x).
-  Any other video file can be enlarged with Project → “Enlarge a Video
-  File…”, saved where you choose. The scale is 1.5x, 2x, 3x or 4x, each
+  The video shown in the window can be enlarged with Video → “Enlarge the
+  Video Shown…” (a project video goes into the project; any other is saved
+  where you choose). Any other video file can be enlarged with Video →
+  “Enlarge a Video File…”, saved where you choose. The scale is 1.5x, 2x, 3x or 4x, each
   shown with the size it makes (a scale past 4096 pixels a side can't be
   chosen), and every upscaler takes each of them. There are four
   upscalers:
@@ -91,8 +93,11 @@ Good to know:
 
   The sound and the AI-generated record stay as they are, and joined videos
   work too. While it runs, the top of the window shows how far it has got,
-  with “Cancel”. An enlarged copy can't be continued (continue the original),
-  and no side may go past 4096 pixels.
+  with “Cancel”. No side may go past 4096 pixels.
+  An enlarged copy can be continued like any video: the continuation is made
+  at the original's size, then enlarged the same way into a copy of its own
+  (with the same scale and upscaler), and “Join and Export” joins the
+  enlarged copies. An enlarged copy of an enlarged copy can't be continued.
 - **If you stop partway,** the clips made so far (two or more) are joined.
 - **Make the same run again.** With Randomness set to Fixed, the first clip
   uses that seed and each later one the next seed up, so the same settings

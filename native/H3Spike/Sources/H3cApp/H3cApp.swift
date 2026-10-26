@@ -38,6 +38,7 @@ struct H3cApp: App {
             AboutCommand()
             AdvancedSettingsCommand()
             ProjectCommands()
+            VideoCommands()
             HelpCommands()
         }
         // Design spec section 3: 1180x780 initial content area, 920x640
@@ -87,6 +88,23 @@ struct ProjectCommands: Commands {
     private func openWindow(for action: PendingProjectAction) {
         store.pendingAction = action
         openWindow(id: mainWindowID)
+    }
+}
+
+/// The 動画 menu: enlarging the video in the frontmost window's preview,
+/// or any video file - neither needs a project. Disabled while that window
+/// is generating.
+struct VideoCommands: Commands {
+    @FocusedObject private var viewModel: GenerationViewModel?
+
+    var body: some Commands {
+        CommandMenu("動画") {
+            let busy = viewModel.map { $0.isGenerating || $0.isUpscalingVideo } ?? true
+            Button("表示中の動画を拡大…") { viewModel?.upscaleDisplayedVideo() }
+                .disabled(busy || !(viewModel?.canUpscaleDisplayedVideo ?? false))
+            Button("動画ファイルを拡大…") { viewModel?.pickVideoToUpscale() }
+                .disabled(busy)
+        }
     }
 }
 

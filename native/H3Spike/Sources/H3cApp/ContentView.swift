@@ -137,6 +137,12 @@ struct ContentView: View {
                 && !viewModel.showingBatchProject && !viewModel.showingSaveAsProject },
             set: { if !$0 { viewModel.projectMessage = nil } }
         )) {
+            if let file = viewModel.projectMessageFile {
+                Button("Finderで表示") {
+                    NSWorkspace.shared.activateFileViewerSelecting([file])
+                    viewModel.projectMessage = nil
+                }
+            }
             Button("OK") { viewModel.projectMessage = nil }
         } message: {
             Text(viewModel.projectMessage ?? "")

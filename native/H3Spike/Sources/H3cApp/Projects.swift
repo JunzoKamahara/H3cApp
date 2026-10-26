@@ -448,11 +448,12 @@ extension GenerationViewModel {
         lastFramePath = draft.lastFrame.map(resolve)
         forcedAudioPath = draft.forcedAudio.map(resolve)
         forcedAudioOffset = draft.forcedAudioOffset ?? 0
-        continuation = draft.continueFrom.map { URL(fileURLWithPath: resolve($0)) }.flatMap { video in
-            let latent = ProjectFiles.latentURL(for: video)
-            guard FileManager.default.fileExists(atPath: latent.path) else { return nil }
-            return ContinuationSource(videoURL: video, latentURL: latent, sizeProfileRaw: draft.sizeProfile,
-                                      frames: draft.continueFrames ?? continuationFrames)
+        continuation = draft.continueFrom.map { URL(fileURLWithPath: resolve($0)) }.flatMap { url in
+            let video = ProjectVideo(url: url, record: ProjectFiles.record(for: url))
+            guard let latent = continuationLatent(of: video) else { return nil }
+            return ContinuationSource(videoURL: url, latentURL: latent, sizeProfileRaw: draft.sizeProfile,
+                                      frames: draft.continueFrames ?? continuationFrames,
+                                      enlargement: enlargement(of: video))
         }
         referenceImages = draft.references.compactMap { reference in
             H3ReferenceKind(storedName: reference.kind).map { H3ReferenceInput(kind: $0, path: resolve(reference.path)) }

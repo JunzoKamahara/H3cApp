@@ -861,11 +861,12 @@ extension GenerationViewModel {
                 return .error(400, "continue_from cannot be combined with first/last frames (references are fine)")
             }
             // An imported video carries over what its latent file was made for.
-            let latent = ProjectFiles.latentURL(for: video.url)
+            let latent = continuationLatent(of: video) ?? ProjectFiles.latentURL(for: video.url)
             let frames = record.importedFrom != nil
                 ? (ProjectFiles.latentFrames(latent) ?? continuationFrames) : continuationFrames
             continuation = ContinuationSource(videoURL: video.url, latentURL: latent,
-                                              sizeProfileRaw: record.draft.sizeProfile, frames: frames)
+                                              sizeProfileRaw: record.draft.sizeProfile, frames: frames,
+                                              enlargement: enlargement(of: video))
         } else {
             continuation = nil
         }
