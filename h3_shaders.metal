@@ -4876,3 +4876,211 @@ kernel void h3_dequantize(device const uchar *raw [[buffer(0)]],
         break;
     }
 }
+
+/* ------------------------------------------------------------------ */
+/* One-step VSR (UPSCALE_PLAN §6.5): channels-last F32 helpers for the
+ * ReAE autoencoder and its pixel I/O. Tensors are [B, T, H, W, C]. */
+
+struct vsr_pad_args {
+    uint batch, depth, height, width, channels;
+    uint depth_front, pad_h, pad_w;
+    uint has_previous;   /* the depth_front frames come from `previous` */
+};
+
+/* Zero padding in space; the depth_front frames in front are copied from
+ * `previous` ([B, depth_front, H, W, C], also spatially padded) when
+ * has_previous, else zero. Grid (C, out_w, B * out_depth * out_h). */
+kernel void h3_vsr_pad_f32(device const float *input [[buffer(0)]],
+                           device float *output [[buffer(1)]],
+                           constant vsr_pad_args &args [[buffer(2)]],
+                           device const float *previous [[buffer(3)]],
+                           uint3 gid [[thread_position_in_grid]]) {
+    uint channel = gid.x, out_x = gid.y;
+    uint out_h = args.height + 2 * args.pad_h;
+    uint out_w = args.width + 2 * args.pad_w;
+    uint out_depth = args.depth + args.depth_front;
+    uint plane = gid.z;
+    if (channel >= args.channels || out_x >= out_w ||
+        plane >= args.batch * out_depth * out_h) return;
+    uint out_y = plane % out_h;
+    uint temporal = plane / out_h;
+    uint out_t = temporal % out_depth;
+    uint batch = temporal / out_depth;
+    size_t destination = ((((size_t)batch * out_depth + out_t) * out_h + out_y) * out_w +
+                          out_x) * args.channels + channel;
+    int y = int(out_y) - int(args.pad_h), x = int(out_x) - int(args.pad_w);
+    if (y < 0 || x < 0 || y >= int(args.height) || x >= int(args.width)) {
+        output[destination] = 0.0f;
+        return;
+    }
+    if (out_t < args.depth_front) {
+        if (!args.has_previous) {
+            output[destination] = 0.0f;
+            return;
+        }
+        size_t source = ((((size_t)batch * args.depth_front + out_t) * args.height + uint(y)) *
+                         args.width + uint(x)) * args.channels + channel;
+        output[destination] = previous[source];
+        return;
+    }
+    uint t = out_t - args.depth_front;
+    size_t source = ((((size_t)batch * args.depth + t) * args.height + uint(y)) * args.width +
+                     uint(x)) * args.channels + channel;
+    output[destination] = input[source];
+}
+
+struct vsr_shape_args {
+    uint batch, depth, height, width, channels;
+};
+
+/* Nearest 2x in space: [B,T,H,W,C] -> [B,T,2H,2W,C]. Grid (C, 2W, B*T*2H). */
+kernel void h3_vsr_upsample2_f32(device const float *input [[buffer(0)]],
+                                 device float *output [[buffer(1)]],
+                                 constant vsr_shape_args &args [[buffer(2)]],
+                                 uint3 gid [[thread_position_in_grid]]) {
+    uint channel = gid.x, out_x = gid.y, plane = gid.z;
+    uint out_h = args.height * 2, out_w = args.width * 2;
+    if (channel >= args.channels || out_x >= out_w || plane >= args.batch * args.depth * out_h) return;
+    uint out_y = plane % out_h;
+    uint frame = plane / out_h;   /* batch * depth + t */
+    size_t source = (((size_t)frame * args.height + out_y / 2) * args.width + out_x / 2) *
+                    args.channels + channel;
+    size_t destination = (((size_t)frame * out_h + out_y) * out_w + out_x) * args.channels + channel;
+    output[destination] = input[source];
+}
+
+/* pixel_unshuffle(2) on channels-last: [B,T,H,W,C] -> [B,T,H/2,W/2,4C] with
+ * output channel (c*2 + ph)*2 + pw (PyTorch's order). Grid (4C, W/2, B*T*H/2). */
+kernel void h3_vsr_space_to_depth_f32(device const float *input [[buffer(0)]],
+                                      device float *output [[buffer(1)]],
+                                      constant vsr_shape_args &args [[buffer(2)]],
+                                      uint3 gid [[thread_position_in_grid]]) {
+    uint out_c = gid.x, out_x = gid.y, plane = gid.z;
+    uint out_h = args.height / 2, out_w = args.width / 2, out_channels = args.channels * 4;
+    if (out_c >= out_channels || out_x >= out_w || plane >= args.batch * args.depth * out_h) return;
+    uint out_y = plane % out_h;
+    uint frame = plane / out_h;
+    uint c = out_c / 4, ph = (out_c / 2) % 2, pw = out_c % 2;
+    size_t source = (((size_t)frame * args.height + out_y * 2 + ph) * args.width + out_x * 2 + pw) *
+                    args.channels + c;
+    size_t destination = (((size_t)frame * out_h + out_y) * out_w + out_x) * out_channels + out_c;
+    output[destination] = input[source];
+}
+
+/* pixel_shuffle(2): [B,T,H,W,4C] -> [B,T,2H,2W,C]; `channels` is C (the
+ * output count). Grid (C, 2W, B*T*2H). */
+kernel void h3_vsr_depth_to_space_f32(device const float *input [[buffer(0)]],
+                                      device float *output [[buffer(1)]],
+                                      constant vsr_shape_args &args [[buffer(2)]],
+                                      uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, out_x = gid.y, plane = gid.z;
+    uint out_h = args.height * 2, out_w = args.width * 2, in_channels = args.channels * 4;
+    if (c >= args.channels || out_x >= out_w || plane >= args.batch * args.depth * out_h) return;
+    uint out_y = plane % out_h;
+    uint frame = plane / out_h;
+    uint in_c = (c * 2 + (out_y % 2)) * 2 + (out_x % 2);
+    size_t source = (((size_t)frame * args.height + out_y / 2) * args.width + out_x / 2) *
+                    in_channels + in_c;
+    size_t destination = (((size_t)frame * out_h + out_y) * out_w + out_x) * args.channels + c;
+    output[destination] = input[source];
+}
+
+/* TGrow(2) tail: [B,T,H,W,2C] -> [B,2T,H,W,C], frame 2t+k takes channels
+ * k*C..k*C+C-1 of frame t. `channels` is C. Grid (C, W, B*2T*H). */
+kernel void h3_vsr_split_frames_f32(device const float *input [[buffer(0)]],
+                                    device float *output [[buffer(1)]],
+                                    constant vsr_shape_args &args [[buffer(2)]],
+                                    uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, x = gid.y, plane = gid.z;
+    uint out_depth = args.depth * 2;
+    if (c >= args.channels || x >= args.width || plane >= args.batch * out_depth * args.height) return;
+    uint y = plane % args.height;
+    uint temporal = plane / args.height;
+    uint out_t = temporal % out_depth;
+    uint batch = temporal / out_depth;
+    uint t = out_t / 2, k = out_t % 2;
+    size_t source = ((((size_t)batch * args.depth + t) * args.height + y) * args.width + x) *
+                    (args.channels * 2) + k * args.channels + c;
+    size_t destination = ((((size_t)batch * out_depth + out_t) * args.height + y) * args.width + x) *
+                         args.channels + c;
+    output[destination] = input[source];
+}
+
+struct vsr_count_args { uint elements; };
+
+/* The ReAE decoder's Clamp: tanh(x / 3) * 3. */
+kernel void h3_vsr_clamp_tanh_f32(device const float *input [[buffer(0)]],
+                                  device float *output [[buffer(1)]],
+                                  constant vsr_count_args &args [[buffer(2)]],
+                                  uint index [[thread_position_in_grid]]) {
+    if (index < args.elements) output[index] = tanh(input[index] / 3.0f) * 3.0f;
+}
+
+struct vsr_pixels_in_args {
+    uint frames, in_w, in_h, in_stride;   /* stride in bytes */
+    uint bgra;                            /* 1: BGRA8, 0: RGB24 */
+    uint out_w, out_h;                    /* the bilinear target */
+    uint pad_w, pad_h;                    /* zero-filled columns/rows after it */
+};
+
+/* 8-bit frames -> F32 RGB [T, out_h + pad_h, out_w + pad_w, 3] in [0, 1]:
+ * torch bilinear (align_corners=False, no antialias) from in_w x in_h to
+ * out_w x out_h, zero beyond. Grid (out_w + pad_w, out_h + pad_h, T). */
+kernel void h3_vsr_pixels_to_f32(device const uchar *input [[buffer(0)]],
+                                 device float *output [[buffer(1)]],
+                                 constant vsr_pixels_in_args &args [[buffer(2)]],
+                                 uint3 gid [[thread_position_in_grid]]) {
+    uint x = gid.x, y = gid.y, t = gid.z;
+    uint full_w = args.out_w + args.pad_w, full_h = args.out_h + args.pad_h;
+    if (x >= full_w || y >= full_h || t >= args.frames) return;
+    size_t destination = (((size_t)t * full_h + y) * full_w + x) * 3;
+    if (x >= args.out_w || y >= args.out_h) {
+        output[destination] = output[destination + 1] = output[destination + 2] = 0.0f;
+        return;
+    }
+    float sx = (float(x) + 0.5f) * float(args.in_w) / float(args.out_w) - 0.5f;
+    float sy = (float(y) + 0.5f) * float(args.in_h) / float(args.out_h) - 0.5f;
+    sx = max(sx, 0.0f);
+    sy = max(sy, 0.0f);
+    uint x0 = min(uint(sx), args.in_w - 1), y0 = min(uint(sy), args.in_h - 1);
+    uint x1 = min(x0 + 1, args.in_w - 1), y1 = min(y0 + 1, args.in_h - 1);
+    float fx = sx - float(x0), fy = sy - float(y0);
+    uint bpp = args.bgra ? 4 : 3;
+    device const uchar *frame = input + (size_t)t * args.in_h * args.in_stride;
+    for (uint c = 0; c < 3; c++) {
+        uint channel = args.bgra ? 2 - c : c;   /* BGRA holds B, G, R */
+        float p00 = frame[(size_t)y0 * args.in_stride + x0 * bpp + channel];
+        float p01 = frame[(size_t)y0 * args.in_stride + x1 * bpp + channel];
+        float p10 = frame[(size_t)y1 * args.in_stride + x0 * bpp + channel];
+        float p11 = frame[(size_t)y1 * args.in_stride + x1 * bpp + channel];
+        float top = p00 + (p01 - p00) * fx, bottom = p10 + (p11 - p10) * fx;
+        output[destination + c] = (top + (bottom - top) * fy) / 255.0f;
+    }
+}
+
+struct vsr_pixels_out_args {
+    uint frames, full_w, full_h;      /* the padded F32 frame */
+    uint crop_w, crop_h, out_stride;  /* the 8-bit frame, stride in bytes */
+    uint bgra;
+    uint round_mode;                  /* 0: truncate (reference), 1: round */
+};
+
+/* F32 RGB [T, full_h, full_w, 3] -> 8-bit frames cropped to crop_w x crop_h.
+ * Grid (crop_w, crop_h, T). */
+kernel void h3_vsr_f32_to_pixels(device const float *input [[buffer(0)]],
+                                 device uchar *output [[buffer(1)]],
+                                 constant vsr_pixels_out_args &args [[buffer(2)]],
+                                 uint3 gid [[thread_position_in_grid]]) {
+    uint x = gid.x, y = gid.y, t = gid.z;
+    if (x >= args.crop_w || y >= args.crop_h || t >= args.frames) return;
+    size_t source = (((size_t)t * args.full_h + y) * args.full_w + x) * 3;
+    uint bpp = args.bgra ? 4 : 3;
+    device uchar *pixel = output + (size_t)t * args.crop_h * args.out_stride +
+                          (size_t)y * args.out_stride + x * bpp;
+    for (uint c = 0; c < 3; c++) {
+        float v = clamp(input[source + c], 0.0f, 1.0f) * 255.0f;
+        uint value = args.round_mode ? uint(v + 0.5f) : uint(v);
+        pixel[args.bgra ? 2 - c : c] = uchar(min(value, 255u));
+    }
+    if (args.bgra) pixel[3] = 255;
+}

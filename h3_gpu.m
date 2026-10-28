@@ -480,6 +480,10 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_audio_qkv_split_f32", @"h3_audio_attention_pool_f32",
             @"h3_geglu_f32", @"h3_clip_f32",
             @"h3_vae_encoder_pad_f32",
+            @"h3_vsr_pad_f32", @"h3_vsr_upsample2_f32",
+            @"h3_vsr_space_to_depth_f32", @"h3_vsr_depth_to_space_f32",
+            @"h3_vsr_split_frames_f32", @"h3_vsr_clamp_tanh_f32",
+            @"h3_vsr_pixels_to_f32", @"h3_vsr_f32_to_pixels",
             @"h3_vae_encoder_group_norm_silu_f32",
             @"h3_vae_encoder_norm_chunk_sum_f32",
             @"h3_vae_encoder_norm_chunk_square_f32",
@@ -2813,6 +2817,188 @@ int h3_gpu_vae_encoder_pad_f32(
         ^(id<MTLComputeCommandEncoder> encoder) {
             [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
             [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
+            [encoder setBytes:&args length:sizeof(args) atIndex:2];
+        });
+}
+
+/* --- One-step VSR helpers (channels-last F32; h3_shaders.metal) --- */
+
+typedef struct {
+    uint32_t batch, depth, height, width, channels;
+    uint32_t depth_front, pad_h, pad_w;
+    uint32_t has_previous;
+} vsr_pad_args;
+
+typedef struct { uint32_t batch, depth, height, width, channels; } vsr_shape_args;
+typedef struct { uint32_t elements; } vsr_count_args;
+
+static int vsr_check_f32(H3GPU *gpu, const h3_gpu_tensor *tensor, size_t count,
+                         NSString *what) {
+    return h3_gpu_require_elements(gpu, tensor, count, what) &&
+           TENSOR(tensor).dtype == H3_GPU_F32;
+}
+
+int h3_gpu_vsr_pad_f32(h3_gpu *opaque, h3_gpu_tensor *output,
+                       const h3_gpu_tensor *input, const h3_gpu_tensor *previous,
+                       uint32_t batch, uint32_t depth, uint32_t height,
+                       uint32_t width, uint32_t channels, uint32_t depth_front,
+                       uint32_t pad_h, uint32_t pad_w) {
+    H3GPU *gpu = GPU(opaque);
+    if (!batch || !depth || !height || !width || !channels) return 0;
+    uint32_t out_depth = depth + depth_front;
+    uint32_t out_h = height + 2 * pad_h, out_w = width + 2 * pad_w;
+    size_t input_count = (size_t)batch * depth * height * width * channels;
+    size_t output_count = (size_t)batch * out_depth * out_h * out_w * channels;
+    size_t previous_count = (size_t)batch * depth_front * height * width * channels;
+    if (!vsr_check_f32(gpu, input, input_count, @"VSR pad input") ||
+        !vsr_check_f32(gpu, output, output_count, @"VSR pad output") ||
+        (previous && !vsr_check_f32(gpu, previous, previous_count, @"VSR pad previous")))
+        return 0;
+    vsr_pad_args args = {batch, depth, height, width, channels, depth_front,
+                         pad_h, pad_w, previous != NULL};
+    const h3_gpu_tensor *previous_or_input = previous ? previous : input;
+    return h3_gpu_dispatch_3d(gpu, @"h3_vsr_pad_f32",
+        MTLSizeMake(channels, out_w, (NSUInteger)batch * out_depth * out_h),
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
+            [encoder setBytes:&args length:sizeof(args) atIndex:2];
+            [encoder setBuffer:TENSOR(previous_or_input).buffer offset:0 atIndex:3];
+        });
+}
+
+static int vsr_shape_dispatch(H3GPU *gpu, NSString *name, h3_gpu_tensor *output,
+                              const h3_gpu_tensor *input, size_t input_count,
+                              size_t output_count, vsr_shape_args args,
+                              MTLSize grid) {
+    if (!vsr_check_f32(gpu, input, input_count, name) ||
+        !vsr_check_f32(gpu, output, output_count, name)) return 0;
+    return h3_gpu_dispatch_3d(gpu, name, grid,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
+            [encoder setBytes:&args length:sizeof(args) atIndex:2];
+        });
+}
+
+int h3_gpu_vsr_upsample2_f32(h3_gpu *opaque, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *input, uint32_t batch,
+                             uint32_t depth, uint32_t height, uint32_t width,
+                             uint32_t channels) {
+    if (!batch || !depth || !height || !width || !channels) return 0;
+    size_t count = (size_t)batch * depth * height * width * channels;
+    vsr_shape_args args = {batch, depth, height, width, channels};
+    return vsr_shape_dispatch(GPU(opaque), @"h3_vsr_upsample2_f32", output, input,
+                              count, count * 4, args,
+                              MTLSizeMake(channels, (NSUInteger)width * 2,
+                                          (NSUInteger)batch * depth * height * 2));
+}
+
+int h3_gpu_vsr_space_to_depth_f32(h3_gpu *opaque, h3_gpu_tensor *output,
+                                  const h3_gpu_tensor *input, uint32_t batch,
+                                  uint32_t depth, uint32_t height, uint32_t width,
+                                  uint32_t channels) {
+    if (!batch || !depth || height % 2 || width % 2 || !height || !width || !channels) return 0;
+    size_t count = (size_t)batch * depth * height * width * channels;
+    vsr_shape_args args = {batch, depth, height, width, channels};
+    return vsr_shape_dispatch(GPU(opaque), @"h3_vsr_space_to_depth_f32", output, input,
+                              count, count, args,
+                              MTLSizeMake((NSUInteger)channels * 4, width / 2,
+                                          (NSUInteger)batch * depth * (height / 2)));
+}
+
+int h3_gpu_vsr_depth_to_space_f32(h3_gpu *opaque, h3_gpu_tensor *output,
+                                  const h3_gpu_tensor *input, uint32_t batch,
+                                  uint32_t depth, uint32_t height, uint32_t width,
+                                  uint32_t channels) {
+    if (!batch || !depth || !height || !width || !channels) return 0;
+    size_t count = (size_t)batch * depth * height * width * channels * 4;
+    vsr_shape_args args = {batch, depth, height, width, channels};
+    return vsr_shape_dispatch(GPU(opaque), @"h3_vsr_depth_to_space_f32", output, input,
+                              count, count, args,
+                              MTLSizeMake(channels, (NSUInteger)width * 2,
+                                          (NSUInteger)batch * depth * height * 2));
+}
+
+int h3_gpu_vsr_split_frames_f32(h3_gpu *opaque, h3_gpu_tensor *output,
+                                const h3_gpu_tensor *input, uint32_t batch,
+                                uint32_t depth, uint32_t height, uint32_t width,
+                                uint32_t channels) {
+    if (!batch || !depth || !height || !width || !channels) return 0;
+    size_t count = (size_t)batch * depth * height * width * channels * 2;
+    vsr_shape_args args = {batch, depth, height, width, channels};
+    return vsr_shape_dispatch(GPU(opaque), @"h3_vsr_split_frames_f32", output, input,
+                              count, count, args,
+                              MTLSizeMake(channels, width,
+                                          (NSUInteger)batch * depth * 2 * height));
+}
+
+int h3_gpu_vsr_clamp_tanh_f32(h3_gpu *opaque, h3_gpu_tensor *output,
+                              const h3_gpu_tensor *input, uint32_t elements) {
+    H3GPU *gpu = GPU(opaque);
+    if (!vsr_check_f32(gpu, input, elements, @"VSR clamp input") ||
+        !vsr_check_f32(gpu, output, elements, @"VSR clamp output")) return 0;
+    vsr_count_args args = {elements};
+    return h3_gpu_dispatch_1d(gpu, @"h3_vsr_clamp_tanh_f32", elements,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
+            [encoder setBytes:&args length:sizeof(args) atIndex:2];
+        });
+}
+
+typedef struct {
+    uint32_t frames, in_w, in_h, in_stride, bgra, out_w, out_h, pad_w, pad_h;
+} vsr_pixels_in_args;
+
+typedef struct {
+    uint32_t frames, full_w, full_h, crop_w, crop_h, out_stride, bgra, round_mode;
+} vsr_pixels_out_args;
+
+int h3_gpu_vsr_pixels_to_f32(h3_gpu *opaque, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *pixels, uint32_t frames,
+                             uint32_t in_w, uint32_t in_h, uint32_t in_stride,
+                             int bgra, uint32_t out_w, uint32_t out_h,
+                             uint32_t pad_w, uint32_t pad_h) {
+    H3GPU *gpu = GPU(opaque);
+    if (!frames || !in_w || !in_h || !out_w || !out_h ||
+        in_stride < in_w * (bgra ? 4u : 3u)) return 0;
+    size_t input_count = (size_t)frames * in_h * in_stride;
+    size_t output_count = (size_t)frames * (out_h + pad_h) * (out_w + pad_w) * 3;
+    if (!h3_gpu_require_elements(gpu, pixels, input_count, @"VSR pixels in") ||
+        TENSOR(pixels).dtype != H3_GPU_I8 ||
+        !vsr_check_f32(gpu, output, output_count, @"VSR pixels out")) return 0;
+    vsr_pixels_in_args args = {frames, in_w, in_h, in_stride, bgra ? 1u : 0u,
+                               out_w, out_h, pad_w, pad_h};
+    return h3_gpu_dispatch_3d(gpu, @"h3_vsr_pixels_to_f32",
+        MTLSizeMake(out_w + pad_w, out_h + pad_h, frames),
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(pixels).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
+            [encoder setBytes:&args length:sizeof(args) atIndex:2];
+        });
+}
+
+int h3_gpu_vsr_f32_to_pixels(h3_gpu *opaque, h3_gpu_tensor *pixels,
+                             const h3_gpu_tensor *input, uint32_t frames,
+                             uint32_t full_w, uint32_t full_h, uint32_t crop_w,
+                             uint32_t crop_h, uint32_t out_stride, int bgra,
+                             int round_mode) {
+    H3GPU *gpu = GPU(opaque);
+    if (!frames || !full_w || !full_h || !crop_w || !crop_h || crop_w > full_w ||
+        crop_h > full_h || out_stride < crop_w * (bgra ? 4u : 3u)) return 0;
+    size_t input_count = (size_t)frames * full_h * full_w * 3;
+    size_t output_count = (size_t)frames * crop_h * out_stride;
+    if (!vsr_check_f32(gpu, input, input_count, @"VSR frames in") ||
+        !h3_gpu_require_elements(gpu, pixels, output_count, @"VSR pixels out") ||
+        TENSOR(pixels).dtype != H3_GPU_I8) return 0;
+    vsr_pixels_out_args args = {frames, full_w, full_h, crop_w, crop_h, out_stride,
+                                bgra ? 1u : 0u, round_mode ? 1u : 0u};
+    return h3_gpu_dispatch_3d(gpu, @"h3_vsr_f32_to_pixels",
+        MTLSizeMake(crop_w, crop_h, frames),
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(pixels).buffer offset:0 atIndex:1];
             [encoder setBytes:&args length:sizeof(args) atIndex:2];
         });
 }

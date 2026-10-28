@@ -114,4 +114,36 @@ void h3_vsr_linear_f32(const float *in, int rows, int in_dim,
 void h3_vsr_rms_norm_rows_f32(float *x, int rows, int dim,
                               const float *weight, float eps);
 
-#endif
+/* ---------------------------------------------------------------- */
+/* ReAE autoencoder (h3_vsr_reae.c): SwiftVR's TAEHV-family encoder and
+ * decoder on the F32 channels-last conv3d path. Frames and latents are
+ * channels-last [T, H, W, C] F32 GPU tensors; RGB in [0, 1]. The encoder
+ * takes 4k frames (the caller adds the last chunk's 3 tail copies) with H
+ * and W multiples of 32 and gives [T/4, H/16, W/16, 48]; the decoder gives
+ * [4L, 16h, 16w, 3] (the caller drops the first chunk's first 3 frames).
+ * A state carries every MemBlock's previous-frame input across chunks and
+ * across the frame batches the runner uses to bound memory. */
+typedef struct h3_vsr_reae h3_vsr_reae;
+typedef struct h3_vsr_reae_state h3_vsr_reae_state;
+
+h3_vsr_reae *h3_vsr_reae_load(const char *model_dir, h3_gpu *gpu,
+                              char *error, size_t error_size);
+void h3_vsr_reae_free(h3_vsr_reae *reae);
+
+/* encoder != 0 for the encoder's state. States are tied to a frame size. */
+h3_vsr_reae_state *h3_vsr_reae_state_new(const h3_vsr_reae *reae, int encoder,
+                                         int height, int width);
+void h3_vsr_reae_state_free(h3_vsr_reae_state *state);
+
+/* frame_batch: input frames per pass (0 = whole chunk); encoder batches
+ * must be multiples of 4, decoder batches count latent steps. */
+int h3_vsr_reae_encode(h3_vsr_reae *reae, h3_vsr_reae_state *state,
+                       const h3_gpu_tensor *frames, int frame_count,
+                       int height, int width, int frame_batch,
+                       h3_gpu_tensor *latent, char *error, size_t error_size);
+int h3_vsr_reae_decode(h3_vsr_reae *reae, h3_vsr_reae_state *state,
+                       const h3_gpu_tensor *latent, int latent_count,
+                       int latent_height, int latent_width, int latent_batch,
+                       h3_gpu_tensor *frames, char *error, size_t error_size);
+
+#endif /* H3_VSR_INTERNAL_H */

@@ -311,6 +311,50 @@ int h3_gpu_clip_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                     const h3_gpu_tensor *input, uint32_t elements,
                     float minimum, float maximum);
 
+
+/* One-step VSR helpers (UPSCALE_PLAN §6.5), channels-last F32 [B,T,H,W,C].
+ * h3_gpu_vsr_pad_f32 zero-pads in space and prepends depth_front frames
+ * taken from `previous` ([B,depth_front,H,W,C], the MemBlock state) or zero
+ * when it is NULL. space_to_depth/depth_to_space are pixel (un)shuffle by 2
+ * with PyTorch's channel order; `channels` is the input count for
+ * space_to_depth and the output count for depth_to_space. split_frames
+ * turns [B,T,H,W,2C] into [B,2T,H,W,C] (TGrow). The pixel converters take
+ * 8-bit BGRA/RGB24 frames as I8 tensors; pixels_to_f32 resizes with torch's
+ * bilinear (align_corners=False) and zero-pads to (out_w+pad_w, out_h+pad_h). */
+int h3_gpu_vsr_pad_f32(h3_gpu *gpu, h3_gpu_tensor *output,
+                       const h3_gpu_tensor *input, const h3_gpu_tensor *previous,
+                       uint32_t batch, uint32_t depth, uint32_t height,
+                       uint32_t width, uint32_t channels, uint32_t depth_front,
+                       uint32_t pad_h, uint32_t pad_w);
+int h3_gpu_vsr_upsample2_f32(h3_gpu *gpu, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *input, uint32_t batch,
+                             uint32_t depth, uint32_t height, uint32_t width,
+                             uint32_t channels);
+int h3_gpu_vsr_space_to_depth_f32(h3_gpu *gpu, h3_gpu_tensor *output,
+                                  const h3_gpu_tensor *input, uint32_t batch,
+                                  uint32_t depth, uint32_t height, uint32_t width,
+                                  uint32_t channels);
+int h3_gpu_vsr_depth_to_space_f32(h3_gpu *gpu, h3_gpu_tensor *output,
+                                  const h3_gpu_tensor *input, uint32_t batch,
+                                  uint32_t depth, uint32_t height, uint32_t width,
+                                  uint32_t channels);
+int h3_gpu_vsr_split_frames_f32(h3_gpu *gpu, h3_gpu_tensor *output,
+                                const h3_gpu_tensor *input, uint32_t batch,
+                                uint32_t depth, uint32_t height, uint32_t width,
+                                uint32_t channels);
+int h3_gpu_vsr_clamp_tanh_f32(h3_gpu *gpu, h3_gpu_tensor *output,
+                              const h3_gpu_tensor *input, uint32_t elements);
+int h3_gpu_vsr_pixels_to_f32(h3_gpu *gpu, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *pixels, uint32_t frames,
+                             uint32_t in_w, uint32_t in_h, uint32_t in_stride,
+                             int bgra, uint32_t out_w, uint32_t out_h,
+                             uint32_t pad_w, uint32_t pad_h);
+int h3_gpu_vsr_f32_to_pixels(h3_gpu *gpu, h3_gpu_tensor *pixels,
+                             const h3_gpu_tensor *input, uint32_t frames,
+                             uint32_t full_w, uint32_t full_h, uint32_t crop_w,
+                             uint32_t crop_h, uint32_t out_stride, int bgra,
+                             int round_mode);
+
 /* Visual-VAE encoder tensors use channels-last [B,T,H,W,C] storage. Spatial
  * padding reflects pixels while temporal front padding is zero-filled. */
 int h3_gpu_vae_encoder_pad_f32(
