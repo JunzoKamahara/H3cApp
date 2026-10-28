@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="../assets/js/lang.js"></script>
-  <title>Advanced settings explained — H3cApp</title>
-  <meta name="description" content="H3cApp's advanced settings explained: size, steps, compute mode, speed and fast mode, denoiser reuse, layer count, seed, LoRA and presets.">
+  <title>Advanced and General Settings explained — H3cApp</title>
+  <meta name="description" content="H3cApp's Advanced and General Settings explained: size, steps, compute mode, speed and fast mode, denoiser reuse, layer count, seed, LoRA, presets, progress previews, saved quality and the API.">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/settings.html">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/settings.html">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/settings.html">
@@ -13,8 +13,8 @@
   <meta property="og:type" content="article">
   <meta property="og:locale" content="en_US">
   <meta property="og:site_name" content="H3cApp">
-  <meta property="og:title" content="Advanced settings explained — H3cApp">
-  <meta property="og:description" content="What each advanced setting changes, with defaults and allowed values.">
+  <meta property="og:title" content="Advanced and General Settings explained — H3cApp">
+  <meta property="og:description" content="What each item in Advanced Settings and General Settings changes, with defaults and allowed values.">
   <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/settings.html">
   <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image-en.jpg">
   <meta name="twitter:card" content="summary_large_image">
@@ -45,16 +45,15 @@
 
   <main id="main">
     <div class="page-head">
-      <h1>Advanced settings explained</h1>
-      <p class="lead">What each item in “Advanced Settings” changes, in the order the dialog shows them. <strong>The defaults are fine to start with.</strong> Come back here when you want to tune the wait or the result. This page follows H3cApp v0.6.2.</p>
+      <h1>Advanced and General Settings explained</h1>
+      <p class="lead">Settings live in two places: “<a href="#overview">Advanced Settings</a>” for each window's generations, and “<a href="#general">General Settings</a>” for the whole app. This page explains what each item changes, in the order the screens show them. <strong>The defaults are fine to start with.</strong> Come back here when you want to tune the wait or the result. This page follows the H3cApp version that adds General Settings (the one after v0.7.0).</p>
       <nav class="toc" aria-label="On this page">
         <p>On this page</p>
         <ol>
-          <li><a href="#overview">Overview and opening the dialog</a></li>
+          <li><a href="#overview">Advanced Settings: overview and opening</a></li>
           <li><a href="#size">Size</a></li>
           <li><a href="#steps">Steps</a></li>
           <li><a href="#compute">Compute mode</a></li>
-          <li><a href="#preview">Progress previews</a></li>
           <li><a href="#speed">Speed and fast mode (experimental)</a></li>
           <li><a href="#reuse">Denoiser reuse (reuse)</a></li>
           <li><a href="#layers">Layer count (DiT blocks)</a></li>
@@ -62,13 +61,18 @@
           <li><a href="#seed">Randomness (seed)</a></li>
           <li><a href="#lora">Add-on models (LoRA)</a></li>
           <li><a href="#presets">Restore Defaults and presets</a></li>
+          <li><a href="#general">General Settings: overview and opening</a></li>
+          <li><a href="#adaln">Speeding up the condition computation</a></li>
+          <li><a href="#preview">Progress previews</a></li>
+          <li><a href="#saved-quality">Saved quality</a></li>
+          <li><a href="#api">API</a></li>
         </ol>
       </nav>
     </div>
 
     <section class="section section-narrow" id="overview" aria-labelledby="overview-title">
-      <h2 id="overview-title">Overview and opening the dialog</h2>
-      <p>Open it with the “<span class="ui">Advanced Settings</span>” button at the top right of the prompt panel, or with “Advanced Settings…” in the app menu (H3cApp) (⌘,). Changes apply from the next generation; changing something while a video is being generated doesn't affect that run.</p>
+      <h2 id="overview-title">Advanced Settings: overview and opening</h2>
+      <p>Open it with the “<span class="ui">Advanced Settings</span>” button at the top right of the prompt panel, or with ⌘,. These settings belong to each window and are used for that window's generations. Changes apply from the next generation; changing something while a video is being generated doesn't affect that run.</p>
       <p>When anything differs from the defaults, the button reads “<span class="ui">Advanced Settings · modified</span>”.</p>
       <figure class="shot">
         <img src="../assets/images/app-advanced-en.jpg" width="1064" height="1268" loading="lazy" alt="The Advanced Settings dialog. From the top: Size (Use a custom size, the current size and the estimate on this Mac), Steps 20, Compute mode Fast (int8 cache), Speed with Standard (best quality), Fast and Fastest, the Fast mode (experimental) checkbox, Denoiser reuse 2 (faster) and Layer count 50 (all layers, standard), with Restore Defaults and Close buttons at the bottom.">
@@ -81,7 +85,6 @@
             <tr><th scope="row"><a href="#size">Size</a></th><td>Preset (square, medium)</td><td>Preset / custom size</td><td>Bigger is slower</td></tr>
             <tr><th scope="row"><a href="#steps">Steps</a></th><td class="num">20</td><td class="num">3–40</td><td>More is slower; fewer lowers quality</td></tr>
             <tr><th scope="row"><a href="#compute">Compute mode</a></th><td>Fast (int8 cache) on M5-class Macs, otherwise Low memory (SSD streaming)</td><td>3 modes</td><td>Speed, and the memory and disk needed</td></tr>
-            <tr><th scope="row"><a href="#preview">Show progress previews while generating</a></th><td>Off</td><td>On / Off</td><td>Shows a frame as it takes shape (generation time about the same)</td></tr>
             <tr><th scope="row"><a href="#speed">Speed</a></th><td>Standard (best quality)</td><td>Standard (best quality) / Fast / Fastest</td><td>Faster, but the result changes</td></tr>
             <tr><th scope="row"><a href="#speed">Fast mode (experimental)</a></th><td>Off</td><td>On / off (shown only where supported)</td><td>Faster, more so for long videos</td></tr>
             <tr><th scope="row"><a href="#reuse">Denoiser reuse</a></th><td class="num">2</td><td class="num">1–3</td><td>Higher is faster; quality may drop</td></tr>
@@ -146,17 +149,6 @@
         <li><strong>Red notes</strong>: with Resident on a Mac with little memory (under 32 GB on M5 and later, under 64 GB otherwise), or with SSD streaming at a large size and 10 seconds or more, the app warns that swapping may make it very slow.</li>
       </ul>
       <p class="small muted">Fast (int8 cache) can only be chosen on an M5-class GPU.</p>
-    </section>
-
-    <section class="section section-narrow" id="preview" aria-labelledby="preview-title">
-      <h2 id="preview-title">Progress previews (from v0.6.2)</h2>
-      <p>With “<span class="ui">Show progress previews while generating</span>” on, the preview area shows a frame of the video taking shape a few times while noise is removed (about five per video), so you can stop early if it isn't what you wanted. Joined generation and batches show them for each video.</p>
-      <ul>
-        <li><strong>How it works</strong>: the finished video the model currently predicts is turned into a picture by a small decoder (taeh3 from madebyollin/taehv, MIT license). The heavy video VAE doesn't run, so generation time barely changes (on an M5, landscape small, 3 s, 20 steps took the same time with and without it).</li>
-        <li><strong>First preview</strong>: it appears once noise removal is a little way along (around step 3 of 20). Until then the preview area says one is coming.</li>
-        <li><strong>What you see</strong>: blurry at first, closer to the result with each step. The finished video differs in the details.</li>
-        <li><strong>Download</strong>: the decoder (22.7 MB) is downloaded the first time you turn this on.</li>
-      </ul>
     </section>
 
     <section class="section section-narrow" id="speed" aria-labelledby="speed-title">
@@ -232,6 +224,74 @@
         <li><strong>Presets</strong>: choose “<span class="ui">Save Current Settings as Preset…</span>” from “<span class="ui">Presets</span>” at the top right of the prompt panel to save the shape, size, length and the advanced settings (LoRAs included) under a name. The prompt isn't included. New windows start from the preset used last.</li>
         <li><strong>Projects</strong>: when a project is open, its settings are saved in the project too (see <a href="guide.html#projects">Projects and batches</a>).</li>
       </ul>
+    </section>
+
+    <section class="section section-narrow" id="general" aria-labelledby="general-title">
+      <h2 id="general-title">General Settings: overview and opening</h2>
+      <p>Open it with “<span class="ui">General Settings…</span>” in the app menu (H3cApp) (⌥⌘,). It also opens from “<span class="ui">General Settings…</span>” in the panel that the status icon in the toolbar (“<span class="ui">Ready</span>” and so on) shows when clicked.</p>
+      <p>These settings are for the whole app and apply to every window. There are three tabs: “<span class="ui">Generation</span>”, “<span class="ui">Saved Quality</span>” and “<span class="ui">API</span>”. A change made during a generation takes effect from the next video.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Tab</th><th scope="col">Item</th><th scope="col">Default</th><th scope="col">Main effect</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Generation</th><td><a href="#adaln">Speed up the condition computation with an approximation</a></td><td>On</td><td>About 10 s faster per video</td></tr>
+            <tr><th scope="row">Generation</th><td><a href="#preview">Show progress previews while generating</a></td><td>Off</td><td>Shows a frame as it takes shape (generation time about the same)</td></tr>
+            <tr><th scope="row">Saved Quality</th><td><a href="#saved-quality">Quality of Saved Videos</a></td><td>High</td><td>Picture quality and file size</td></tr>
+            <tr><th scope="row">API</th><td><a href="#api">Let other devices on the same network use the API</a></td><td>Off</td><td>Whether other Macs and phones can use the API</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="adaln" aria-labelledby="adaln-title">
+      <h2 id="adaln-title">Speeding up the condition computation (General Settings &gt; Generation)</h2>
+      <p>“<span class="ui">Speed up the condition computation with an approximation</span>” computes the per-step conditions (AdaLN) from a small approximation file. It is on by default.</p>
+      <ul>
+        <li><strong>Speed</strong>: about 10 s faster per video, in every <a href="#compute">compute mode</a>.</li>
+        <li><strong>First run</strong>: the first generation with each model spends about 7 s building a file of about 0.6 GB, shown as “Preparing the computation (first time only)”.</li>
+        <li><strong>Result</strong>: the approximation error is about the size of the rounding error in the original computation, but the same seed gives a slightly different video than with it off.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="preview" aria-labelledby="preview-title">
+      <h2 id="preview-title">Progress previews (General Settings &gt; Generation)</h2>
+      <p>With “<span class="ui">Show progress previews while generating</span>” on, the preview area shows a frame of the video taking shape a few times while noise is removed (about five per video), so you can stop early if it isn't what you wanted. Joined generation and batches show them for each video.</p>
+      <ul>
+        <li><strong>How it works</strong>: the finished video the model currently predicts is turned into a picture by a small decoder (taeh3 from madebyollin/taehv, MIT license). The heavy video VAE doesn't run, so generation time barely changes (on an M5, landscape small, 3 s, 20 steps took the same time with and without it).</li>
+        <li><strong>First preview</strong>: it appears once noise removal is a little way along (around step 3 of 20). Until then the preview area says one is coming.</li>
+        <li><strong>What you see</strong>: blurry at first, closer to the result with each step. The finished video differs in the details.</li>
+        <li><strong>Download</strong>: the decoder (22.7 MB) is downloaded the first time you turn this on.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="saved-quality" aria-labelledby="saved-quality-title">
+      <h2 id="saved-quality-title">Saved quality (General Settings &gt; Saved Quality)</h2>
+      <p>The quality at which the app saves its videos, in HEVC: generated videos, and also joined exports, enlarged copies and imported videos. The default is “High”.</p>
+      <ul>
+        <li><strong>Standard</strong>: smaller files, about a third of High. Fine blocks can show in bright, smooth areas such as skin.</li>
+        <li><strong>High</strong>: the default.</li>
+        <li><strong>Highest</strong>: the blocks all but disappear, but files are about three times the size of High.</li>
+      </ul>
+      <p>A video can't be raised to a higher quality after it is saved. The codec for exports (Export as H.264) and the export quality are chosen when exporting.</p>
+    </section>
+
+    <section class="section section-narrow" id="api" aria-labelledby="api-title">
+      <h2 id="api-title">API (General Settings &gt; API)</h2>
+      <p>While H3cApp runs, it offers an API that only this Mac can use, so scripts can start generations or check on them. See the <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/API.md#api">API reference</a> for details. This tab gathers what you need to use it.</p>
+      <ul>
+        <li><strong>Status and address</strong>: whether the API is accepting requests, and its address (<code>http://127.0.0.1:8420</code>), with “<span class="ui">Copy</span>” to copy it.</li>
+        <li><strong>Access token</strong>: every API request needs an “<code>Authorization: Bearer &lt;token&gt;</code>” header. “<span class="ui">Show</span>” shows the token and “<span class="ui">Copy</span>” copies it. “<span class="ui">Regenerate…</span>” makes a new token; the current one stops working at once.</li>
+        <li><strong>Token file</strong>: the token is also written to <code>~/Library/Application Support/H3cApp/api-token</code>. It normally changes every time the app starts, so have scripts read it from this file each time. “<span class="ui">Copy curl Example</span>” copies a command that reads this file and checks the API's status.</li>
+      </ul>
+      <h3>Access from other devices</h3>
+      <p>With “<span class="ui">Let other devices on the same network use the API</span>” on, other Macs and phones can use the API too, with an address shown there (this Mac's name or IP address) and the token. It is off by default.</p>
+      <ul>
+        <li>While it is on, the token stays the same when the app quits. Turning it off makes a new token.</li>
+        <li>The first time you turn it on, macOS may ask whether to accept incoming network connections.</li>
+      </ul>
+      <div class="warn">
+        <p><strong>Traffic is not encrypted.</strong> Devices on the same network could read the token, prompts and videos. Use this only on a network you trust, such as your home's.</p>
+      </div>
     </section>
   </main>
 
