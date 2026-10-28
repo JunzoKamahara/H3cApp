@@ -484,3 +484,21 @@ The assumptions (int8 = 2× BF16, M4's effective MPSGraph TFLOP/s) are unmeasure
 - TAEHV: https://github.com/madebyollin/taehv (MIT)
 - diffusers `transformer_wan.py` (WanTransformer3DModel)
 - h3c-app: `SPEEDUP_ROADMAP.md` (NAX/ccv/memory measurements), `TECHNICAL.md`, `VideoUpscale.swift`, `TinyPreviewDecoder.swift`, `h3_gpu.h`
+
+## Appendix A: Implementation status (2026-10-28, branch vsr-engine)
+
+| Phase | State | Where | Verification |
+|---|---|---|---|
+| P0 Document | done (main) | `UPSCALE_PLAN(.ja).md` | — |
+| P1 Reference dump | **not started** (needs the 20 GB download and the license acceptance) | `tools/dump_swiftvr_fixture.py` (planned) | — |
+| P2 Weight cache | done | `h3_vsr_weights.c`, `h3_vsr_internal.h`, `h3_build_vsr_cache.c` | `tests/test_vsr_cache.c` (synthetic model, bf16 + int8) |
+| P3 ReAE | done (F32 conv3d path) | `h3_vsr_reae.c` | `tests/test_vsr_reae.c`: 2e-7 vs a double transcription; chunk / frame-batch state carry bit-exact |
+| P4 DiT | done (BF16 / int8, full-window MFSWA and full attention) | `h3_vsr_wan.c`, the `h3_vsr_*` kernels in `h3_shaders.metal`, `h3_gpu_sdpa_batched/cross_bf16` | `tests/test_vsr_wan.c`: 61 dB (bf16) / 60.8 dB (int8) vs a double reference |
+| P5 Streamer | done (one context, sequential; only the decoder's 3-frame delay) | `h3_vsr.c` | `tests/test_vsr_session.c`: 7/29/52/70 frames, counts match, deterministic, cancellation |
+| P6 App | in progress | `H3VSR.swift`, `VideoUpscale.swift` (`ChunkedFrameScaler`, `.swiftVR`), `UpscaleSheet.swift`, Localizable | build being checked. No download / acceptance UI yet (weights go into `~/Library/Application Support/H3cApp/Upscalers/SwiftVR/` by hand, converted with `build_vsr_cache`) |
+| P7 Optimization | not started (owner-only queries, NAX for any shape, tapconv, ReAE F16, two contexts, ANE) | — | — |
+| P8 FlashVSR | not started | — | — |
+
+Corrections the implementation forced on the text: 124 frames make 6 chunks (§6.4); even-layer owner widths are 16/16/16/12 (§6.4);
+the patch input order is (c, ph, pw) and the output order (ph, pw, c) (`h3_vsr_patch_in_index` / `h3_vsr_patch_out_index` in `h3_vsr.h`);
+the int8 linears need at least 128 rows, so token rows are padded to 128 (`h3_vsr_wan.c`).

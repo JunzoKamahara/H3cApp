@@ -959,3 +959,10 @@
 "詳細設定を開く（⌘,）" = "Open Advanced Settings (⌘,)";
 "同じファイルには書き出せません" = "Cannot export to the same file";
 "書き出す動画そのものが選ばれています。別の名前か別の場所を選んでください。" = "That is the video being exported. Choose another name or another place.";
+
+/* SwiftVR (one-step VSR) upscaler: VideoUpscale.swift, H3VSR.swift */
+"SwiftVR（AI動画超解像・研究用）" = "SwiftVR (AI video super-resolution, research)";
+"動画全体を一度に見るAIモデル（SwiftVR、Wan2.2ベース）で、質感や細部を描き起こしながら拡大します。24フレームずつ処理し、Real-ESRGANより大幅に時間がかかります（M5で5秒の動画に1分前後）。重みはSwiftVR Research License（研究・非商用）のため同梱せず、ダウンロードした重みをアプリで変換して使います。" = "An AI model that looks at the whole video at once (SwiftVR, based on Wan2.2) enlarges it while drawing texture and detail back in. It works 24 frames at a time and takes far longer than Real-ESRGAN (about a minute for a 5-second video on an M5). Its weights are under the SwiftVR Research License (research, non-commercial), so they are not bundled: the app converts weights you downloaded.";
+"SwiftVRのモデルが入っていません。重みを「%@」に置き、build_vsr_cache で変換すると選べます。" = "The SwiftVR model is not installed. Put its weights in \"%@\" and convert them with build_vsr_cache to choose it.";
+"このMacでは使えません。" = "Not available on this Mac.";
+"出力フレームを確保できませんでした" = "Could not allocate an output frame";

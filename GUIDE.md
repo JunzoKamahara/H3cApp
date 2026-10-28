@@ -87,6 +87,13 @@ Good to know:
     high-quality resize (other scales).
   - Real-ESRGAN Anime (AI upscaling): crisps up lines and flat colours, for
     anime and illustration-style video, in about half General's time.
+  - SwiftVR (AI video super-resolution, research): an AI model that looks at
+    the whole video at once (a one-step restoration model based on Wan2.2)
+    enlarges it while drawing texture and detail back in. It works 24 frames
+    at a time and takes far longer than Real-ESRGAN. Its weights are under
+    the SwiftVR Research License (research, non-commercial), so they are not
+    bundled; it can be chosen only once downloaded weights are installed and
+    converted (UPSCALE_PLAN.md).
 
   All of them run inside the app, with no other program. Real-ESRGAN's
   pretrained weights (BSD-3-Clause) are included in the app.

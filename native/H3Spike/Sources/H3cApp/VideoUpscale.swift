@@ -3,6 +3,7 @@ import AppKit
 import AVFoundation
 import CoreVideo
 import Foundation
+import H3Engine
 import Metal
 import MetalFX
 
@@ -25,6 +26,10 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
     /// denoise strength 0.5) and realesr-animevideov3, bundled.
     case realESRGANGeneral
     case realESRGANAnime
+    /// SwiftVR (Wan2.2-based one-step video restoration), run by the
+    /// engine (h3_vsr.h) from weights the user downloaded: AI video
+    /// super-resolution with generated detail. Research license.
+    case swiftVR
 
     var id: String { rawValue }
 
@@ -34,7 +39,20 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         case .metalFX: return String(localized: "MetalFX（輪郭を保つ拡大）")
         case .realESRGANGeneral: return String(localized: "Real-ESRGAN 汎用（AI超解像）")
         case .realESRGANAnime: return String(localized: "Real-ESRGAN アニメ（AI超解像）")
+        case .swiftVR: return String(localized: "SwiftVR（AI動画超解像・研究用）")
         }
+    }
+
+    /// Where the SwiftVR model lives (reae.safetensors, prompt_embedding.
+    /// safetensors, transformer/) and its .h3vc cache next to it;
+    /// H3_VSR_MODEL_DIR points elsewhere while developing.
+    static var swiftVRModelDirectory: String {
+        ProcessInfo.processInfo.environment["H3_VSR_MODEL_DIR"] ?? (h3AppSupportDirectory + "/Upscalers/SwiftVR")
+    }
+
+    /// The cache this Mac can run SwiftVR from, when the model is installed.
+    static var swiftVRCachePath: String? {
+        H3VideoSuperResolver.usableCachePath(modelDirectory: swiftVRModelDirectory)
     }
 
     /// The bundled weights of an AI upscaler (Resources/Upscalers).
@@ -45,6 +63,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return Bundle.main.url(forResource: "realesr-general-x4v3", withExtension: "safetensors", subdirectory: "Upscalers")
         case .realESRGANAnime:
             return Bundle.main.url(forResource: "realesr-animevideov3", withExtension: "safetensors", subdirectory: "Upscalers")
+        case .swiftVR: return nil
         }
     }
 
@@ -59,6 +78,8 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return String(localized: "AIで細部を補いながら拡大します（Real-ESRGAN realesr-general-x4v3）。実写や一般の映像向けです。細部を描き足すので、元にない模様が出ることがあります。標準より時間がかかります（GPUで、5秒の動画に数十秒〜数分）。")
         case .realESRGANAnime:
             return String(localized: "AIで線や色の面をくっきりさせながら拡大します（Real-ESRGAN realesr-animevideov3）。アニメやイラスト調の映像向けで、汎用より速く処理します。")
+        case .swiftVR:
+            return String(localized: "動画全体を一度に見るAIモデル（SwiftVR、Wan2.2ベース）で、質感や細部を描き起こしながら拡大します。24フレームずつ処理し、Real-ESRGANより大幅に時間がかかります（M5で5秒の動画に1分前後）。重みはSwiftVR Research License（研究・非商用）のため同梱せず、ダウンロードした重みをアプリで変換して使います。")
         }
     }
 
@@ -71,6 +92,19 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return MTLFXSpatialScalerDescriptor.supportsDevice(device)
         case .realESRGANGeneral, .realESRGANAnime:
             return weightsURL != nil && MTLCreateSystemDefaultDevice() != nil
+        case .swiftVR:
+            return Self.swiftVRCachePath != nil && MTLCreateSystemDefaultDevice() != nil
+        }
+    }
+
+    /// Why an unavailable upscaler can't be chosen, for the sheet.
+    var unavailableReason: String? {
+        if isAvailable { return nil }
+        switch self {
+        case .swiftVR:
+            return String(localized: "SwiftVRのモデルが入っていません。重みを「\(Self.swiftVRModelDirectory)」に置き、build_vsr_cache で変換すると選べます。")
+        default:
+            return String(localized: "このMacでは使えません。")
         }
     }
 }
@@ -111,6 +145,50 @@ enum UpscaleFactor: Double, CaseIterable, Identifiable {
 /// One frame in, the same frame enlarged out (both 32BGRA).
 private protocol FrameScaler {
     func scale(_ source: CVPixelBuffer, into destination: CVPixelBuffer) throws
+}
+
+/// Frames in groups, enlarged frames out of a pool, in order and one output
+/// per input over the whole video - possibly behind by a few frames, and
+/// flushed by `isLast` (UPSCALE_PLAN §6.6). `chunkFrames` is how many the
+/// next call should bring.
+private protocol ChunkedFrameScaler {
+    var chunkFrames: Int { get }
+    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool) throws -> [CVPixelBuffer]
+    /// Stops work inside a chunk when the user cancels.
+    func cancel()
+}
+
+/// Any per-frame scaler as a chunk of one: the same operations, so the
+/// output is unchanged byte for byte.
+private final class PerFrameChunkAdapter: ChunkedFrameScaler {
+    let scaler: FrameScaler
+    init(_ scaler: FrameScaler) { self.scaler = scaler }
+    var chunkFrames: Int { 1 }
+    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool) throws -> [CVPixelBuffer] {
+        var outputs: [CVPixelBuffer] = []
+        for frame in frames {
+            var enlarged: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &enlarged)
+            guard let enlarged else {
+                throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
+            }
+            try scaler.scale(frame, into: enlarged)
+            outputs.append(enlarged)
+        }
+        return outputs
+    }
+    func cancel() {}
+}
+
+/// SwiftVR through the engine: 28 frames, then 24 at a time.
+private final class VSRChunkScaler: ChunkedFrameScaler {
+    let session: H3VideoSuperResolver.Session
+    init(session: H3VideoSuperResolver.Session) { self.session = session }
+    var chunkFrames: Int { max(1, session.nextChunkFrames) }
+    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool) throws -> [CVPixelBuffer] {
+        try session.process(frames, isLast: isLast, pool: pool)
+    }
+    func cancel() { session.cancel() }
 }
 
 enum VideoUpscale {
@@ -200,21 +278,38 @@ enum VideoUpscale {
         guard width <= maximumSide, height <= maximumSide else {
             throw UpscaleError.tooLarge(width: width, height: height)
         }
-        let scaler: FrameScaler
+        let scaler: ChunkedFrameScaler
         switch upscaler {
-        case .standard: scaler = VImageScaler()
+        case .standard: scaler = PerFrameChunkAdapter(VImageScaler())
         case .metalFX:
             guard let made = MetalFXScaler(inputWidth: inputWidth, inputHeight: inputHeight,
                                            outputWidth: width, outputHeight: height) else {
                 throw UpscaleError.unavailable(upscaler.label)
             }
-            scaler = made
+            scaler = PerFrameChunkAdapter(made)
         case .realESRGANGeneral, .realESRGANAnime:
             guard let weights = upscaler.weightsURL else { throw UpscaleError.unavailable(upscaler.label) }
-            scaler = try RealESRGANScaler(network: RealESRGANNetwork(weights: weights, width: inputWidth,
-                                                                     height: inputHeight,
-                                                                     scale: factor == .two ? 2 : 4),
-                                          outputWidth: width, outputHeight: height)
+            scaler = PerFrameChunkAdapter(try RealESRGANScaler(network: RealESRGANNetwork(weights: weights, width: inputWidth,
+                                                                                          height: inputHeight,
+                                                                                          scale: factor == .two ? 2 : 4),
+                                                               outputWidth: width, outputHeight: height))
+        case .swiftVR:
+            guard let cachePath = VideoUpscaler.swiftVRCachePath else { throw UpscaleError.unavailable(upscaler.label) }
+            let resolver: H3VideoSuperResolver
+            do {
+                resolver = try H3VideoSuperResolver(modelDirectory: VideoUpscaler.swiftVRModelDirectory, cachePath: cachePath)
+            } catch {
+                throw UpscaleError.cannotWrite(error.localizedDescription)
+            }
+            let requirements = resolver.requirements(inputWidth: inputWidth, inputHeight: inputHeight,
+                                                     outputWidth: width, outputHeight: height)
+            guard requirements.supported else { throw UpscaleError.cannotWrite(requirements.reason) }
+            do {
+                scaler = VSRChunkScaler(session: try resolver.openSession(inputWidth: inputWidth, inputHeight: inputHeight,
+                                                                          outputWidth: width, outputHeight: height))
+            } catch {
+                throw UpscaleError.cannotWrite(error.localizedDescription)
+            }
         }
         let expectedFrames = max(1, Int((timeRange.duration.seconds * Double(frameRate)).rounded()))
 
@@ -273,29 +368,50 @@ enum VideoUpscale {
         let failure = Failure()
         await withTaskGroup(of: Void.self) { group in
             group.addTask {
+                // Reader -> chunked scaler -> writer, in one serial pump
+                // (UPSCALE_PLAN §6.6): frames are collected until the scaler
+                // has its chunk, enlarged together, and appended with the
+                // input timestamps in order (one output per input overall).
                 var done = 0
+                var pending: [CVPixelBuffer] = []
+                var pendingTimes: [CMTime] = []
+                var ready: [CVPixelBuffer] = []
+                var readyTimes: [CMTime] = []
+                var finished = false
                 await pump(videoInput, on: DispatchQueue(label: "h3c.upscale.video")) {
                     if failure.error != nil { return false }
                     if isCancelled() {
+                        scaler.cancel()
                         failure.set(UpscaleError.cancelled)
                         return false
                     }
-                    guard let sample = videoOutput.copyNextSampleBuffer() else { return false }
-                    guard let frame = CMSampleBufferGetImageBuffer(sample),
-                          let pool = adaptor.pixelBufferPool else { return true }
-                    var enlarged: CVPixelBuffer?
-                    CVPixelBufferPoolCreatePixelBuffer(nil, pool, &enlarged)
-                    guard let enlarged else {
-                        failure.set(UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした")))
-                        return false
+                    while ready.isEmpty {
+                        if finished { return false }
+                        guard let pool = adaptor.pixelBufferPool else { return false }
+                        var isLast = false
+                        while pending.count < scaler.chunkFrames {
+                            guard let sample = videoOutput.copyNextSampleBuffer() else { isLast = true; break }
+                            guard let frame = CMSampleBufferGetImageBuffer(sample) else { continue }
+                            pending.append(frame)
+                            pendingTimes.append(CMSampleBufferGetPresentationTimeStamp(sample))
+                        }
+                        if pending.isEmpty { finished = true; return false }
+                        do {
+                            let outputs = try scaler.process(pending, isLast: isLast, pool: pool)
+                            ready.append(contentsOf: outputs)
+                            readyTimes.append(contentsOf: pendingTimes.prefix(outputs.count))
+                            pendingTimes.removeFirst(min(outputs.count, pendingTimes.count))
+                            // Times of inputs still inside the scaler stay queued for its later outputs.
+                            pending.removeAll()
+                        } catch {
+                            failure.set(error)
+                            return false
+                        }
+                        if isLast { finished = true }
                     }
-                    do {
-                        try scaler.scale(frame, into: enlarged)
-                    } catch {
-                        failure.set(error)
-                        return false
-                    }
-                    if !adaptor.append(enlarged, withPresentationTime: CMSampleBufferGetPresentationTimeStamp(sample)) {
+                    let enlarged = ready.removeFirst()
+                    let time = readyTimes.removeFirst()
+                    if !adaptor.append(enlarged, withPresentationTime: time) {
                         failure.set(UpscaleError.cannotWrite(writer.error?.localizedDescription ?? ""))
                         return false
                     }

@@ -52,6 +52,9 @@ struct UpscaleSheet: View {
             .pickerStyle(.radioGroup)
             VStack(alignment: .leading, spacing: 4) {
                 Text(upscaler.detail)
+                if let reason = upscaler.unavailableReason {
+                    Text(reason).foregroundStyle(.orange)
+                }
                 Text(pending.projectVideo != nil
                      ? String(localized: "拡大した動画は、プロジェクトに新しく加わります（名前の最後に「_\(factor.suffix)」）。音声とAIで生成したという記録は、そのままです。")
                      : String(localized: "拡大した動画の保存先は、次に選びます。音声とファイルの情報は、そのままです。"))

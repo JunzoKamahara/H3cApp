@@ -485,3 +485,21 @@ Swift（`VideoUpscale.upscale` を 3 段に。既存方式は `PerFrameChunkAdap
 - TAEHV: https://github.com/madebyollin/taehv （MIT）
 - diffusers `transformer_wan.py`（WanTransformer3DModel）
 - h3c-app: `SPEEDUP_ROADMAP.md`（NAX/ccv/メモリ実測）、`TECHNICAL.md`、`VideoUpscale.swift`、`TinyPreviewDecoder.swift`、`h3_gpu.h`
+
+## 付録 A: 実装状況（2026-10-28, ブランチ vsr-engine）
+
+| フェーズ | 状態 | 場所 | 検証 |
+|---|---|---|---|
+| P0 文書 | 完了（main） | `UPSCALE_PLAN(.ja).md` | — |
+| P1 参照ダンプ | **未着手**（20 GB の重み取得とライセンス同意が必要） | `tools/dump_swiftvr_fixture.py`（予定） | — |
+| P2 重みキャッシュ | 完了 | `h3_vsr_weights.c`, `h3_vsr_internal.h`, `h3_build_vsr_cache.c` | `tests/test_vsr_cache.c`（合成モデル、bf16+int8） |
+| P3 ReAE | 完了（F32 conv3d 経路） | `h3_vsr_reae.c` | `tests/test_vsr_reae.c`: 倍精度転写と 2e-7、チャンク／フレームバッチの状態持ち越しはビット一致 |
+| P4 DiT | 完了（BF16 / int8、全窓 MFSWA と全注意） | `h3_vsr_wan.c`, `h3_shaders.metal` の `h3_vsr_*`, `h3_gpu_sdpa_batched/cross_bf16` | `tests/test_vsr_wan.c`: 倍精度参照と 61 dB（bf16）/ 60.8 dB（int8） |
+| P5 ストリーマ | 完了（1 コンテキスト直列、1 チャンク遅延なし＝デコーダの 3 フレーム遅延のみ） | `h3_vsr.c` | `tests/test_vsr_session.c`: 7/29/52/70 フレームで出力数一致・決定的・キャンセル |
+| P6 アプリ | 進行中 | `H3VSR.swift`, `VideoUpscale.swift`（`ChunkedFrameScaler`, `.swiftVR`）, `UpscaleSheet.swift`, Localizable | ビルド確認中。DL／同意 UI は未実装（重みは `~/Library/Application Support/H3cApp/Upscalers/SwiftVR/` に手で置き `build_vsr_cache` で変換） |
+| P7 最適化 | 未着手（owner 限定クエリ、NAX 任意形状、tapconv、ReAE F16、2 コンテキスト並走、ANE） | — | — |
+| P8 FlashVSR | 未着手 | — | — |
+
+実装で判明し本文を修正した点: 124 フレームは 6 チャンク（§6.4）、偶数層の owner 幅は 16/16/16/12（§6.4）、
+patch 入力は (c, ph, pw)・出力は (ph, pw, c) 順（`h3_vsr.h` の `h3_vsr_patch_in_index` / `h3_vsr_patch_out_index`）、
+int8 線形は 128 行以上を要求するためトークン行を 128 単位でパディング（`h3_vsr_wan.c`）。

@@ -108,3 +108,23 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+## SwiftVR, LightX2V and TAEHV (the "SwiftVR" upscaler; no weights bundled)
+
+The "SwiftVR（AI動画超解像・研究用）" upscaler is the engine's own C/Metal
+implementation (`h3_vsr*.c`, `h3_shaders.metal`) of the SwiftVR one-step
+video restoration model: the Wan2.2-based transformer with mask-free
+shifted-window attention and the Restoration-aware Autoencoder, transcribed
+from the model definitions in [H-oliday/SwiftVR](https://github.com/H-oliday/SwiftVR)
+(Apache License 2.0) and the streaming protocol of
+[ModelTC/LightX2V](https://github.com/ModelTC/LightX2V) (Apache License 2.0),
+whose autoencoder follows [madebyollin/taehv](https://github.com/madebyollin/taehv)
+(MIT). No code from those projects ships in the app.
+
+The model weights are **not bundled**. They are published separately by the
+SwiftVR authors at https://huggingface.co/H-oliday/SwiftVR under the
+"SwiftVR Research License", which permits research and other non-commercial
+use only; commercial use needs the authors' written permission. The app only
+reads weights the user has downloaded and converted (`build_vsr_cache`), and
+shows this notice before they are used.
+
