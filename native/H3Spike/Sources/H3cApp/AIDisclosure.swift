@@ -59,7 +59,7 @@ enum AIDisclosure {
         var errorDescription: String? {
             switch self {
             case .cannotExport: return String(localized: "書き出しの準備ができませんでした")
-            case .overSource: return String(localized: "元の動画と同じファイルには書き出せません")
+            case .overSource: return String(localized: "同じファイルには書き出せません")
             }
         }
     }

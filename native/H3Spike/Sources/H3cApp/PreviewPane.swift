@@ -284,7 +284,11 @@ private struct ResultActionsView: View {
         panel.directoryURL = Self.initialExportDirectory
         let options = ExportOptionsAccessory()
         panel.accessoryView = options.view
-        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        let guardDelegate = ExportPanelDelegate(source: sourceURL)
+        panel.delegate = guardDelegate
+        let response = panel.runModal()
+        panel.delegate = nil
+        guard response == .OK, let destination = panel.url else { return }
         AIDisclosure.addsLabel = options.addsLabel
         AIDisclosure.exportsH264 = options.makesH264
         VideoQuality.export = options.quality
@@ -312,6 +316,26 @@ private struct ResultActionsView: View {
             }
             isExporting = false
         }
+    }
+}
+
+/// Keeps the save panel open, with a dialog, when the file chosen is the
+/// video being exported itself: it is read while the export is written.
+/// AIDisclosure.export refuses it too, for any other way in.
+private final class ExportPanelDelegate: NSObject, NSOpenSavePanelDelegate {
+    private let source: URL
+
+    init(source: URL) {
+        self.source = source
+    }
+
+    func panel(_ sender: Any, validate url: URL) throws {
+        guard VideoUpscale.isSameFile(source, url) else { return }
+        throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError, userInfo: [
+            NSLocalizedDescriptionKey: String(localized: "同じファイルには書き出せません"),
+            NSLocalizedRecoverySuggestionErrorKey:
+                String(localized: "書き出す動画そのものが選ばれています。別の名前か別の場所を選んでください。"),
+        ])
     }
 }
 

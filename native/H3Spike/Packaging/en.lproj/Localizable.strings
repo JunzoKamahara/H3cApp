@@ -957,4 +957,5 @@
 "途中の様子" = "Progress Previews";
 "どちらもすべてのウィンドウに効きます。生成中なら、次の1本から変わります。" = "Both apply to every window. During a generation, they take effect from the next video.";
 "詳細設定を開く（⌘,）" = "Open Advanced Settings (⌘,)";
-"元の動画と同じファイルには書き出せません" = "Cannot export over the original video";
+"同じファイルには書き出せません" = "Cannot export to the same file";
+"書き出す動画そのものが選ばれています。別の名前か別の場所を選んでください。" = "That is the video being exported. Choose another name or another place.";
