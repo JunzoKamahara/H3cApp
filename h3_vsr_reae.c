@@ -141,6 +141,20 @@ static h3_gpu_tensor *pack_taps(h3_gpu *gpu, const float *w, int out, int in_tot
     return tensor;
 }
 
+/* 1x1 taps given tap-major as [taps][out][in] -> [taps * out_p, in_p] BF16. */
+static h3_gpu_tensor *pack_taps_1x1(h3_gpu *gpu, const float *w, int taps, int out, int in, int out_p, int in_p) {
+    size_t n = (size_t)taps * out_p * in_p;
+    uint16_t *packed = calloc(n, sizeof(uint16_t));
+    if (!packed) return NULL;
+    for (int t = 0; t < taps; t++)
+        for (int o = 0; o < out; o++)
+            for (int i = 0; i < in; i++)
+                packed[((size_t)t * out_p + o) * in_p + i] = f32_to_bf16(w[((size_t)t * out + o) * in + i]);
+    h3_gpu_tensor *tensor = h3_gpu_tensor_from_bf16(gpu, packed, n);
+    free(packed);
+    return tensor;
+}
+
 static h3_gpu_tensor *pack_bias(h3_gpu *gpu, const float *b, int out, int out_p) {
     float *padded = calloc((size_t)out_p, sizeof(float));
     if (!padded) return NULL;
@@ -250,6 +264,18 @@ static int load_tpool(layer *l, h3_weight_store *store, h3_gpu *gpu, const char 
             for (int f = 0; f < stride; f++)
                 w3[((size_t)o * channels + i) * stride + f] =
                     w[(size_t)o * stride * channels + (size_t)f * channels + i];
+    l->in_p = l->out_p = round64(channels);
+    if (nax_wanted(gpu)) {
+        float *wt = malloc((size_t)stride * channels * channels * sizeof(float));
+        if (wt) {
+            for (int f = 0; f < stride; f++)
+                for (int o = 0; o < channels; o++)
+                    for (int i = 0; i < channels; i++)
+                        wt[((size_t)f * channels + o) * channels + i] = w[(size_t)o * stride * channels + (size_t)f * channels + i];
+            l->nw[0] = pack_taps_1x1(gpu, wt, stride, channels, channels, l->out_p, l->in_p);
+            free(wt);
+        }
+    }
     free(w);
     l->w[0] = upload(gpu, w3, (size_t)channels * channels * stride);
     free(w3);
@@ -268,6 +294,8 @@ static int load_tgrow(layer *l, h3_weight_store *store, h3_gpu *gpu, const char 
         float *w = host_f32(store, gpu, name, 4, shape, error, error_size);
         if (!w) return 0;
         l->w[0] = upload(gpu, w, (size_t)channels * channels);
+        l->in_p = l->out_p = round64(channels);
+        if (nax_wanted(gpu)) l->nw[0] = pack_taps_1x1(gpu, w, 1, channels, channels, l->out_p, l->in_p);
         free(w);
         l->in_ch = l->out_ch = channels;
         return l->w[0] != NULL;
@@ -286,6 +314,9 @@ static int load_tgrow(layer *l, h3_weight_store *store, h3_gpu *gpu, const char 
         }
     free(w);
     l->w[0] = upload(gpu, w2, (size_t)2 * channels * channels);
+    l->in_p = round64(channels);
+    l->out_p = round64(2 * channels);
+    if (nax_wanted(gpu)) l->nw[0] = pack_taps_1x1(gpu, w2, 1, 2 * channels, channels, l->out_p, l->in_p);
     free(w2);
     l->in_ch = channels;
     l->out_ch = 2 * channels;
@@ -533,9 +564,17 @@ static int act_alloc_grid(h3_vsr_reae *reae, activation *a, int t, int h, int w,
     a->cp = round64(c);
     a->rows = (uint32_t)t * ((uint32_t)h + 2) * wp;
     a->guard = (wp + 3 + 127) / 128 * 128;
-    a->x_rows = a->guard + a->rows + a->guard + 128;
+    /* trailing room: the 3x3 taps, or one frame for the TPool pair tap */
+    uint32_t frame_rows = ((uint32_t)h + 2) * wp;
+    uint32_t tail = a->guard + 128 > frame_rows + 128 ? a->guard + 128 : frame_rows + 128;
+    a->x_rows = a->guard + a->rows + tail;
     a->tensor = pool_take(reae, (size_t)a->x_rows * a->cp, 1);
     return a->tensor != NULL;
+}
+
+static h3_vsr_grid grid_of(const activation *a) {
+    h3_vsr_grid g = {(uint32_t)a->t, (uint32_t)a->h, (uint32_t)a->w, (uint32_t)a->c, (uint32_t)a->cp, a->guard, a->x_rows};
+    return g;
 }
 
 static size_t act_elements(const activation *a) {
@@ -733,7 +772,8 @@ static int to_f32(h3_vsr_reae *reae, const activation *in, activation *out, char
     return 1;
 }
 
-/* A conv or MemBlock on the TensorOps path: `in` and `out` are grids. */
+/* One layer on the TensorOps path: `in` and `out` are grids. The S2D,
+ * Clamp and D2S layers are the table's edges and live in run_table. */
 static int run_layer_nax(h3_vsr_reae *reae, const layer *l, h3_vsr_reae_state *state,
                          const activation *in, activation *out, int relu,
                          char *error, size_t error_size) {
@@ -742,11 +782,15 @@ static int run_layer_nax(h3_vsr_reae *reae, const layer *l, h3_vsr_reae_state *s
     tap_offsets(in->w, off);
     activation past = {0}, y1 = {0}, y2 = {0};
     memset(out, 0, sizeof(*out));
-    if (in->cp != l->in_p) {
+    size_t frame_rows = (size_t)(in->h + 2) * (in->w + 2);
+    size_t cp = (size_t)in->cp;
+    if ((l->kind == L_CONV || l->kind == L_CONV_S2 || l->kind == L_MEMBLOCK || l->kind == L_TPOOL ||
+         l->kind == L_TGROW1 || l->kind == L_TGROW2) && in->cp != l->in_p) {
         fail(error, error_size, "ReAE: grid has %d padded channels, the layer wants %d", in->cp, l->in_p);
         return 0;
     }
-    if (l->kind == L_CONV) {
+    switch (l->kind) {
+    case L_CONV:
         if (!act_alloc_grid(reae, out, in->t, in->h, in->w, l->out_ch)) goto oom;
         GPU_OP(grid_zero_guards(gpu, out));
         GPU_OP(h3_gpu_vsr_tapconv_bf16(gpu, out->tensor, in->tensor, NULL, l->nw[0], NULL, l->nb[0], NULL,
@@ -755,11 +799,77 @@ static int run_layer_nax(h3_vsr_reae *reae, const layer *l, h3_vsr_reae_state *s
         GPU_OP(h3_gpu_vsr_zero_border_bf16(gpu, out->tensor, (uint32_t)out->t, (uint32_t)out->h,
                                            (uint32_t)out->w, (uint32_t)out->cp, out->guard, out->x_rows));
         return 1;
+    case L_CONV_S2: {
+        /* the stride-1 conv everywhere, then every other row and column */
+        if (!act_alloc_grid(reae, &y1, in->t, in->h, in->w, l->out_ch)) goto oom;
+        GPU_OP(grid_zero_guards(gpu, &y1));
+        GPU_OP(h3_gpu_vsr_tapconv_bf16(gpu, y1.tensor, in->tensor, NULL, l->nw[0], NULL, l->nb[0], NULL,
+                                       in->rows, in->x_rows, in->guard, (uint32_t)in->cp, (uint32_t)y1.cp,
+                                       9, off, relu));
+        if (!act_alloc_grid(reae, out, in->t, in->h / 2, in->w / 2, l->out_ch)) goto oom;
+        h3_vsr_grid go = grid_of(out), gi = grid_of(&y1);
+        GPU_OP(h3_gpu_vsr_grid_select_bf16(gpu, out->tensor, &go, y1.tensor, &gi, 1, 2, 2));
+        act_free(&y1);
+        return 1;
     }
-    /* MemBlock: past = [state or zero, frames 0 .. T-2] of the input. */
-    {
-        size_t frame_rows = (size_t)(in->h + 2) * (in->w + 2);
-        size_t cp = (size_t)in->cp;
+    case L_TPOOL: {
+        int32_t taps[2] = {0, (int32_t)frame_rows};
+        if (l->stride == 1) {
+            if (!act_alloc_grid(reae, out, in->t, in->h, in->w, l->out_ch)) goto oom;
+            GPU_OP(grid_zero_guards(gpu, out));
+            GPU_OP(h3_gpu_vsr_tapconv_bf16(gpu, out->tensor, in->tensor, NULL, l->nw[0], NULL, NULL, NULL,
+                                           in->rows, in->x_rows, in->guard, (uint32_t)cp, (uint32_t)out->cp, 1, taps, 0));
+            GPU_OP(h3_gpu_vsr_zero_border_bf16(gpu, out->tensor, (uint32_t)out->t, (uint32_t)out->h,
+                                               (uint32_t)out->w, (uint32_t)out->cp, out->guard, out->x_rows));
+            return 1;
+        }
+        if (in->t % l->stride) {
+            fail(error, error_size, "ReAE TPool: %d frames are not a multiple of %d", in->t, l->stride);
+            goto failed;
+        }
+        /* z(t) = Wa x(t) + Wb x(t+1) for every frame, then the even frames */
+        if (!act_alloc_grid(reae, &y1, in->t, in->h, in->w, l->out_ch)) goto oom;
+        GPU_OP(grid_zero_guards(gpu, &y1));
+        GPU_OP(h3_gpu_vsr_tapconv_bf16(gpu, y1.tensor, in->tensor, NULL, l->nw[0], NULL, NULL, NULL,
+                                       in->rows, in->x_rows, in->guard, (uint32_t)cp, (uint32_t)y1.cp, 2, taps, 0));
+        if (!act_alloc_grid(reae, out, in->t / l->stride, in->h, in->w, l->out_ch)) goto oom;
+        h3_vsr_grid go = grid_of(out), gi = grid_of(&y1);
+        GPU_OP(h3_gpu_vsr_grid_select_bf16(gpu, out->tensor, &go, y1.tensor, &gi, (uint32_t)l->stride, 1, 1));
+        act_free(&y1);
+        return 1;
+    }
+    case L_TGROW1: {
+        int32_t tap = 0;
+        if (!act_alloc_grid(reae, out, in->t, in->h, in->w, l->out_ch)) goto oom;
+        GPU_OP(grid_zero_guards(gpu, out));
+        GPU_OP(h3_gpu_vsr_tapconv_bf16(gpu, out->tensor, in->tensor, NULL, l->nw[0], NULL, NULL, NULL,
+                                       in->rows, in->x_rows, in->guard, (uint32_t)cp, (uint32_t)out->cp, 1, &tap, 0));
+        GPU_OP(h3_gpu_vsr_zero_border_bf16(gpu, out->tensor, (uint32_t)out->t, (uint32_t)out->h,
+                                           (uint32_t)out->w, (uint32_t)out->cp, out->guard, out->x_rows));
+        return 1;
+    }
+    case L_TGROW2: {
+        /* 1x1 to 2C per frame (the two temporal taps see only the frame's
+         * own two copies), then frame 2t+k takes half k */
+        int32_t tap = 0;
+        if (!act_alloc_grid(reae, &y1, in->t, in->h, in->w, l->out_ch)) goto oom;
+        GPU_OP(grid_zero_guards(gpu, &y1));
+        GPU_OP(h3_gpu_vsr_tapconv_bf16(gpu, y1.tensor, in->tensor, NULL, l->nw[0], NULL, NULL, NULL,
+                                       in->rows, in->x_rows, in->guard, (uint32_t)cp, (uint32_t)y1.cp, 1, &tap, 0));
+        if (!act_alloc_grid(reae, out, in->t * 2, in->h, in->w, l->out_ch / 2)) goto oom;
+        h3_vsr_grid go = grid_of(out), gi = grid_of(&y1);
+        GPU_OP(h3_gpu_vsr_grid_split_frames_bf16(gpu, out->tensor, &go, y1.tensor, &gi));
+        act_free(&y1);
+        return 1;
+    }
+    case L_UPSAMPLE: {
+        if (!act_alloc_grid(reae, out, in->t, in->h * 2, in->w * 2, in->c)) goto oom;
+        h3_vsr_grid go = grid_of(out), gi = grid_of(in);
+        GPU_OP(h3_gpu_vsr_grid_upsample2_bf16(gpu, out->tensor, &go, in->tensor, &gi));
+        return 1;
+    }
+    case L_MEMBLOCK: {
+        /* past = [state or zero, frames 0 .. T-2] of the input */
         int idx = l->state_index;
         if (!act_alloc_grid(reae, &past, in->t, in->h, in->w, in->c)) goto oom;
         GPU_OP(grid_zero_guards(gpu, &past));
@@ -804,6 +914,10 @@ static int run_layer_nax(h3_vsr_reae *reae, const layer *l, h3_vsr_reae_state *s
         act_free(&y2);
         return 1;
     }
+    default:
+        fail(error, error_size, "ReAE: layer kind %d is not on the TensorOps path", (int)l->kind);
+        return 0;
+    }
 oom:
     fail(error, error_size, "ReAE: out of GPU memory");
 failed:
@@ -832,6 +946,8 @@ static int run_table(h3_vsr_reae *reae, const layer *layers, int count,
     }
     for (int start = 0; start < in_t; start += batch) {
         int frames = start + batch <= in_t ? batch : in_t - start;
+        struct timespec batch0;
+        clock_gettime(CLOCK_MONOTONIC, &batch0);
         activation current = {0};
         if (!act_alloc(reae, &current, frames, in_h, in_w, in_c)) {
             fail(error, error_size, "ReAE: out of GPU memory");
@@ -846,22 +962,44 @@ static int run_table(h3_vsr_reae *reae, const layer *layers, int count,
         for (int i = 0; i < count; i++) {
             activation next;
             const layer *l = &layers[i];
-            int use_nax = reae->nax && (l->kind == L_CONV || l->kind == L_MEMBLOCK);
-            if (use_nax != current.grid) {
-                activation converted;
-                int ok = use_nax ? to_grid(reae, &current, &converted, error, error_size)
-                                 : to_f32(reae, &current, &converted, error, error_size);
-                act_free(&current);
-                if (!ok) return 0;
-                current = converted;
-            }
+            int use_nax = reae->nax;
             int ok;
             struct timespec cpu0;
             clock_gettime(CLOCK_MONOTONIC, &cpu0);
-            if (use_nax) {
+            if (use_nax && (l->kind == L_S2D || l->kind == L_CLAMP_TANH)) {
+                /* the table's first layer: F32 input -> grid */
+                int s2d = l->kind == L_S2D;
+                if (!act_alloc_grid(reae, &next, current.t, s2d ? current.h / 2 : current.h,
+                                    s2d ? current.w / 2 : current.w, s2d ? current.c * 4 : current.c)) {
+                    fail(error, error_size, "ReAE: out of GPU memory");
+                    act_free(&current);
+                    return 0;
+                }
+                h3_vsr_grid g = grid_of(&next);
+                ok = s2d ? h3_gpu_vsr_pack_grid_s2d_bf16(gpu, next.tensor, &g, current.tensor)
+                         : h3_gpu_vsr_pack_grid_clamp_bf16(gpu, next.tensor, &g, current.tensor);
+                if (!ok) fail(error, error_size, "ReAE: grid pack failed: %s", h3_gpu_error(gpu));
+            } else if (use_nax && l->kind == L_D2S_CLAMP01) {
+                /* the decoder's last layer: grid -> F32 frames */
+                if (!act_alloc(reae, &next, current.t, current.h * 2, current.w * 2, current.c / 4)) {
+                    fail(error, error_size, "ReAE: out of GPU memory");
+                    act_free(&current);
+                    return 0;
+                }
+                h3_vsr_grid g = grid_of(&current);
+                ok = h3_gpu_vsr_unpack_grid_d2s_f32(gpu, next.tensor, current.tensor, &g);
+                if (!ok) fail(error, error_size, "ReAE: grid unpack failed: %s", h3_gpu_error(gpu));
+            } else if (use_nax) {
+                if (!current.grid) {
+                    activation converted;
+                    ok = to_grid(reae, &current, &converted, error, error_size);
+                    act_free(&current);
+                    if (!ok) return 0;
+                    current = converted;
+                }
                 /* a ReLU right after a conv is the conv's epilogue */
                 int relu = 0;
-                if (l->kind == L_CONV && i + 1 < count && layers[i + 1].kind == L_RELU) { relu = 1; i++; }
+                if ((l->kind == L_CONV || l->kind == L_CONV_S2) && i + 1 < count && layers[i + 1].kind == L_RELU) { relu = 1; i++; }
                 ok = run_layer_nax(reae, l, state, &current, &next, relu, error, error_size);
             } else {
                 ok = run_layer(reae, l, state, &current, &next, error, error_size);
@@ -924,6 +1062,15 @@ static int run_table(h3_vsr_reae *reae, const layer *layers, int count,
         }
         out_at += current.t;
         act_free(&current);
+        if (getenv("H3_VSR_TRACE_BATCH")) {
+            struct timespec batch1;
+            if (!h3_gpu_submit(gpu) || !h3_gpu_begin(gpu)) return 0;
+            clock_gettime(CLOCK_MONOTONIC, &batch1);
+            fprintf(stderr, "reae batch %s start %d (%d frames): %.1f ms wall (submitted), pool %d\n",
+                    layers == reae->encoder ? "enc" : "dec", start, frames,
+                    ((double)(batch1.tv_sec - batch0.tv_sec) + (double)(batch1.tv_nsec - batch0.tv_nsec) * 1e-9) * 1000.0,
+                    reae->pool_count);
+        }
     }
     if (!h3_gpu_submit(gpu)) {
         fail(error, error_size, "ReAE: GPU submit failed: %s", h3_gpu_error(gpu));
@@ -931,7 +1078,7 @@ static int run_table(h3_vsr_reae *reae, const layer *layers, int count,
     }
     /* The pool serves the batch loop; the buffers go back to the system
      * between calls so the DiT has the memory. */
-    pool_drain(reae);
+    if (!getenv("H3_VSR_REAE_KEEP_POOL")) pool_drain(reae);
     if (out_at != out_t) {
         fail(error, error_size, "ReAE: produced %d of %d frames", out_at, out_t);
         return 0;

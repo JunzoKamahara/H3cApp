@@ -425,6 +425,31 @@ int h3_gpu_vsr_unpack_grid_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_
 int h3_gpu_vsr_zero_border_bf16(h3_gpu *gpu, h3_gpu_tensor *x, uint32_t frames,
                                 uint32_t height, uint32_t width, uint32_t padded_channels,
                                 uint32_t guard, uint32_t x_rows);
+/* The grid geometry the layer kernels below take: `channels` real
+ * channels in `padded_channels` (a multiple of 64), frames x (height+2) x
+ * (width+2) rows from `guard`, x_rows physical rows. Every kernel zeroes
+ * its output's guard and border rows. */
+typedef struct {
+    uint32_t frames, height, width, channels, padded_channels, guard, x_rows;
+} h3_vsr_grid;
+/* F32 frames [T, 2h, 2w, 3] -> grid (12 channels): pixel_unshuffle(2). */
+int h3_gpu_vsr_pack_grid_s2d_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_vsr_grid *out,
+                                  const h3_gpu_tensor *frames);
+/* F32 [T, h, w, C] -> grid with tanh(x / 3) * 3. */
+int h3_gpu_vsr_pack_grid_clamp_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_vsr_grid *out,
+                                    const h3_gpu_tensor *input);
+/* grid (12 channels) -> F32 frames [T, 2h, 2w, 3] in [0, 1]: pixel_shuffle(2). */
+int h3_gpu_vsr_unpack_grid_d2s_f32(h3_gpu *gpu, h3_gpu_tensor *frames, const h3_gpu_tensor *input,
+                                   const h3_vsr_grid *in);
+int h3_gpu_vsr_grid_upsample2_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_vsr_grid *out,
+                                   const h3_gpu_tensor *input, const h3_vsr_grid *in);
+/* grid [T, h, w, 2C] -> grid [2T, h, w, C]: frame 2t+k = channels k*C.. of frame t. */
+int h3_gpu_vsr_grid_split_frames_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_vsr_grid *out,
+                                      const h3_gpu_tensor *input, const h3_vsr_grid *in);
+/* out(t, y, x) = in(t*stride_t, y*stride_y, x*stride_x). */
+int h3_gpu_vsr_grid_select_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_vsr_grid *out,
+                                const h3_gpu_tensor *input, const h3_vsr_grid *in,
+                                uint32_t stride_t, uint32_t stride_y, uint32_t stride_x);
 int h3_gpu_vsr_pixels_to_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                              const h3_gpu_tensor *pixels, uint32_t frames,
                              uint32_t in_w, uint32_t in_h, uint32_t in_stride,

@@ -2703,6 +2703,64 @@ kernel void h3_linear_int8_nax_r128_full_k14336(
     }
 }
 
+/* The same full-K product for other static shapes (the SwiftVR FC2). */
+template<uint INPUT_DIM, uint OUTPUT_DIM>
+kernel void h3_linear_int8_nax_r128_full_k_impl(
+                           device int8_t *input [[buffer(0)]],
+                           device int8_t *weight [[buffer(1)]],
+                           device const float *input_scales [[buffer(2)]],
+                           device const float *weight_scales [[buffer(3)]],
+                           device bfloat *output [[buffer(4)]],
+                           constant linear_args &args [[buffer(5)]],
+                           uint code [[threadgroup_position_in_grid]],
+                           ushort tid [[thread_index_in_threadgroup]]) {
+    constexpr uint TILE = 128;
+    uint padded_rows = (args.rows + TILE - 1) & ~(TILE - 1);
+    uint row_tiles = padded_rows / TILE;
+    uint2 group = h3_morton_decode_compact(
+        code, row_tiles, OUTPUT_DIM / TILE);
+    uint row_start = group.x * TILE;
+    uint column_start = group.y * TILE;
+    threadgroup float local_input_scales[TILE];
+    threadgroup float local_weight_scales[TILE];
+    if (tid < TILE) {
+        local_input_scales[tid] = input_scales[row_start + tid];
+        local_weight_scales[tid] = weight_scales[column_start + tid];
+    }
+    auto x = tensor<device int8_t, dextents<int32_t, 2>, tensor_inline>(
+        input, dextents<int32_t, 2>((int)INPUT_DIM,
+                                    (int)padded_rows));
+    auto w = tensor<device int8_t, dextents<int32_t, 2>, tensor_inline>(
+        weight, dextents<int32_t, 2>((int)INPUT_DIM,
+                                     (int)OUTPUT_DIM));
+    constexpr auto descriptor = matmul2d_descriptor(
+        TILE, TILE, INPUT_DIM, false, true, true,
+        matmul2d_descriptor::mode::multiply);
+    matmul2d<descriptor, execution_simdgroups<8>> mm;
+    auto a = x.slice<TILE, INPUT_DIM>(0, (int)row_start);
+    auto b = w.slice<INPUT_DIM, TILE>(0, (int)column_start);
+    auto accum = mm.template get_destination_cooperative_tensor<
+        decltype(a), decltype(b), int32_t>();
+    mm.run(a, b, accum);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    #pragma clang loop unroll(full)
+    for (ushort element = 0; element < accum.get_capacity(); element++) {
+        if (!accum.is_valid_element(element)) continue;
+        auto index = accum.get_multidimensional_index(element);
+        uint row = row_start + (uint)index[1];
+        uint column = column_start + (uint)index[0];
+        if (row < args.rows)
+            output[row * OUTPUT_DIM + column] =
+                (bfloat)((float)accum[element] *
+                    local_input_scales[(uint)index[1]] *
+                    local_weight_scales[(uint)index[0]]);
+    }
+}
+
+typedef decltype(h3_linear_int8_nax_r128_full_k_impl<14336, 3072>) h3_linear_int8_nax_r128_full_k_t;
+template [[host_name("h3_linear_int8_nax_r128_full_k14336_n3072")]]
+kernel h3_linear_int8_nax_r128_full_k_t h3_linear_int8_nax_r128_full_k_impl<14336, 3072>;
+
 kernel void h3_linear_int8_nax_r128x256_full_k14336(
                            device int8_t *input [[buffer(0)]],
                            device int8_t *weight [[buffer(1)]],
@@ -2841,6 +2899,19 @@ kernel h3_linear_int8_local_scales_nax_r128_t
 template [[host_name("h3_linear_int8_local_scales_nax_r128_k7168")]]
 kernel h3_linear_int8_local_scales_nax_r128_t
     h3_linear_int8_local_scales_nax_r128_impl<7168, 5376>;
+/* The SwiftVR DiT's shapes (dim 3072, FFN 14336): static K loops. */
+template [[host_name("h3_linear_int8_local_scales_nax_r128_k3072_n3072")]]
+kernel h3_linear_int8_local_scales_nax_r128_t
+    h3_linear_int8_local_scales_nax_r128_impl<3072, 3072>;
+template [[host_name("h3_linear_int8_local_scales_nax_r128_k3072_n9216")]]
+kernel h3_linear_int8_local_scales_nax_r128_t
+    h3_linear_int8_local_scales_nax_r128_impl<3072, 9216>;
+template [[host_name("h3_linear_int8_local_scales_nax_r128_k3072_n14336")]]
+kernel h3_linear_int8_local_scales_nax_r128_t
+    h3_linear_int8_local_scales_nax_r128_impl<3072, 14336>;
+template [[host_name("h3_linear_int8_local_scales_nax_r128_k14336_n3072")]]
+kernel h3_linear_int8_local_scales_nax_r128_t
+    h3_linear_int8_local_scales_nax_r128_impl<14336, 3072>;
 
 /* FC2 is more sensitive to a single scale spanning all 14336 activated
  * channels.  Retain one activation scale per 1024-wide K group, accumulate
@@ -5446,4 +5517,128 @@ kernel void h3_vsr_zero_rows_bf16(device ushort *x [[buffer(0)]],
                                   uint2 gid [[thread_position_in_grid]]) {
     if (gid.x >= args.width || gid.y >= args.rows) return;
     x[((size_t)args.col_offset + gid.y) * args.width + gid.x] = 0;
+}
+
+/* ---- the rest of the ReAE on the padded grid ---------------------- */
+
+/* Grid geometry shared by the kernels below: `channels` real channels in
+ * `padded_channels`, frames x (height+2) x (width+2) rows after `guard`. */
+struct vsr_grid2_args {
+    uint frames, height, width, channels, padded_channels, guard;   /* output grid */
+    uint in_height, in_width, in_channels, in_padded, in_guard;     /* input grid */
+    uint stride_t, stride_y, stride_x, mode;
+};
+
+static inline size_t vsr_grid_row(uint guard, uint t, uint hp, uint wp, uint y, uint x) {
+    return (size_t)guard + ((size_t)t * hp + y) * wp + x;
+}
+
+/* F32 frames [T, 2h, 2w, 3] -> grid [T, h, w, 12 of padded]: pixel_unshuffle(2),
+ * channel c*4 + ph*2 + pw. Grid (padded, w+2, T*(h+2)); borders zero. */
+kernel void h3_vsr_pack_grid_s2d_bf16(device const float *input [[buffer(0)]],
+                                      device ushort *output [[buffer(1)]],
+                                      constant vsr_grid2_args &args [[buffer(2)]],
+                                      uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, x = gid.y, ty = gid.z;
+    uint hp = args.height + 2, wp = args.width + 2;
+    if (c >= args.padded_channels || x >= wp || ty >= args.frames * hp) return;
+    uint t = ty / hp, y = ty - t * hp;
+    float v = 0.0f;
+    if (c < 12 && y >= 1 && y <= args.height && x >= 1 && x <= args.width) {
+        uint pc = c / 4, ph = (c / 2) % 2, pw = c % 2;
+        uint H = args.height * 2, W = args.width * 2;
+        v = input[(((size_t)t * H + (y - 1) * 2 + ph) * W + (x - 1) * 2 + pw) * 3 + pc];
+    }
+    output[vsr_grid_row(args.guard, t, hp, wp, y, x) * args.padded_channels + c] = h3_f32_to_bf16(v);
+}
+
+/* Grid [T, h, w, 12 of padded] -> F32 frames [T, 2h, 2w, 3] clamped to
+ * [0, 1]: pixel_shuffle(2). Grid (3, 2w, T*2h). */
+kernel void h3_vsr_unpack_grid_d2s_f32(device const ushort *input [[buffer(0)]],
+                                       device float *output [[buffer(1)]],
+                                       constant vsr_grid2_args &args [[buffer(2)]],
+                                       uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, ox = gid.y, toy = gid.z;
+    uint H = args.in_height * 2, W = args.in_width * 2;
+    if (c >= 3 || ox >= W || toy >= args.frames * H) return;
+    uint t = toy / H, oy = toy - t * H;
+    uint ic = (c * 2 + (oy % 2)) * 2 + (ox % 2);
+    size_t row = vsr_grid_row(args.in_guard, t, args.in_height + 2, args.in_width + 2, oy / 2 + 1, ox / 2 + 1);
+    float v = h3_bf16_to_f32(input[row * args.in_padded + ic]);
+    output[(((size_t)t * H + oy) * W + ox) * 3 + c] = clamp(v, 0.0f, 1.0f);
+}
+
+/* Nearest 2x spatial upsample, grid -> grid (same channels).
+ * Grid (padded, 2w+2, T*(2h+2)); borders zero. */
+kernel void h3_vsr_grid_upsample2_bf16(device const ushort *input [[buffer(0)]],
+                                       device ushort *output [[buffer(1)]],
+                                       constant vsr_grid2_args &args [[buffer(2)]],
+                                       uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, x = gid.y, ty = gid.z;
+    uint hp = args.height + 2, wp = args.width + 2;
+    if (c >= args.padded_channels || x >= wp || ty >= args.frames * hp) return;
+    uint t = ty / hp, y = ty - t * hp;
+    ushort v = 0;
+    if (y >= 1 && y <= args.height && x >= 1 && x <= args.width) {
+        size_t row = vsr_grid_row(args.in_guard, t, args.in_height + 2, args.in_width + 2, (y - 1) / 2 + 1, (x - 1) / 2 + 1);
+        v = input[row * args.in_padded + c];
+    }
+    output[vsr_grid_row(args.guard, t, hp, wp, y, x) * args.padded_channels + c] = v;
+}
+
+/* TGrow(2) tail: grid [T, h, w, 2C of in_padded] -> grid [2T, h, w, C of
+ * padded]; frame 2t+k takes channels k*C .. k*C+C-1 of frame t.
+ * Grid (padded, w+2, 2T*(h+2)); borders and padded channels zero. */
+kernel void h3_vsr_grid_split_frames_bf16(device const ushort *input [[buffer(0)]],
+                                          device ushort *output [[buffer(1)]],
+                                          constant vsr_grid2_args &args [[buffer(2)]],
+                                          uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, x = gid.y, ty = gid.z;
+    uint hp = args.height + 2, wp = args.width + 2;
+    if (c >= args.padded_channels || x >= wp || ty >= args.frames * hp) return;
+    uint t = ty / hp, y = ty - t * hp;
+    ushort v = 0;
+    if (c < args.channels && y >= 1 && y <= args.height && x >= 1 && x <= args.width) {
+        size_t row = vsr_grid_row(args.in_guard, t / 2, hp, wp, y, x);
+        v = input[row * args.in_padded + (t % 2) * args.channels + c];
+    }
+    output[vsr_grid_row(args.guard, t, hp, wp, y, x) * args.padded_channels + c] = v;
+}
+
+/* Subsampling, grid -> grid: out(t, y, x) = in(t*stride_t, y*stride_y,
+ * x*stride_x) (the stride-2 conv's output, TPool's even frames).
+ * Grid (padded, w+2, T*(h+2)); borders zero. */
+kernel void h3_vsr_grid_select_bf16(device const ushort *input [[buffer(0)]],
+                                    device ushort *output [[buffer(1)]],
+                                    constant vsr_grid2_args &args [[buffer(2)]],
+                                    uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, x = gid.y, ty = gid.z;
+    uint hp = args.height + 2, wp = args.width + 2;
+    if (c >= args.padded_channels || x >= wp || ty >= args.frames * hp) return;
+    uint t = ty / hp, y = ty - t * hp;
+    ushort v = 0;
+    if (y >= 1 && y <= args.height && x >= 1 && x <= args.width) {
+        size_t row = vsr_grid_row(args.in_guard, t * args.stride_t, args.in_height + 2, args.in_width + 2,
+                                  (y - 1) * args.stride_y + 1, (x - 1) * args.stride_x + 1);
+        v = input[row * args.in_padded + c];
+    }
+    output[vsr_grid_row(args.guard, t, hp, wp, y, x) * args.padded_channels + c] = v;
+}
+
+/* F32 [T, h, w, C] -> grid with tanh(x / 3) * 3 (the decoder's Clamp).
+ * Grid (padded, w+2, T*(h+2)). */
+kernel void h3_vsr_pack_grid_clamp_bf16(device const float *input [[buffer(0)]],
+                                        device ushort *output [[buffer(1)]],
+                                        constant vsr_grid_args &args [[buffer(2)]],
+                                        uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, x = gid.y, ty = gid.z;
+    uint hp = args.height + 2, wp = args.width + 2;
+    if (c >= args.padded_channels || x >= wp || ty >= args.frames * hp) return;
+    uint t = ty / hp, y = ty - t * hp;
+    float v = 0.0f;
+    if (c < args.channels && y >= 1 && y <= args.height && x >= 1 && x <= args.width) {
+        v = input[(((size_t)t * args.height + (y - 1)) * args.width + (x - 1)) * args.channels + c];
+        v = tanh(clamp(v / 3.0f, -20.0f, 20.0f)) * 3.0f;
+    }
+    output[vsr_grid_row(args.guard, t, hp, wp, y, x) * args.padded_channels + c] = h3_f32_to_bf16(v);
 }

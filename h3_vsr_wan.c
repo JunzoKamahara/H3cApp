@@ -15,6 +15,7 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <time.h>
 #include <string.h>
 
 typedef struct {
@@ -319,6 +320,18 @@ static void dump_tokens(h3_gpu *gpu, const char *stage, h3_gpu_tensor *x, size_t
 static int dump_block_index(void) { const char *e = getenv("H3_VSR_DUMP_BLOCK"); return e && e[0] ? atoi(e) : -1; }
 #define TRACE(stage, tensor, elements) do { if (b == trace_block) dump_tokens(gpu, stage, tensor, elements, 0); } while (0)
 
+/* H3_VSR_TRACE_DIT: GPU time of every op of block 1 (submit + wait). */
+static double dit_now(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9; }
+static void dit_mark(h3_gpu *gpu, int on, double *mark, const char *label) {
+    if (!on) return;
+    if (!h3_gpu_submit(gpu)) return;
+    double now = dit_now();
+    fprintf(stderr, "dit op %-16s %6.1f ms\n", label, (now - *mark) * 1000.0);
+    h3_gpu_begin(gpu);
+    *mark = dit_now();
+}
+#define MARK(label) dit_mark(gpu, trace_ops, &mark, label)
+
 int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
                        int frames, int height, int width,
                        const h3_vsr_window_layout *even,
@@ -403,9 +416,13 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
     int trace_tokens = getenv("H3_VSR_DUMP_TOKENS") != NULL;
     dump_tokens(gpu, "x_in", x, (size_t)N * D, 1);
     int trace_block = dump_block_index();
+    int trace_dit = getenv("H3_VSR_TRACE_DIT") != NULL;
+    double mark = dit_now();
     for (int b = 0; b < wan->layers; b++) {
         wan_block *k = &wan->blocks[b];
         const gpu_layout *layout = even ? &layouts[b % 2] : NULL;
+        int trace_ops = trace_dit && b == 1;
+        if (trace_ops) dit_mark(gpu, 1, &mark, "(blocks before)");
         if (on_block && on_block("vsr dit", b, wan->layers, opaque)) {
             fail(error, error_size, "vsr cancelled");
             goto failed;
@@ -413,20 +430,26 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
         /* Self-attention. */
         OP(h3_gpu_vsr_ln_mod_bf16(gpu, h, x, k->scale, k->shift, NULL, NULL, N, D, 1e-6f));
         TRACE("norm1", h, (size_t)N * D);
+        MARK("norm1");
         OP(run_linear(&r, wan, &k->qkv, qkv, h));
         TRACE("qkv_linear", qkv, (size_t)N * 3 * D);
+        MARK("qkv linear");
         OP(h3_gpu_vsr_qkv_prepare_bf16(gpu, qkv, k->qkv_bias, k->norm_q, k->norm_k, rope_cos,
                                        rope_sin, N, D, heads, head_dim, 3, 1e-6f));
         TRACE("qkv_prepared", qkv, (size_t)N * 3 * D);
+        MARK("qkv prepare");
         if (layout) {
             uint32_t gathered = layout->windows * layout->length;
             OP(h3_gpu_vsr_gather_rows_bf16(gpu, qg, qkv, layout->indices, gathered, D, 3 * D, 0));
             OP(h3_gpu_vsr_gather_rows_bf16(gpu, kg, qkv, layout->indices, gathered, D, 3 * D, D));
             OP(h3_gpu_vsr_gather_rows_bf16(gpu, vg, qkv, layout->indices, gathered, D, 3 * D, 2 * D));
+            MARK("window gather");
             OP(h3_gpu_sdpa_batched_bf16(gpu, ag, qg, kg, vg, layout->windows, layout->length,
                                         heads, head_dim, scale));
             TRACE("sdpa_windows", ag, (size_t)layout->windows * layout->length * D);
+            MARK("window sdpa");
             OP(h3_gpu_vsr_gather_rows_bf16(gpu, att, ag, layout->owner, N, D, D, 0));
+            MARK("owner scatter");
         } else {
             OP(h3_gpu_vsr_gather_rows_bf16(gpu, qg, qkv, identity, N, D, 3 * D, 0));
             OP(h3_gpu_vsr_gather_rows_bf16(gpu, kg, qkv, identity, N, D, 3 * D, D));
@@ -436,8 +459,10 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
         TRACE("attn", att, (size_t)N * D);
         OP(run_linear(&r, wan, &k->out, o, att));
         TRACE("attn_out", o, (size_t)N * D);
+        MARK("out linear");
         OP(h3_gpu_vsr_bias_gate_add_bf16(gpu, x, o, k->out_bias, k->gate, x, N, D));
         TRACE("x_after_attn", x, (size_t)N * D);
+        MARK("gate add");
         /* Cross-attention with the precomputed text K/V. */
         if (k->norm2_w)
             OP(h3_gpu_vsr_ln_mod_bf16(gpu, h, x, NULL, NULL, k->norm2_w, k->norm2_b, N, D, 1e-6f));
@@ -447,21 +472,29 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
         OP(h3_gpu_vsr_qkv_prepare_bf16(gpu, qg, k->q2_bias, k->norm_q2, NULL, NULL, NULL, N, D,
                                        heads, head_dim, 1, 1e-6f));
         TRACE("q2", qg, (size_t)N * D);
+        MARK("norm2 + q2");
         OP(h3_gpu_sdpa_cross_bf16(gpu, att, qg, k->k2, k->v2, N, S, heads, head_dim, scale));
         TRACE("cross", att, (size_t)N * D);
+        MARK("cross sdpa");
         OP(run_linear(&r, wan, &k->out2, o, att));
         OP(h3_gpu_vsr_bias_gate_add_bf16(gpu, x, o, k->out2_bias, NULL, x, N, D));
         TRACE("x_after_cross", x, (size_t)N * D);
+        MARK("out2 + add");
         /* Feed-forward. */
         OP(h3_gpu_vsr_ln_mod_bf16(gpu, h, x, k->c_scale, k->c_shift, NULL, NULL, N, D, 1e-6f));
         TRACE("norm3", h, (size_t)N * D);
+        MARK("norm3");
         OP(run_linear(&r, wan, &k->fc1, f, h));
         TRACE("fc1", f, (size_t)N * F);
+        MARK("fc1 linear");
         OP(h3_gpu_vsr_gelu_bias_bf16(gpu, f, k->fc1_bias, N, F));
         TRACE("gelu", f, (size_t)N * F);
+        MARK("gelu");
         OP(run_linear(&r, wan, &k->fc2, o, f));
         TRACE("fc2", o, (size_t)N * D);
+        MARK("fc2 linear");
         OP(h3_gpu_vsr_bias_gate_add_bf16(gpu, x, o, k->fc2_bias, k->c_gate, x, N, D));
+        MARK("gate add 2");
         OP(h3_gpu_continue(gpu));
         if (trace_tokens) {
             char stage[32];

@@ -490,6 +490,9 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_vsr_gelu_bias_bf16", @"h3_vsr_patchify_bf16",
             @"h3_vsr_pack_grid_bf16", @"h3_vsr_unpack_grid_f32",
             @"h3_vsr_zero_border_bf16", @"h3_vsr_zero_rows_bf16",
+            @"h3_vsr_pack_grid_s2d_bf16", @"h3_vsr_unpack_grid_d2s_f32",
+            @"h3_vsr_grid_upsample2_bf16", @"h3_vsr_grid_split_frames_bf16",
+            @"h3_vsr_grid_select_bf16", @"h3_vsr_pack_grid_clamp_bf16",
             @"h3_vsr_unpatchify_sub_f32",
             @"h3_vae_encoder_group_norm_silu_f32",
             @"h3_vae_encoder_norm_chunk_sum_f32",
@@ -537,6 +540,11 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
                 @"h3_linear_int8_nax_r128x256_full_k14336"];
             [names addObject:@"h3_linear_int8_local_scales_nax_r128"];
             [names addObject:@"h3_linear_int8_local_scales_nax_r128_k7168"];
+            [names addObject:@"h3_linear_int8_local_scales_nax_r128_k3072_n3072"];
+            [names addObject:@"h3_linear_int8_local_scales_nax_r128_k3072_n9216"];
+            [names addObject:@"h3_linear_int8_local_scales_nax_r128_k3072_n14336"];
+            [names addObject:@"h3_linear_int8_local_scales_nax_r128_k14336_n3072"];
+            [names addObject:@"h3_linear_int8_nax_r128_full_k14336_n3072"];
             [names addObject:@"h3_gate_adaln_quantize_int8"];
             [names addObject:@"h3_gate_adaln_quantize_int8_scalar"];
             [names addObject:@"h3_linear_int8_grouped_nax_r128x64"];
@@ -4099,8 +4107,21 @@ static int h3_gpu_linear_int8_bf16_layout(
     BOOL known_linear = local_scales && rows <= 2048 && input_dim == 7168 &&
         output_dim == 5376 &&
         getenv("H3_DISABLE_INT8_LINEAR_KNOWN") == NULL;
+    /* The SwiftVR DiT's shapes get static K loops (and FC2 a full-K
+     * product unless H3_VSR_FC2_LOOP is set). */
+    NSString *vsr_name = nil;
+    if (local_scales && getenv("H3_DISABLE_INT8_LINEAR_KNOWN") == NULL) {
+        if (input_dim == 3072 && output_dim == 3072) vsr_name = @"h3_linear_int8_local_scales_nax_r128_k3072_n3072";
+        else if (input_dim == 3072 && output_dim == 9216) vsr_name = @"h3_linear_int8_local_scales_nax_r128_k3072_n9216";
+        else if (input_dim == 3072 && output_dim == 14336) vsr_name = @"h3_linear_int8_local_scales_nax_r128_k3072_n14336";
+        else if (input_dim == 14336 && output_dim == 3072)
+            vsr_name = getenv("H3_VSR_FC2_LOOP") ? @"h3_linear_int8_local_scales_nax_r128_k14336_n3072"
+                                                 : @"h3_linear_int8_nax_r128_full_k14336_n3072";
+        if (getenv("H3_VSR_INT8_GENERIC")) vsr_name = nil;
+    }
     id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(
-        gpu, known_linear ? @"h3_linear_int8_local_scales_nax_r128_k7168" :
+        gpu, vsr_name ? vsr_name :
+             known_linear ? @"h3_linear_int8_local_scales_nax_r128_k7168" :
              local_scales ? @"h3_linear_int8_local_scales_nax_r128" :
                             @"h3_linear_int8_nax_r128");
     if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < 256) {
@@ -6037,4 +6058,126 @@ int h3_gpu_vsr_zero_border_bf16(h3_gpu *opaque, h3_gpu_tensor *x, uint32_t frame
             [encoder setBuffer:TENSOR(x).buffer offset:0 atIndex:0];
             [encoder setBytes:&args length:sizeof(args) atIndex:1];
         });
+}
+
+typedef struct {
+    uint32_t frames, height, width, channels, padded_channels, guard;
+    uint32_t in_height, in_width, in_channels, in_padded, in_guard;
+    uint32_t stride_t, stride_y, stride_x, mode;
+} vsr_grid2_args;
+
+/* A grid's row count and the check that it fits its buffer. */
+static int vsr_grid_fits(H3GPU *gpu, const h3_gpu_tensor *t, const h3_vsr_grid *g, NSString *what) {
+    uint64_t rows = (uint64_t)g->frames * (g->height + 2) * (g->width + 2);
+    if (!g->frames || !g->height || !g->width || g->padded_channels < g->channels || g->padded_channels % 64 ||
+        g->guard + rows > g->x_rows) {
+        h3_gpu_set_error(gpu, @"%@: bad grid geometry", what);
+        return 0;
+    }
+    return h3_gpu_require_bf16(gpu, t, (size_t)g->x_rows * g->padded_channels, what);
+}
+
+static int vsr_grid_zero_guards(h3_gpu *opaque, h3_gpu_tensor *t, const h3_vsr_grid *g) {
+    uint32_t rows = g->frames * (g->height + 2) * (g->width + 2);
+    return h3_gpu_vsr_zero_rows_bf16(opaque, t, 0, g->guard, g->padded_channels) &&
+           h3_gpu_vsr_zero_rows_bf16(opaque, t, g->guard + rows, g->x_rows - g->guard - rows, g->padded_channels);
+}
+
+static vsr_grid2_args vsr_grid2(const h3_vsr_grid *out, const h3_vsr_grid *in) {
+    vsr_grid2_args a = {out->frames, out->height, out->width, out->channels, out->padded_channels, out->guard,
+                        in ? in->height : 0, in ? in->width : 0, in ? in->channels : 0, in ? in->padded_channels : 0,
+                        in ? in->guard : 0, 1, 1, 1, 0};
+    return a;
+}
+
+#define VSR_GRID_DISPATCH(name, out_grid, in_tensor, out_tensor, args_value) \
+    h3_gpu_dispatch_3d(gpu, name, \
+        MTLSizeMake((out_grid)->padded_channels, (out_grid)->width + 2, (NSUInteger)(out_grid)->frames * ((out_grid)->height + 2)), \
+        ^(id<MTLComputeCommandEncoder> encoder) { \
+            [encoder setBuffer:TENSOR(in_tensor).buffer offset:0 atIndex:0]; \
+            [encoder setBuffer:TENSOR(out_tensor).buffer offset:0 atIndex:1]; \
+            [encoder setBytes:&(args_value) length:sizeof(args_value) atIndex:2]; \
+        })
+
+int h3_gpu_vsr_pack_grid_s2d_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_vsr_grid *out,
+                                  const h3_gpu_tensor *frames) {
+    H3GPU *gpu = GPU(opaque);
+    if (!vsr_grid_fits(gpu, output, out, @"VSR s2d pack") || out->channels != 12 ||
+        !vsr_check_f32(gpu, frames, (size_t)out->frames * out->height * 2 * out->width * 2 * 3, @"VSR s2d frames"))
+        return 0;
+    if (!vsr_grid_zero_guards(opaque, output, out)) return 0;
+    vsr_grid2_args args = vsr_grid2(out, NULL);
+    return VSR_GRID_DISPATCH(@"h3_vsr_pack_grid_s2d_bf16", out, frames, output, args);
+}
+
+int h3_gpu_vsr_pack_grid_clamp_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_vsr_grid *out,
+                                    const h3_gpu_tensor *input) {
+    H3GPU *gpu = GPU(opaque);
+    if (!vsr_grid_fits(gpu, output, out, @"VSR clamp pack") ||
+        !vsr_check_f32(gpu, input, (size_t)out->frames * out->height * out->width * out->channels, @"VSR clamp input"))
+        return 0;
+    if (!vsr_grid_zero_guards(opaque, output, out)) return 0;
+    vsr_grid_args args = {out->frames, out->height, out->width, out->channels, out->padded_channels, out->guard};
+    return VSR_GRID_DISPATCH(@"h3_vsr_pack_grid_clamp_bf16", out, input, output, args);
+}
+
+int h3_gpu_vsr_unpack_grid_d2s_f32(h3_gpu *opaque, h3_gpu_tensor *frames, const h3_gpu_tensor *input,
+                                   const h3_vsr_grid *in) {
+    H3GPU *gpu = GPU(opaque);
+    if (!vsr_grid_fits(gpu, input, in, @"VSR d2s unpack") || in->channels != 12 ||
+        !vsr_check_f32(gpu, frames, (size_t)in->frames * in->height * 2 * in->width * 2 * 3, @"VSR d2s frames"))
+        return 0;
+    vsr_grid2_args args = vsr_grid2(in, in);
+    return h3_gpu_dispatch_3d(gpu, @"h3_vsr_unpack_grid_d2s_f32",
+        MTLSizeMake(3, in->width * 2, (NSUInteger)in->frames * in->height * 2),
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(frames).buffer offset:0 atIndex:1];
+            [encoder setBytes:&args length:sizeof(args) atIndex:2];
+        });
+}
+
+int h3_gpu_vsr_grid_upsample2_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_vsr_grid *out,
+                                   const h3_gpu_tensor *input, const h3_vsr_grid *in) {
+    H3GPU *gpu = GPU(opaque);
+    if (!vsr_grid_fits(gpu, output, out, @"VSR grid upsample out") || !vsr_grid_fits(gpu, input, in, @"VSR grid upsample in") ||
+        out->height != in->height * 2 || out->width != in->width * 2 || out->frames != in->frames ||
+        out->padded_channels != in->padded_channels) {
+        h3_gpu_set_error(gpu, @"VSR grid upsample: shapes");
+        return 0;
+    }
+    if (!vsr_grid_zero_guards(opaque, output, out)) return 0;
+    vsr_grid2_args args = vsr_grid2(out, in);
+    return VSR_GRID_DISPATCH(@"h3_vsr_grid_upsample2_bf16", out, input, output, args);
+}
+
+int h3_gpu_vsr_grid_split_frames_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_vsr_grid *out,
+                                      const h3_gpu_tensor *input, const h3_vsr_grid *in) {
+    H3GPU *gpu = GPU(opaque);
+    if (!vsr_grid_fits(gpu, output, out, @"VSR split out") || !vsr_grid_fits(gpu, input, in, @"VSR split in") ||
+        out->height != in->height || out->width != in->width || out->frames != in->frames * 2 ||
+        in->channels != out->channels * 2) {
+        h3_gpu_set_error(gpu, @"VSR grid split: shapes");
+        return 0;
+    }
+    if (!vsr_grid_zero_guards(opaque, output, out)) return 0;
+    vsr_grid2_args args = vsr_grid2(out, in);
+    return VSR_GRID_DISPATCH(@"h3_vsr_grid_split_frames_bf16", out, input, output, args);
+}
+
+int h3_gpu_vsr_grid_select_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_vsr_grid *out,
+                                const h3_gpu_tensor *input, const h3_vsr_grid *in,
+                                uint32_t stride_t, uint32_t stride_y, uint32_t stride_x) {
+    H3GPU *gpu = GPU(opaque);
+    if (!vsr_grid_fits(gpu, output, out, @"VSR select out") || !vsr_grid_fits(gpu, input, in, @"VSR select in") ||
+        !stride_t || !stride_y || !stride_x || out->padded_channels != in->padded_channels ||
+        (out->frames - 1) * stride_t >= in->frames || (out->height - 1) * stride_y >= in->height ||
+        (out->width - 1) * stride_x >= in->width) {
+        h3_gpu_set_error(gpu, @"VSR grid select: shapes");
+        return 0;
+    }
+    if (!vsr_grid_zero_guards(opaque, output, out)) return 0;
+    vsr_grid2_args args = vsr_grid2(out, in);
+    args.stride_t = stride_t; args.stride_y = stride_y; args.stride_x = stride_x;
+    return VSR_GRID_DISPATCH(@"h3_vsr_grid_select_bf16", out, input, output, args);
 }

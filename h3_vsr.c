@@ -18,6 +18,7 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <time.h>
 #include <string.h>
 
 struct h3_vsr {
@@ -60,6 +61,16 @@ static void fail(char *error, size_t error_size, const char *format, ...) {
 }
 
 /* Development trace (H3_VSR_TRACE_LIVE): the GPU's live tensor bytes. */
+/* Development trace (H3_VSR_TRACE_STAGES): wall time since the previous
+ * mark, printed at points where the GPU has been waited for. */
+static double trace_now(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9; }
+static void trace_stage(double *mark, const char *label) {
+    if (!getenv("H3_VSR_TRACE_STAGES")) return;
+    double now = trace_now();
+    fprintf(stderr, "vsr stage %-28s %7.1f ms\n", label, (now - *mark) * 1000.0);
+    *mark = now;
+}
+
 static void trace_live(h3_gpu *gpu, const char *label) {
     h3_gpu_stats st;
     if (getenv("H3_VSR_TRACE_LIVE") && h3_gpu_get_stats(gpu, &st))
@@ -335,6 +346,7 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
     size_t fplane = (size_t)s->full_h * s->full_w * 3;
     int bpp = in[0].format == H3_VSR_BGRA8 ? 4 : 3;
     size_t in_stride = (size_t)s->in_w * bpp;
+    double mark = trace_now();
     h3_gpu_tensor *pixels = NULL, *frames = NULL, *latent = NULL, *z_lq = NULL, *z_hq = NULL;
     h3_gpu_tensor *decoded = NULL, *rope_cos = NULL, *rope_sin = NULL, *out_pixels = NULL;
     int8_t *packed = NULL;
@@ -381,6 +393,7 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
                                   (uint32_t)s->pad_h), "vsr resize");
     trace_live(gpu, "after resize encode");
     STEP(h3_gpu_submit(gpu), "vsr resize submit");
+    trace_stage(&mark, "pack + resize");
     if (chunk->index == 0) dump_f32(chunk->index, "frames", frames, (size_t)enc_frames * fplane);
     trace_live(gpu, "chunk buffers allocated");
     if (on_progress && on_progress("vsr encode", 0, 1, opaque)) goto cancelled;
@@ -391,6 +404,7 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
         goto failed;
     dump_f32(chunk->index, "latent", latent, (size_t)latents * lplane);
     trace_live(gpu, "after encode");
+    trace_stage(&mark, "reae encode");
     if (on_progress && on_progress("vsr encode", 1, 1, opaque)) goto cancelled;
 
     /* 3. DiT input: the previous chunk's last `prefix` LQ latents (zeros
@@ -440,6 +454,7 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
             goto failed;
     }
     trace_live(gpu, "after dit");
+    trace_stage(&mark, "dit (gpu complete)");
     dump_f32(chunk->index, "z_lq", z_lq, (size_t)dit_latents * lplane);
     dump_f32(chunk->index, "z_hq", z_hq, (size_t)dit_latents * lplane);
 
@@ -472,6 +487,7 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
     }
     if (chunk->index == 0) dump_f32(chunk->index, "decoded", decoded, (size_t)decoded_frames * fplane);
     trace_live(gpu, "after decode");
+    trace_stage(&mark, "reae decode");
     if (on_progress && on_progress("vsr decode", 1, 1, opaque)) goto cancelled;
 
     /* 5. Crop to the target size and hand the real frames over. */
@@ -507,6 +523,7 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
         }
         *written += count;
     }
+    trace_stage(&mark, "output pixels");
     (void)real_total;
     free(packed); free(cs); free(sn); free(out_bytes);
     h3_gpu_tensor_free(pixels); h3_gpu_tensor_free(frames); h3_gpu_tensor_free(latent);
