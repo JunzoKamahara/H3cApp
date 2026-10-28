@@ -56,8 +56,10 @@ int h3_lora_parse_key(const char *name, h3_lora_key *key) {
     }
     char *tokens[MAX_TOKENS];
     int count = 0;
-    for (char *cursor = strtok(buffer, "."); cursor && count < MAX_TOKENS;
-         cursor = strtok(NULL, "."))
+    /* strtok_r, not strtok: adapters are parsed on several threads at once. */
+    char *save = NULL;
+    for (char *cursor = strtok_r(buffer, ".", &save); cursor && count < MAX_TOKENS;
+         cursor = strtok_r(NULL, ".", &save))
         tokens[count++] = cursor;
 
     int blocks_at = -1;

@@ -36,7 +36,7 @@ struct H3cApp: App {
         }
         .commands {
             AboutCommand()
-            AdvancedSettingsCommand()
+            GeneralSettingsCommand()
             ProjectCommands()
             VideoCommands()
             HelpCommands()
@@ -50,6 +50,12 @@ struct H3cApp: App {
         // down/right from the last - after many relaunches during
         // development the window had drifted low enough to push its bottom
         // (Save As...) past the dock. Centering keeps it reachable.
+        .defaultPosition(.center)
+
+        Window("全体設定", id: generalSettingsWindowID) {
+            GeneralSettingsView()
+        }
+        .windowResizability(.contentSize)
         .defaultPosition(.center)
     }
 }
@@ -108,16 +114,16 @@ struct VideoCommands: Commands {
     }
 }
 
-/// 詳細設定… in the app menu (where Settings… normally sits), acting on the
-/// frontmost window - each window has its own state.
-struct AdvancedSettingsCommand: Commands {
-    @FocusedObject private var viewModel: GenerationViewModel?
+/// 全体設定… in the app menu, where Settings… normally sits (⌥⌘,): the
+/// settings for the whole app. Each window's own settings (詳細設定) open
+/// from its prompt panel, or with ⌘, (ContentView).
+struct GeneralSettingsCommand: Commands {
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         CommandGroup(replacing: .appSettings) {
-            Button("詳細設定…") { viewModel?.showingAdvancedSettings = true }
-                .keyboardShortcut(",", modifiers: .command)
-                .disabled(viewModel == nil)
+            Button("全体設定…") { openWindow(id: generalSettingsWindowID) }
+                .keyboardShortcut(",", modifiers: [.command, .option])
         }
     }
 }

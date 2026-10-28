@@ -1,8 +1,7 @@
 import H3Engine
 import SwiftUI
 
-/// 詳細設定 as its own dialog, opened from the composer's button or the app
-/// menu (詳細設定…, ⌘,). Everything here applies from the next generation.
+/// 詳細設定 as its own dialog, opened from the composer's button. Everything here applies from the next generation.
 struct AdvancedSettingsView: View {
     @ObservedObject var viewModel: GenerationViewModel
     @ObservedObject var library: ModelLibrary
@@ -44,7 +43,6 @@ struct AdvancedSettingsView: View {
                     reuseSection
                     layersSection
                     chainSection
-                    videoQualitySection
                     seedSection
                     loraSection
                 }
@@ -191,14 +189,6 @@ struct AdvancedSettingsView: View {
             if viewModel.supportsInt8Cache && viewModel.computeMode == .attentionCache {
                 attentionCacheBuildSection
             }
-            Toggle("条件の計算を近似で速くする", isOn: $viewModel.useAdaLNCurve)
-                .toggleStyle(.checkbox)
-                .padding(.top, 6)
-            Text("時刻ごとの条件（AdaLN）を小さな近似ファイルから計算し、1本あたり約10秒速くします。どの計算方式でも使えます。初回だけ、モデルごとに約7秒かけて約0.6GBのファイルを作ります。近似の誤差は元の計算の丸め誤差と同じ程度ですが、同じシードでも以前の版とは少し違う動画になります。")
-                .font(.caption)
-                .foregroundStyle(palette.textSecondary)
-            DenoisePreviewSettingRow(viewModel: viewModel, downloader: viewModel.denoisePreviewDownloader)
-                .padding(.top, 6)
             if viewModel.isHeavySsdStreamingConfig {
                 Text("最大解像度・長い秒数・SSDストリーミングの組み合わせは、メモリ不足でスワップが発生し非常に遅くなることがあります（数時間かかる場合も）。解像度か秒数を下げることをおすすめします。")
                     .font(.caption)
@@ -355,24 +345,6 @@ struct AdvancedSettingsView: View {
             Text("15秒を超える長さ（と「つないで15秒」）は、この長さの動画を前の動画の続きとして順につくり、重なり（約0.9秒）でつないで1本にします。長いほど、つなぎ目が少なくなります。")
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
-        }
-    }
-
-    private var videoQualitySection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("保存する動画の画質").font(.caption).foregroundStyle(palette.textSecondary)
-            Picker("保存する動画の画質", selection: $viewModel.savedVideoQuality) {
-                ForEach(VideoQuality.allCases) { quality in
-                    Text(quality == .high ? String(localized: "\(quality.label)（標準）") : quality.label).tag(quality)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 320)
-            Text("生成・つないで書き出す・拡大・取り込みの動画を、この画質のHEVCで保存します。あとから画質を上げることはできません。「標準」はファイルが小さく（高画質の約3分の1）、明るくなめらかな肌などに細かなブロックが出ることがあります。「最高画質」はブロックがほぼ消えますが、ファイルは高画質の約3倍になります。")
-                .font(.caption)
-                .foregroundStyle(palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

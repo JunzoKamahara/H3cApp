@@ -36,6 +36,15 @@ struct ContentView: View {
                 .onHover { viewModel.isPointerOverComposer = $0 }
                 .padding(.bottom, 20)
             }
+            .background {
+                // ⌘, opens this window's 詳細設定 - a key only, with no menu
+                // item, and working while the prompt panel is folded away
+                // with its 詳細設定 button.
+                Button("詳細設定を開く") { viewModel.showingAdvancedSettings = true }
+                    .keyboardShortcut(",", modifiers: .command)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+            }
             .sheet(item: $viewModel.pendingVideoImport) { pending in
                 ImportVideoSheet(viewModel: viewModel, pending: pending)
             }

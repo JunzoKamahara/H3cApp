@@ -20,8 +20,37 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 ウィンドウと共有されます — 生成ボタンを押すのと`POST /api/generate`は同じ枠を
 奪い合い、負けた方には明確な`409`が返ります。
 
-クライアントとサーバーは常に同じMac上にあるため、メディア入力はアップ
-ロードではなく、単なるファイルシステムパスです。
+別のオリジンのWebページからのPOSTリクエストには`403`が返ります: ブラウザが
+付ける`Origin`ヘッダーが`http://127.0.0.1:8420`・`http://localhost:8420`
+以外のもの、または`Sec-Fetch-Site: cross-site`/`same-site`を持つリクエストは
+拒否されるので、閲覧中のサイトがアプリを操作することはできません。スクリプト
+や`curl`はどちらのヘッダーも送らないので影響を受けません。`GET`リクエストは
+従来どおり応答します。
+
+`Host`ヘッダーが`localhost`かIPアドレス（ポートは問いません）以外の名前の
+リクエストには`403`が返ります — DNSリバインディングでWebページから操作される
+のを防ぐためです（自分のドメイン名を127.0.0.1に向けたページも、`Host`には
+そのドメイン名を送ります）。curlやスクリプト用ライブラリはURLから`Host`を
+設定するので、`http://127.0.0.1:8420`・`http://[::1]:8420`・
+`http://localhost:8420`でそのまま使えます。
+
+リクエストにはすべて、アプリのAPIトークンを`Authorization: Bearer <トークン>`
+として付けてください。付いていない、または違うトークンのリクエストには、
+`GET`も含めてどのエンドポイントも`401`を返します。`127.0.0.1`には自分だけで
+なく、そのMacのすべてのアカウント・すべてのプロセスから接続でき、APIは
+プロンプト・パス・結果を読み出し、あなたの権限でファイルを書き込めるため、
+トークンで自分だけが使えるようにしています。トークンはアプリが起動する
+たびに新しく作られ、自分のアカウントだけが読めるファイル（モード`0600`）
+`~/Library/Application Support/H3cApp/api-token`に書き込まれます。アプリを
+普通に終了するとこのファイルは削除されるので、トークンを控えておかず、
+スクリプトを始めるたびにこのファイルを読んでください。
+**H3cApp > 全体設定…**（⌥⌘,）には、アドレスとトークンがコピー用のボタン
+（curlの例も）とともに表示され、**作り直す…**でトークンをすぐに作り直せます。トークンをコマンド
+ラインやURLに書かないでください。そのMacの他のアカウントは`ps`で
+すべてのプロセスのコマンドラインを読めます。curlでは下の例のように
+ヘッダーを標準入力から渡します（`printf`はシェルの組み込みコマンドなので
+`ps`には出ません）。他の言語のスクリプトでは、ファイルを読んで
+ヘッダーをコードの中で設定してください。
 
 | メソッド | パス | 内容 |
 |---|---|---|
@@ -40,7 +69,7 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `POST` | `/api/project/delete-video` | `{"video"}` 動画と記録をゴミ箱に移す。 |
 | `POST` | `/api/project/join` | `{"video"}` その動画で終わる続きの連なりを、引き継いだ部分のクロスフェードでプロジェクトの`<名前>_joined.mp4`（記録つき）につなぎ、終わったら`{"path", "clips"}`を返す。 |
 | `POST` | `/api/project/upscale-video` | `{"video", "upscaler"?, "scale"?}` そのプロジェクトの動画を拡大した動画（2倍なら`<名前>_x2.mp4`、音声とメタデータはそのまま）をつくる。`scale`は1.5・2（省略時）・3・4。`upscaler`は`standard`（省略時。大きさの×2と同じ高品質な拡大）、`metalFX`（MetalFXの拡大）、`realESRGANGeneral`・`realESRGANAnime`（Real-ESRGANのAI超解像、アプリに同梱）。拡大する前に`{"video"}`（付く名前）を返す。一辺が4096ピクセルを超えるときは`400`、ほかの拡大中は`409`。`GET /api/status`（と`GET /api/project`）の`upscaling_video`・`upscale_progress`（0〜1）・`message`で進み具合と結果が分かる。 |
-| `POST` | `/api/upscale-file` | `{"path", "output", "upscaler"?, "scale"?}` どの動画ファイルでも、拡大して`output`（`.mp4`のパス）に書き出す。拡大の方法と倍率は上と同じ。`output`の隣の隠しファイルに書き出し、終わってから置き換えるので、拡大に失敗したり中止したりしても、既にある`output`はそのまま残る。`output`が入力そのもの（`..`やシンボリックリンク、ハードリンクでの別名も含む）なら`400`。すぐに返り、進み具合と結果は上と同じく分かる。 |
+| `POST` | `/api/upscale-file` | `{"path", "output", "upscaler"?, "scale"?}` どの動画ファイルでも、拡大して`output`（`.mp4`のパス）に書き出す。拡大の方法と倍率は上と同じ。`output`の隣の隠しファイルに書き出し、終わってから置き換えるので、拡大に失敗したり中止したりしても、既にある`output`はそのまま残る。`output`が入力そのもの（`..`やシンボリックリンク、ハードリンクでの別名も含む）なら`400`。別のサイトのWebページから送られたもの（別の`Origin`、または`Sec-Fetch-Site: cross-site`/`same-site`）には`403`を返す。スクリプトや`curl`は影響を受けない。すぐに返り、進み具合と結果は上と同じく分かる。 |
 | `POST` | `/api/upscale/cancel` | 実行中の拡大を止める。書きかけのファイルは消す。実行中でなければ`409`。 |
 | `POST` | `/api/project/import-video` | `{"path", "size_profile"?, "carry_frames"?, "crop_position"?}` ほかで作った動画の続きをつくるため、その動画を、動画の大きさに近い大きさ（`size_profile`が`"current"`なら今の大きさ、大きさの名前ならその大きさ）と24fpsに変換してプロジェクトに取り込み、フォームをその続きにする。`carry_frames`は引き継ぐコマ数（22・39・56、省略時22）。`crop_position`（`[x, y]`、それぞれ0〜1、省略時`[0.5, 0.5]`）は、縦横比が違うときに残す部分の位置（`[0, 0.5]`で左端）。取り込む前に`{"video"}`（付く名前）を返し、変換が終わると`GET /api/project`に並んで`continue_from`に使える。 |
 
@@ -76,11 +105,44 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 範囲を示した`400`になります。黙って範囲内に収めたり丸めたりはしません。
 
 ```sh
-curl -X POST http://127.0.0.1:8420/api/generate -H "Content-Type: application/json" -d '{
+TOKEN_FILE="$HOME/Library/Application Support/H3cApp/api-token"
+
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" |
+  curl -X POST http://127.0.0.1:8420/api/generate -H @- -H "Content-Type: application/json" -d '{
   "prompt": "A red fox walks through fresh snow in a pine forest.",
   "size_profile": "square", "seconds": 5, "steps": 20
 }'
 
-curl http://127.0.0.1:8420/api/status
-curl http://127.0.0.1:8420/api/result/video -o fox.mp4
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" | curl -H @- http://127.0.0.1:8420/api/status
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" | curl -H @- http://127.0.0.1:8420/api/result/video -o fox.mp4
 ```
+
+標準入力はヘッダーに使うので、ファイルに入れたボディは`-d @ファイル名`で
+送ります。
+
+```sh
+TOKEN_FILE="$HOME/Library/Application Support/H3cApp/api-token"
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" |
+  curl -X POST http://127.0.0.1:8420/api/generate -H @- -H "Content-Type: application/json" -d @request.json
+```
+
+### ほかの機器から使う
+
+**全体設定 > 同じネットワークのほかの機器からAPIを使えるようにする**を
+オンにしない限り、APIは`127.0.0.1`でしか受け付けません。オンにすると、
+Macのネットワークのアドレス（`http://192.168.1.5:8420`や
+`http://<名前>.local:8420`など、全体設定に表示されます）でも受け付けるので、
+同じネットワークのほかのMacやスマートフォンから、同じトークンで使えます。
+オンのあいだ、トークンはアプリを終了しても変わりません（ほかの機器は
+トークンのファイルを読めないため）。オフに戻すとトークンは作り直されるので、
+ほかの機器に渡したトークンは使えなくなります。macOSが一度、H3cAppが外部から
+の接続を受け付けてよいか尋ねることがあります。
+
+通信は暗号化されない素のHTTPです。同じネットワークの機器なら、行き来する
+トークン・プロンプト・動画を読み取れます。自宅など信頼できるネットワーク
+でだけ使ってください。それ以外の場所では、SSHのトンネル
+（`ssh -L 8420:127.0.0.1:8420 <ユーザー名>@<Mac名>.local`、Mac側で
+「リモートログイン」をオン）を使えば、APIは`127.0.0.1`のままで使えます。
+リクエストの中のパスは、H3cAppが動いているMacの上のパスです。
+1つの接続がリクエストを送り終えるまでの時間は最大30秒、本文は最大1MBで、
+同時に扱う接続は32本までです。

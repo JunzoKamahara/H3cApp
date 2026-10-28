@@ -32,6 +32,9 @@ struct ContinuationSource: Equatable {
 /// with (continue-test/REPORT.md).
 let continuationFrames = 22
 
+/// The lengths the engine can carry over (h3.h continue_frames).
+let continuationFrameCounts: Set<Int> = [5, 22, 39, 56]
+
 extension ProjectFiles {
     /// The latents saved next to a generated video (h3_params.save_latent_path).
     static func latentURL(for videoURL: URL) -> URL {
@@ -177,6 +180,31 @@ extension GenerationViewModel {
             .deletingLastPathComponent().standardizedFileURL })
         guard folders.count == 1, let folder = folders.first,
               folder.deletingLastPathComponent().lastPathComponent == "chains" else { return nil }
+        // The record can name any path (absolute, "../", through a symbolic
+        // link): only a folder directly in this project's chains folder, once
+        // links are resolved, goes to the Trash with the video.
+        func realPath(_ url: URL) -> (path: String?, missing: Bool) {
+            url.path.withCString { raw in
+                guard let real = realpath(raw, nil) else { return (nil, errno == ENOENT) }
+                defer { free(real) }
+                return (String(cString: real), false)
+            }
+        }
+        let real = realPath(folder)
+        if let path = real.path {
+            guard let projectPath = realPath(project.url).path,
+                  let chainsPath = realPath(project.url.appendingPathComponent("chains", isDirectory: true)).path,
+                  (chainsPath as NSString).deletingLastPathComponent == projectPath,
+                  (path as NSString).deletingLastPathComponent == chainsPath else { return nil }
+            return folder
+        }
+        // Gone (say, taken along with another joined video): kept, so the
+        // delete is refused as before, only when nothing, not even a link, is
+        // there and its path is literally <project>/chains/<name>.
+        guard real.missing, (try? FileManager.default.attributesOfItem(atPath: folder.path)) == nil,
+              folder.path == project.url.appendingPathComponent("chains", isDirectory: true)
+                .appendingPathComponent(folder.lastPathComponent).standardizedFileURL.path
+        else { return nil }
         return folder
     }
 

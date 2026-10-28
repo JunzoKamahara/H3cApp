@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 
 struct PreviewPane: View {
     @ObservedObject var viewModel: GenerationViewModel
+    /// So turning 途中の様子 on or off in 全体設定 shows here at once.
+    @ObservedObject private var preferences = AppPreferences.shared
     // Room the floating composer takes at the bottom: the empty and
     // in-progress states centre their text above it. The finished video uses
     // the whole stage and the composer overlays it (its transport bar sits

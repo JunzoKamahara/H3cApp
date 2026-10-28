@@ -369,18 +369,28 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
         const char *source_path = shader_source_path ? shader_source_path :
                                                        "h3_shaders.metal";
         NSString *path = [NSString stringWithUTF8String:source_path];
-        /* Callers pass the shader relative to the working directory, which
-         * the app sets to its Resources folder at launch - but an open/save
-         * panel can move the working directory (picking files in the GGUF
-         * import made the next generation fail with the shader "not
-         * found"). A relative path that does not resolve falls back to the
-         * same file in the app bundle's Resources. */
-        if (!path.isAbsolutePath &&
-            ![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-            NSString *bundled = [NSBundle.mainBundle.resourcePath
+        /* Callers pass the shader as a relative name. Inside an .app bundle
+         * that name means the bundle's own Resources copy, and only that:
+         * the working directory is not trusted there, because an open/save
+         * panel can move it into a folder the user browsed to (picking
+         * files in the GGUF import did), and whatever h3_shaders.metal sat
+         * in that folder would be compiled and run on the GPU. Outside an
+         * .app (the CLI and tests, run from the repo root) a relative path
+         * is read from the working directory as before, falling back to the
+         * same file next to the executable when it does not resolve. */
+        if (!path.isAbsolutePath) {
+            NSBundle *bundle = NSBundle.mainBundle;
+            NSString *bundled = [bundle.resourcePath
                 stringByAppendingPathComponent:path.lastPathComponent];
-            if (bundled && [[NSFileManager defaultManager] fileExistsAtPath:bundled])
-                path = bundled;
+            BOOL inAppBundle = [bundle.bundlePath.pathExtension.lowercaseString
+                isEqualToString:@"app"];
+            if (inAppBundle) {
+                /* No Resources path: fail to open rather than use the CWD. */
+                path = bundled ? bundled : @"";
+            } else if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+                if (bundled && [[NSFileManager defaultManager] fileExistsAtPath:bundled])
+                    path = bundled;
+            }
         }
         NSError *libraryError = nil;
         NSString *source = [NSString stringWithContentsOfFile:path

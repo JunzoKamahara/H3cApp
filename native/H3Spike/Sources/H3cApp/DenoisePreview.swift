@@ -98,37 +98,31 @@ final class DenoisePreviewRenderer: @unchecked Sendable {
     }
 }
 
-/// Advanced Settings' 途中の様子 row: the switch, what it does, and the
+/// 全体設定 > 生成's 途中の様子 row: the switch, what it does, and the
 /// decoder download it needs.
 struct DenoisePreviewSettingRow: View {
-    @ObservedObject var viewModel: GenerationViewModel
+    @ObservedObject var preferences: AppPreferences
     @ObservedObject var downloader: DenoisePreviewDownloader
-    @Environment(\.colorScheme) private var colorScheme
-    private var palette: H3Palette { H3Palette(colorScheme) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Toggle("生成中に途中の様子を表示する", isOn: Binding(
-                get: { viewModel.showDenoisePreview },
-                set: { on in
-                    viewModel.showDenoisePreview = on
-                    if on && !DenoisePreviewWeights.isPresent { downloader.download() }
-                }))
-                .toggleStyle(.checkbox)
+                get: { preferences.showDenoisePreview },
+                set: { preferences.setShowDenoisePreview($0) }))
             Text("ノイズを取り除いている途中で、できあがりつつある動画の1コマを数回表示します。思っていた動画と違えば、早めに止められます。生成時間はほとんど変わりません。小さなデコーダ（madebyollin/taehv の taeh3、MITライセンス、22.7MB）を使い、初めてオンにしたときにダウンロードします。")
                 .font(.caption)
-                .foregroundStyle(palette.textSecondary)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if viewModel.showDenoisePreview && !DenoisePreviewWeights.isPresent {
+            if preferences.showDenoisePreview && !DenoisePreviewWeights.isPresent {
                 switch downloader.state {
                 case .downloading:
                     HStack {
                         ProgressView().controlSize(.small)
-                        Text("デコーダをダウンロードしています…").font(.caption).foregroundStyle(palette.textSecondary)
+                        Text("デコーダをダウンロードしています…").font(.caption).foregroundStyle(.secondary)
                     }
                 case .failed(let message):
                     HStack {
-                        Text("ダウンロードできませんでした（\(message)）").font(.caption).foregroundStyle(palette.errorColor)
+                        Text("ダウンロードできませんでした（\(message)）").font(.caption).foregroundStyle(.red)
                         Button("再試行") { downloader.download() }.controlSize(.small)
                     }
                 case .idle:

@@ -17,43 +17,9 @@ import H3Engine
 /// current result until the next generate() call deletes it.
 let h3APIPort: UInt16 = 8420
 
-/// The app's one API server, started at launch and kept until quit. It
-/// always talks to the primary model (AppModels), which outlives its window,
-/// so the API keeps working with every window closed while the app runs.
-@MainActor
-final class APIHost {
-    static let shared = APIHost()
-
-    private var server: HTTPServer?
-    private var startError: String?
-
-    func start() {
-        guard server == nil, startError == nil else { return }
-        let server = HTTPServer(port: h3APIPort) { request in
-            await AppModels.shared.primary.handleAPIRequest(request)
-        }
-        do {
-            try server.start()
-            self.server = server
-        } catch {
-            startError = String(describing: error)
-        }
-    }
-
-    func stop() {
-        server?.stop()
-        server = nil
-    }
-
-    /// What 「APIサーバー」 says in `model`'s window.
-    func status(for model: GenerationViewModel) -> String {
-        if let startError { return String(localized: "起動できませんでした（\(startError)）") }
-        guard server != nil else { return String(localized: "起動しています…") }
-        let address = "http://127.0.0.1:\(h3APIPort)"
-        return model === AppModels.shared.primary
-            ? address : String(localized: "\(address)（別のウィンドウで受け付け中）")
-    }
-}
+/// Where the running server's API token is kept (mode 0600, see APIToken):
+/// every request must send it as `Authorization: Bearer <token>`.
+let h3APITokenPath = h3AppSupportDirectory + "/api-token"
 
 extension GenerationViewModel {
     func handleAPIRequest(_ request: HTTPRequest) async -> HTTPResponse {
@@ -70,6 +36,20 @@ extension GenerationViewModel {
             // the video at "path" enlarged 2x to "output" (an .mp4 path).
             // Answers at once; GET /api/project reports upscaling_video and
             // upscale_progress, and its message when done.
+            // Any web page can send this POST blind (a text/plain form or
+            // no-cors fetch needs no preflight) and it replaces whatever file
+            // "output" names, so a browser request from another site - a
+            // foreign Origin (or "null"), or Sec-Fetch-Site cross-site or
+            // same-site - is refused before any file is looked at. Scripts
+            // and curl send neither header.
+            let origin = request.headers["origin"]?.lowercased()
+            let site = request.headers["sec-fetch-site"]?.lowercased()
+            guard origin == nil || origin == "http://127.0.0.1:\(h3APIPort)" || origin == "http://localhost:\(h3APIPort)",
+                  site != "cross-site", site != "same-site" else {
+                var refused = HTTPResponse.error(403, "requests from web pages on other origins are not accepted")
+                refused.statusText = "Forbidden"
+                return refused
+            }
             let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
             guard let path = json["path"] as? String, FileManager.default.fileExists(atPath: path) else {
                 return .error(400, "\"path\" must name an existing video file")
@@ -120,12 +100,11 @@ extension GenerationViewModel {
             }
             return HTTPResponse(status: 200, headers: ["Content-Type": "image/png"], body: png)
         case ("POST", "/api/preview/settings"):
-            // {"enabled": bool} - Advanced Settings' 途中の様子; turning it on
+            // {"enabled": bool} - 全体設定 > 生成's 途中の様子; turning it on
             // downloads the decoder (22.7 MB) when it is not there yet.
             let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
             guard let enabled = json["enabled"] as? Bool else { return .error(400, "\"enabled\" must be true or false") }
-            showDenoisePreview = enabled
-            if enabled && !DenoisePreviewWeights.isPresent { denoisePreviewDownloader.download() }
+            preferences.setShowDenoisePreview(enabled)
             return .json(200, denoisePreviewStatus)
         case ("GET", "/api/models"):
             return .json(200, library.models.map {
@@ -151,6 +130,14 @@ extension GenerationViewModel {
         case ("GET", "/api/models/import/downloads"):
             // What the import wizard would offer to download for a part
             // (?kind=dit|ref2va|textEncoder|vision|shared); lists only.
+            // Listing fetches and parses file headers from `repo`, and any
+            // web page can send this GET blind (<img>, no-cors fetch), so
+            // browser requests from other sites are refused.
+            guard !isFromAnotherSite(request) else {
+                var refused = HTTPResponse.error(403, "requests from web pages on other origins are not accepted")
+                refused.statusText = "Forbidden"
+                return refused
+            }
             guard let kind = request.query["kind"].flatMap(ImportDownloadKind.init(rawValue:)) else {
                 return .error(400, "\"kind\" must be one of dit, ref2va, textEncoder, vision, shared")
             }
@@ -176,12 +163,14 @@ extension GenerationViewModel {
             }
             // "delete_files": true also moves the model's files to the Trash,
             // like Model Management's 削除… ("dry_run": true only reports
-            // what would go and the space it frees).
+            // what would go and the space it frees). Only a folder holding
+            // FL2VA weights goes: a request has no confirmation to show.
             // The model's generation caches are always deleted.
             let others = library.models.filter { $0.id != id }.map { (path: $0.path, id: $0.id) }
             let path = entry.path, files = json["delete_files"] as? Bool == true
             let plan = await Task.detached {
-                ModelRemovalPlan.make(modelPath: path, id: id, others: others, includeFiles: files)
+                ModelRemovalPlan.make(modelPath: path, id: id, others: others, includeFiles: files,
+                                      requireWeights: true)
             }.value
             let report: [String: Any] = [
                 "targets": plan.targets.map { ["path": $0.path, "label": $0.label, "bytes": $0.bytes] },
@@ -214,8 +203,9 @@ extension GenerationViewModel {
             return .json(200, ["ok": true])
         case ("GET", "/api/project"):
             return projectResponse()
+        case ("POST", "/api/project/import-video"):
+            return handleProjectRequest(request)
         case ("POST", "/api/project/new"), ("POST", "/api/project/open"), ("POST", "/api/project/close"),
-             ("POST", "/api/project/import-video"),
             ("POST", "/api/project/upscale-video"),
             ("POST", "/api/upscale-file"),
             ("POST", "/api/upscale/cancel"),
@@ -575,10 +565,10 @@ extension GenerationViewModel {
     }
 
     private var denoisePreviewStatus: [String: Any] {
-        var status: [String: Any] = ["enabled": showDenoisePreview,
+        var status: [String: Any] = ["enabled": preferences.showDenoisePreview,
                                      "decoder_ready": DenoisePreviewWeights.isPresent,
                                      "available": denoisePreviewImage != nil]
-        switch denoisePreviewDownloader.state {
+        switch preferences.denoisePreviewDownloader.state {
         case .downloading: status["downloading"] = true
         case .failed(let message): status["download_error"] = message
         case .idle: break
@@ -1019,4 +1009,19 @@ private func jsonUInt64(_ value: Any) -> UInt64? {
     guard let number = value as? NSNumber,
           CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
     return value as? UInt64
+}
+
+/// Whether a browser sent this on behalf of a page from another origin.
+/// Browsers mark such requests with Origin (or "null" from a file:// page)
+/// and Sec-Fetch-Site - an <img> GET carries at least the latter; scripts
+/// and curl send neither.
+private func isFromAnotherSite(_ request: HTTPRequest) -> Bool {
+    if let origin = request.headers["origin"]?.lowercased(),
+       origin != "http://127.0.0.1:\(h3APIPort)", origin != "http://localhost:\(h3APIPort)" {
+        return true
+    }
+    if let site = request.headers["sec-fetch-site"]?.lowercased(), site == "cross-site" || site == "same-site" {
+        return true
+    }
+    return false
 }

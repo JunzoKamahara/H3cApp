@@ -21,8 +21,36 @@ shared with the window showing that instance — pressing its generate button
 and a `POST /api/generate` compete for the same slot, and whichever loses
 gets a clear `409`.
 
-Because the client and server are always on the same Mac, media inputs are
-plain filesystem paths, not uploads.
+POST requests from web pages on other origins get `403`: a request that
+carries an `Origin` header other than `http://127.0.0.1:8420` or
+`http://localhost:8420`, or `Sec-Fetch-Site: cross-site` / `same-site`, as a
+browser adds, is refused, so a site you visit can't drive the app. Scripts
+and `curl` send neither header and are unaffected; `GET` requests are
+answered as before.
+
+A request whose `Host` header names anything other than `localhost` or an
+IP address (with any port) gets `403`, which keeps web pages out through DNS
+rebinding: a page that points its own domain name at 127.0.0.1 still sends
+that name as `Host`. curl and scripting libraries set `Host` from the URL, so
+`http://127.0.0.1:8420`, `http://[::1]:8420` or `http://localhost:8420` just
+works.
+
+Every request must carry the app's API token as
+`Authorization: Bearer <token>`; without it, or with a wrong one, every
+endpoint, `GET` ones included, answers `401`. `127.0.0.1` can be reached by
+every account and every process on the Mac, not only yours, and the API
+reads your prompts, paths and results and writes files as you, so the token
+is what keeps it yours. The app makes a new token each time it starts and
+writes it to `~/Library/Application Support/H3cApp/api-token`, a file only
+your account can read (mode `0600`), and deletes the file when it quits
+normally; read the file each time a script starts rather than keeping a copy
+of the token. **H3cApp > 全体設定…** (General Settings, ⌥⌘,) shows the
+addresses and the token with buttons to copy them (and a curl example),
+and **作り直す…** replaces the token at once. Do not put the token on a
+command line or in a URL: other accounts on the Mac can read every process's command line with `ps`. With
+curl, pass the header on standard input as in the examples below (`printf`
+is built into the shell, so it never shows in `ps`); a script in another
+language should read the file and set the header in its own code.
 
 | Method | Path | Does |
 |---|---|---|
@@ -41,7 +69,7 @@ plain filesystem paths, not uploads.
 | `POST` | `/api/project/delete-video` | `{"video"}` moves the video and its record to the Trash. |
 | `POST` | `/api/project/join` | `{"video"}` joins the chain of continuations ending at that video into `<name>_joined.mp4` in the project, with a record, (cross-fading each carried-over stretch) and returns `{"path", "clips"}` when done. |
 | `POST` | `/api/project/upscale-video` | `{"video", "upscaler"?, "scale"?}` makes an enlarged copy of that project video (`<name>_x2.mp4` at 2x, sound and metadata as they are); `scale` is 1.5, 2 (default), 3 or 4. `upscaler` is `standard` (default: the same high-quality resize as the ×2 sizes), `metalFX` (MetalFX spatial scaling), `realESRGANGeneral` or `realESRGANAnime` (Real-ESRGAN AI upscaling, bundled). Answers at once with `{"video"}`, the name it will have; `400` if a side would pass 4096 pixels, `409` while another is being enlarged. `GET /api/status` (and `GET /api/project`) report `upscaling_video`, `upscale_progress` (0-1) and `message`. |
-| `POST` | `/api/upscale-file` | `{"path", "output", "upscaler"?, "scale"?}` writes any video file enlarged to `output` (an `.mp4` path), with the same upscalers and scales. The video is written to a hidden file next to `output` and replaces it only when complete, so an existing `output` stays as it was if enlarging fails or is cancelled; `output` naming the input itself (also through `..`, a symbolic link or a hard link) is `400`. Answers at once; progress and the result as above. |
+| `POST` | `/api/upscale-file` | `{"path", "output", "upscaler"?, "scale"?}` writes any video file enlarged to `output` (an `.mp4` path), with the same upscalers and scales. The video is written to a hidden file next to `output` and replaces it only when complete, so an existing `output` stays as it was if enlarging fails or is cancelled; `output` naming the input itself (also through `..`, a symbolic link or a hard link) is `400`. `403` when a web page on another site sends it (a foreign `Origin`, or `Sec-Fetch-Site: cross-site` / `same-site`); scripts and `curl` are unaffected. Answers at once; progress and the result as above. |
 | `POST` | `/api/upscale/cancel` | Stops the enlargement running now; its unfinished file is removed. `409` if none is running. |
 | `POST` | `/api/project/import-video` | `{"path", "size_profile"?, "carry_frames"?, "crop_position"?}` brings a video made elsewhere into the open project to continue it: converted to the size closest to its own (`"size_profile": "current"` keeps the form's, a size name uses that) and 24 fps, with the form set to continue it; `carry_frames` (22, 39 or 56; default 22) is how much of its end is carried over; `crop_position` (`[x, y]`, 0-1 each; default `[0.5, 0.5]`) is where the kept part sits across what a different aspect ratio cuts off (`[0, 0.5]` keeps the left). Answers at once with `{"video"}`, the name it will have; once converted it is listed by `GET /api/project` and usable as `continue_from`. |
 
@@ -78,11 +106,43 @@ where an integer is expected), is a `400` naming the allowed range; nothing
 is clamped or rounded silently.
 
 ```sh
-curl -X POST http://127.0.0.1:8420/api/generate -H "Content-Type: application/json" -d '{
+TOKEN_FILE="$HOME/Library/Application Support/H3cApp/api-token"
+
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" |
+  curl -X POST http://127.0.0.1:8420/api/generate -H @- -H "Content-Type: application/json" -d '{
   "prompt": "A red fox walks through fresh snow in a pine forest.",
   "size_profile": "square", "seconds": 5, "steps": 20
 }'
 
-curl http://127.0.0.1:8420/api/status
-curl http://127.0.0.1:8420/api/result/video -o fox.mp4
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" | curl -H @- http://127.0.0.1:8420/api/status
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" | curl -H @- http://127.0.0.1:8420/api/result/video -o fox.mp4
 ```
+
+Standard input then carries the header, so a body kept in a file is sent
+with `-d @file`:
+
+```sh
+TOKEN_FILE="$HOME/Library/Application Support/H3cApp/api-token"
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" |
+  curl -X POST http://127.0.0.1:8420/api/generate -H @- -H "Content-Type: application/json" -d @request.json
+```
+
+### From other devices
+
+The API listens on `127.0.0.1` only unless **全体設定 >
+同じネットワークのほかの機器からAPIを使えるようにする** is on. Then it also
+answers on the Mac's network addresses - the settings list them, such as
+`http://192.168.1.5:8420` and `http://<name>.local:8420` - so another Mac or
+a phone on the same network can use it, with the same token. While this is
+on the token is kept across launches (another device cannot read the token
+file); turning it off replaces it, so a token handed to another device stops
+working. macOS may ask once whether H3cApp may accept incoming connections.
+
+The traffic is plain HTTP, not encrypted: any device on the same network
+can read the token, prompts and videos as they pass. Use it only on a
+network you trust, such as your home's; elsewhere, reach the Mac through an
+SSH tunnel instead (`ssh -L 8420:127.0.0.1:8420 <user>@<mac>.local`, with
+Remote Login on), which keeps the API on `127.0.0.1`. Paths in requests are
+paths on the Mac running H3cApp. A connection may take at most 30 seconds
+to send its request, a request body at most 1 MB, and 32 connections are
+served at once.

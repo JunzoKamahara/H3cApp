@@ -426,6 +426,14 @@ private final class RealESRGANScaler: FrameScaler {
 
     deinit { full?.deallocate() }
 
+    /// Whether `buffer` holds at least `width` x `height` BGRA pixels: the
+    /// network and vImage copy that many rows of that many bytes, at the
+    /// buffer's own row stride, with nothing else bounding them.
+    private static func holds(_ buffer: CVPixelBuffer, width: Int, height: Int) -> Bool {
+        CVPixelBufferGetWidth(buffer) >= width && CVPixelBufferGetHeight(buffer) >= height
+            && CVPixelBufferGetBytesPerRow(buffer) >= width * 4
+    }
+
     func scale(_ source: CVPixelBuffer, into destination: CVPixelBuffer) throws {
         CVPixelBufferLockBaseAddress(source, .readOnly)
         CVPixelBufferLockBaseAddress(destination, [])
@@ -433,8 +441,12 @@ private final class RealESRGANScaler: FrameScaler {
             CVPixelBufferUnlockBaseAddress(source, .readOnly)
             CVPixelBufferUnlockBaseAddress(destination, [])
         }
+        // The network was made for the track's size (naturalSize); a frame
+        // decoded smaller would be read past its end.
         guard let input = CVPixelBufferGetBaseAddress(source),
-              let output = CVPixelBufferGetBaseAddress(destination) else {
+              let output = CVPixelBufferGetBaseAddress(destination),
+              Self.holds(source, width: network.width, height: network.height),
+              Self.holds(destination, width: outputWidth, height: outputHeight) else {
             throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
         }
         guard let full else {

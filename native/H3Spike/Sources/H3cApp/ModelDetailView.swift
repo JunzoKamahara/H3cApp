@@ -272,7 +272,13 @@ private struct SafetensorsSummary {
                 names.insert(name)
                 guard let tensor = value as? [String: Any], let dtype = tensor["dtype"] as? String,
                       let offsets = tensor["data_offsets"] as? [NSNumber], offsets.count == 2 else { continue }
-                dtypeBytes[dtype, default: 0] += offsets[1].int64Value - offsets[0].int64Value
+                // Negative or out-of-order offsets, or a total that would
+                // overflow, skip the entry instead of trapping.
+                let begin = offsets[0].int64Value, end = offsets[1].int64Value
+                guard begin >= 0, begin <= end else { continue }
+                let total = dtypeBytes[dtype, default: 0].addingReportingOverflow(end - begin)
+                guard !total.overflow else { continue }
+                dtypeBytes[dtype] = total.partialValue
             }
         }
         if files == 0 { return nil }

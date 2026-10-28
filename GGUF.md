@@ -243,11 +243,12 @@ and `h3_gguf.c`, `h3_quant.c`, `h3_shaders.metal`.
 
 ## API
 
-The app's JSON API (`127.0.0.1:8420`) does the same.
+The app's JSON API (`127.0.0.1:8420`) does the same; each request needs
+the API token (see [API](API.md#api)).
 
 | Endpoint | What it does |
 |---|---|
-| `GET /api/models/import/downloads?kind=dit&repo=…` | download choices for a part (`dit`, `ref2va`, `textEncoder`, `vision`, `shared`); `repo` takes a name or URL |
+| `GET /api/models/import/downloads?kind=dit&repo=…` | download choices for a part (`dit`, `ref2va`, `textEncoder`, `vision`, `shared`); `repo` takes a name or URL. `403` when a web page on another site sends it (a foreign `Origin`, or `Sec-Fetch-Site: cross-site` / `same-site`); scripts and `curl` are unaffected |
 | `POST /api/models/import` | imports GGUF files: `files` or `folder`, `base_model` or `base_path`, `name`, `dry_run` |
 | `GET /api/models/detail?id=…` | what a model holds (the details screen) |
 | `POST /api/models/remove` | unregisters (caches deleted); `delete_files` also moves the files to the Trash, `dry_run` only computes |

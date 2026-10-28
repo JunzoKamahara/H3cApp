@@ -90,7 +90,7 @@
 "プリセット" = "Presets";
 "作り方" = "Mode";
 "画像の使い方" = "Image use";
-"詳細設定を開く（⌘,）" = "Open the advanced settings (⌘,)";
+"詳細設定を開く" = "Open Advanced Settings";
 "詳細設定・変更あり" = "Advanced Settings · modified";
 "この画像から動き始めます。" = "The video starts from this image.";
 "最初の画像" = "First image";
@@ -203,7 +203,6 @@
 "動画をつくれませんでした。（詳細: %@）" = "Couldn't make the video. (Details: %@)";
 
 /* H3cApp.swift */
-"詳細設定…" = "Advanced Settings…";
 
 /* ModelDownloadWizardView.swift */
 "Ref2VA も含める（参照画像・動画機能。おおよそ倍のサイズになります）" = "Also include Ref2VA (reference images and videos; roughly doubles the size)";
@@ -928,3 +927,33 @@
 "高画質" = "High";
 "（%lldクリップ）" = " (%lld clips)";
 "×%lld本" = " × %lld videos";
+"全体設定" = "General Settings";
+"全体設定…" = "General Settings…";
+"API" = "API";
+"状態" = "Status";
+"受け付け中" = "Accepting requests";
+"アドレス" = "Addresses";
+"アクセストークン" = "Access token";
+"なし" = "None";
+"隠す" = "Hide";
+"コピー" = "Copy";
+"コピーしました" = "Copied";
+"作り直す…" = "Regenerate…";
+"作り直す" = "Regenerate";
+"トークンのファイル" = "Token file";
+"curlの例をコピー" = "Copy curl Example";
+"リクエストには「Authorization: Bearer <トークン>」ヘッダーが必要です。ほかの機器からのアクセスを許可しているあいだ、トークンはアプリを終了しても変わりません。" = "Requests need an “Authorization: Bearer <token>” header. While other devices are allowed, the token stays the same when the app quits.";
+"リクエストには「Authorization: Bearer <トークン>」ヘッダーが必要です。トークンはアプリを起動するたびに変わるので、スクリプトでは毎回ファイルから読んでください。" = "Requests need an “Authorization: Bearer <token>” header. The token changes each time the app starts, so have scripts read it from the file every time.";
+"ほかの機器からのアクセス" = "Access from Other Devices";
+"同じネットワークのほかの機器からAPIを使えるようにする" = "Let other devices on the same network use the API";
+"ほかのMacやスマートフォンから、上のアドレスとトークンでAPIを使えます。オフに戻すとトークンは作り直されます。" = "Other Macs and phones can use the API with the addresses and token above. Turning this off regenerates the token.";
+"通信は暗号化されません。トークンやプロンプト、動画が同じネットワークの機器から読み取られるおそれがあるので、自宅など信頼できるネットワークでだけ使ってください。" = "Traffic is not encrypted: devices on the same network could read the token, prompts and videos. Use this only on a network you trust, such as your home’s.";
+"トークンを作り直しますか？" = "Regenerate the token?";
+"今のトークンはすぐに使えなくなります。スクリプトやほかの機器には新しいトークンを設定し直してください。" = "The current token stops working at once. Give scripts and other devices the new token.";
+"%@（ほかの機器からも受け付け中）" = "%@ (also accepting other devices)";
+"書き出すときのコーデック（H.264で書き出す）と書き出しの画質は、書き出しの画面で選びます。" = "The codec for exports (Export as H.264) and the export quality are chosen when exporting.";
+"保存画質" = "Saved Quality";
+"生成" = "Generation";
+"途中の様子" = "Progress Previews";
+"どちらもすべてのウィンドウに効きます。生成中なら、次の1本から変わります。" = "Both apply to every window. During a generation, they take effect from the next video.";
+"詳細設定を開く（⌘,）" = "Open Advanced Settings (⌘,)";

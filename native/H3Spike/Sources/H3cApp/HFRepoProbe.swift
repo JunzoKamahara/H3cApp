@@ -242,7 +242,14 @@ enum HFRepoProbe {
             names.append(name)
             if let tensor = value as? [String: Any], let dtype = tensor["dtype"] as? String,
                let offsets = tensor["data_offsets"] as? [NSNumber], offsets.count == 2 {
-                dtypeBytes[dtype, default: 0] += offsets[1].int64Value - offsets[0].int64Value
+                // The header is the remote repository's: an entry with
+                // negative or out-of-order offsets, or one that would overflow
+                // the total, is skipped like any other malformed entry.
+                let begin = offsets[0].int64Value, end = offsets[1].int64Value
+                guard begin >= 0, begin <= end else { continue }
+                let total = dtypeBytes[dtype, default: 0].addingReportingOverflow(end - begin)
+                guard !total.overflow else { continue }
+                dtypeBytes[dtype] = total.partialValue
             }
         }
         let has = { (part: String) in names.contains { $0.contains(part) } }
@@ -361,9 +368,13 @@ private struct GGUFScan {
             guard let length = u64(), length < 1 << 24, let raw = bytes(Int(length)) else { return nil }
             return String(decoding: raw, as: UTF8.self)
         }
+        /// Arrays of arrays nest at most this deep; the header comes from the
+        /// network, so deeper nesting is refused rather than recursed into.
+        static let maxArrayDepth = 4
         /// GGUF value types: 0 u8, 1 i8, 2 u16, 3 i16, 4 u32, 5 i32, 6 f32,
         /// 7 bool, 8 string, 9 array, 10 u64, 11 i64, 12 f64.
-        mutating func skipValue(type: UInt32) -> Bool {
+        /// `depth` counts the arrays enclosing this value.
+        mutating func skipValue(type: UInt32, depth: Int = 0) -> Bool {
             switch type {
             case 0, 1, 7: return bytes(1) != nil
             case 2, 3: return bytes(2) != nil
@@ -371,11 +382,12 @@ private struct GGUFScan {
             case 10, 11, 12: return bytes(8) != nil
             case 8: return string() != nil
             case 9:
-                guard let elementType = u32(), let count = u64(), count < 1 << 26 else { return false }
+                guard depth < Self.maxArrayDepth,
+                      let elementType = u32(), let count = u64(), count < 1 << 26 else { return false }
                 let fixed: [UInt32: Int] = [0: 1, 1: 1, 7: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 10: 8, 11: 8, 12: 8]
                 if let size = fixed[elementType] { return bytes(Int(count) * size) != nil }
                 for _ in 0 ..< count {
-                    guard skipValue(type: elementType) else { return false }
+                    guard skipValue(type: elementType, depth: depth + 1) else { return false }
                 }
                 return true
             default: return false

@@ -144,34 +144,16 @@ final class GenerationViewModel: ObservableObject {
     @Published private(set) var supportsInt8Cache = true
     var defaultComputeMode: ComputeMode { supportsInt8Cache ? .attentionCache : .ssdStreaming }
     @Published var speedMode: SpeedMode = .quality
-    /// Curve-form AdaLN (H3GenerationParams.adalnCurveDirectory): ~10 s
-    /// faster setup per video in every compute mode, values as close to
-    /// exact as the dense path but not bit-identical, so the same seed gives
-    /// a slightly different video than the dense path. An app-wide
-    /// preference, not part of a draft; on by default.
-    @Published var useAdaLNCurve: Bool =
-        UserDefaults.standard.object(forKey: "h3c-app.useAdaLNCurve") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(useAdaLNCurve, forKey: "h3c-app.useAdaLNCurve") }
-    }
-    /// 途中の様子: show what the video is turning into while it denoises
-    /// (DenoisePreview.swift). An app-wide preference; off until turned on,
-    /// since it needs the 22.7 MB decoder downloaded first.
-    /// 保存する動画の画質 (VideoQuality.saved, kept across launches).
-    @Published var savedVideoQuality: VideoQuality = VideoQuality.saved {
-        didSet { VideoQuality.saved = savedVideoQuality }
-    }
-    @Published var showDenoisePreview: Bool =
-        UserDefaults.standard.bool(forKey: "h3c-app.showDenoisePreview") {
-        didSet { UserDefaults.standard.set(showDenoisePreview, forKey: "h3c-app.showDenoisePreview") }
-    }
+    /// 全体設定 > 生成 (curve-form AdaLN, 途中の様子), shared with every
+    /// other window.
+    let preferences = AppPreferences.shared
     /// The latest preview picture of the running generation and its step.
     @Published private(set) var denoisePreviewImage: CGImage?
     @Published private(set) var denoisePreviewStep: Int = 0
     @Published private(set) var denoisePreviewSteps: Int = 0
-    let denoisePreviewDownloader = DenoisePreviewDownloader()
     private let denoisePreviewRenderer = DenoisePreviewRenderer()
     /// On, and the decoder is there.
-    var denoisePreviewActive: Bool { showDenoisePreview && DenoisePreviewWeights.isPresent }
+    var denoisePreviewActive: Bool { preferences.showDenoisePreview && DenoisePreviewWeights.isPresent }
     /// Reuse actually sent to the engine: the 高速/最速 presets rely on core
     /// reuse, which the engine won't combine with denoiser reuse, and were
     /// measured at reuse 1 - so they run at 1 whatever denoiseReuse holds.
@@ -218,7 +200,7 @@ final class GenerationViewModel: ObservableObject {
     // default, offered only where the engine reports it can run, and kept
     // separate from speedMode - no speed preset turns it on.
     @Published var fastAttention = false
-    // The 詳細設定 dialog, opened from the composer and the app menu (⌘,).
+    // The 詳細設定 dialog, opened from the composer's button.
     @Published var showingAdvancedSettings = false
     // Settings presets live in PresetStore (shared by all windows); this
     // window's active one, and one waiting for a name in the save dialog.
@@ -1006,7 +988,7 @@ final class GenerationViewModel: ObservableObject {
         params.references = effectiveReferences
         params.ssdStreaming = computeMode == .ssdStreaming
         params.attentionCachePath = computeMode == .attentionCache ? currentAttentionCachePath : nil
-        params.adalnCurveDirectory = useAdaLNCurve
+        params.adalnCurveDirectory = preferences.useAdaLNCurve
             ? library.activeModel.map { attentionCacheDirectory(for: $0) } : nil
         let loras = effectiveLoRAs
         params.loras = loras.map { H3LoRAInput(path: $0.path, strength: $0.strength) }
@@ -1025,7 +1007,7 @@ final class GenerationViewModel: ObservableObject {
         params.forcedAudioPath = forcedAudioPath
         params.forcedAudioOffset = max(0, forcedAudioOffset)
         params.continueLatentPath = continuation?.latentURL.path
-        params.continueFrames = Int32(continuation?.frames ?? continuationFrames)
+        params.continueFrames = Int32(clamping: continuation?.frames ?? continuationFrames)
         params.latentPreviewEvery = denoisePreviewActive
             ? DenoisePreviewRenderer.interval(steps: Int(params.steps), reuse: effectiveDenoiseReuse) : 0
 

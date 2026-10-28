@@ -82,7 +82,7 @@ Related documentation: [Local API](API.md) Â· [Building and testing](BUILD.md) Â
   [DMAD](https://github.com/Yzmblog/DMAD) (see
   [Step rule and audio shift](#step-rule-and-audio-shift)).
 - **Progress previews** (v0.6.2): with "Show progress previews while
-  generating" on in Advanced Settings, a frame of the finished video the model
+  generating" on in General Settings > Generation, a frame of the finished video the model
   currently predicts is shown about five times per video while noise is
   removed. The heavy video VAE doesn't run: a small decoder (taeh3 from
   madebyollin/taehv, MIT, 22.7 MB, downloaded the first time) runs with
@@ -159,7 +159,7 @@ Related documentation: [Local API](API.md) Â· [Building and testing](BUILD.md) Â
   as a staircase of blocks on dark edges. `H3_VAE_TILE_PIXELS` still picks
   another size.
 - **Video compression**: every video the app keeps (generated, joined,
-  enlarged, imported) is HEVC at a constant quality: Advanced Settings'
+  enlarged, imported) is HEVC at a constant quality: General Settings > Saved Quality,
   Quality of Saved Videos, Standard (0.85), High (0.90, the default) or
   Highest (0.95). Bright, smooth skin needs High: at 0.85 a 768x768
   close-up got 2.2 Mbps and its 16-pixel blocks showed, at 0.90 6.4 Mbps
@@ -308,8 +308,8 @@ each for FL2VA and Ref2VA). For now this saves time, not disk space: the
 dense weights stay in the checkpoint until the planned import packs drop
 them.
 
-The app uses it by default in every compute mode (Advanced settings: "Speed
-up the condition computation with an approximation"). The first generation
+The app uses it by default in every compute mode (General Settings > Generation:
+"Speed up the condition computation with an approximation"). The first generation
 with a model builds `adaln_fl2va.curve` or `adaln_ref2va.curve` next to that
 model's int8 cache (~7 s, shown as "Preparing the computation (first time
 only)"), rebuilds it if the weights change, and falls back to the dense

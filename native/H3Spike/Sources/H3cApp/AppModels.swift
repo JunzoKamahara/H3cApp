@@ -61,7 +61,7 @@ final class AppModels {
         shown[ObjectIdentifier(model)]?.model != nil
     }
 
-    private func refreshAPIStatus() {
+    func refreshAPIStatus() {
         for model in shown.values.compactMap(\.model) {
             model.apiServerStatus = APIHost.shared.status(for: model)
         }

@@ -166,6 +166,11 @@ final class ModelImporter: ObservableObject {
     private func run(_ request: Request) async throws -> String {
         let fm = FileManager.default
         let root = request.outputPath ?? Self.uniqueFolder(name: request.name)
+        // A folder named after the import is one directly in Imported.
+        if request.outputPath == nil, URL(fileURLWithPath: root).standardized.deletingLastPathComponent().path
+            != URL(fileURLWithPath: importedModelsDirectory).standardized.path {
+            throw CocoaError(.fileWriteInvalidFileName, userInfo: [NSFilePathErrorKey: root])
+        }
         if let existing = try? fm.contentsOfDirectory(atPath: root),
            existing.contains(where: { $0 != importDownloadFolderName && $0 != ".DS_Store" }) {
             throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: root])
@@ -309,7 +314,10 @@ final class ModelImporter: ObservableObject {
     private static func uniqueFolder(name: String) -> String {
         let cleaned = name.replacingOccurrences(of: "/", with: "-")
             .trimmingCharacters(in: .whitespaces)
-        let stem = importedModelsDirectory + "/" + (cleaned.isEmpty ? "MiniMax-H3 GGUF" : cleaned)
+        // "." and ".." name no folder (they would be Imported itself or the
+        // folder above it): the default, as for an empty name.
+        let stem = importedModelsDirectory + "/"
+            + (cleaned.isEmpty || cleaned == "." || cleaned == ".." ? "MiniMax-H3 GGUF" : cleaned)
         var candidate = stem
         var number = 2
         while FileManager.default.fileExists(atPath: candidate) {

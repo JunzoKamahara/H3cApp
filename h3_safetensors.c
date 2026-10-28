@@ -11,12 +11,16 @@
 #include <unistd.h>
 
 #define H3_ST_MAX_HEADER (256u * 1024u * 1024u)
+/* Deepest nesting h3_json_skip accepts in a skipped value. Headers are
+ * untrusted and every level costs stack; real ones skip only flat values. */
+#define H3_JSON_MAX_DEPTH 64u
 
 typedef struct {
     const char *at;
     const char *end;
     char *error;
     size_t error_size;
+    unsigned depth;
 } h3_json_cursor;
 
 static int h3_json_fail(h3_json_cursor *cursor, const char *message) {
@@ -136,6 +140,8 @@ static int h3_json_uint(h3_json_cursor *cursor, uint64_t *result) {
 static int h3_json_skip(h3_json_cursor *cursor);
 
 static int h3_json_skip_compound(h3_json_cursor *cursor, char open, char close) {
+    if (cursor->depth >= H3_JSON_MAX_DEPTH)
+        return h3_json_fail(cursor, "safetensors JSON header nested too deeply");
     if (!h3_json_take(cursor, open)) return 0;
     h3_json_ws(cursor);
     if (cursor->at < cursor->end && *cursor->at == close) {
@@ -149,7 +155,10 @@ static int h3_json_skip_compound(h3_json_cursor *cursor, char open, char close) 
             free(key);
             if (!h3_json_take(cursor, ':')) return 0;
         }
-        if (!h3_json_skip(cursor)) return 0;
+        cursor->depth++;
+        int ok = h3_json_skip(cursor);
+        cursor->depth--;
+        if (!ok) return 0;
         h3_json_ws(cursor);
         if (cursor->at >= cursor->end) return h3_json_fail(cursor, "unterminated JSON value");
         if (*cursor->at == close) {
@@ -359,14 +368,14 @@ static int h3_append_tensor(h3_st_header *header, h3_st_tensor tensor,
 /* Parses the "__metadata__" object's entries, keeping string-valued ones
  * (the only kind LoRA adapters use, e.g. "alpha") and discarding the rest
  * (freeing the already-parsed key in that case, since nothing stores it). */
-static int h3_parse_metadata_object(h3_json_cursor *cursor, h3_st_header *header) {
+static int h3_parse_metadata_object(h3_json_cursor *cursor, h3_st_header *header,
+                                    size_t *capacity) {
     if (!h3_json_take(cursor, '{')) return 0;
     h3_json_ws(cursor);
     if (cursor->at < cursor->end && *cursor->at == '}') {
         cursor->at++;
         return 1;
     }
-    size_t capacity = 0;
     for (;;) {
         char *key = h3_json_string(cursor);
         if (!key || !h3_json_take(cursor, ':')) {
@@ -380,8 +389,8 @@ static int h3_parse_metadata_object(h3_json_cursor *cursor, h3_st_header *header
             free(key);
             if (!h3_json_skip(cursor)) return 0;
         } else {
-            if (header->metadata_count == capacity) {
-                size_t next = capacity ? capacity * 2 : 8;
+            if (header->metadata_count == *capacity) {
+                size_t next = *capacity ? *capacity * 2 : 8;
                 h3_st_metadata_entry *entries = realloc(
                     header->metadata, next * sizeof(*entries));
                 if (!entries) {
@@ -390,7 +399,7 @@ static int h3_parse_metadata_object(h3_json_cursor *cursor, h3_st_header *header
                     return h3_json_fail(cursor, "out of memory indexing metadata");
                 }
                 header->metadata = entries;
-                capacity = next;
+                *capacity = next;
             }
             header->metadata[header->metadata_count++] =
                 (h3_st_metadata_entry){key, value};
@@ -457,8 +466,9 @@ int h3_st_read_header(const char *path, h3_st_header *header,
         if (error && error_size) snprintf(error, error_size, "out of memory");
         return 0;
     }
-    h3_json_cursor cursor = {json, json + header_size, error, error_size};
+    h3_json_cursor cursor = {json, json + header_size, error, error_size, 0};
     size_t capacity = 0;
+    size_t metadata_capacity = 0;
     if (!h3_json_take(&cursor, '{')) goto fail;
     h3_json_ws(&cursor);
     if (cursor.at < cursor.end && *cursor.at == '}') cursor.at++;
@@ -470,7 +480,7 @@ int h3_st_read_header(const char *path, h3_st_header *header,
         }
         if (!strcmp(name, "__metadata__")) {
             free(name);
-            if (!h3_parse_metadata_object(&cursor, header)) goto fail;
+            if (!h3_parse_metadata_object(&cursor, header, &metadata_capacity)) goto fail;
         } else {
             h3_st_tensor tensor;
             memset(&tensor, 0, sizeof(tensor));

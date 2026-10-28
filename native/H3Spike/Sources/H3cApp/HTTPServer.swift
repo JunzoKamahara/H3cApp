@@ -29,6 +29,8 @@ struct HTTPResponse: Sendable {
         case 200: return "OK"
         case 202: return "Accepted"
         case 400: return "Bad Request"
+        case 401: return "Unauthorized"
+        case 403: return "Forbidden"
         case 404: return "Not Found"
         case 409: return "Conflict"
         case 500: return "Internal Server Error"
@@ -61,19 +63,39 @@ struct HTTPResponse: Sendable {
 /// deliberately not Network.framework or any third-party library, matching
 /// this app's "no external dependency" approach elsewhere (native
 /// AVFoundation media I/O, the plain-URLSession model downloader). Bound to
-/// 127.0.0.1 only. One OS thread per connection with blocking reads/writes:
-/// entirely appropriate for a local automation API that a script hits
-/// occasionally, not a public-facing server under real concurrency.
+/// 127.0.0.1 only, or to every interface when 全体設定 lets other devices
+/// in (`acceptsExternal`). One OS thread per connection with blocking
+/// reads/writes: entirely appropriate for an automation API that a script
+/// hits occasionally, not a public-facing server under real concurrency -
+/// though since a device on the network can connect before it shows any
+/// token, connections, the time a request may take to arrive and its size
+/// are all capped.
 final class HTTPServer {
     typealias Router = @Sendable (HTTPRequest) async -> HTTPResponse
 
     private let port: UInt16
+    private let acceptsExternal: Bool
+    /// Names besides localhost and IP addresses that Host may carry: this
+    /// Mac's own network name while other devices are let in.
+    private let ownHostNames: Set<String>
     private let router: Router
     private var listenSocket: Int32 = -1
     private var running = false
+    private let connections = ConnectionCount()
 
-    init(port: UInt16, router: @escaping Router) {
+    /// Connections served at once; more wait in the listen queue.
+    private static let maxConnections = 32
+    /// How long a client may stall while sending its request (or taking
+    /// the response) before the connection is dropped.
+    private static let socketTimeoutSeconds = 30
+    /// The largest request body read: every endpoint takes a small JSON
+    /// object.
+    private static let maxBodyBytes = 1 << 20
+
+    init(port: UInt16, acceptsExternal: Bool = false, ownHostNames: Set<String> = [], router: @escaping Router) {
         self.port = port
+        self.acceptsExternal = acceptsExternal
+        self.ownHostNames = ownHostNames
         self.router = router
     }
 
@@ -89,7 +111,7 @@ final class HTTPServer {
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = port.bigEndian
-        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        address.sin_addr = in_addr(s_addr: acceptsExternal ? INADDR_ANY : inet_addr("127.0.0.1"))
 
         let bindResult = withUnsafePointer(to: &address) { pointer -> Int32 in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
@@ -122,12 +144,26 @@ final class HTTPServer {
 
     private func acceptLoop() {
         while running {
+            // Wait for a free slot before taking the next connection, so a
+            // flood of them queues in the kernel instead of each getting a
+            // thread.
+            connections.waitForSlot(limit: Self.maxConnections)
             let client = accept(listenSocket, nil, nil)
             guard client >= 0 else {
+                connections.release()
                 if running { continue }
                 break
             }
-            let thread = Thread { [weak self] in self?.handle(client: client) }
+            var timeout = timeval(tv_sec: Self.socketTimeoutSeconds, tv_usec: 0)
+            setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            var noSigPipe: Int32 = 1
+            setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
+            let connections = self.connections
+            let thread = Thread { [weak self] in
+                defer { connections.release() }
+                self?.handle(client: client)
+            }
             thread.name = "H3 API connection"
             thread.start()
         }
@@ -136,6 +172,14 @@ final class HTTPServer {
     private func handle(client: Int32) {
         defer { close(client) }
         guard let request = Self.readRequest(socket: client) else { return }
+        if request.method != "GET", request.method != "HEAD", isFromAnotherSite(request) {
+            Self.write(.error(403, "requests from web pages on other origins are not accepted"), to: client)
+            return
+        }
+        guard !isForeignHost(request.headers["host"], ownNames: ownHostNames) else {
+            Self.write(.error(403, "the Host header must be localhost or an IP address"), to: client)
+            return
+        }
 
         let semaphore = DispatchSemaphore(value: 0)
         let router = self.router
@@ -146,6 +190,21 @@ final class HTTPServer {
         }
         semaphore.wait()
         Self.write(box.response ?? .error(500, "no response"), to: client)
+    }
+
+    /// Whether a browser sent this on behalf of a page from another origin -
+    /// any site the user visits can POST here without a preflight (e.g. as
+    /// text/plain). Browsers mark such requests with Origin (or "null" from a
+    /// file:// page) and Sec-Fetch-Site; scripts and curl send neither.
+    private func isFromAnotherSite(_ request: HTTPRequest) -> Bool {
+        if let origin = request.headers["origin"]?.lowercased(),
+           origin != "http://127.0.0.1:\(port)", origin != "http://localhost:\(port)" {
+            return true
+        }
+        if let site = request.headers["sec-fetch-site"]?.lowercased(), site == "cross-site" || site == "same-site" {
+            return true
+        }
+        return false
     }
 
     private static func readRequest(socket: Int32) -> HTTPRequest? {
@@ -180,6 +239,7 @@ final class HTTPServer {
         }
 
         let contentLength = Int(headers["content-length"] ?? "0") ?? 0
+        guard contentLength <= maxBodyBytes else { return nil }
         while bodyBuffer.count < contentLength {
             let n = recv(socket, &chunk, min(chunk.count, contentLength - bodyBuffer.count), 0)
             guard n > 0 else { break }
@@ -245,3 +305,73 @@ enum HTTPServerError: Error, CustomStringConvertible {
     }
 }
 
+// DNS-rebinding guard: a web page whose own domain name has been re-pointed
+// at 127.0.0.1 reaches this server as its own origin, but the browser still
+// sends that domain name as Host. So only localhost and IP addresses pass -
+// what curl and scripts send for http://127.0.0.1:8420, http://127.1:8420,
+// http://[::1]:8420 or http://localhost:8420 - and a request with no Host
+// at all (an HTTP/1.0 script): browsers always send one.
+
+/// Whether a Host header value names a host other than localhost, an IP
+/// address or one of `ownNames` (any port). A missing or empty value, or
+/// one with no host before its port, names none.
+private func isForeignHost(_ value: String?, ownNames: Set<String> = []) -> Bool {
+    guard let value, !value.isEmpty else { return false }
+    guard value.allSatisfy(\.isASCII) else { return true }
+    var host = Substring(value)
+    if host.hasPrefix("[") {
+        // "[IPv6]" or "[IPv6]:port"
+        guard let close = host.firstIndex(of: "]"),
+              isPortSuffix(host[host.index(after: close)...]) else { return true }
+        return !isIPv6Address(host[host.index(after: host.startIndex) ..< close])
+    }
+    if isIPv6Address(host) { return false } // without brackets
+    if let colon = host.firstIndex(of: ":") {
+        guard isPortSuffix(host[colon...]) else { return true }
+        host = host[..<colon]
+    }
+    let name = host.lowercased()
+    return !(host.isEmpty || name == "localhost" || isIPv4Address(host) || ownNames.contains(name))
+}
+
+/// Nothing, or ":" and the port's digits.
+private func isPortSuffix(_ text: Substring) -> Bool {
+    text.isEmpty || (text.first == ":" && text.dropFirst().allSatisfy(\.isNumber))
+}
+
+/// An IPv6 address, without a zone ("%en0" - inet_pton takes anything
+/// after the "%").
+private func isIPv6Address(_ text: Substring) -> Bool {
+    var address = in6_addr()
+    return text.allSatisfy({ $0.isHexDigit || $0 == ":" || $0 == "." })
+        && inet_pton(AF_INET6, String(text), &address) == 1
+}
+
+/// An IPv4 address in any form inet_aton reads (127.0.0.1, 127.1, 0x7f.1,
+/// 2130706433). inet_aton ignores whatever follows a space, so only the
+/// characters those forms use may reach it.
+private func isIPv4Address(_ text: Substring) -> Bool {
+    var address = in_addr()
+    return text.allSatisfy({ $0.isHexDigit || $0 == "." || $0 == "x" || $0 == "X" })
+        && inet_aton(String(text), &address) == 1
+}
+
+/// Connections being served, with a wait for a free slot.
+private final class ConnectionCount: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var count = 0
+
+    func waitForSlot(limit: Int) {
+        condition.lock()
+        while count >= limit { condition.wait() }
+        count += 1
+        condition.unlock()
+    }
+
+    func release() {
+        condition.lock()
+        count -= 1
+        condition.signal()
+        condition.unlock()
+    }
+}

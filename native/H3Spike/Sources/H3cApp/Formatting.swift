@@ -1,7 +1,9 @@
 import Foundation
 
 func formatElapsed(_ seconds: Double) -> String {
-    let total = max(Int(seconds.rounded()), 0)
+    // A project's .json can hold any number: NaN, infinite and out-of-Int
+    // values show as 0 rather than trapping in Int(_:).
+    let total = max(Int(exactly: seconds.rounded()) ?? 0, 0)
     let minutes = total / 60
     let secs = total % 60
     // A long つなげて生成 runs past an hour: h:mm:ss rather than 95:30.

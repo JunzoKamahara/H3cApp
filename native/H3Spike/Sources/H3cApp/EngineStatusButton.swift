@@ -8,6 +8,7 @@ struct EngineStatusButton: View {
     @ObservedObject var library: ModelLibrary
     @Binding var showingModelManager: Bool
     @State private var showingPopover = false
+    @Environment(\.openWindow) private var openWindow
 
     private var statusText: String {
         switch viewModel.engineState {
@@ -55,6 +56,11 @@ struct EngineStatusButton: View {
             Divider()
             Text("APIサーバー").font(.caption).foregroundStyle(.secondary)
             Text(viewModel.apiServerStatus).font(.caption).textSelection(.enabled)
+            Button("全体設定…") {
+                showingPopover = false
+                openWindow(id: generalSettingsWindowID)
+            }
+            .font(.caption)
             if case .failed(let message) = viewModel.engineState {
                 Divider()
                 Text("読み込みエラー").font(.caption).foregroundStyle(.secondary)

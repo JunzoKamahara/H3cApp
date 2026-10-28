@@ -105,9 +105,15 @@ static uint64_t scalar_size(uint32_t type) {
     }
 }
 
+/* Arrays of arrays recurse in value(); real metadata nests at most one
+ * level, so deeper nesting is refused rather than run off the stack. */
+#define GGUF_MAX_ARRAY_DEPTH 8
+
 /* Skips one value; strings and u32/u64 scalars are handed back when the
- * caller wants them (text/number may be NULL). */
-static int value(reader *r, uint32_t type, char **text, uint64_t *number) {
+ * caller wants them (text/number may be NULL). depth is the number of
+ * arrays the value sits inside (0 for a key's own value). */
+static int value(reader *r, uint32_t type, char **text, uint64_t *number,
+                 int depth) {
     if (type == GGUF_STRING) {
         char *s = string(r, UINT32_MAX);
         if (!s) return 0;
@@ -118,6 +124,7 @@ static int value(reader *r, uint32_t type, char **text, uint64_t *number) {
     if (type == GGUF_ARRAY) {
         uint32_t element;
         uint64_t count;
+        if (depth >= GGUF_MAX_ARRAY_DEPTH) return fail(r, "GGUF arrays nested too deeply");
         if (!u32(r, &element) || !u64(r, &count)) return 0;
         uint64_t size = scalar_size(element);
         if (size) {
@@ -128,7 +135,7 @@ static int value(reader *r, uint32_t type, char **text, uint64_t *number) {
         if (element != GGUF_STRING && element != GGUF_ARRAY)
             return fail(r, "unknown GGUF array type %u", element);
         for (uint64_t index = 0; index < count; index++)
-            if (!value(r, element, NULL, NULL)) return 0;
+            if (!value(r, element, NULL, NULL, depth + 1)) return 0;
         return 1;
     }
     uint64_t size = scalar_size(type);
@@ -184,7 +191,7 @@ static int shape_value(reader *r, orig_shape *out) {
         return skip(r, count * size);
     }
     for (uint64_t index = 0; index < count; index++)
-        if (!value(r, element, NULL, NULL)) return 0;
+        if (!value(r, element, NULL, NULL, 1)) return 0;
     return 1;
 }
 
@@ -288,7 +295,7 @@ int h3_gguf_read_header(const char *path, h3_st_header *header,
         }
         char *text = NULL;
         uint64_t number = 0;
-        if (!value(&r, type, &text, &number)) {
+        if (!value(&r, type, &text, &number, 0)) {
             free(key);
             goto failed;
         }

@@ -48,7 +48,7 @@ enum VideoCodec {
 }
 
 /// The constant quality videos are compressed at: 保存する動画の画質
-/// (詳細設定) for what the project keeps, 書き出しの画質 for an export that
+/// (全体設定) for what the project keeps, 書き出しの画質 for an export that
 /// is re-encoded. Measured on HEVC (Mbps for a 768x768 skin close-up / a
 /// dark 1920x1088 clip / a bright 1600x1088 one): 0.85 2.2/2.4/5.7 - the
 /// close-up's 16-pixel blocks showed; 0.90 6.4/6.5/14.9; 0.95 17.8 on the
@@ -80,7 +80,7 @@ enum VideoQuality: String, CaseIterable, Identifiable {
         UserDefaults.standard.string(forKey: key).flatMap(VideoQuality.init(rawValue:)) ?? .high
     }
 
-    /// 保存する動画の画質, kept across launches.
+    /// 保存する動画の画質 (全体設定 > 保存画質), kept across launches.
     static var saved: VideoQuality {
         get { stored("h3c-app.videoQuality") }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "h3c-app.videoQuality") }

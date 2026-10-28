@@ -68,9 +68,10 @@ struct ModelRemovalPlan: Sendable {
 
     /// `others` are the models staying registered; when there are none and
     /// the files go too, so do the app's shared download folders and the
-    /// caches no model uses.
+    /// caches no model uses. `requireWeights` (the API) also refuses a
+    /// model folder without weights (see holdsModelWeights).
     static func make(modelPath: String, id: UUID, others: [(path: String, id: UUID)],
-                     includeFiles: Bool) -> ModelRemovalPlan {
+                     includeFiles: Bool, requireWeights: Bool = false) -> ModelRemovalPlan {
         var plan = ModelRemovalPlan()
         plan.includesFiles = includeFiles
         let fm = FileManager.default
@@ -88,7 +89,7 @@ struct ModelRemovalPlan: Sendable {
         func add(_ path: String, _ label: String) {
             if fm.fileExists(atPath: path) { plan.targets.append(Target(path: path, label: label, bytes: 0)) }
         }
-        if isDeletableModelFolder(modelPath) {
+        if isDeletableModelFolder(modelPath) && (!requireWeights || holdsModelWeights(modelPath)) {
             add(modelPath, String(localized: "モデルのフォルダ"))
         } else {
             plan.refused.append(modelPath)
@@ -147,6 +148,22 @@ struct ModelRemovalPlan: Sendable {
               !NSHomeDirectory().hasPrefix(standard + "/") else { return false }
         return fm.fileExists(atPath: standard + "/FL2VA") || fm.fileExists(atPath: standard + "/Ref2VA") ||
             fm.fileExists(atPath: standard + "/" + ModelImportManifest.fileName)
+    }
+
+    /// Whether FL2VA/transformer holds a weights file (.safetensors or
+    /// .gguf), as every downloaded or imported model does. The API asks for
+    /// this too: it registers any folder holding an FL2VA entry and can
+    /// make one (a project named FL2VA), so the names above would let a
+    /// request send any folder to the Trash. Only files count, since the
+    /// API can also make folders named like weights.
+    static func holdsModelWeights(_ path: String) -> Bool {
+        let transformer = (path as NSString).standardizingPath + "/FL2VA/transformer"
+        let fm = FileManager.default
+        return ((try? fm.contentsOfDirectory(atPath: transformer)) ?? []).contains { name in
+            var isDirectory: ObjCBool = false
+            return (name.hasSuffix(".safetensors") || name.hasSuffix(".gguf")) &&
+                fm.fileExists(atPath: transformer + "/" + name, isDirectory: &isDirectory) && !isDirectory.boolValue
+        }
     }
 
     private static func regularFiles(under path: String) -> [String] {

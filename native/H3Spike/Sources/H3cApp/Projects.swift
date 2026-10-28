@@ -343,7 +343,25 @@ enum ProjectFiles {
             destination = folder.appendingPathComponent(ext.isEmpty ? "\(stem) \(counter)" : "\(stem) \(counter).\(ext)")
             counter += 1
         }
-        try FileManager.default.copyItem(at: source, to: destination)
+        // The copy keeps the source's mode, but the project folder may be one
+        // others can read while the source wasn't: make it owner-only in a
+        // private folder (on the same volume, so still a clone) before it
+        // appears in references/.
+        let staging = try (try? FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                                         appropriateFor: folder, create: true))
+            ?? FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                       appropriateFor: FileManager.default.temporaryDirectory, create: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let staged = staging.appendingPathComponent(source.lastPathComponent)
+        try FileManager.default.copyItem(at: source, to: staged)
+        let attributes = try FileManager.default.attributesOfItem(atPath: staged.path)
+        // Not a symbolic link (copied as one): its mode would be set on the
+        // file it points to.
+        if attributes[.type] as? FileAttributeType != .typeSymbolicLink,
+           let mode = attributes[.posixPermissions] as? NSNumber {
+            try FileManager.default.setAttributes([.posixPermissions: mode.intValue & 0o700], ofItemAtPath: staged.path)
+        }
+        try FileManager.default.moveItem(at: staged, to: destination)
         return destination.path
     }
 
@@ -451,8 +469,11 @@ extension GenerationViewModel {
         continuation = draft.continueFrom.map { URL(fileURLWithPath: resolve($0)) }.flatMap { url in
             let video = ProjectVideo(url: url, record: ProjectFiles.record(for: url))
             guard let latent = continuationLatent(of: video) else { return nil }
+            // A length the engine can't carry over (project.json can be
+            // edited by hand) counts as absent.
+            let frames = draft.continueFrames.flatMap { continuationFrameCounts.contains($0) ? $0 : nil }
             return ContinuationSource(videoURL: url, latentURL: latent, sizeProfileRaw: draft.sizeProfile,
-                                      frames: draft.continueFrames ?? continuationFrames,
+                                      frames: frames ?? continuationFrames,
                                       enlargement: enlargement(of: video))
         }
         referenceImages = draft.references.compactMap { reference in

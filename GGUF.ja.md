@@ -233,11 +233,12 @@ GGUF の取り込みは、同じディスク上のファイルを APFS の複製
 
 ## API
 
-アプリの JSON API（`127.0.0.1:8420`）からも同じ操作ができます。
+アプリの JSON API（`127.0.0.1:8420`）からも同じ操作ができます。リクエストには
+それぞれ API トークンが必要です（[API](API.ja.md#api) 参照）。
 
 | エンドポイント | 内容 |
 |---|---|
-| `GET /api/models/import/downloads?kind=dit&repo=…` | 部品（`dit`・`ref2va`・`textEncoder`・`vision`・`shared`）のダウンロード候補。`repo` にはリポジトリ名か URL |
+| `GET /api/models/import/downloads?kind=dit&repo=…` | 部品（`dit`・`ref2va`・`textEncoder`・`vision`・`shared`）のダウンロード候補。`repo` にはリポジトリ名か URL。別のサイトの Web ページから送られたもの（別の `Origin`、または `Sec-Fetch-Site: cross-site`/`same-site`）には `403` を返します。スクリプトや `curl` は影響を受けません |
 | `POST /api/models/import` | GGUF の取り込み。`files` または `folder`、`base_model` か `base_path`、`name`、`dry_run` |
 | `GET /api/models/detail?id=…` | モデルの中身（詳細画面と同じ内容） |
 | `POST /api/models/remove` | 登録を外す（キャッシュは削除）。`delete_files` でファイルもゴミ箱へ、`dry_run` で計算だけ |
