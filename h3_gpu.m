@@ -488,6 +488,8 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_vsr_ln_mod_bf16", @"h3_vsr_qkv_prepare_bf16",
             @"h3_vsr_gather_rows_bf16", @"h3_vsr_bias_gate_add_bf16",
             @"h3_vsr_gelu_bias_bf16", @"h3_vsr_patchify_bf16",
+            @"h3_vsr_pack_grid_bf16", @"h3_vsr_unpack_grid_f32",
+            @"h3_vsr_zero_border_bf16", @"h3_vsr_zero_rows_bf16",
             @"h3_vsr_unpatchify_sub_f32",
             @"h3_vae_encoder_group_norm_silu_f32",
             @"h3_vae_encoder_norm_chunk_sum_f32",
@@ -496,6 +498,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
         ] mutableCopy];
         if (gpu.tensorOpsEnabled) {
             [names addObject:@"h3_linear_bf16_nax_r128"];
+            [names addObject:@"h3_vsr_tapconv_bf16_nax"];
             [names addObject:@"h3_linear_bf16_nax_r128_morton"];
             [names addObject:@"h3_linear_bf16_nax_r128_morton4"];
             [names addObject:
@@ -5886,5 +5889,152 @@ int h3_gpu_silu_mul_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
             [encoder setBuffer:TENSOR(up).buffer offset:0 atIndex:1];
             [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:2];
             [encoder setBytes:&elements length:sizeof(elements) atIndex:3];
+        });
+}
+
+/* ---- VSR: ReAE convolutions on TensorOps (see h3_shaders.metal) ---- */
+
+typedef struct {
+    uint32_t rows, x_rows, guard, in_ch, out_ch, taps, inputs, relu, has_bias, has_residual;
+    int32_t offsets[9];
+} vsr_tapconv_args;
+typedef struct { uint32_t frames, height, width, channels, padded_channels, guard; } vsr_grid_args;
+
+int h3_gpu_has_tensor_ops(const h3_gpu *opaque) {
+    if (!opaque) return 0;
+    H3GPU *gpu = GPU((h3_gpu *)(void *)opaque);
+    return gpu.tensorOpsEnabled;
+}
+
+int h3_gpu_vsr_tapconv_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
+                            const h3_gpu_tensor *x0, const h3_gpu_tensor *x1,
+                            const h3_gpu_tensor *w0, const h3_gpu_tensor *w1,
+                            const h3_gpu_tensor *bias, const h3_gpu_tensor *residual,
+                            uint32_t rows, uint32_t x_rows, uint32_t guard,
+                            uint32_t in_ch, uint32_t out_ch, uint32_t taps,
+                            const int32_t *offsets, int relu) {
+    H3GPU *gpu = GPU(opaque);
+    if (!gpu.tensorOpsEnabled) { h3_gpu_set_error(gpu, @"VSR tapconv needs TensorOps"); return 0; }
+    if (!rows || !taps || taps > 9 || in_ch % 64 || out_ch % 64 || !offsets ||
+        guard + rows + 128 > x_rows) {
+        h3_gpu_set_error(gpu, @"VSR tapconv: bad arguments");
+        return 0;
+    }
+    for (uint32_t t = 0; t < taps; t++)
+        if (offsets[t] < -(int32_t)guard || (int64_t)guard + rows + 128 + offsets[t] > (int64_t)x_rows) {
+            h3_gpu_set_error(gpu, @"VSR tapconv: tap offset outside the guard rows");
+            return 0;
+        }
+    size_t x_count = (size_t)x_rows * in_ch, y_count = (size_t)x_rows * out_ch;
+    size_t w_count = (size_t)taps * out_ch * in_ch;
+    if (!h3_gpu_require_bf16(gpu, x0, x_count, @"VSR tapconv x0") ||
+        (x1 && !h3_gpu_require_bf16(gpu, x1, x_count, @"VSR tapconv x1")) ||
+        !h3_gpu_require_bf16(gpu, w0, w_count, @"VSR tapconv w0") ||
+        (x1 && !h3_gpu_require_bf16(gpu, w1, w_count, @"VSR tapconv w1")) ||
+        !h3_gpu_require_bf16(gpu, output, y_count, @"VSR tapconv output") ||
+        (residual && !h3_gpu_require_bf16(gpu, residual, y_count, @"VSR tapconv residual")) ||
+        !vsr_check_f32_vector(gpu, bias, out_ch, @"VSR tapconv bias")) return 0;
+    if (!h3_gpu_require_command(gpu)) return 0;
+    id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(gpu, @"h3_vsr_tapconv_bf16_nax");
+    if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < 128) {
+        h3_gpu_set_error(gpu, @"device cannot dispatch the VSR TensorOps conv");
+        return 0;
+    }
+    vsr_tapconv_args args = {rows, x_rows, guard, in_ch, out_ch, taps, x1 ? 2u : 1u,
+                             relu != 0, bias != NULL, residual != NULL, {0}};
+    memcpy(args.offsets, offsets, taps * sizeof(int32_t));
+    const h3_gpu_tensor *xb = x1 ? x1 : x0, *wb = x1 ? w1 : w0;
+    const h3_gpu_tensor *b = bias ? bias : w0, *r = residual ? residual : output;
+    @autoreleasepool {
+        id<MTLComputeCommandEncoder> encoder = [gpu.command computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:TENSOR(x0).buffer offset:0 atIndex:0];
+        [encoder setBuffer:TENSOR(xb).buffer offset:0 atIndex:1];
+        [encoder setBuffer:TENSOR(w0).buffer offset:0 atIndex:2];
+        [encoder setBuffer:TENSOR(wb).buffer offset:0 atIndex:3];
+        [encoder setBuffer:TENSOR(b).buffer offset:0 atIndex:4];
+        [encoder setBuffer:TENSOR(r).buffer offset:0 atIndex:5];
+        [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:6];
+        [encoder setBytes:&args length:sizeof(args) atIndex:7];
+        [encoder dispatchThreadgroups:MTLSizeMake((rows + 127) / 128, out_ch / 64, 1)
+                 threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+        [encoder endEncoding];
+    }
+    h3_gpu_stats stats = gpu.stats;
+    stats.direct_dispatches++;
+    gpu.stats = stats;
+    return 1;
+}
+
+int h3_gpu_vsr_zero_rows_bf16(h3_gpu *opaque, h3_gpu_tensor *x, uint32_t first,
+                              uint32_t count, uint32_t width) {
+    H3GPU *gpu = GPU(opaque);
+    if (!count) return 1;
+    if (!h3_gpu_require_bf16(gpu, x, ((size_t)first + count) * width, @"VSR zero rows")) return 0;
+    vsr_rows_args args = {count, width, width, first};
+    return h3_gpu_dispatch_2d(gpu, @"h3_vsr_zero_rows_bf16", width, count,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(x).buffer offset:0 atIndex:0];
+            [encoder setBytes:&args length:sizeof(args) atIndex:1];
+        });
+}
+
+int h3_gpu_vsr_pack_grid_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                              uint32_t frames, uint32_t height, uint32_t width,
+                              uint32_t channels, uint32_t padded_channels, uint32_t guard,
+                              uint32_t x_rows, int zero_guards) {
+    H3GPU *gpu = GPU(opaque);
+    uint32_t rows = frames * (height + 2) * (width + 2);
+    if (!frames || !height || !width || !channels || padded_channels < channels ||
+        guard + rows > x_rows) return 0;
+    if (!vsr_check_f32(gpu, input, (size_t)frames * height * width * channels, @"VSR pack input") ||
+        !h3_gpu_require_bf16(gpu, output, (size_t)x_rows * padded_channels, @"VSR pack output")) return 0;
+    vsr_grid_args args = {frames, height, width, channels, padded_channels, guard};
+    if (zero_guards &&
+        (!h3_gpu_vsr_zero_rows_bf16(opaque, output, 0, guard, padded_channels) ||
+         !h3_gpu_vsr_zero_rows_bf16(opaque, output, guard + rows, x_rows - guard - rows, padded_channels)))
+        return 0;
+    return h3_gpu_dispatch_3d(gpu, @"h3_vsr_pack_grid_bf16",
+        MTLSizeMake(padded_channels, width + 2, (NSUInteger)frames * (height + 2)),
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
+            [encoder setBytes:&args length:sizeof(args) atIndex:2];
+        });
+}
+
+int h3_gpu_vsr_unpack_grid_f32(h3_gpu *opaque, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                               uint32_t frames, uint32_t height, uint32_t width,
+                               uint32_t channels, uint32_t padded_channels, uint32_t guard,
+                               uint32_t x_rows) {
+    H3GPU *gpu = GPU(opaque);
+    uint32_t rows = frames * (height + 2) * (width + 2);
+    if (!frames || !height || !width || !channels || padded_channels < channels ||
+        guard + rows > x_rows) return 0;
+    if (!h3_gpu_require_bf16(gpu, input, (size_t)x_rows * padded_channels, @"VSR unpack input") ||
+        !vsr_check_f32(gpu, output, (size_t)frames * height * width * channels, @"VSR unpack output")) return 0;
+    vsr_grid_args args = {frames, height, width, channels, padded_channels, guard};
+    return h3_gpu_dispatch_3d(gpu, @"h3_vsr_unpack_grid_f32",
+        MTLSizeMake(channels, width, (NSUInteger)frames * height),
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
+            [encoder setBytes:&args length:sizeof(args) atIndex:2];
+        });
+}
+
+int h3_gpu_vsr_zero_border_bf16(h3_gpu *opaque, h3_gpu_tensor *x, uint32_t frames,
+                                uint32_t height, uint32_t width, uint32_t padded_channels,
+                                uint32_t guard, uint32_t x_rows) {
+    H3GPU *gpu = GPU(opaque);
+    uint32_t rows = frames * (height + 2) * (width + 2);
+    if (!frames || !height || !width || guard + rows > x_rows) return 0;
+    if (!h3_gpu_require_bf16(gpu, x, (size_t)x_rows * padded_channels, @"VSR zero border")) return 0;
+    vsr_grid_args args = {frames, height, width, padded_channels, padded_channels, guard};
+    return h3_gpu_dispatch_3d(gpu, @"h3_vsr_zero_border_bf16",
+        MTLSizeMake(padded_channels, 2 * (width + 2) + 2 * height, frames),
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(x).buffer offset:0 atIndex:0];
+            [encoder setBytes:&args length:sizeof(args) atIndex:1];
         });
 }

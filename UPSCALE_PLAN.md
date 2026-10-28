@@ -408,7 +408,7 @@ Cancellation: `cancel_requested` is checked between DiT blocks and phases (the `
 | P5 Streamer | `h3_vsr_chunk.c`/`h3_vsr.c`: chunking, state, last-chunk front fill, preprocessing and cropping, two contexts in parallel, cancel | 124-frame end-to-end ≥ 35 dB vs the reference's whole output; time and peak-memory table on M5/M4 (`bench_vsr`). Real weights: the 8-bit output of 57 frames 384x272 -> 768x544 matches the official run at 51.2 dB bf16 / 49.3 dB int8, counts match |
 | P5.5 Quality evaluation | §9.5: evaluation set, SeedVR2 reference output (a ≥64 GB Mac or cloud), metric scripts, fill the table for every variant of this implementation, blind A/B | record the achieved ratio vs SeedVR2 (§1's 95%) and choose the defaults of the "quality" and "speed" modes |
 | P6 App | `ChunkedFrameScaler` and the 3-stage pipeline, **quality / speed mode switch (full attention, precision, overlap)**, `.swiftVR`, download/acceptance/conversion UI, API, records, documents, localization, `isGenerating` guard | the existing four methods are byte-identical and unchanged; the new method works from both the project and file entry points and with continuation. Real weights: the rebuilt app enlarged a 512x512, 39-frame clip to 1024x1024 HEVC (sound kept) in about 30 s through `POST /api/upscale-file` (swiftVR, 2x) on 2026-10-29; the SwiftVR setup sheet itself was not clicked through |
-| P7 Optimization | not started (owner-only queries, NAX for any shape, tapconv, ReAE F16, two contexts, ANE); the measurements of Appendix A.1 are the starting point | — | — |
+| P7 Optimization | in progress (Appendix A.2: the ReAE convolutions moved to TensorOps, a 1080p middle chunk 17.6 s -> 9.6 s) | `h3_vsr_tapconv_bf16_nax`, `h3_vsr_reae.c`, `tests/bench_vsr.c` | `tests/test_vsr_tapconv.c`, the TensorOps part of `tests/test_vsr_reae.c`, real weights 56 to 60 dB |
 | P8 FlashVSR Tiny | Second back-end on the shared engine (LQ_proj_in, KV cache, block-selection attention, TCDecoder, color correction) | same parity and speed tables |
 | PX Experiment | H3 hires-fix (§11) | comparison table and decision |
 
@@ -529,3 +529,19 @@ Two defects only the real weights exposed (both fixed; the synthetic-model tests
 The app itself was checked too: with the rebuilt bundle running, `GET /api/upscalers` reports SwiftVR available (int8 cache) and `POST /api/upscale-file` enlarged a 512x512, 39-frame generated clip 2x to a 1024x1024 HEVC file (sound as it was) in about 30 s. Next to bilinear, hair, teeth and the dress pattern are clearly sharper, and the brightness matches the input.
 
 Speed is below the plan's estimate (§6.4: 6.5 s per chunk at 1920x1088 on int8). At 768x544 (2,856 tokens) int8 takes 3.7 to 4.5 s per chunk, so 1920x1088 (12,240 tokens) extrapolates linearly to 16 to 19 s per chunk. This is where P7 starts.
+
+### Appendix A.2: P7 speed work (2026-10-29, M5 24 GB, int8)
+
+Measured with `tests/bench_vsr.c` (`make h3_vsr_bench`; `./h3_vsr_bench [in_w in_h out_w out_h] [chunks] [int8|bf16|auto] [full]`) at 960x544 -> 1920x1088 (12,240 tokens per chunk). Wall time of a MIDDLE chunk (24 frames):
+
+| Version | Chunk | Preprocess + ReAE encode | DiT | ReAE decode | Peak live GPU |
+|---|---|---|---|---|---|
+| Start (ReAE on F32 MPSGraph, whole chunk at once) | 17.6 s | 1.7 s | 2.2 s | 13.6 s | 23.7 GiB (29 GB footprint, killed by the OS) |
+| ReAE in 4-frame passes | 17.6 s | 1.7 s | 2.2 s | 13.6 s | 8.7 GiB |
+| ReAE 3x3 convs and MemBlocks on TensorOps | **9.6 s** | 0.5 s | 2.2 s | 6.8 s | 11.3 GiB (13.9 GB footprint) |
+
+- The DiT runs at 67 to 80 ms per block (less than half the plan's §6.4 estimate of 165 ms): 2.2 to 2.6 s per chunk, so the ReAE dominates for now.
+- The new kernel `h3_vsr_tapconv_bf16_nax` (`h3_shaders.metal`) keeps activations in a "padded grid" (channels-last BF16 with zero border rows, channels padded to a multiple of 64) and computes the nine 3x3 taps as row-offset `matmul2d` accumulations; the MemBlock's `cat[x, past]` is a second input in the same accumulation, and bias, residual and ReLU are the epilogue. The decoder's 128-channel MemBlock (272x480, 2 frames) takes 22 ms (13.8 TFLOP/s) against 52 ms for the same three convs on F32 MPSGraph (205 ms inside the old runner, pad/cat copies included).
+- Precision: ReAE encoder 56 to 58 dB and decoder 60 dB against the official float32 run (the F32 path gives 140 dB). Checked by `tests/test_vsr_tapconv.c` (65 dB vs a double reference), `tests/test_vsr_reae.c` (55 to 61 dB vs the F32 path) and the reae stage of `tests/test_real_vsr.c`. `H3_VSR_REAE_F32=1` selects the old path.
+- The remaining 6.8 s of decode is the layers still on F32 (TGrow, TPool, Upsample, pixel (un)shuffle, clamp), the grid <-> F32 conversions, and MPSGraph compiling graphs whenever a shape is new (the LAST chunk's encode takes 9.7 s). Moving those layers onto BF16 grid kernels is the next step. The ReAE pass width (4/8/12 frames) does not change the time, so the memory-minimal 4 is the default (`reae_frame_batch` 0 = 4).
+- A 5-second clip (124 frames, about 5 chunks) should take 50 to 60 s, within the §1 target (2 minutes on M5).

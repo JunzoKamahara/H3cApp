@@ -92,6 +92,9 @@ h3_vsr *h3_vsr_open(const char *model_dir, const h3_vsr_open_params *params,
     h3_vsr *vsr = calloc(1, sizeof(*vsr));
     if (!vsr) return NULL;
     vsr->params = *params;
+    /* 0 = "auto": 4 frames per ReAE pass (one latent step when decoding)
+     * bounds the activations; larger batches measured no faster (bench_vsr). */
+    if (vsr->params.reae_frame_batch <= 0) vsr->params.reae_frame_batch = 4;
     vsr->clip_latents = H3_VSR_CLIP_FRAMES / H3_VSR_TEMPORAL;
     if (!h3_vsr_inspect_dir(model_dir, &vsr->info, error, error_size)) goto failed;
     if (!h3_vsr_cache_matches(params->cache_path, model_dir)) {
@@ -130,6 +133,10 @@ int h3_vsr_get_stats(const h3_vsr *vsr, double *dit_seconds,
     if (reae_seconds) *reae_seconds = 0.0;
     if (peak_live_bytes) *peak_live_bytes = stats.peak_live_bytes;
     return 1;
+}
+
+int h3_vsr_gpu_stats(const h3_vsr *vsr, h3_gpu_stats *stats) {
+    return vsr && stats && h3_gpu_get_stats(vsr->gpu, stats);
 }
 
 int h3_vsr_check_requirements(const h3_vsr *vsr, int in_w, int in_h,

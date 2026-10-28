@@ -5307,3 +5307,143 @@ kernel void h3_vsr_unpatchify_sub_f32(device const float *z_lq [[buffer(0)]],
     size_t at = (((size_t)t * args.height + y) * args.width + x) * args.channels + c;
     z_hq[at] = z_lq[at] - (h3_bf16_to_f32(v[token * c4 + k]) + bias[k]);
 }
+
+/* ------------------------------------------------------------------ */
+/* VSR: 3x3 convolutions of the ReAE as tap-accumulated TensorOps matmuls
+ * (M5). Activations live in a "padded grid": channels-last BF16 rows
+ * [guard | T x (H+2) x (W+2) | guard], the spatial border rows zero, the
+ * channel count padded to a multiple of 64. A 3x3 tap is then a constant
+ * row offset, and out[r] = sum_taps x[r + off_tap] . W_tap^T (+ a second
+ * input with its own weights for the MemBlock's cat[x, past]) + bias,
+ * optionally + residual and ReLU. Rows past the grid and the border rows
+ * come out as garbage and are zeroed by h3_vsr_zero_border_bf16. */
+
+struct vsr_tapconv_args {
+    uint rows;        /* grid rows: T * (H+2) * (W+2) */
+    uint x_rows;      /* physical rows of each input and of the output */
+    uint guard;       /* leading guard rows */
+    uint in_ch, out_ch, taps, inputs, relu, has_bias, has_residual;
+    int offsets[9];
+};
+
+kernel void h3_vsr_tapconv_bf16_nax(device bfloat *x0 [[buffer(0)]],
+                                    device bfloat *x1 [[buffer(1)]],
+                                    device bfloat *w0 [[buffer(2)]],
+                                    device bfloat *w1 [[buffer(3)]],
+                                    device const float *bias [[buffer(4)]],
+                                    device const bfloat *residual [[buffer(5)]],
+                                    device bfloat *output [[buffer(6)]],
+                                    constant vsr_tapconv_args &args [[buffer(7)]],
+                                    uint2 group [[threadgroup_position_in_grid]]) {
+    constexpr int RT = 128, CT = 64, KT = 64;
+    int row_start = (int)(group.x * RT), col_start = (int)(group.y * CT);
+    auto xa = tensor<device bfloat, dextents<int32_t, 2>, tensor_inline>(
+        x0, dextents<int32_t, 2>((int)args.in_ch, (int)args.x_rows));
+    auto xb = tensor<device bfloat, dextents<int32_t, 2>, tensor_inline>(
+        x1, dextents<int32_t, 2>((int)args.in_ch, (int)args.x_rows));
+    auto wa = tensor<device bfloat, dextents<int32_t, 2>, tensor_inline>(
+        w0, dextents<int32_t, 2>((int)args.in_ch, (int)(args.taps * args.out_ch)));
+    auto wb = tensor<device bfloat, dextents<int32_t, 2>, tensor_inline>(
+        w1, dextents<int32_t, 2>((int)args.in_ch, (int)(args.taps * args.out_ch)));
+    constexpr auto descriptor = matmul2d_descriptor(
+        RT, CT, KT, false, true, false,
+        matmul2d_descriptor::mode::multiply_accumulate);
+    matmul2d<descriptor, execution_simdgroups<4>> mm;
+    auto first_a = xa.slice<KT, RT>(0, row_start);
+    auto first_b = wa.slice<KT, CT>(0, col_start);
+    auto accum = mm.template get_destination_cooperative_tensor<
+        decltype(first_a), decltype(first_b), float>();
+    #pragma clang loop unroll(full)
+    for (ushort element = 0; element < accum.get_capacity(); element++)
+        if (accum.is_valid_element(element)) accum[element] = 0.0f;
+    for (uint input = 0; input < args.inputs; input++) {
+        for (uint t = 0; t < args.taps; t++) {
+            int base = row_start + (int)args.guard + args.offsets[t];
+            int col = (int)(t * args.out_ch) + col_start;
+            for (int k = 0; k < (int)args.in_ch; k += KT) {
+                if (input == 0) {
+                    auto a = xa.slice<KT, RT>(k, base);
+                    auto b = wa.slice<KT, CT>(k, col);
+                    mm.run(a, b, accum);
+                } else {
+                    auto a = xb.slice<KT, RT>(k, base);
+                    auto b = wb.slice<KT, CT>(k, col);
+                    mm.run(a, b, accum);
+                }
+            }
+        }
+    }
+    #pragma clang loop unroll(full)
+    for (ushort element = 0; element < accum.get_capacity(); element++) {
+        if (!accum.is_valid_element(element)) continue;
+        auto index = accum.get_multidimensional_index(element);
+        int row = row_start + (int)index[1];
+        int col = col_start + (int)index[0];
+        if (row >= (int)args.rows) continue;
+        float v = accum[element];
+        if (args.has_bias) v += bias[col];
+        size_t at = (size_t)(row + (int)args.guard) * args.out_ch + (size_t)col;
+        if (args.has_residual) v += (float)residual[at];
+        if (args.relu) v = max(v, 0.0f);
+        output[at] = (bfloat)v;
+    }
+}
+
+struct vsr_grid_args { uint frames, height, width, channels, padded_channels, guard; };
+
+/* F32 [T, H, W, C] -> the padded grid (border rows and padded channels
+ * zero). Grid (padded_channels, W+2, T*(H+2)). The guard rows are zeroed
+ * separately (h3_vsr_zero_rows_bf16). */
+kernel void h3_vsr_pack_grid_bf16(device const float *input [[buffer(0)]],
+                                  device ushort *output [[buffer(1)]],
+                                  constant vsr_grid_args &args [[buffer(2)]],
+                                  uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, x = gid.y, ty = gid.z;
+    uint hp = args.height + 2, wp = args.width + 2;
+    if (c >= args.padded_channels || x >= wp || ty >= args.frames * hp) return;
+    uint t = ty / hp, y = ty - t * hp;
+    float v = 0.0f;
+    if (c < args.channels && y >= 1 && y <= args.height && x >= 1 && x <= args.width)
+        v = input[(((size_t)t * args.height + (y - 1)) * args.width + (x - 1)) * args.channels + c];
+    size_t row = (size_t)args.guard + ((size_t)t * hp + y) * wp + x;
+    output[row * args.padded_channels + c] = h3_f32_to_bf16(v);
+}
+
+/* The padded grid -> F32 [T, H, W, C]. Grid (C, W, T*H). */
+kernel void h3_vsr_unpack_grid_f32(device const ushort *input [[buffer(0)]],
+                                   device float *output [[buffer(1)]],
+                                   constant vsr_grid_args &args [[buffer(2)]],
+                                   uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, x = gid.y, ty = gid.z;
+    if (c >= args.channels || x >= args.width || ty >= args.frames * args.height) return;
+    uint t = ty / args.height, y = ty - t * args.height;
+    uint hp = args.height + 2, wp = args.width + 2;
+    size_t row = (size_t)args.guard + ((size_t)t * hp + (y + 1)) * wp + (x + 1);
+    output[(((size_t)t * args.height + y) * args.width + x) * args.channels + c] =
+        h3_bf16_to_f32(input[row * args.padded_channels + c]);
+}
+
+/* Zeroes the spatial border rows of every frame of a padded grid.
+ * Grid (padded_channels, 2*(W+2) + 2*H, T). */
+kernel void h3_vsr_zero_border_bf16(device ushort *x [[buffer(0)]],
+                                    constant vsr_grid_args &args [[buffer(1)]],
+                                    uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, i = gid.y, t = gid.z;
+    uint hp = args.height + 2, wp = args.width + 2;
+    if (c >= args.padded_channels || i >= 2 * wp + 2 * args.height || t >= args.frames) return;
+    uint y, xx;
+    if (i < wp) { y = 0; xx = i; }
+    else if (i < 2 * wp) { y = hp - 1; xx = i - wp; }
+    else { uint j = i - 2 * wp; y = 1 + j / 2; xx = (j & 1) ? wp - 1 : 0; }
+    size_t row = (size_t)args.guard + ((size_t)t * hp + y) * wp + xx;
+    x[row * args.padded_channels + c] = 0;
+}
+
+/* Zeroes rows [first, first + count) of a BF16 row-major buffer.
+ * Grid (width, count). */
+kernel void h3_vsr_zero_rows_bf16(device ushort *x [[buffer(0)]],
+                                  constant vsr_rows_args &args [[buffer(1)]],
+                                  uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= args.width || gid.y >= args.rows) return;
+    x[((size_t)args.col_offset + gid.y) * args.width + gid.x] = 0;
+}

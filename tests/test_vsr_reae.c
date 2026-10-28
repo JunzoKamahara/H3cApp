@@ -342,9 +342,18 @@ static void compare_f32(const float *a, const float *b, size_t n, double toleran
     CHECK(worst <= tolerance);
 }
 
+static double psnr(const float *a, const float *b, size_t n) {
+    double err = 0.0, peak = 0.0;
+    for (size_t i = 0; i < n; i++) { double d = (double)a[i] - b[i]; err += d * d; if (fabs(b[i]) > peak) peak = fabs(b[i]); }
+    return 10.0 * log10(peak * peak / (err / (double)n > 0 ? err / (double)n : 1e-30));
+}
+
 int main(void) {
     char dir[] = "/tmp/h3vsr-reae-test-XXXXXX";
     CHECK(mkdtemp(dir) != NULL);
+    /* The double transcription is checked on the exact F32 path; the
+     * TensorOps (BF16) path is compared with it afterwards. */
+    setenv("H3_VSR_REAE_F32", "1", 1);
     reae_weights w;
     build_model(dir, &w);
 
@@ -430,7 +439,6 @@ int main(void) {
     /* The reference decodes the double latent; feed the GPU the same values
      * (latent_f is the GPU encoder's output, close to the reference). */
     compare(decoded_f, frames_ref.v, frames_n, 5e-3, "decoder, one pass (vs double reference)");
-    h3_vsr_reae_state_free(dec_state);
     {
         h3_gpu_tensor *decoded2 = h3_gpu_tensor_new_f32(gpu, frames_n);
         h3_vsr_reae_state *state = h3_vsr_reae_state_new(reae, 0, H, W);
@@ -445,6 +453,57 @@ int main(void) {
     }
     /* Outputs are clamped to [0, 1]. */
     for (size_t i = 0; i < frames_n; i++) CHECK(decoded_f[i] >= 0.0f && decoded_f[i] <= 1.0f);
+
+    /* The TensorOps path (M5): the same clip, within BF16 of the F32 path,
+     * whole and with the state carried across two chunks. */
+    if (h3_gpu_has_tensor_ops(gpu)) {
+        unsetenv("H3_VSR_REAE_F32");
+        h3_vsr_reae *nax = h3_vsr_reae_load(dir, gpu, error, sizeof(error));
+        CHECK(nax != NULL);
+        h3_gpu_tensor *latent2 = h3_gpu_tensor_new_f32(gpu, latent_n);
+        h3_gpu_tensor *decoded2 = h3_gpu_tensor_new_f32(gpu, frames_n);
+        float *got = malloc(frames_n * sizeof(float));
+        CHECK(latent2 && decoded2 && got);
+        for (int mode = 0; mode < 2; mode++) {
+            h3_vsr_reae_state *state = h3_vsr_reae_state_new(nax, 1, H, W);
+            CHECK(state != NULL);
+            if (mode == 0) {
+                CHECK(h3_vsr_reae_encode(nax, state, frames_t, T, H, W, 0, latent2, error, sizeof(error)));
+            } else {
+                h3_gpu_tensor *half = h3_gpu_tensor_new_f32(gpu, (size_t)4 * H * W * 3);
+                h3_gpu_tensor *half_latent = h3_gpu_tensor_new_f32(gpu, latent_n / 2);
+                CHECK(half && half_latent);
+                for (int chunk = 0; chunk < 2; chunk++) {
+                    CHECK(h3_gpu_tensor_write_f32(half, frames_f + (size_t)chunk * 4 * H * W * 3, (size_t)4 * H * W * 3));
+                    CHECK(h3_vsr_reae_encode(nax, state, half, 4, H, W, 0, half_latent, error, sizeof(error)));
+                    float part[2048];
+                    CHECK(h3_gpu_tensor_read_f32(half_latent, part, latent_n / 2));
+                    CHECK(h3_gpu_tensor_write_f32_range(latent2, (size_t)chunk * (latent_n / 2), part, latent_n / 2));
+                }
+                h3_gpu_tensor_free(half);
+                h3_gpu_tensor_free(half_latent);
+            }
+            CHECK(h3_gpu_tensor_read_f32(latent2, got, latent_n));
+            double db = psnr(got, latent_f, latent_n);
+            printf("  TensorOps encoder, %s: %.1f dB vs the F32 path\n", mode ? "two chunks" : "one pass", db);
+            CHECK(db > 40.0);
+            h3_vsr_reae_state_free(state);
+        }
+        h3_vsr_reae_state_free(dec_state);
+        dec_state = h3_vsr_reae_state_new(nax, 0, H, W);
+        CHECK(dec_state != NULL);
+        CHECK(h3_vsr_reae_decode(nax, dec_state, latent_in, T / 4, H / 16, W / 16, 0, decoded2, error, sizeof(error)));
+        CHECK(h3_gpu_tensor_read_f32(decoded2, got, frames_n));
+        double db = psnr(got, decoded_f, frames_n);
+        printf("  TensorOps decoder: %.1f dB vs the F32 path\n", db);
+        CHECK(db > 40.0);
+        free(got);
+        h3_gpu_tensor_free(latent2);
+        h3_gpu_tensor_free(decoded2);
+        h3_vsr_reae_free(nax);
+    } else {
+        h3_vsr_reae_state_free(dec_state);
+    }
 
     h3_gpu_tensor_free(frames_t);
     h3_gpu_tensor_free(latent_t);

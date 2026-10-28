@@ -406,7 +406,7 @@ Swift（`VideoUpscale.upscale` を 3 段に。既存方式は `PerFrameChunkAdap
 | P5 ストリーマ | `h3_vsr_chunk.c`/`h3_vsr.c`: チャンク分割、状態、最終チャンクの前詰め、前処理・切り出し、2 コンテキスト並走、キャンセル | 124 fr の end-to-end が参照の全体出力と ≥ 35 dB、M5/M4 で時間・ピークメモリ表（`bench_vsr`）。実重み: 57 フレーム 384x272→768x544 の 8 ビット出力が公式と bf16 51.2 dB / int8 49.3 dB、出力数一致 |
 | P5.5 品質評価 | §9.5: 評価セット作成、SeedVR2 参照出力（≥64 GB Mac かクラウド）、指標スクリプト、本実装の全変種で表を埋める、ブラインド A/B | SeedVR2 比の達成率（§1 の 95%）を記録し、「品質優先」「速度」モードの既定を決める |
 | P6 アプリ | `ChunkedFrameScaler` と 3 段パイプライン、**品質優先／速度モードの切替（全注意・精度・overlap）**、`.swiftVR`、DL/同意/変換 UI、API、記録、文書、ローカライズ、`isGenerating` ガード | 既存 4 方式の出力がバイト一致で不変、新方式で project/file 両入口＋継続が動く。実重み: 新ビルドのアプリで `POST /api/upscale-file`（swiftVR, 2x）により 512x512・39 フレームが 1024x1024 HEVC（音声保持）に約 30 秒で拡大された（2026-10-29）。「SwiftVR のモデルを準備」画面の操作は未確認 |
-| P7 最適化 | 未着手（owner 限定クエリ、NAX 任意形状、tapconv、ReAE F16、2 コンテキスト、ANE）。付録 A.1 の実測が出発点 | — | — |
+| P7 最適化 | 進行中（付録 A.2: ReAE の畳み込みを TensorOps に移し、1080p の中間チャンク 17.6 s → 9.6 s） | `h3_vsr_tapconv_bf16_nax`, `h3_vsr_reae.c`, `tests/bench_vsr.c` | `tests/test_vsr_tapconv.c`、`tests/test_vsr_reae.c` の TensorOps 節、実重み 56〜60 dB |
 | P8 FlashVSR Tiny | 共通エンジンに第二バックエンド（LQ_proj_in、KV キャッシュ、ブロック選択注意、TCDecoder、色補正） | 同様の parity と速度表 |
 | PX 実験 | H3 hires-fix（§11） | 比較表と判断 |
 
@@ -530,3 +530,19 @@ int8 線形は 128 行以上を要求するためトークン行を 128 単位�
 アプリ本体でも確認した: 新ビルドを起動し、`GET /api/upscalers` が SwiftVR を使用可（int8 キャッシュ）と報告、`POST /api/upscale-file` で 512x512・39 フレームの生成動画を 2 倍にして 1024x1024 の HEVC（音声そのまま）が約 30 秒で書き出された。bilinear と並べると髪・歯・服の柄が明らかに鮮明で、明るさは入力と同じ。
 
 速度は計画の見積（§6.4: 1920x1088 で int8 6.5 s/チャンク）より遅い。768x544（2,856 トークン）で int8 3.7〜4.5 s なので、1920x1088（12,240 トークン）では線形外挿で 16〜19 s/チャンク。P7 の出発点とする。
+
+### 付録 A.2: P7 速度最適化の記録（2026-10-29, M5 24 GB, int8）
+
+`tests/bench_vsr.c`（`make h3_vsr_bench`、`./h3_vsr_bench [in_w in_h out_w out_h] [chunks] [int8|bf16|auto] [full]`）で 960x544→1920x1088（12,240 トークン/チャンク）を計測。MIDDLE チャンク（24 フレーム）の壁時計:
+
+| 版 | チャンク | 前処理+ReAE encode | DiT | ReAE decode | GPU 常駐ピーク |
+|---|---|---|---|---|---|
+| 着手時（ReAE は F32 MPSGraph、チャンク一括） | 17.6 s | 1.7 s | 2.2 s | 13.6 s | 23.7 GiB（フットプリント 29 GB、強制終了） |
+| ReAE 4 フレーム分割 | 17.6 s | 1.7 s | 2.2 s | 13.6 s | 8.7 GiB |
+| ReAE の 3x3 畳み込みと MemBlock を TensorOps に | **9.6 s** | 0.5 s | 2.2 s | 6.8 s | 11.3 GiB（フットプリント 13.9 GB） |
+
+- DiT は 67〜80 ms/ブロック（計画 §6.4 の見積 165 ms の半分以下）。チャンクあたり 2.2〜2.6 s で、当面は ReAE が支配的。
+- 新カーネル `h3_vsr_tapconv_bf16_nax`（`h3_shaders.metal`）: 活性を「パディング付き格子」（境界行をゼロにした channels-last BF16、チャネルは 64 の倍数に詰め物）に置き、3x3 の 9 タップを行オフセット付きの `matmul2d` 累積で計算する。MemBlock の `cat[x, past]` は第 2 入力として同じ累積に入れ、bias・残差・ReLU はエピローグ。デコーダの 128 ch MemBlock（272x480、2 フレーム）で 22 ms（13.8 TFLOP/s）、F32 MPSGraph の同じ 3 畳み込みは 52 ms（実行器内では pad/cat の複製を含め 205 ms）。
+- 精度: 公式 float32 に対し ReAE エンコーダ 56〜58 dB、デコーダ 60 dB（F32 経路は 140 dB）。`tests/test_vsr_tapconv.c`（倍精度参照 65 dB）、`tests/test_vsr_reae.c`（F32 経路との比較 55〜61 dB）、`tests/test_real_vsr.c` の reae 段で検証。`H3_VSR_REAE_F32=1` で従来経路に戻せる。
+- 残る decode 6.8 s は F32 のままの層（TGrow・TPool・Upsample・pixel (un)shuffle・clamp）と格子⇄F32 の変換、および FIRST/LAST チャンクで形状が変わるたびに走る MPSGraph のコンパイル（LAST チャンクの encode が 9.7 s）。これらを格子上の BF16 カーネルに移すのが次の作業。ReAE の分割幅（4/8/12 フレーム）は時間に影響せず、メモリ下限の 4 を既定にした（`reae_frame_batch` 0 = 4）。
+- 5 秒クリップ（124 フレーム ≈ 5 チャンク）は約 50〜60 s の見込みで、§1 の目標（M5 で 2 分以内）に入る。

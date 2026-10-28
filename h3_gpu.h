@@ -398,6 +398,33 @@ int h3_gpu_vsr_split_frames_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                                 uint32_t channels);
 int h3_gpu_vsr_clamp_tanh_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                               const h3_gpu_tensor *input, uint32_t elements);
+/* ReAE convolutions on M5 TensorOps: a "padded grid" of BF16 rows
+ * [guard | T x (H+2) x (W+2) | guard] with channels padded to a multiple of
+ * 64 (x_rows physical rows, guard >= W+3, trailing room >= guard + 128).
+ * tapconv: out[r] = sum over taps of x[r + offset] . W_tap^T (x1/w1: a
+ * second input accumulated the same way) + bias (+ residual) (ReLU). The
+ * weights are [taps * out_ch, in_ch] BF16 row-major, tap-major. */
+int h3_gpu_has_tensor_ops(const h3_gpu *gpu);
+int h3_gpu_vsr_tapconv_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                            const h3_gpu_tensor *x0, const h3_gpu_tensor *x1,
+                            const h3_gpu_tensor *w0, const h3_gpu_tensor *w1,
+                            const h3_gpu_tensor *bias, const h3_gpu_tensor *residual,
+                            uint32_t rows, uint32_t x_rows, uint32_t guard,
+                            uint32_t in_ch, uint32_t out_ch, uint32_t taps,
+                            const int32_t *offsets, int relu);
+int h3_gpu_vsr_zero_rows_bf16(h3_gpu *gpu, h3_gpu_tensor *x, uint32_t first,
+                              uint32_t count, uint32_t width);
+int h3_gpu_vsr_pack_grid_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                              uint32_t frames, uint32_t height, uint32_t width,
+                              uint32_t channels, uint32_t padded_channels, uint32_t guard,
+                              uint32_t x_rows, int zero_guards);
+int h3_gpu_vsr_unpack_grid_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                               uint32_t frames, uint32_t height, uint32_t width,
+                               uint32_t channels, uint32_t padded_channels, uint32_t guard,
+                               uint32_t x_rows);
+int h3_gpu_vsr_zero_border_bf16(h3_gpu *gpu, h3_gpu_tensor *x, uint32_t frames,
+                                uint32_t height, uint32_t width, uint32_t padded_channels,
+                                uint32_t guard, uint32_t x_rows);
 int h3_gpu_vsr_pixels_to_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                              const h3_gpu_tensor *pixels, uint32_t frames,
                              uint32_t in_w, uint32_t in_h, uint32_t in_stride,

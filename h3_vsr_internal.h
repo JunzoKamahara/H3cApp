@@ -171,4 +171,7 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
                        h3_progress_callback on_block, void *opaque,
                        char *error, size_t error_size);
 
+/* The DiT/ReAE context's raw counters (tests/bench_vsr.c). */
+int h3_vsr_gpu_stats(const h3_vsr *vsr, h3_gpu_stats *stats);
+
 #endif /* H3_VSR_INTERNAL_H */
