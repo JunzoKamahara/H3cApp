@@ -156,7 +156,10 @@ MLXフィクスチャが`misc/fixtures/`に配置されていれば、Metalソ�
 実行時にコンパイルして、トイのH3ブロックを名前付きMLX出力と比較検証
 します — Irisにならい意図的に実行時コンパイルとしており、Xcodeの
 オプションであるオフラインMetalツールチェーンを必要としません。
-`make parity`はそのMetal/MLXチェックのみを実行します。
+`make parity`はそのMetal/MLXチェックのみを実行します。SwiftVRの照合テスト
+（`h3_real_vsr_test`）も同様に、ダウンロード済みのSwiftVRの重みと
+`tools/dump_swiftvr_fixture.py`のfixtureがあるときだけ走り、なければ
+`skip:`と表示します。
 
 同じシードでの再現性：`make test`には`h3_determinism_tests`（threadgroupで
 集計するカーネルを繰り返し実行し、ビット単位で一致することを確認）が

@@ -153,7 +153,10 @@ make parity
 MLX fixtures are installed under `misc/fixtures/`, also compiles the Metal
 source at runtime and checks a toy H3 block against named MLX outputs —
 intentionally at runtime, matching Iris, so it needs no Xcode offline Metal
-toolchain. `make parity` runs just those Metal/MLX checks.
+toolchain. `make parity` runs just those Metal/MLX checks. The SwiftVR
+parity test (`h3_real_vsr_test`) likewise runs only when the downloaded
+SwiftVR weights and the fixture of `tools/dump_swiftvr_fixture.py` are
+present, and prints `skip:` otherwise.
 
 Same-seed reproducibility: `make test` includes `h3_determinism_tests`
 (repeat runs of the threadgroup-reduction kernels must match bit for bit).

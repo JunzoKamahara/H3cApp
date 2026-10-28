@@ -402,11 +402,11 @@ Swift（`VideoUpscale.upscale` を 3 段に。既存方式は `PerFrameChunkAdap
 | P1 参照データ | scratch venv で公式 SwiftVR を CPU/MPS で小入力（8 fr 256x256 → 512x512）実行し、§9 のチェックポイントと定数を safetensors でダンプ（`tools/dump_swiftvr_fixture.py`、Python は開発専用）。窓開始位置・owner 規則も同スクリプトで書き出す | ダンプ一式と README |
 | P2 重み変換 | `h3_vsr_weights.c` + CLI `build_vsr_cache`: F32 safetensors → `.h3vc`（BF16 / int8 行量子化、F32 定数、交差 K/V、融合 QKV、fingerprint）。`h3_gpu_set_nax_generic` もここで | 変換時間・サイズ記録、再読込一致、`test_vsr` のホスト部 |
 | P3 ReAE | `h3_vsr_reae.c` + tapconv NAX 核 + MPSGraph 経路（状態持ち越し、フレームバッチ、TGrow 前置、アップサンプル折り畳み） | 参照と ReAE 潜在 ≥ 40 dB(BF16)、デコード RGB ≥ 38 dB；両経路の一致 |
-| P4 DiT | `h3_vsr_wan.c` + `h3_vsr_window.c`: 全窓 MFSWA → owner 限定、BF16 → int8、定数条件、交差注意、RoPE（t_off=0 の検証） | block-0 ≥ 40 dB、最終潜在 ≥ 36/33 dB、RGB ≥ 38/35 dB（BF16/int8）；dense 注意との差を記録 |
-| P5 ストリーマ | `h3_vsr_chunk.c`/`h3_vsr.c`: チャンク分割、状態、最終チャンクの前詰め、前処理・切り出し、2 コンテキスト並走、キャンセル | 124 fr の end-to-end が参照の全体出力と ≥ 35 dB、M5/M4 で時間・ピークメモリ表（`bench_vsr`） |
+| P4 DiT | `h3_vsr_wan.c` + `h3_vsr_window.c`: 全窓 MFSWA → owner 限定、BF16 → int8、定数条件、交差注意、RoPE（t_off=0 の検証） | block-0 ≥ 40 dB、最終潜在 ≥ 36/33 dB、RGB ≥ 38/35 dB（BF16/int8）；dense 注意との差を記録。実重み（付録 A.1）: 公式 float32 に対し v が bf16 60.0 dB / int8 51.3 dB（MFSWA）、全注意 60.4 / 51.7 dB |
+| P5 ストリーマ | `h3_vsr_chunk.c`/`h3_vsr.c`: チャンク分割、状態、最終チャンクの前詰め、前処理・切り出し、2 コンテキスト並走、キャンセル | 124 fr の end-to-end が参照の全体出力と ≥ 35 dB、M5/M4 で時間・ピークメモリ表（`bench_vsr`）。実重み: 57 フレーム 384x272→768x544 の 8 ビット出力が公式と bf16 51.2 dB / int8 49.3 dB、出力数一致 |
 | P5.5 品質評価 | §9.5: 評価セット作成、SeedVR2 参照出力（≥64 GB Mac かクラウド）、指標スクリプト、本実装の全変種で表を埋める、ブラインド A/B | SeedVR2 比の達成率（§1 の 95%）を記録し、「品質優先」「速度」モードの既定を決める |
-| P6 アプリ | `ChunkedFrameScaler` と 3 段パイプライン、**品質優先／速度モードの切替（全注意・精度・overlap）**、`.swiftVR`、DL/同意/変換 UI、API、記録、文書、ローカライズ、`isGenerating` ガード | 既存 4 方式の出力がバイト一致で不変、新方式で project/file 両入口＋継続が動く |
-| P7 最適化 | int8 既定化（M5）、融合核（§6.5-9）、SSD vs 常駐の再判定、ANE 実験（§6.7 の基準で go/no-go） | §1 の時間目標達成 or 未達理由の記録 |
+| P6 アプリ | `ChunkedFrameScaler` と 3 段パイプライン、**品質優先／速度モードの切替（全注意・精度・overlap）**、`.swiftVR`、DL/同意/変換 UI、API、記録、文書、ローカライズ、`isGenerating` ガード | 既存 4 方式の出力がバイト一致で不変、新方式で project/file 両入口＋継続が動く。実重みでのアプリ操作（準備画面・拡大）は未確認（起動中のアプリを止める許可待ち） |
+| P7 最適化 | 未着手（owner 限定クエリ、NAX 任意形状、tapconv、ReAE F16、2 コンテキスト、ANE）。付録 A.1 の実測が出発点 | — | — |
 | P8 FlashVSR Tiny | 共通エンジンに第二バックエンド（LQ_proj_in、KV キャッシュ、ブロック選択注意、TCDecoder、色補正） | 同様の parity と速度表 |
 | PX 実験 | H3 hires-fix（§11） | 比較表と判断 |
 
@@ -491,7 +491,7 @@ Swift（`VideoUpscale.upscale` を 3 段に。既存方式は `PerFrameChunkAdap
 | フェーズ | 状態 | 場所 | 検証 |
 |---|---|---|---|
 | P0 文書 | 完了（main） | `UPSCALE_PLAN(.ja).md` | — |
-| P1 参照ダンプ | **未着手**（20 GB の重み取得とライセンス同意が必要） | `tools/dump_swiftvr_fixture.py`（予定） | — |
+| P1 参照ダンプ | 完了（2026-10-29。利用者が同意のうえ 20 GB をダウンロード。付録 A.1） | `tools/dump_swiftvr_fixture.py` → `misc/fixtures/swiftvr-768x544/`（gitignore） | `tests/test_real_vsr.c`（重みと fixture があるときだけ走り、なければ skip） |
 | P2 重みキャッシュ | 完了 | `h3_vsr_weights.c`, `h3_vsr_internal.h`, `h3_build_vsr_cache.c` | `tests/test_vsr_cache.c`（合成モデル、bf16+int8） |
 | P3 ReAE | 完了（F32 conv3d 経路） | `h3_vsr_reae.c` | `tests/test_vsr_reae.c`: 倍精度転写と 2e-7、チャンク／フレームバッチの状態持ち越しはビット一致 |
 | P4 DiT | 完了（BF16 / int8、全窓 MFSWA と全注意） | `h3_vsr_wan.c`, `h3_shaders.metal` の `h3_vsr_*`, `h3_gpu_sdpa_batched/cross_bf16` | `tests/test_vsr_wan.c`: 倍精度参照と 61 dB（bf16）/ 60.8 dB（int8） |
@@ -503,3 +503,28 @@ Swift（`VideoUpscale.upscale` を 3 段に。既存方式は `PerFrameChunkAdap
 実装で判明し本文を修正した点: 124 フレームは 6 チャンク（§6.4）、偶数層の owner 幅は 16/16/16/12（§6.4）、
 patch 入力は (c, ph, pw)・出力は (ph, pw, c) 順（`h3_vsr.h` の `h3_vsr_patch_in_index` / `h3_vsr_patch_out_index`）、
 int8 線形は 128 行以上を要求するためトークン行を 128 単位でパディング（`h3_vsr_wan.c`）。
+
+### 付録 A.1: 実重みでの検証（2026-10-29, M5 24 GB）
+
+公式実装（github H-oliday/SwiftVR）を float32 で走らせた参照（`tools/dump_swiftvr_fixture.py`。DiT は 20 GB を常駐させず 1 ブロックずつ読む）と、本エンジンを段階ごとに比べた。題材は GUIN の生成動画 57 フレームを 768x544 に切り出し 384x272 に縮小したもの（2x、トークン格子 24x17、FIRST 28 / MIDDLE 24 / LAST 5 の 3 チャンク）。`tests/test_real_vsr.c`（`H3_VSR_STAGES=host,reae,dit,session`、`H3_VSR_PRECISION=bf16|int8|both`）。
+
+| 段階 | bf16 | int8 | 備考 |
+|---|---|---|---|
+| 窓の索引表・owner（偶奇 × T=6,7） | 一致 | — | `h3_vsr_window.c` と公式 `_WindowRuntimeMetaCache` が同一 |
+| RoPE 表 | max 6.5e-7 | — | 公式は MPS では float32 周波数 |
+| 前処理（bilinear, align_corners=False） | 一致（max 0） | — | |
+| ReAE エンコーダ（3 チャンク、状態持ち越し） | 139.6〜140.9 dB | — | float32 の丸め誤差水準 |
+| ReAE デコーダ（チャンク 0） | 140.8 dB | — | |
+| キャッシュ定数 `mod` / `k2` / `v2` | 153 / 73.8 / 76.5 dB | 同左 | k2/v2 は BF16 格納 |
+| DiT 単体 v（チャンク 0、MFSWA / 全注意） | 60.0 / 60.4 dB | 51.3 / 51.7 dB | ブロック 0, 1 のトークンは 87.8 / 85.3 dB |
+| セッション z_hq（チャンク 0/1/2） | 63.4 / 62.9 / 61.9 dB | 54.7 / 51.6 / 52.3 dB | |
+| 8 ビット出力 vs 公式（57 フレーム） | 51.2 dB（max 18/255、>4 が 0.002%） | 49.3 dB（max 31/255、>4 が 0.16%） | 元画像に対しては本エンジン 27.4 dB、公式 27.6 dB（bilinear 39.3 dB。公式出力は元より明るく高コントラストで、目視では鮮明） |
+| チャンク時間（28/24/5 フレーム） | 5.8 / 4.6 / 3.9 s | 4.5 / 3.7 / 2.6 s | GPU DiT bf16 4.6 s（3 チャンク計）、int8 7.9 s は dit 単体 3.9/2.4 s と矛盾し要再測 |
+| GPU 常駐ピーク（`peak_live_bytes`） | 12.3 GiB | 8.3 GiB | プロセスのピークフットプリントは約 20 GB（MPSGraph の作業域を含む）。P7 で内訳を取る |
+
+実重みで初めて出た不具合 2 件（どちらも修正済み、合成モデルの試験では出なかった）:
+
+1. FFN の GELU（tanh 近似）で Metal の `tanh` が大きな引数に NaN を返し、特定の 16 トークンから全体に広がった。引数を ±20 にクランプ（`h3_geglu_f32` と ReAE の Clamp も同様に保護）。
+2. ReAE デコーダの MemBlock 状態をフレーム解像度で確保していた（正しくは潜在解像度）。768x544 で約 17 GB を無駄に確保し、ピークフットプリント 29 GB でスワップと OS による強制終了を招いていた。`h3_vsr_reae_state_new` を修正し、常駐は int8 4.7 GiB（セッション開始時）になった。
+
+速度は計画の見積（§6.4: 1920x1088 で int8 6.5 s/チャンク）より遅い。768x544（2,856 トークン）で int8 3.7〜4.5 s なので、1920x1088（12,240 トークン）では線形外挿で 16〜19 s/チャンク。P7 の出発点とする。

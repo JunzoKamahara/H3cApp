@@ -1017,8 +1017,10 @@ kernel void h3_geglu_f32(device const float *gate [[buffer(0)]],
     if (gid >= count) return;
     float x = gate[gid];
     float cube = x * x * x;
-    float gelu = 0.5f * x *
-        (1.0f + tanh(0.7978845608028654f * (x + 0.044715f * cube)));
+    /* clamped: Metal's tanh can return NaN for large arguments, and it is
+     * +-1 to float precision beyond |x| = 20 */
+    float inner = clamp(0.7978845608028654f * (x + 0.044715f * cube), -20.0f, 20.0f);
+    float gelu = 0.5f * x * (1.0f + tanh(inner));
     output[gid] = gelu * linear[gid];
 }
 
@@ -5013,7 +5015,9 @@ kernel void h3_vsr_clamp_tanh_f32(device const float *input [[buffer(0)]],
                                   device float *output [[buffer(1)]],
                                   constant vsr_count_args &args [[buffer(2)]],
                                   uint index [[thread_position_in_grid]]) {
-    if (index < args.elements) output[index] = tanh(input[index] / 3.0f) * 3.0f;
+    /* tanh is +-1 to float precision beyond |x| = 20, and Metal's tanh can
+     * return NaN for large arguments, so the argument is clamped. */
+    if (index < args.elements) output[index] = tanh(clamp(input[index] / 3.0f, -20.0f, 20.0f)) * 3.0f;
 }
 
 struct vsr_pixels_in_args {
@@ -5260,7 +5264,10 @@ kernel void h3_vsr_gelu_bias_bf16(device ushort *x [[buffer(0)]],
     size_t at = (size_t)row * args.width + column;
     float v = h3_bf16_to_f32(x[at]) + bias[column];
     const float k = 0.7978845608028654f;
-    float g = 0.5f * v * (1.0f + tanh(k * (v + 0.044715f * v * v * v)));
+    /* Metal's tanh overflows to NaN past |x| ~ 44 (exp(2x) / exp(2x)); it is
+     * +-1 to float precision long before that, so the argument is clamped. */
+    float t = clamp(k * (v + 0.044715f * v * v * v), -20.0f, 20.0f);
+    float g = 0.5f * v * (1.0f + tanh(t));
     x[at] = h3_f32_to_bf16(g);
 }
 

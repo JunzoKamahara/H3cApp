@@ -7,7 +7,7 @@
  * Skips (exit 0) when the fixture or the weights are not installed:
  *   H3_VSR_FIXTURE    fixture directory (default misc/fixtures/swiftvr-768x544)
  *   H3_VSR_MODEL_DIR  SwiftVR weights (default the app's Upscalers/SwiftVR)
- *   H3_VSR_PRECISION  bf16 (default), int8, or both
+ *   H3_VSR_PRECISION  auto (default: int8 on tensor hardware, else bf16), bf16, int8, or both
  *   H3_VSR_STAGES     comma list of host, reae, dit, session (default all)
  * The .h3vc cache is built next to the weights when it is missing. */
 #include "h3_vsr_internal.h"
@@ -139,6 +139,7 @@ typedef struct {
 } geometry;
 
 int main(void) {
+    setvbuf(stdout, NULL, _IOLBF, 0);
     const char *fixture = getenv("H3_VSR_FIXTURE");
     if (!fixture || !fixture[0]) fixture = "misc/fixtures/swiftvr-768x544";
     const char *model_dir = getenv("H3_VSR_MODEL_DIR");
@@ -334,7 +335,11 @@ int main(void) {
 
     /* ---- precisions ------------------------------------------------- */
     int precisions[2], precision_count = 0;
-    if (!precision_env || !strcmp(precision_env, "bf16")) precisions[precision_count++] = H3_VSR_PRECISION_BF16;
+    /* Default: what the app uses on this Mac (int8 on tensor hardware,
+     * BF16 elsewhere); only one cache need exist. */
+    if (!precision_env || !precision_env[0] || !strcmp(precision_env, "auto"))
+        precisions[precision_count++] = h3_vsr_int8_supported() ? H3_VSR_PRECISION_INT8 : H3_VSR_PRECISION_BF16;
+    else if (!strcmp(precision_env, "bf16")) precisions[precision_count++] = H3_VSR_PRECISION_BF16;
     else if (!strcmp(precision_env, "int8")) precisions[precision_count++] = H3_VSR_PRECISION_INT8;
     else { precisions[precision_count++] = H3_VSR_PRECISION_BF16; precisions[precision_count++] = H3_VSR_PRECISION_INT8; }
     if (!h3_vsr_int8_supported()) {
@@ -427,8 +432,12 @@ int main(void) {
             h3_gpu_tensor *sn_t = h3_gpu_tensor_from_f32(gpu, sn, tokens * pairs);
             CHECK(z_lq_t && z_hq_t && cs_t && sn_t);
             float *got = malloc((size_t)T * lplane * sizeof(float)), *v_got = malloc((size_t)T * lplane * sizeof(float));
+            char dit_dump[] = "/tmp/h3vsr-real-dit-XXXXXX";
+            CHECK(mkdtemp(dit_dump) != NULL);
             for (int windowed = 1; windowed >= 0; windowed--) {
                 t0 = now();
+                if (windowed) { setenv("H3_VSR_DUMP_DIR", dit_dump, 1); setenv("H3_VSR_DUMP_TOKENS", "1", 1); }
+                else { unsetenv("H3_VSR_DUMP_DIR"); unsetenv("H3_VSR_DUMP_TOKENS"); }
                 if (!h3_vsr_wan_predict(wan, z_lq_t, T, g.latent_h, g.latent_w, windowed ? &even : NULL, windowed ? &odd : NULL,
                                         cs_t, sn_t, z_hq_t, NULL, NULL, error, sizeof(error)))
                     fprintf(stderr, "%s\n", error);
@@ -443,8 +452,33 @@ int main(void) {
                 if (windowed) {
                     metrics mz = compare(got, zden0_cl, (size_t)T * lplane);
                     report("DiT MFSWA z_hq (chunk 0)", mz);
+                    /* the token activations of the first blocks vs the official ones */
+                    const char *names[3] = {"x_in", "block0", "block1"};
+                    const char *refs[3] = {"hs_in0", "block0_out0", "block1_out0"};
+                    for (int i = 0; i < 3; i++) {
+                        tensor ref;
+                        load_f32(fixture, "dit.safetensors", refs[i], &ref);
+                        CHECK(ref.elements == tokens * (size_t)D);
+                        char path[4200];
+                        snprintf(path, sizeof(path), "%s/dit_%s.f32", dit_dump, names[i]);
+                        FILE *fp = fopen(path, "rb");
+                        CHECK(fp != NULL);
+                        float *act = malloc(ref.elements * sizeof(float));
+                        CHECK(fread(act, sizeof(float), ref.elements, fp) == ref.elements);
+                        fclose(fp);
+                        metrics ma = compare(act, ref.data, ref.elements);
+                        snprintf(what, sizeof(what), "DiT tokens after %s", names[i]);
+                        report(what, ma);
+                        free(act); free(ref.data);
+                    }
                 }
-                CHECK(mv.psnr > floor_db);
+                if (!(mv.psnr > floor_db)) printf("  !! DiT %s below %.0f dB\n", windowed ? "MFSWA" : "dense", floor_db);
+            }
+            if (getenv("H3_VSR_KEEP_DUMP")) printf("  kept the DiT dump in %s\n", dit_dump);
+            else {
+                char cmd[4200];
+                snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dit_dump);
+                (void)system(cmd);
             }
             free(got); free(v_got); free(cs); free(sn); free(z0_cl); free(v0_cl); free(v0f_cl); free(zden0_cl);
             h3_vsr_window_layout_free(&even); h3_vsr_window_layout_free(&odd);
@@ -462,6 +496,8 @@ int main(void) {
             params.precision = precision;
             params.cache_path = cache_path;
             params.shader_source_path = "h3_shaders.metal";
+            if (getenv("H3_VSR_REAE_BATCH")) params.reae_frame_batch = atoi(getenv("H3_VSR_REAE_BATCH"));
+            printf("  reae_frame_batch %d\n", params.reae_frame_batch);
             double t0 = now();
             h3_vsr *vsr = h3_vsr_open(model_dir, &params, NULL, NULL, error, sizeof(error));
             if (!vsr) fprintf(stderr, "%s\n", error);

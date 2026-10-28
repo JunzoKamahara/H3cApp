@@ -326,7 +326,7 @@ def main():
                 pred = dit.forward_chunk(z_bcfhw, temb, tp, enc_hs, t_off, dump=chunk_dump, log=print)
                 if chunk_dump is not None:
                     for k, v in chunk_dump.items():
-                        dump[f"{k}0"] = v
+                        dump[k if k.endswith("_0") else f"{k}0"] = v
                     dump["v0"] = pred[0].permute(1, 0, 2, 3).clone()
                 z_den = z_bcfhw - pred
                 prev_lq = z_bcfhw[:, :, -n_lat:].clone()

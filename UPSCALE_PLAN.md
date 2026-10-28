@@ -404,11 +404,11 @@ Cancellation: `cancel_requested` is checked between DiT blocks and phases (the `
 | P1 Reference data | Run the official SwiftVR on CPU/MPS in a scratch venv on a small input (8 fr 256x256 → 512x512) and dump the §9 checkpoints and constants as safetensors (`tools/dump_swiftvr_fixture.py`; Python is dev-only). The same script also writes the window starts and owner rule | dump set and README |
 | P2 Weight conversion | `h3_vsr_weights.c` + CLI `build_vsr_cache`: F32 safetensors → `.h3vc` (BF16 / int8 per-row, F32 constants, cross K/V, fused QKV, fingerprint). `h3_gpu_set_nax_generic` here too | conversion time and size recorded, reload matches, host part of `test_vsr` |
 | P3 ReAE | `h3_vsr_reae.c` + tapconv NAX kernel + MPSGraph path (state carry, frame batching, TGrow first, upsample fold) | ReAE latent ≥ 40 dB (BF16) vs reference, decoded RGB ≥ 38 dB; both paths agree |
-| P4 DiT | `h3_vsr_wan.c` + `h3_vsr_window.c`: full-window MFSWA → owner-only, BF16 → int8, constant conditioning, cross-attention, RoPE (verify t_off=0) | block 0 ≥ 40 dB, final latent ≥ 36/33 dB, RGB ≥ 38/35 dB (BF16/int8); record the difference from dense attention |
-| P5 Streamer | `h3_vsr_chunk.c`/`h3_vsr.c`: chunking, state, last-chunk front fill, preprocessing and cropping, two contexts in parallel, cancel | 124-frame end-to-end ≥ 35 dB vs the reference's whole output; time and peak-memory table on M5/M4 (`bench_vsr`) |
+| P4 DiT | `h3_vsr_wan.c` + `h3_vsr_window.c`: full-window MFSWA → owner-only, BF16 → int8, constant conditioning, cross-attention, RoPE (verify t_off=0) | block 0 ≥ 40 dB, final latent ≥ 36/33 dB, RGB ≥ 38/35 dB (BF16/int8); record the difference from dense attention. Real weights (Appendix A.1): v vs the official float32 run 60.0 dB bf16 / 51.3 dB int8 (MFSWA), 60.4 / 51.7 dB dense |
+| P5 Streamer | `h3_vsr_chunk.c`/`h3_vsr.c`: chunking, state, last-chunk front fill, preprocessing and cropping, two contexts in parallel, cancel | 124-frame end-to-end ≥ 35 dB vs the reference's whole output; time and peak-memory table on M5/M4 (`bench_vsr`). Real weights: the 8-bit output of 57 frames 384x272 -> 768x544 matches the official run at 51.2 dB bf16 / 49.3 dB int8, counts match |
 | P5.5 Quality evaluation | §9.5: evaluation set, SeedVR2 reference output (a ≥64 GB Mac or cloud), metric scripts, fill the table for every variant of this implementation, blind A/B | record the achieved ratio vs SeedVR2 (§1's 95%) and choose the defaults of the "quality" and "speed" modes |
-| P6 App | `ChunkedFrameScaler` and the 3-stage pipeline, **quality / speed mode switch (full attention, precision, overlap)**, `.swiftVR`, download/acceptance/conversion UI, API, records, documents, localization, `isGenerating` guard | the existing four methods are byte-identical and unchanged; the new method works from both the project and file entry points and with continuation |
-| P7 Optimization | int8 default (M5), fused kernels (§6.5-9), revisit SSD vs resident, ANE experiment (go/no-go by §6.7) | §1 time targets met, or the reasons recorded |
+| P6 App | `ChunkedFrameScaler` and the 3-stage pipeline, **quality / speed mode switch (full attention, precision, overlap)**, `.swiftVR`, download/acceptance/conversion UI, API, records, documents, localization, `isGenerating` guard | the existing four methods are byte-identical and unchanged; the new method works from both the project and file entry points and with continuation. Driving the app itself on the real weights (setup sheet, 拡大) is still unverified (waiting for permission to quit the running app) |
+| P7 Optimization | not started (owner-only queries, NAX for any shape, tapconv, ReAE F16, two contexts, ANE); the measurements of Appendix A.1 are the starting point | — | — |
 | P8 FlashVSR Tiny | Second back-end on the shared engine (LQ_proj_in, KV cache, block-selection attention, TCDecoder, color correction) | same parity and speed tables |
 | PX Experiment | H3 hires-fix (§11) | comparison table and decision |
 
@@ -490,7 +490,7 @@ The assumptions (int8 = 2× BF16, M4's effective MPSGraph TFLOP/s) are unmeasure
 | Phase | State | Where | Verification |
 |---|---|---|---|
 | P0 Document | done (main) | `UPSCALE_PLAN(.ja).md` | — |
-| P1 Reference dump | **not started** (needs the 20 GB download and the license acceptance) | `tools/dump_swiftvr_fixture.py` (planned) | — |
+| P1 Reference dump | done (2026-10-29; the user accepted the 20 GB download; Appendix A.1) | `tools/dump_swiftvr_fixture.py` -> `misc/fixtures/swiftvr-768x544/` (git-ignored) | `tests/test_real_vsr.c` (runs only with the weights and the fixture, skips otherwise) |
 | P2 Weight cache | done | `h3_vsr_weights.c`, `h3_vsr_internal.h`, `h3_build_vsr_cache.c` | `tests/test_vsr_cache.c` (synthetic model, bf16 + int8) |
 | P3 ReAE | done (F32 conv3d path) | `h3_vsr_reae.c` | `tests/test_vsr_reae.c`: 2e-7 vs a double transcription; chunk / frame-batch state carry bit-exact |
 | P4 DiT | done (BF16 / int8, full-window MFSWA and full attention) | `h3_vsr_wan.c`, the `h3_vsr_*` kernels in `h3_shaders.metal`, `h3_gpu_sdpa_batched/cross_bf16` | `tests/test_vsr_wan.c`: 61 dB (bf16) / 60.8 dB (int8) vs a double reference |
@@ -502,3 +502,28 @@ The assumptions (int8 = 2× BF16, M4's effective MPSGraph TFLOP/s) are unmeasure
 Corrections the implementation forced on the text: 124 frames make 6 chunks (§6.4); even-layer owner widths are 16/16/16/12 (§6.4);
 the patch input order is (c, ph, pw) and the output order (ph, pw, c) (`h3_vsr_patch_in_index` / `h3_vsr_patch_out_index` in `h3_vsr.h`);
 the int8 linears need at least 128 rows, so token rows are padded to 128 (`h3_vsr_wan.c`).
+
+### Appendix A.1: Verification on the real weights (2026-10-29, M5 24 GB)
+
+The engine was compared stage by stage with the official implementation (github H-oliday/SwiftVR) run in float32 (`tools/dump_swiftvr_fixture.py`; the DiT is evaluated one block at a time so the 20 GB never has to be resident). The clip: 57 frames of the GUIN generation, cropped to 768x544 and downscaled to 384x272 (2x, a 24x17 token grid, three chunks FIRST 28 / MIDDLE 24 / LAST 5). `tests/test_real_vsr.c` (`H3_VSR_STAGES=host,reae,dit,session`, `H3_VSR_PRECISION=bf16|int8|both`).
+
+| Stage | bf16 | int8 | Notes |
+|---|---|---|---|
+| Window index tables and owners (both parities, T=6,7) | identical | — | `h3_vsr_window.c` equals the official `_WindowRuntimeMetaCache` |
+| RoPE tables | max 6.5e-7 | — | the official code uses float32 frequencies on MPS |
+| Preprocessing (bilinear, align_corners=False) | identical (max 0) | — | |
+| ReAE encoder (3 chunks, carried state) | 139.6 to 140.9 dB | — | float32 rounding level |
+| ReAE decoder (chunk 0) | 140.8 dB | — | |
+| Cache constants `mod` / `k2` / `v2` | 153 / 73.8 / 76.5 dB | same | k2/v2 are stored as BF16 |
+| DiT alone, v (chunk 0, MFSWA / dense) | 60.0 / 60.4 dB | 51.3 / 51.7 dB | tokens after blocks 0 and 1: 87.8 / 85.3 dB |
+| Session z_hq (chunks 0/1/2) | 63.4 / 62.9 / 61.9 dB | 54.7 / 51.6 / 52.3 dB | |
+| 8-bit output vs the official run (57 frames) | 51.2 dB (max 18/255, 0.002% over 4) | 49.3 dB (max 31/255, 0.16% over 4) | against the source: engine 27.4 dB, official 27.6 dB (bilinear 39.3 dB; the official output is brighter and higher-contrast than the source, and visibly sharper) |
+| Chunk time (28/24/5 frames) | 5.8 / 4.6 / 3.9 s | 4.5 / 3.7 / 2.6 s | GPU DiT 4.6 s bf16 over three chunks; the 7.9 s reported for int8 contradicts the DiT-alone 3.9/2.4 s and needs remeasuring |
+| Peak live GPU bytes (`peak_live_bytes`) | 12.3 GiB | 8.3 GiB | the process's peak footprint is about 20 GB (MPSGraph workspaces included); P7 breaks it down |
+
+Two defects only the real weights exposed (both fixed; the synthetic-model tests never hit them):
+
+1. In the FFN's tanh-approximate GELU, Metal's `tanh` returns NaN for large arguments; 16 tokens went NaN and spread to everything. The argument is now clamped to +-20 (`h3_geglu_f32` and the ReAE clamp are protected the same way).
+2. The ReAE decoder's MemBlock states were sized from the frame grid instead of the latent grid: about 17 GB allocated for nothing at 768x544, a 29 GB peak footprint, swapping, and the OS killing the process. `h3_vsr_reae_state_new` is fixed; the resident set is now 4.7 GiB on int8 when a session starts.
+
+Speed is below the plan's estimate (§6.4: 6.5 s per chunk at 1920x1088 on int8). At 768x544 (2,856 tokens) int8 takes 3.7 to 4.5 s per chunk, so 1920x1088 (12,240 tokens) extrapolates linearly to 16 to 19 s per chunk. This is where P7 starts.

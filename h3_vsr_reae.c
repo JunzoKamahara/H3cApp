@@ -337,9 +337,11 @@ h3_vsr_reae *h3_vsr_reae_load(const char *model_dir, h3_gpu *gpu,
 /* State */
 
 /* Shapes of each MemBlock's input, walking the table with a unit frame. */
-static void memblock_shapes(const layer *layers, int count, int height, int width,
+/* The MemBlock state shapes of a table: `height` x `width` x `channels`
+ * is the table's input (frames for the encoder, latents for the decoder). */
+static void memblock_shapes(const layer *layers, int count, int height, int width, int channels0,
                             int *heights, int *widths, int *channels) {
-    int h = height, w = width, c = 3;
+    int h = height, w = width, c = channels0;
     for (int i = 0; i < count; i++) {
         const layer *l = &layers[i];
         switch (l->kind) {
@@ -376,7 +378,12 @@ h3_vsr_reae_state *h3_vsr_reae_state_new(const h3_vsr_reae *reae, int encoder,
     state->frames = calloc((size_t)states, sizeof(h3_gpu_tensor *));
     state->valid = calloc((size_t)states, sizeof(int));
     int hs[MAX_LAYERS], ws[MAX_LAYERS], cs[MAX_LAYERS];
-    memblock_shapes(layers, count, height, width, hs, ws, cs);
+    /* The decoder's table starts at the latent grid, not the frame. */
+    if (encoder)
+        memblock_shapes(layers, count, height, width, 3, hs, ws, cs);
+    else
+        memblock_shapes(layers, count, height / H3_VSR_SPATIAL, width / H3_VSR_SPATIAL,
+                        H3_VSR_LATENT_CHANNELS, hs, ws, cs);
     int ok = state->frames && state->valid;
     for (int i = 0; ok && i < states; i++) {
         state->frames[i] = h3_gpu_tensor_new_f32(reae->gpu, (size_t)hs[i] * ws[i] * cs[i]);
@@ -593,6 +600,12 @@ static int run_table(h3_vsr_reae *reae, const layer *layers, int count,
             }
             act_free(&current);
             current = next;
+            if (getenv("H3_VSR_TRACE_LIVE")) {
+                h3_gpu_stats st;
+                if (h3_gpu_get_stats(gpu, &st))
+                    fprintf(stderr, "reae live %.2f GiB after layer %d kind %d [%d,%d,%d,%d]\n",
+                            (double)st.live_bytes / 1073741824.0, i, (int)layers[i].kind, current.t, current.h, current.w, current.c);
+            }
             /* Keep command buffers short. */
             if (!h3_gpu_continue(gpu)) {
                 fail(error, error_size, "ReAE: GPU continue failed: %s", h3_gpu_error(gpu));

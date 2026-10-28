@@ -207,7 +207,7 @@ h3_real_vsr_test: tests/test_real_vsr.o $(LIB_OBJ)
 h3_semantic_vae_test: tests/test_semantic_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-test: h3_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests h3_vsr_wan_tests h3_vsr_session_tests h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
+test: h3_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests h3_vsr_wan_tests h3_vsr_session_tests h3_real_vsr_test h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
 	h3_audio_gpu_tests h3_determinism_tests h3_real_audio_vae_test \
 	h3_real_audio_encoder_test h3_real_video_encoder_test \
 	h3_real_qwen_vision_test h3_real_multimodal_text_test \
@@ -219,6 +219,7 @@ test: h3_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests h3_vsr_wan_test
 	./h3_vsr_reae_tests
 	./h3_vsr_wan_tests
 	./h3_vsr_session_tests
+	./h3_real_vsr_test
 	./h3_gguf_header_tests
 	./h3_quant_tests
 	@if test -f misc/fixtures/h3_dit.safetensors && \
