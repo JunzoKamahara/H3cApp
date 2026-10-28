@@ -199,6 +199,11 @@ tests/bench_dit_864.o: tests/bench_dit.c
 h3_real_video_vae_test: tests/test_real_video_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# SwiftVR parity against the official implementation (needs the downloaded
+# weights and the fixture of tools/dump_swiftvr_fixture.py; self-skipping).
+h3_real_vsr_test: tests/test_real_vsr.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 h3_semantic_vae_test: tests/test_semantic_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 

@@ -280,6 +280,23 @@ static int block_watch_callback(const char *phase, int done, int total, void *op
     return 0;
 }
 
+/* Development hook: with H3_VSR_DUMP_DIR set, every chunk's intermediate
+ * tensors are written there as raw F32 (tests/test_real_vsr.c compares
+ * them with the official SwiftVR dump). Off in the app. */
+static void dump_f32(int chunk, const char *stage, h3_gpu_tensor *tensor, size_t elements) {
+    const char *dir = getenv("H3_VSR_DUMP_DIR");
+    if (!dir || !dir[0] || !tensor) return;
+    float *host = malloc(elements * sizeof(float));
+    if (!host) return;
+    if (h3_gpu_tensor_read_f32(tensor, host, elements)) {
+        char path[4096];
+        snprintf(path, sizeof(path), "%s/chunk%d_%s.f32", dir, chunk, stage);
+        FILE *f = fopen(path, "wb");
+        if (f) { fwrite(host, sizeof(float), elements, f); fclose(f); }
+    }
+    free(host);
+}
+
 /* Runs one chunk: `frames` padded input frames taken from `in` (real
  * frames 0..in_count-1, the last one repeated past them), writes its
  * output frames to `out` from *written on. */
@@ -344,12 +361,14 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
                                   (uint32_t)s->out_w, (uint32_t)s->out_h, (uint32_t)s->pad_w,
                                   (uint32_t)s->pad_h), "vsr resize");
     STEP(h3_gpu_submit(gpu), "vsr resize submit");
+    dump_f32(chunk->index, "frames", frames, (size_t)enc_frames * fplane);
     if (on_progress && on_progress("vsr encode", 0, 1, opaque)) goto cancelled;
 
     /* 2. ReAE encode. */
     if (!h3_vsr_reae_encode(vsr->reae, s->enc_state, frames, enc_frames, s->full_h, s->full_w,
                             vsr->params.reae_frame_batch, latent, error, error_size))
         goto failed;
+    dump_f32(chunk->index, "latent", latent, (size_t)latents * lplane);
     if (on_progress && on_progress("vsr encode", 1, 1, opaque)) goto cancelled;
 
     /* 3. DiT input: the previous chunk's last `prefix` LQ latents (zeros
@@ -398,6 +417,8 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
                                 error, error_size))
             goto failed;
     }
+    dump_f32(chunk->index, "z_lq", z_lq, (size_t)dit_latents * lplane);
+    dump_f32(chunk->index, "z_hq", z_hq, (size_t)dit_latents * lplane);
 
     /* Remember the LQ latents for the next chunk's prefix. */
     {
@@ -426,6 +447,7 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
         h3_gpu_tensor_free(own);
         if (!ok) goto failed;
     }
+    dump_f32(chunk->index, "decoded", decoded, (size_t)decoded_frames * fplane);
     if (on_progress && on_progress("vsr decode", 1, 1, opaque)) goto cancelled;
 
     /* 5. Crop to the target size and hand the real frames over. */
