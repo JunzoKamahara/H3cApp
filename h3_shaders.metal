@@ -5084,3 +5084,219 @@ kernel void h3_vsr_f32_to_pixels(device const float *input [[buffer(0)]],
     }
     if (args.bgra) pixel[3] = 255;
 }
+
+/* ------------------------------------------------------------------ */
+/* One-step VSR: the Wan DiT block on BF16 activations with F32 math and
+ * F32 constants (UPSCALE_PLAN §6.5). */
+
+struct vsr_ln_args {
+    uint rows, width;
+    float epsilon;
+    uint has_scale, has_shift, has_weight, has_bias;
+};
+
+/* LayerNorm (no affine) then optionally * weight + bias (norm2) and / or
+ * * (1 + scale) + shift (the modulated norm1 / norm3 / norm_out). */
+kernel void h3_vsr_ln_mod_bf16(device const ushort *input [[buffer(0)]],
+                               device ushort *output [[buffer(1)]],
+                               device const float *scale [[buffer(2)]],
+                               device const float *shift [[buffer(3)]],
+                               device const float *weight [[buffer(4)]],
+                               device const float *bias [[buffer(5)]],
+                               constant vsr_ln_args &args [[buffer(6)]],
+                               uint3 group [[threadgroup_position_in_grid]],
+                               uint3 thread_position [[thread_position_in_threadgroup]],
+                               uint3 threadgroup_size [[threads_per_threadgroup]]) {
+    uint row = group.x, tid = thread_position.x, threads = threadgroup_size.x;
+    if (row >= args.rows) return;
+    threadgroup float reductions[256];
+    device const ushort *x = input + (size_t)row * args.width;
+    float local_sum = 0.0f;
+    for (uint column = tid; column < args.width; column += threads)
+        local_sum += h3_bf16_to_f32(x[column]);
+    reductions[tid] = local_sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = threads / 2; stride; stride >>= 1) {
+        if (tid < stride) reductions[tid] += reductions[tid + stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    float mean = reductions[0] / float(args.width);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float local_square = 0.0f;
+    for (uint column = tid; column < args.width; column += threads) {
+        float centered = h3_bf16_to_f32(x[column]) - mean;
+        local_square = fma(centered, centered, local_square);
+    }
+    reductions[tid] = local_square;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = threads / 2; stride; stride >>= 1) {
+        if (tid < stride) reductions[tid] += reductions[tid + stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    float inverse = rsqrt(reductions[0] / float(args.width) + args.epsilon);
+    device ushort *y = output + (size_t)row * args.width;
+    for (uint column = tid; column < args.width; column += threads) {
+        float value = (h3_bf16_to_f32(x[column]) - mean) * inverse;
+        if (args.has_weight) value *= weight[column];
+        if (args.has_bias) value += bias[column];
+        if (args.has_scale) value *= 1.0f + scale[column];
+        if (args.has_shift) value += shift[column];
+        y[column] = h3_f32_to_bf16(value);
+    }
+}
+
+struct vsr_qkv_args {
+    uint rows, dim, heads, head_dim, segments;   /* segments: 3 for qkv, 1 for q alone */
+    uint has_bias, norm_q, norm_k, rope;
+    float epsilon;
+};
+
+/* In place on [rows, segments * dim]: add the F32 bias, RMSNorm across all
+ * heads on segment 0 (q) and 1 (k) with their weights, then Wan's
+ * interleaved RoPE on q and k: pair p of a head rotates (2p, 2p+1) by the
+ * token's (cos, sin)[p]. One threadgroup per row. */
+kernel void h3_vsr_qkv_prepare_bf16(device ushort *qkv [[buffer(0)]],
+                                    device const float *bias [[buffer(1)]],
+                                    device const float *norm_q_weight [[buffer(2)]],
+                                    device const float *norm_k_weight [[buffer(3)]],
+                                    device const float *rope_cos [[buffer(4)]],
+                                    device const float *rope_sin [[buffer(5)]],
+                                    constant vsr_qkv_args &args [[buffer(6)]],
+                                    uint3 group [[threadgroup_position_in_grid]],
+                                    uint3 thread_position [[thread_position_in_threadgroup]],
+                                    uint3 threadgroup_size [[threads_per_threadgroup]]) {
+    uint row = group.x, tid = thread_position.x, threads = threadgroup_size.x;
+    if (row >= args.rows) return;
+    uint width = args.segments * args.dim;
+    device ushort *x = qkv + (size_t)row * width;
+    threadgroup float sum_q[256], sum_k[256];
+    float local_q = 0.0f, local_k = 0.0f;
+    for (uint column = tid; column < width; column += threads) {
+        float v = h3_bf16_to_f32(x[column]) + (args.has_bias ? bias[column] : 0.0f);
+        uint segment = column / args.dim;
+        if (segment == 0) local_q = fma(v, v, local_q);
+        else if (segment == 1) local_k = fma(v, v, local_k);
+    }
+    sum_q[tid] = local_q;
+    sum_k[tid] = local_k;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = threads / 2; stride; stride >>= 1) {
+        if (tid < stride) { sum_q[tid] += sum_q[tid + stride]; sum_k[tid] += sum_k[tid + stride]; }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    float inverse_q = rsqrt(sum_q[0] / float(args.dim) + args.epsilon);
+    float inverse_k = rsqrt(sum_k[0] / float(args.dim) + args.epsilon);
+    uint pairs = args.head_dim / 2;
+    device const float *c = rope_cos + (size_t)row * pairs;
+    device const float *s = rope_sin + (size_t)row * pairs;
+    for (uint pair = tid; pair < width / 2; pair += threads) {
+        uint column = pair * 2;
+        uint segment = column / args.dim;
+        float v0 = h3_bf16_to_f32(x[column]) + (args.has_bias ? bias[column] : 0.0f);
+        float v1 = h3_bf16_to_f32(x[column + 1]) + (args.has_bias ? bias[column + 1] : 0.0f);
+        if (segment == 0 && args.norm_q) {
+            v0 *= inverse_q * norm_q_weight[column];
+            v1 *= inverse_q * norm_q_weight[column + 1];
+        } else if (segment == 1 && args.norm_k) {
+            v0 *= inverse_k * norm_k_weight[column - args.dim];
+            v1 *= inverse_k * norm_k_weight[column + 1 - args.dim];
+        }
+        if (args.rope && segment < 2) {
+            uint p = (column % args.head_dim) / 2;
+            float cv = c[p], sv = s[p];
+            float r0 = v0 * cv - v1 * sv, r1 = v0 * sv + v1 * cv;
+            v0 = r0;
+            v1 = r1;
+        }
+        x[column] = h3_f32_to_bf16(v0);
+        x[column + 1] = h3_f32_to_bf16(v1);
+    }
+}
+
+struct vsr_rows_args { uint rows, width, in_stride, col_offset; };
+
+/* out[r, 0..width) = in[index[r], col_offset .. col_offset + width): the
+ * window gather (col_offset selects q, k or v in a fused buffer) and, with
+ * the owner map as index, the scatter back. Grid (width, rows). */
+kernel void h3_vsr_gather_rows_bf16(device const ushort *input [[buffer(0)]],
+                                    device const int *index [[buffer(1)]],
+                                    device ushort *output [[buffer(2)]],
+                                    constant vsr_rows_args &args [[buffer(3)]],
+                                    uint2 gid [[thread_position_in_grid]]) {
+    uint column = gid.x, row = gid.y;
+    if (column >= args.width || row >= args.rows) return;
+    output[(size_t)row * args.width + column] =
+        input[(size_t)index[row] * args.in_stride + args.col_offset + column];
+}
+
+struct vsr_bias_gate_args { uint rows, width, has_residual, has_bias, has_gate; };
+
+/* out = residual + (y + bias) * gate, with the optional parts dropped;
+ * out may alias residual. Grid (width, rows). */
+kernel void h3_vsr_bias_gate_add_bf16(device const ushort *y [[buffer(0)]],
+                                      device const float *bias [[buffer(1)]],
+                                      device const float *gate [[buffer(2)]],
+                                      device const ushort *residual [[buffer(3)]],
+                                      device ushort *output [[buffer(4)]],
+                                      constant vsr_bias_gate_args &args [[buffer(5)]],
+                                      uint2 gid [[thread_position_in_grid]]) {
+    uint column = gid.x, row = gid.y;
+    if (column >= args.width || row >= args.rows) return;
+    size_t at = (size_t)row * args.width + column;
+    float value = h3_bf16_to_f32(y[at]);
+    if (args.has_bias) value += bias[column];
+    if (args.has_gate) value *= gate[column];
+    if (args.has_residual) value += h3_bf16_to_f32(residual[at]);
+    output[at] = h3_f32_to_bf16(value);
+}
+
+/* x = gelu_tanh(x + bias) in place. Grid (width, rows). */
+kernel void h3_vsr_gelu_bias_bf16(device ushort *x [[buffer(0)]],
+                                  device const float *bias [[buffer(1)]],
+                                  constant vsr_rows_args &args [[buffer(2)]],
+                                  uint2 gid [[thread_position_in_grid]]) {
+    uint column = gid.x, row = gid.y;
+    if (column >= args.width || row >= args.rows) return;
+    size_t at = (size_t)row * args.width + column;
+    float v = h3_bf16_to_f32(x[at]) + bias[column];
+    const float k = 0.7978845608028654f;
+    float g = 0.5f * v * (1.0f + tanh(k * (v + 0.044715f * v * v * v)));
+    x[at] = h3_f32_to_bf16(g);
+}
+
+struct vsr_patch_args { uint frames, height, width, channels; };   /* latent cells */
+
+/* F32 latent [T, h, w, C] -> BF16 tokens [T*(h/2)*(w/2), 4C] in the patch
+ * embedding's (c, ph, pw) order. Grid (4C, w/2, T*h/2). */
+kernel void h3_vsr_patchify_bf16(device const float *latent [[buffer(0)]],
+                                 device ushort *tokens [[buffer(1)]],
+                                 constant vsr_patch_args &args [[buffer(2)]],
+                                 uint3 gid [[thread_position_in_grid]]) {
+    uint k = gid.x, ww = gid.y, plane = gid.z;
+    uint h2 = args.height / 2, w2 = args.width / 2, c4 = args.channels * 4;
+    if (k >= c4 || ww >= w2 || plane >= args.frames * h2) return;
+    uint hh = plane % h2, t = plane / h2;
+    uint c = k / 4, ph = (k / 2) % 2, pw = k % 2;
+    size_t source = (((size_t)t * args.height + hh * 2 + ph) * args.width + ww * 2 + pw) *
+                    args.channels + c;
+    size_t token = ((size_t)t * h2 + hh) * w2 + ww;
+    tokens[token * c4 + k] = h3_f32_to_bf16(latent[source]);
+}
+
+/* z_hq[T, h, w, C] = z_lq - (v + bias) where v is BF16 [tokens, 4C] in the
+ * unpatchify (ph, pw, c) order. Grid (C, w, T*h). */
+kernel void h3_vsr_unpatchify_sub_f32(device const float *z_lq [[buffer(0)]],
+                                      device const ushort *v [[buffer(1)]],
+                                      device const float *bias [[buffer(2)]],
+                                      device float *z_hq [[buffer(3)]],
+                                      constant vsr_patch_args &args [[buffer(4)]],
+                                      uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, x = gid.y, plane = gid.z;
+    if (c >= args.channels || x >= args.width || plane >= args.frames * args.height) return;
+    uint y = plane % args.height, t = plane / args.height;
+    uint h2 = args.height / 2, w2 = args.width / 2, c4 = args.channels * 4;
+    size_t token = ((size_t)t * h2 + y / 2) * w2 + x / 2;
+    uint k = ((y % 2) * 2 + (x % 2)) * args.channels + c;
+    size_t at = (((size_t)t * args.height + y) * args.width + x) * args.channels + c;
+    z_hq[at] = z_lq[at] - (h3_bf16_to_f32(v[token * c4 + k]) + bias[k]);
+}

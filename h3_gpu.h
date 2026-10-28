@@ -321,6 +321,60 @@ int h3_gpu_clip_f32(h3_gpu *gpu, h3_gpu_tensor *output,
  * turns [B,T,H,W,2C] into [B,2T,H,W,C] (TGrow). The pixel converters take
  * 8-bit BGRA/RGB24 frames as I8 tensors; pixels_to_f32 resizes with torch's
  * bilinear (align_corners=False) and zero-pads to (out_w+pad_w, out_h+pad_h). */
+/* One-step VSR: the Wan block on BF16 activations with F32 constants.
+ * ln_mod: LayerNorm(no affine) [* weight + bias] [* (1 + scale) + shift],
+ * NULL vectors are skipped. qkv_prepare (in place on [rows, segments*dim]):
+ * + bias, RMSNorm across heads on segment 0 (q) and 1 (k) with weights,
+ * then interleaved RoPE on q and k from (cos, sin) [rows, head_dim/2];
+ * segments 1 handles a lone q. gather_rows: out[r] = in[index[r],
+ * col_offset .. +width] with a U32 index (also the scatter, with the owner
+ * map). bias_gate_add: out = residual + (y + bias) * gate, optional parts
+ * NULL; out may be residual. patchify/unpatchify: F32 latent [T,h,w,C] <->
+ * BF16 tokens [T*h/2*w/2, 4C] in the Wan (c,ph,pw) input and (ph,pw,c)
+ * output orders; unpatchify writes z_lq - (v + bias). */
+int h3_gpu_vsr_ln_mod_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                           const h3_gpu_tensor *input, const h3_gpu_tensor *scale,
+                           const h3_gpu_tensor *shift, const h3_gpu_tensor *weight,
+                           const h3_gpu_tensor *bias, uint32_t rows, uint32_t width,
+                           float epsilon);
+int h3_gpu_vsr_qkv_prepare_bf16(h3_gpu *gpu, h3_gpu_tensor *qkv,
+                                const h3_gpu_tensor *bias,
+                                const h3_gpu_tensor *norm_q_weight,
+                                const h3_gpu_tensor *norm_k_weight,
+                                const h3_gpu_tensor *rope_cos,
+                                const h3_gpu_tensor *rope_sin, uint32_t rows,
+                                uint32_t dim, uint32_t heads, uint32_t head_dim,
+                                uint32_t segments, float epsilon);
+int h3_gpu_vsr_gather_rows_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                                const h3_gpu_tensor *input, const h3_gpu_tensor *index,
+                                uint32_t rows, uint32_t width, uint32_t in_stride,
+                                uint32_t col_offset);
+int h3_gpu_vsr_bias_gate_add_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                                  const h3_gpu_tensor *y, const h3_gpu_tensor *bias,
+                                  const h3_gpu_tensor *gate, const h3_gpu_tensor *residual,
+                                  uint32_t rows, uint32_t width);
+int h3_gpu_vsr_gelu_bias_bf16(h3_gpu *gpu, h3_gpu_tensor *x, const h3_gpu_tensor *bias,
+                              uint32_t rows, uint32_t width);
+int h3_gpu_vsr_patchify_bf16(h3_gpu *gpu, h3_gpu_tensor *tokens,
+                             const h3_gpu_tensor *latent, uint32_t frames,
+                             uint32_t height, uint32_t width, uint32_t channels);
+int h3_gpu_vsr_unpatchify_sub_f32(h3_gpu *gpu, h3_gpu_tensor *z_hq,
+                                  const h3_gpu_tensor *z_lq, const h3_gpu_tensor *v,
+                                  const h3_gpu_tensor *bias, uint32_t frames,
+                                  uint32_t height, uint32_t width, uint32_t channels);
+/* SDPA over a batch of equal windows ([batch, sequence, heads, head_dim]
+ * row-major BF16), and cross-attention with kv_sequence keys/values. */
+int h3_gpu_sdpa_batched_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *query, const h3_gpu_tensor *key,
+                             const h3_gpu_tensor *value, uint32_t batch,
+                             uint32_t sequence, uint32_t heads,
+                             uint32_t head_dim, float scale);
+int h3_gpu_sdpa_cross_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                           const h3_gpu_tensor *query, const h3_gpu_tensor *key,
+                           const h3_gpu_tensor *value, uint32_t sequence,
+                           uint32_t kv_sequence, uint32_t heads,
+                           uint32_t head_dim, float scale);
+
 int h3_gpu_vsr_pad_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                        const h3_gpu_tensor *input, const h3_gpu_tensor *previous,
                        uint32_t batch, uint32_t depth, uint32_t height,

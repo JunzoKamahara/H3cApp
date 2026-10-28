@@ -146,4 +146,24 @@ int h3_vsr_reae_decode(h3_vsr_reae *reae, h3_vsr_reae_state *state,
                        int latent_height, int latent_width, int latent_batch,
                        h3_gpu_tensor *frames, char *error, size_t error_size);
 
+/* ---------------------------------------------------------------- */
+/* Wan DiT runner (h3_vsr_wan.c): the 30 blocks of the one-step model from
+ * an .h3vc cache, on BF16 activations with F32 constants. predict() turns
+ * the F32 channels-last LQ latent [T, h, w, C] into z_hq = z_lq - v. The
+ * window layouts select mask-free shifted-window attention (even and odd
+ * blocks); both NULL means full attention. rope_cos/sin are the F32
+ * [tokens, head_dim/2] tables of h3_vsr_rope_table on the GPU. */
+typedef struct h3_vsr_wan h3_vsr_wan;
+
+h3_vsr_wan *h3_vsr_wan_load(h3_gpu *gpu, const char *cache_path,
+                            char *error, size_t error_size);
+void h3_vsr_wan_free(h3_vsr_wan *wan);
+int h3_vsr_wan_is_int8(const h3_vsr_wan *wan);
+int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
+                       int frames, int height, int width,
+                       const h3_vsr_window_layout *even,
+                       const h3_vsr_window_layout *odd,
+                       const h3_gpu_tensor *rope_cos, const h3_gpu_tensor *rope_sin,
+                       h3_gpu_tensor *z_hq, char *error, size_t error_size);
+
 #endif /* H3_VSR_INTERNAL_H */
