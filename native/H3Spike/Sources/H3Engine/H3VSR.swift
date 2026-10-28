@@ -73,6 +73,34 @@ private final class VSRProgressBridge: @unchecked Sendable {
     }
 }
 
+/// One chunk's progress for Session.process: the engine's phases
+/// ("vsr encode", "vsr dit" per block, "vsr decode") as a share of the
+/// chunk, and the cancel flag read back at each.
+private final class VSRProcessBridge: @unchecked Sendable {
+    let progress: (Double) -> Void
+    let cancelFlag: VSRCancelFlag
+    init(progress: @escaping (Double) -> Void, cancelFlag: VSRCancelFlag) {
+        self.progress = progress
+        self.cancelFlag = cancelFlag
+    }
+}
+
+private let h3VSRProcessTrampoline: h3_progress_callback = { phase, completed, total, opaque in
+    guard let opaque else { return 0 }
+    let bridge = Unmanaged<VSRProcessBridge>.fromOpaque(opaque).takeUnretainedValue()
+    if let phase {
+        let share: Double?
+        switch String(cString: phase) {
+        case "vsr encode": share = completed > 0 ? 0.05 : 0
+        case "vsr dit": share = 0.05 + 0.85 * Double(completed) / Double(max(total, 1))
+        case "vsr decode": share = completed > 0 ? 1 : 0.9
+        default: share = nil
+        }
+        if let share { bridge.progress(share) }
+    }
+    return bridge.cancelFlag.isCancelled ? 1 : 0
+}
+
 private let h3VSRCacheProgressTrampoline: h3_progress_callback = { _, completed, total, opaque in
     guard let opaque else { return 0 }
     let bridge = Unmanaged<VSRProgressBridge>.fromOpaque(opaque).takeUnretainedValue()
@@ -84,6 +112,9 @@ public final class H3VideoSuperResolver: @unchecked Sendable {
     private let handle: OpaquePointer
     public let info: H3VSRInfo
     public let isInt8: Bool
+
+    /// Whether this GPU takes the int8 (tensor hardware) path.
+    public static var int8Supported: Bool { h3_vsr_int8_supported() != 0 }
 
     /// What a model directory holds, without loading it.
     public static func inspect(modelDirectory: String) throws -> H3VSRInfo {
@@ -233,8 +264,14 @@ public final class H3VideoSuperResolver: @unchecked Sendable {
         /// Asks the engine to stop at the next block.
         public func cancel() { cancelFlag.cancel() }
 
-        public func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool) throws -> [CVPixelBuffer] {
+        /// `progress` gets this call's share done (0-1; from the engine's
+        /// thread, once per DiT block) when given.
+        public func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
+                            progress: ((Double) -> Void)? = nil) throws -> [CVPixelBuffer] {
             guard !frames.isEmpty else { return [] }
+            let bridge = progress.map { VSRProcessBridge(progress: $0, cancelFlag: cancelFlag) }
+            let bridgeHandle = bridge.map { Unmanaged.passRetained($0) }
+            defer { bridgeHandle?.release() }
             var outputs: [CVPixelBuffer] = []
             for _ in 0 ..< frames.count + 3 {
                 var buffer: CVPixelBuffer?
@@ -264,7 +301,9 @@ public final class H3VideoSuperResolver: @unchecked Sendable {
                 outs.withUnsafeMutableBufferPointer { outPtr in
                     error.withUnsafeMutableBufferPointer { buffer in
                         h3_vsr_session_process(handle, ins.baseAddress, Int32(frames.count), isLast ? 1 : 0,
-                                               outPtr.baseAddress, Int32(outputs.count), &produced, nil, nil,
+                                               outPtr.baseAddress, Int32(outputs.count), &produced,
+                                               bridgeHandle == nil ? nil : h3VSRProcessTrampoline,
+                                               bridgeHandle?.toOpaque(),
                                                cancelFlag.engineFlag, buffer.baseAddress, buffer.count)
                     }
                 }

@@ -169,6 +169,10 @@ typedef struct {
 } h3_vsr_info;
 
 /* Reads config.json and the safetensors headers only. */
+/* Whether this Mac's GPU takes the int8 (tensor hardware) path, without
+ * a model: what h3_vsr_info.int8_supported reports. */
+int h3_vsr_int8_supported(void);
+
 int h3_vsr_inspect_dir(const char *model_dir, h3_vsr_info *info,
                        char *error, size_t error_size);
 

@@ -68,6 +68,7 @@ extension GenerationViewModel {
                 }
                 upscaler = chosen
             }
+            if let reason = upscaleBlockedReason(upscaler) { return .error(409, reason) }
             var factor = UpscaleFactor.two
             if let raw = json["scale"] {
                 guard let number = raw as? NSNumber, let chosen = UpscaleFactor(rawValue: number.doubleValue) else {
@@ -214,6 +215,24 @@ extension GenerationViewModel {
             return handleProjectRequest(request)
         case ("POST", "/api/project/join"):
             return await handleJoinRequest(request)
+        case ("GET", "/api/upscalers"):
+            // The enlargement methods: which can be chosen now and why not
+            // (not on this Mac, or its model not installed), and for
+            // SwiftVR where its model goes and how far it is set up.
+            return .json(200, VideoUpscaler.allCases.map { upscaler -> [String: Any] in
+                var item: [String: Any] = ["id": upscaler.rawValue, "label": upscaler.label,
+                                           "available": upscaler.isAvailable]
+                if let reason = upscaler.unavailableReason { item["reason"] = reason }
+                if let reason = upscaleBlockedReason(upscaler) { item["busy_reason"] = reason }
+                if upscaler == .swiftVR {
+                    item["model_directory"] = SwiftVRModel.directory
+                    item["model_installed"] = SwiftVRModel.weightsPresent
+                    item["cache"] = SwiftVRModel.cachePath as Any
+                    item["license_accepted"] = SwiftVRModel.licenseAcceptedAt != nil
+                    item["setup"] = SwiftVRSetup.shared.phase.apiText
+                }
+                return item
+            })
         case ("GET", "/api/loras"):
             return .json(200, library.loras.map {
                 ["id": $0.id.uuidString, "name": $0.name, "path": $0.path,
@@ -500,6 +519,7 @@ extension GenerationViewModel {
                 }
                 upscaler = chosen
             }
+            if let reason = upscaleBlockedReason(upscaler) { return .error(409, reason) }
             Task { await upscaleProjectVideo(video, as: name, upscaler: upscaler, factor: factor) }
             return .json(202, ["ok": true, "video": name])
         case "/api/project/import-video":

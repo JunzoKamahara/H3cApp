@@ -267,6 +267,19 @@ int h3_vsr_session_pending_frames(const h3_vsr_session *s) {
     } \
 } while (0)
 
+typedef struct {
+    h3_progress_callback on_progress;
+    void *opaque;
+    const volatile int *cancel_requested;
+} block_watch;
+
+static int block_watch_callback(const char *phase, int done, int total, void *opaque) {
+    block_watch *watch = opaque;
+    if (watch->cancel_requested && *watch->cancel_requested) return 1;
+    if (watch->on_progress && watch->on_progress(phase, done, total, watch->opaque)) return 1;
+    return 0;
+}
+
 /* Runs one chunk: `frames` padded input frames taken from `in` (real
  * frames 0..in_count-1, the last one repeated past them), writes its
  * output frames to `out` from *written on. */
@@ -375,12 +388,16 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
             goto failed;
         }
     }
-    if (on_progress && on_progress("vsr dit", 0, 1, opaque)) goto cancelled;
-    if (!h3_vsr_wan_predict(vsr->wan, z_lq, dit_latents, s->latent_h, s->latent_w,
-                            slot ? &slot->even : NULL, slot ? &slot->odd : NULL,
-                            rope_cos, rope_sin, z_hq, error, error_size))
-        goto failed;
-    if (on_progress && on_progress("vsr dit", 1, 1, opaque)) goto cancelled;
+    {
+        /* Per block: the caller's progress and the cancel flag, so a 中止
+         * lands within a block rather than after the whole DiT. */
+        block_watch watch = { on_progress, opaque, cancel_requested };
+        if (!h3_vsr_wan_predict(vsr->wan, z_lq, dit_latents, s->latent_h, s->latent_w,
+                                slot ? &slot->even : NULL, slot ? &slot->odd : NULL,
+                                rope_cos, rope_sin, z_hq, block_watch_callback, &watch,
+                                error, error_size))
+            goto failed;
+    }
 
     /* Remember the LQ latents for the next chunk's prefix. */
     {

@@ -7,6 +7,7 @@ struct UpscaleSheet: View {
     var close: () -> Void
     @State private var upscaler: VideoUpscaler = .standard
     @State private var factor: UpscaleFactor
+    @State private var showingSwiftVRSetup = false
     @Environment(\.colorScheme) private var colorScheme
     private var palette: H3Palette { H3Palette(colorScheme) }
 
@@ -54,6 +55,17 @@ struct UpscaleSheet: View {
                 Text(upscaler.detail)
                 if let reason = upscaler.unavailableReason {
                     Text(reason).foregroundStyle(.orange)
+                } else if let reason = viewModel.upscaleBlockedReason(upscaler) {
+                    Text(reason).foregroundStyle(.orange)
+                }
+                if upscaler == .swiftVR {
+                    HStack {
+                        Button(upscaler.isAvailable ? "モデルを管理…" : "モデルを準備…") { showingSwiftVRSetup = true }
+                            .controlSize(.small)
+                        if SwiftVRSetup.shared.isBusy {
+                            Text("準備中です（\(SwiftVRSetup.shared.phase.apiText)）").foregroundStyle(.orange)
+                        }
+                    }
                 }
                 Text(pending.projectVideo != nil
                      ? String(localized: "拡大した動画は、プロジェクトに新しく加わります（名前の最後に「_\(factor.suffix)」）。音声とAIで生成したという記録は、そのままです。")
@@ -77,10 +89,14 @@ struct UpscaleSheet: View {
                     viewModel.startUpscale(pending, upscaler: chosen, factor: scale)
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!fits(factor) || !upscaler.isAvailable || viewModel.isUpscalingVideo)
+                .disabled(!fits(factor) || !upscaler.isAvailable || viewModel.isUpscalingVideo
+                          || viewModel.upscaleBlockedReason(upscaler) != nil)
             }
         }
         .padding(H3Spacing.lg)
         .frame(width: 500)
+        .sheet(isPresented: $showingSwiftVRSetup) {
+            SwiftVRSetupView(busy: viewModel.isGenerating || viewModel.isBuildingCache) { showingSwiftVRSetup = false }
+        }
     }
 }

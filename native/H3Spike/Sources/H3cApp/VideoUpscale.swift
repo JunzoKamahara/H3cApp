@@ -102,11 +102,17 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         if isAvailable { return nil }
         switch self {
         case .swiftVR:
-            return String(localized: "SwiftVRのモデルが入っていません。重みを「\(Self.swiftVRModelDirectory)」に置き、build_vsr_cache で変換すると選べます。")
+            if SwiftVRModel.weightsPresent {
+                return String(localized: "SwiftVRの重みはありますが、このMac用に変換されていません。「モデルを準備…」で変換すると選べます。")
+            }
+            return String(localized: "SwiftVRのモデルが入っていません。「モデルを準備…」で重み（約20GB）をダウンロードして変換すると選べます。")
         default:
             return String(localized: "このMacでは使えません。")
         }
     }
+
+    /// Whether it wants the GPU to itself (so it waits for a generation).
+    var needsIdleGPU: Bool { self == .swiftVR }
 }
 
 /// How much bigger (the sheet's 倍率). Every upscaler takes each of them.
@@ -151,9 +157,12 @@ private protocol FrameScaler {
 /// per input over the whole video - possibly behind by a few frames, and
 /// flushed by `isLast` (UPSCALE_PLAN §6.6). `chunkFrames` is how many the
 /// next call should bring.
+/// `progress` may be told the share of the call done so far (0-1) while
+/// a chunk takes long.
 private protocol ChunkedFrameScaler {
     var chunkFrames: Int { get }
-    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool) throws -> [CVPixelBuffer]
+    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
+                 progress: @escaping (Double) -> Void) throws -> [CVPixelBuffer]
     /// Stops work inside a chunk when the user cancels.
     func cancel()
 }
@@ -164,7 +173,8 @@ private final class PerFrameChunkAdapter: ChunkedFrameScaler {
     let scaler: FrameScaler
     init(_ scaler: FrameScaler) { self.scaler = scaler }
     var chunkFrames: Int { 1 }
-    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool) throws -> [CVPixelBuffer] {
+    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
+                 progress: @escaping (Double) -> Void) throws -> [CVPixelBuffer] {
         var outputs: [CVPixelBuffer] = []
         for frame in frames {
             var enlarged: CVPixelBuffer?
@@ -180,13 +190,27 @@ private final class PerFrameChunkAdapter: ChunkedFrameScaler {
     func cancel() {}
 }
 
-/// SwiftVR through the engine: 28 frames, then 24 at a time.
+/// SwiftVR through the engine: 28 frames, then 24 at a time. A chunk
+/// takes seconds, so 中止 is read at each DiT block (`isCancelled`) and
+/// stops the engine there.
 private final class VSRChunkScaler: ChunkedFrameScaler {
     let session: H3VideoSuperResolver.Session
-    init(session: H3VideoSuperResolver.Session) { self.session = session }
+    let isCancelled: () -> Bool
+    init(session: H3VideoSuperResolver.Session, isCancelled: @escaping () -> Bool) {
+        self.session = session
+        self.isCancelled = isCancelled
+    }
     var chunkFrames: Int { max(1, session.nextChunkFrames) }
-    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool) throws -> [CVPixelBuffer] {
-        try session.process(frames, isLast: isLast, pool: pool)
+    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
+                 progress: @escaping (Double) -> Void) throws -> [CVPixelBuffer] {
+        do {
+            return try session.process(frames, isLast: isLast, pool: pool) { [session, isCancelled] share in
+                if isCancelled() { session.cancel() }
+                progress(share)
+            }
+        } catch H3VSRError.cancelled {
+            throw VideoUpscale.UpscaleError.cancelled
+        }
     }
     func cancel() { session.cancel() }
 }
@@ -306,7 +330,8 @@ enum VideoUpscale {
             guard requirements.supported else { throw UpscaleError.cannotWrite(requirements.reason) }
             do {
                 scaler = VSRChunkScaler(session: try resolver.openSession(inputWidth: inputWidth, inputHeight: inputHeight,
-                                                                          outputWidth: width, outputHeight: height))
+                                                                          outputWidth: width, outputHeight: height),
+                                        isCancelled: isCancelled)
             } catch {
                 throw UpscaleError.cannotWrite(error.localizedDescription)
             }
@@ -378,6 +403,13 @@ enum VideoUpscale {
                 var ready: [CVPixelBuffer] = []
                 var readyTimes: [CMTime] = []
                 var finished = false
+                var reported = 0.0
+                func report(_ share: Double) {
+                    let clamped = min(max(share, reported), 1)
+                    guard clamped > reported else { return }
+                    reported = clamped
+                    DispatchQueue.main.async { progress(clamped) }
+                }
                 await pump(videoInput, on: DispatchQueue(label: "h3c.upscale.video")) {
                     if failure.error != nil { return false }
                     if isCancelled() {
@@ -397,7 +429,12 @@ enum VideoUpscale {
                         }
                         if pending.isEmpty { finished = true; return false }
                         do {
-                            let outputs = try scaler.process(pending, isLast: isLast, pool: pool)
+                            // Frames inside the scaler count by the share of
+                            // the chunk it reports done.
+                            let base = done, inFlight = pending.count
+                            let outputs = try scaler.process(pending, isLast: isLast, pool: pool) { share in
+                                report((Double(base) + share * Double(inFlight)) / Double(expectedFrames))
+                            }
                             ready.append(contentsOf: outputs)
                             readyTimes.append(contentsOf: pendingTimes.prefix(outputs.count))
                             pendingTimes.removeFirst(min(outputs.count, pendingTimes.count))
@@ -416,10 +453,7 @@ enum VideoUpscale {
                         return false
                     }
                     done += 1
-                    if done % 4 == 0 {
-                        let share = min(Double(done) / Double(expectedFrames), 1)
-                        DispatchQueue.main.async { progress(share) }
-                    }
+                    if done % 4 == 0 { report(Double(done) / Double(expectedFrames)) }
                     return true
                 }
             }
@@ -771,6 +805,20 @@ extension GenerationViewModel {
         upscaleCancel.request()
     }
 
+    /// Why `upscaler` can't start now, if it can't: one that wants the GPU
+    /// to itself (SwiftVR) waits for a generation, a cache build or an
+    /// import, as those wait for an enlargement (validationMessage).
+    func upscaleBlockedReason(_ upscaler: VideoUpscaler) -> String? {
+        guard upscaler.needsIdleGPU else { return nil }
+        if isGenerating || isBuildingCache {
+            return String(localized: "生成中は\(upscaler.label)で拡大できません。生成が終わってから拡大してください")
+        }
+        if isImportingVideo {
+            return String(localized: "動画の取り込み中は\(upscaler.label)で拡大できません。取り込みが終わってから拡大してください")
+        }
+        return nil
+    }
+
     /// Runs one upscale with the banner's progress and 中止.
     private func runUpscale(_ source: URL, to destination: URL, upscaler: VideoUpscaler,
                             factor: UpscaleFactor) async throws {
@@ -800,6 +848,10 @@ extension GenerationViewModel {
                              continuing previous: String? = nil) async -> Bool {
         guard let project, !isUpscalingVideo,
               let name = name ?? upscaledVideoName(for: video, factor: factor) else {
+            return false
+        }
+        if let reason = upscaleBlockedReason(upscaler) {
+            projectMessage = reason
             return false
         }
         let destination = project.url.appendingPathComponent(name)
@@ -871,6 +923,10 @@ extension GenerationViewModel {
     func upscaleVideoFile(_ source: URL, to destination: URL, upscaler: VideoUpscaler = .standard,
                           factor: UpscaleFactor = .two) async -> Bool {
         guard !isUpscalingVideo else { return false }
+        if let reason = upscaleBlockedReason(upscaler) {
+            projectMessage = reason
+            return false
+        }
         let started = Date()
         do {
             try await runUpscale(source, to: destination, upscaler: upscaler, factor: factor)

@@ -386,7 +386,7 @@ int main(void) {
         CHECK(wan != NULL && h3_vsr_wan_is_int8(wan) == pass);
         for (int windowed = 0; windowed < 2; windowed++) {
             if (!h3_vsr_wan_predict(wan, z_lq_t, T, LH, LW, windowed ? &even : NULL, windowed ? &odd : NULL,
-                                    cs_t, sn_t, z_hq_t, error, sizeof(error)))
+                                    cs_t, sn_t, z_hq_t, NULL, NULL, error, sizeof(error)))
                 fprintf(stderr, "%s\n", error);
             CHECK(error[0] == '\0');
             CHECK(h3_gpu_tensor_read_f32(z_hq_t, got, latent_n));
@@ -398,7 +398,7 @@ int main(void) {
             if (!pass && !windowed) memcpy(got_bf16_full, got, latent_n * sizeof(float));
         }
         if (pass) {
-            CHECK(h3_vsr_wan_predict(wan, z_lq_t, T, LH, LW, NULL, NULL, cs_t, sn_t, z_hq_t, error, sizeof(error)));
+            CHECK(h3_vsr_wan_predict(wan, z_lq_t, T, LH, LW, NULL, NULL, cs_t, sn_t, z_hq_t, NULL, NULL, error, sizeof(error)));
             CHECK(h3_gpu_tensor_read_f32(z_hq_t, got, latent_n));
             printf("  int8 vs bf16 (full): %.1f dB\n", psnr(got, got_bf16_full, latent_n));
         }
@@ -410,9 +410,9 @@ int main(void) {
         h3_vsr_wan *wan = h3_vsr_wan_load(gpu, cache_path, error, sizeof(error));
         CHECK(wan != NULL);
         float *again = malloc(latent_n * sizeof(float));
-        CHECK(h3_vsr_wan_predict(wan, z_lq_t, T, LH, LW, &even, &odd, cs_t, sn_t, z_hq_t, error, sizeof(error)));
+        CHECK(h3_vsr_wan_predict(wan, z_lq_t, T, LH, LW, &even, &odd, cs_t, sn_t, z_hq_t, NULL, NULL, error, sizeof(error)));
         CHECK(h3_gpu_tensor_read_f32(z_hq_t, got, latent_n));
-        CHECK(h3_vsr_wan_predict(wan, z_lq_t, T, LH, LW, &even, &odd, cs_t, sn_t, z_hq_t, error, sizeof(error)));
+        CHECK(h3_vsr_wan_predict(wan, z_lq_t, T, LH, LW, &even, &odd, cs_t, sn_t, z_hq_t, NULL, NULL, error, sizeof(error)));
         CHECK(h3_gpu_tensor_read_f32(z_hq_t, again, latent_n));
         CHECK(memcmp(got, again, latent_n * sizeof(float)) == 0);
         free(again);

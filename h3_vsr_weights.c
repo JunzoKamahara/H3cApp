@@ -187,6 +187,12 @@ int h3_vsr_read_wan_config(const char *model_dir, h3_vsr_wan_config *config,
 /* ---------------------------------------------------------------- */
 /* Inspection */
 
+int h3_vsr_int8_supported(void) {
+    h3_device_info device;
+    char probe_error[256];
+    return h3_metal_probe(&device, probe_error, sizeof(probe_error)) && device.apple_gpu_family >= 10;
+}
+
 int h3_vsr_inspect_dir(const char *model_dir, h3_vsr_info *info,
                        char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
@@ -221,14 +227,9 @@ int h3_vsr_inspect_dir(const char *model_dir, h3_vsr_info *info,
                     (uint64_t)config.text_tokens * d;
     info->weight_bytes_bf16 = (block_params + kv2) * 2 * (uint64_t)config.layers + once * 2;
     info->weight_bytes_int8 = (block_params + kv2 * 2) * (uint64_t)config.layers + once * 2;
-    {
-        /* Tensor hardware (Metal 4 TensorOps, MTLGPUFamilyApple10) without
-         * creating a GPU context. */
-        h3_device_info device;
-        char probe_error[256];
-        info->int8_supported = h3_metal_probe(&device, probe_error, sizeof(probe_error)) &&
-                               device.apple_gpu_family >= 10;
-    }
+    /* Tensor hardware (Metal 4 TensorOps, MTLGPUFamilyApple10) without
+     * creating a GPU context. */
+    info->int8_supported = h3_vsr_int8_supported();
     snprintf(info->license_id, sizeof(info->license_id), "SwiftVR-Research-License");
     info->commercial_use_allowed = 0;
     return 1;

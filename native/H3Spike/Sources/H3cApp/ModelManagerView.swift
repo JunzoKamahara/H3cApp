@@ -45,10 +45,18 @@ struct ModelManagerView: View {
 
     private var palette: H3Palette { H3Palette(colorScheme) }
 
+    @State private var showingSwiftVRSetup = false
+
     private enum Section: String, CaseIterable, Identifiable {
-        case models, loras
+        case models, loras, upscalers
         var id: String { rawValue }
-        var label: String { self == .models ? String(localized: "H3モデル") : "LoRA" }
+        var label: String {
+            switch self {
+            case .models: return String(localized: "H3モデル")
+            case .loras: return "LoRA"
+            case .upscalers: return String(localized: "拡大モデル")
+            }
+        }
     }
 
     var body: some View {
@@ -73,6 +81,7 @@ struct ModelManagerView: View {
             switch section {
             case .models: modelsSection
             case .loras: lorasSection
+            case .upscalers: upscalersSection
             }
         }
         .frame(width: 560, height: 460)
@@ -512,6 +521,55 @@ struct ModelManagerView: View {
     private func openLoRAFolder() {
         try? FileManager.default.createDirectory(atPath: defaultLoRADirectory, withIntermediateDirectories: true)
         NSWorkspace.shared.open(URL(fileURLWithPath: defaultLoRADirectory, isDirectory: true))
+    }
+
+    // MARK: Upscalers (the models the 拡大 sheet's AI methods need)
+
+    private var upscalersSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            List {
+                HStack(alignment: .top, spacing: H3Spacing.md) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(VideoUpscaler.swiftVR.label).font(.system(size: 13, weight: .medium))
+                        Text(swiftVRStatusText).font(.caption).foregroundStyle(palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(verbatim: SwiftVRModel.directory).font(.caption2).foregroundStyle(palette.textSecondary)
+                            .textSelection(.enabled)
+                    }
+                    Spacer()
+                    Button(VideoUpscaler.swiftVR.isAvailable ? "管理…" : "準備…") { showingSwiftVRSetup = true }
+                }
+                .padding(.vertical, 4)
+                HStack(alignment: .top, spacing: H3Spacing.md) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Real-ESRGAN 汎用・アニメ").font(.system(size: 13, weight: .medium))
+                        Text("アプリに含まれています（BSD-3-Clause）。準備は要りません。")
+                            .font(.caption).foregroundStyle(palette.textSecondary)
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 4)
+            }
+            .listStyle(.inset)
+            Text("「動画を拡大」のAI超解像が使うモデルです。SwiftVRの重みは研究・非商用のライセンスのため同梱せず、ここでダウンロードして変換します。")
+                .font(.caption).foregroundStyle(palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(H3Spacing.md)
+        }
+        .sheet(isPresented: $showingSwiftVRSetup) {
+            SwiftVRSetupView(busy: isGenerating) { showingSwiftVRSetup = false }
+        }
+    }
+
+    private var swiftVRStatusText: String {
+        if SwiftVRSetup.shared.isBusy {
+            return String(localized: "準備中です（\(SwiftVRSetup.shared.phase.apiText)）")
+        }
+        if VideoUpscaler.swiftVR.isAvailable {
+            return String(localized: "使えます（\(SwiftVRModel.usesInt8 ? "int8" : "BF16")で変換済み、\(ByteCountFormatter.string(fromByteCount: SwiftVRModel.bytesOnDisk(), countStyle: .file))）")
+        }
+        if SwiftVRModel.weightsPresent { return String(localized: "重みはありますが、このMac用に変換されていません。") }
+        return String(localized: "まだありません。約20GBのダウンロードと変換が必要です。")
     }
 
     private func emptyState(_ text: String) -> some View {

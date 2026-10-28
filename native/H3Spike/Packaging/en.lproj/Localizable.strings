@@ -963,6 +963,46 @@
 /* SwiftVR (one-step VSR) upscaler: VideoUpscale.swift, H3VSR.swift */
 "SwiftVR（AI動画超解像・研究用）" = "SwiftVR (AI video super-resolution, research)";
 "動画全体を一度に見るAIモデル（SwiftVR、Wan2.2ベース）で、質感や細部を描き起こしながら拡大します。24フレームずつ処理し、Real-ESRGANより大幅に時間がかかります（M5で5秒の動画に1分前後）。重みはSwiftVR Research License（研究・非商用）のため同梱せず、ダウンロードした重みをアプリで変換して使います。" = "An AI model that looks at the whole video at once (SwiftVR, based on Wan2.2) enlarges it while drawing texture and detail back in. It works 24 frames at a time and takes far longer than Real-ESRGAN (about a minute for a 5-second video on an M5). Its weights are under the SwiftVR Research License (research, non-commercial), so they are not bundled: the app converts weights you downloaded.";
-"SwiftVRのモデルが入っていません。重みを「%@」に置き、build_vsr_cache で変換すると選べます。" = "The SwiftVR model is not installed. Put its weights in \"%@\" and convert them with build_vsr_cache to choose it.";
 "このMacでは使えません。" = "Not available on this Mac.";
 "出力フレームを確保できませんでした" = "Could not allocate an output frame";
+
+/* SwiftVR model setup (download, license, conversion): SwiftVRModelSetup.swift, UpscaleSheet.swift, ModelManagerView.swift */
+"拡大モデル" = "Upscaling models";
+"「動画を拡大」のAI超解像が使うモデルです。SwiftVRの重みは研究・非商用のライセンスのため同梱せず、ここでダウンロードして変換します。" = "The models the AI methods of \"Enlarge video\" use. SwiftVR's weights are under a research, non-commercial license, so they are not bundled: download and convert them here.";
+"準備…" = "Set up…";
+"準備中です（%@）" = "Setting up (%@)";
+"使えます（%@で変換済み、%@）" = "Ready (converted as %@, %@)";
+"重みはありますが、このMac用に変換されていません。" = "The weights are here but not converted for this Mac.";
+"まだありません。約20GBのダウンロードと変換が必要です。" = "Not installed. It needs a download of about 20 GB and a conversion.";
+"Real-ESRGAN 汎用・アニメ" = "Real-ESRGAN General / Anime";
+"アプリに含まれています（BSD-3-Clause）。準備は要りません。" = "Included in the app (BSD-3-Clause). Nothing to set up.";
+"%@ に、必要なファイル（%@）が見つかりませんでした" = "%@ does not have the files needed (%@)";
+"SwiftVRのモデルを削除" = "Delete the SwiftVR model";
+"SwiftVRのモデルを準備" = "Set up the SwiftVR model";
+"SwiftVR（Wan2.2ベースの一段動画超解像モデル）の重みをHugging Faceからダウンロードし、このMacのGPU用に変換します。重みは約%@、変換後のキャッシュは約%@（%@）で、どちらも「%@」に置かれます。" = "Downloads the weights of SwiftVR (a one-step video super-resolution model based on Wan2.2) from Hugging Face and converts them for this Mac's GPU. The weights are about %@ and the converted cache about %@ (%@); both go in \"%@\".";
+"SwiftVR Research Licenseを読み、研究・個人利用などの非商用の範囲で使うことに同意します" = "I have read the SwiftVR Research License and agree to use the model for research, personal and other non-commercial purposes only";
+"SwiftVRを使えるようになりました。「動画を拡大」で選べます。" = "SwiftVR is ready. Choose it in \"Enlarge video\".";
+"生成中は変換できません。生成が終わってから始めてください。" = "The conversion can't run while a video is being generated. Start it once the generation is finished.";
+"削除できませんでした（詳細: %@）" = "Could not delete it (details: %@)";
+"ダウンロードした重みと変換したキャッシュ（計%@）を削除します。また使うには、もう一度ダウンロードと変換が必要です。" = "Deletes the downloaded weights and the converted cache (%@ in all). To use SwiftVR again, download and convert them again.";
+"SwiftVRの重みには「SwiftVR Research License」が適用されます。研究などの非商用の利用に限られ、商用に使うには権利者の書面による許諾が必要です。ダウンロードと利用の前にライセンスを読み、その条件に従ってください。SwiftVRのコードはApache License 2.0です。" = "SwiftVR's weights are under the \"SwiftVR Research License\": research and other non-commercial use only; commercial use needs the rights holders' written permission. Read the license before downloading and using them, and follow its terms. SwiftVR's code is under the Apache License 2.0.";
+"SwiftVRのライセンス" = "SwiftVR license";
+"重み" = "Weights";
+"ダウンロード済み" = "Downloaded";
+"まだありません" = "Not yet";
+"変換" = "Conversion";
+"このMac用に変換済み（%@）" = "Converted for this Mac (%@)";
+"まだ変換していません" = "Not converted yet";
+"使用容量" = "Disk use";
+"%@に同意" = "Agreed on %@";
+"ダウンロードはこの画面を閉じても続きます。中断しても、次回は続きから再開します。" = "The download keeps going when this window is closed. If it is stopped, it resumes next time.";
+"このMac用に変換しています（%lld/%lld）…" = "Converting for this Mac (%lld/%lld)…";
+"このMac用に変換しています…" = "Converting for this Mac…";
+"変換する" = "Convert";
+"ダウンロードして変換する" = "Download and convert";
+"モデルを管理…" = "Manage model…";
+"モデルを準備…" = "Set up model…";
+"生成中は%@で拡大できません。生成が終わってから拡大してください" = "%@ can't enlarge while a video is being generated. Enlarge once the generation is finished";
+"動画の取り込み中は%@で拡大できません。取り込みが終わってから拡大してください" = "%@ can't enlarge while a video is being imported. Enlarge once the import is finished";
+"SwiftVRの重みはありますが、このMac用に変換されていません。「モデルを準備…」で変換すると選べます。" = "SwiftVR's weights are here but not converted for this Mac. Convert them with \"Set up model…\" to choose it.";
+"SwiftVRのモデルが入っていません。「モデルを準備…」で重み（約20GB）をダウンロードして変換すると選べます。" = "The SwiftVR model is not installed. Download its weights (about 20 GB) and convert them with \"Set up model…\" to choose it.";

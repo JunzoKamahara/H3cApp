@@ -285,7 +285,9 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
                        const h3_vsr_window_layout *even,
                        const h3_vsr_window_layout *odd,
                        const h3_gpu_tensor *rope_cos, const h3_gpu_tensor *rope_sin,
-                       h3_gpu_tensor *z_hq, char *error, size_t error_size) {
+                       h3_gpu_tensor *z_hq,
+                       h3_progress_callback on_block, void *opaque,
+                       char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
     if (!wan || !z_lq || !z_hq || frames < 1 || height < 2 || width < 2 || height % 2 || width % 2 ||
         !rope_cos || !rope_sin || (even == NULL) != (odd == NULL)) {
@@ -362,6 +364,10 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
     for (int b = 0; b < wan->layers; b++) {
         wan_block *k = &wan->blocks[b];
         const gpu_layout *layout = even ? &layouts[b % 2] : NULL;
+        if (on_block && on_block("vsr dit", b, wan->layers, opaque)) {
+            fail(error, error_size, "vsr cancelled");
+            goto failed;
+        }
         /* Self-attention. */
         OP(h3_gpu_vsr_ln_mod_bf16(gpu, h, x, k->scale, k->shift, NULL, NULL, N, D, 1e-6f));
         OP(run_linear(&r, wan, &k->qkv, qkv, h));
@@ -401,6 +407,10 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
         OP(run_linear(&r, wan, &k->fc2, o, f));
         OP(h3_gpu_vsr_bias_gate_add_bf16(gpu, x, o, k->fc2_bias, k->c_gate, x, N, D));
         OP(h3_gpu_continue(gpu));
+    }
+    if (on_block && on_block("vsr dit", wan->layers, wan->layers, opaque)) {
+        fail(error, error_size, "vsr cancelled");
+        goto failed;
     }
     OP(h3_gpu_vsr_ln_mod_bf16(gpu, h, x, wan->out_scale, wan->out_shift, NULL, NULL, N, D, 1e-6f));
     OP(h3_gpu_linear_bf16(gpu, v, h, wan->proj.w, NULL, N, D, (uint32_t)wan->patch_out));

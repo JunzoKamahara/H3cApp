@@ -159,11 +159,16 @@ h3_vsr_wan *h3_vsr_wan_load(h3_gpu *gpu, const char *cache_path,
                             char *error, size_t error_size);
 void h3_vsr_wan_free(h3_vsr_wan *wan);
 int h3_vsr_wan_is_int8(const h3_vsr_wan *wan);
+/* `on_block`, when given, is called as ("vsr dit", b, layers) before each
+ * block and once after the last; a non-zero return stops with the error
+ * "vsr cancelled". */
 int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
                        int frames, int height, int width,
                        const h3_vsr_window_layout *even,
                        const h3_vsr_window_layout *odd,
                        const h3_gpu_tensor *rope_cos, const h3_gpu_tensor *rope_sin,
-                       h3_gpu_tensor *z_hq, char *error, size_t error_size);
+                       h3_gpu_tensor *z_hq,
+                       h3_progress_callback on_block, void *opaque,
+                       char *error, size_t error_size);
 
 #endif /* H3_VSR_INTERNAL_H */

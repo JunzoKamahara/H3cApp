@@ -92,8 +92,12 @@ Good to know:
     enlarges it while drawing texture and detail back in. It works 24 frames
     at a time and takes far longer than Real-ESRGAN. Its weights are under
     the SwiftVR Research License (research, non-commercial), so they are not
-    bundled; it can be chosen only once downloaded weights are installed and
-    converted (UPSCALE_PLAN.md).
+    bundled: the first time, choose SwiftVR in the sheet and press
+    "モデルを準備…" (also in モデル管理 → 拡大モデル), read the license, and
+    the app downloads the weights (about 20 GB, resumable) and converts them
+    for this Mac (about 4.6 GB on an M5, 8.9 GB otherwise). It waits for a
+    running generation to finish, since it needs the whole GPU
+    (UPSCALE_PLAN.md).
 
   All of them run inside the app, with no other program. Real-ESRGAN's
   pretrained weights (BSD-3-Clause) are included in the app.
