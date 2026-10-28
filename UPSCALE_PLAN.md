@@ -270,7 +270,7 @@ typedef struct {
     double estimated_seconds_per_chunk;   /* bench calibration scaled by token count */
     int tokens_per_chunk, windows_even, windows_odd;
 } h3_vsr_requirements;
-int h3_vsr_requirements(const h3_vsr *vsr, int in_w, int in_h, int out_w, int out_h, h3_vsr_requirements *out);
+int h3_vsr_check_requirements(const h3_vsr *vsr, int in_w, int in_h, int out_w, int out_h, h3_vsr_requirements *out);
 
 h3_vsr_session *h3_vsr_session_open(h3_vsr *vsr, int in_w, int in_h, int out_w, int out_h,
                                     int total_frames /* 0 = unknown */, char *error, size_t error_size);
@@ -289,7 +289,7 @@ int  h3_vsr_session_process(h3_vsr_session *s, const h3_vsr_image *in, int in_fr
                             const volatile int *cancel_requested, char *error, size_t error_size);
 int  h3_vsr_session_pending_frames(const h3_vsr_session *s);
 void h3_vsr_session_close(h3_vsr_session *s);
-int  h3_vsr_get_stats(const h3_vsr *vsr, h3_gpu_stats *dit, h3_gpu_stats *reae);
+int  h3_vsr_get_stats(const h3_vsr *vsr, double *dit_seconds, double *reae_seconds, uint64_t *peak_live_bytes);
 ```
 
 Output count rule (SwiftVR): call 1 (28 frames in) → 0 out; call 2 (24 in) → chunk 1's 25 frames; then 24 per call; `is_last` → the previous chunk's remainder plus the last chunk (padded internally to 4b+1, 3 encoder copies, 4b+4 decoded, cropped to the real count).
@@ -306,13 +306,13 @@ Output count rule (SwiftVR): call 1 (28 frames in) → 0 out; call 2 (24 in) →
 | All linear biases | F32 | added in F32 epilogues |
 | `attn1/attn2.norm_q/norm_k.weight` | F32 | RMSNorm across heads |
 | `norm2.weight/bias` | F32 (+BF16 copy) | affine LN before cross-attention |
-| `scale_shift_table[6,3072] + time_proj` → `(1+scale_msa)`, `shift_msa`, `gate_msa`, `(1+c_scale)`, `c_shift`, `c_gate` | F32 (BF16 copies for the LN) | t=1000 fixed |
+| `blocks.b.mod` = `scale_shift_table[6,3072] + time_proj` [6,D] (raw shift, scale, gate, c_shift, c_scale, c_gate; `(1+scale)` is formed at load) | F32 | t=1000 fixed |
 | `attn2.to_k/to_v` not stored; instead **`K2_b = RMSNorm_k(ctx·Wk+bk)`, `V2_b = ctx·Wv+bv` `[512,3072]`** | BF16 | fixed prompt. 6.3 MB/layer, 189 MB total |
 | `patch_embedding [3072,48,1,2,2]` → `[3072,192]` + bias | BF16 + F32 | |
 | `norm_out` modulation (`scale_shift_table[2,3072]+temb`) | F32 | |
 | `proj_out [192,3072]` + bias | BF16 + F32 (bias folded into unpatchify) | |
 | Condition embedder (time 256→3072→3072, time_proj 3072→18432, text 4096→3072→3072) | **not stored**; evaluated once on the CPU in double/F32 at build time | its outputs are the constants above |
-| ReAE 40.95M | BF16 | shared by the NAX tapconv and MPSGraph paths |
+| ReAE 40.95M | **not in the cache**: read from `reae.safetensors` (F32, 164 MB) at load time and converted to the precision needed; only its fingerprint is recorded in the header | small enough to skip conversion; an F32 quality mode stays possible |
 
 - Constant evaluation (CPU, build time): `temb = L2(SiLU(L1(sinusoidal_256(1000.0))))` (diffusers `get_timestep_embedding(flip_sin_to_cos=True, downscale_freq_shift=0)`), `time_proj = L(SiLU(temb))`→6×3072, `mod_b = scale_shift_table_b + time_proj`, `ctx = L(GELU_tanh(L(prompt_emb)))`, `K2_b/V2_b`. **Settle whether attn2 applies norm_q/norm_k by matching block 0 in the harness.**
 - Cache format `swiftvr-dit-{int8|bf16}.h3vc` (next to the model directory, gitignored like `.h3ac`): 128 B header `{magic "H3VC", version, model_kind, precision, blocks, dim, ffn, heads, head_dim, text_tokens, patch_in, latent_channels, fingerprint[32] (transformer/), reae_fingerprint[32] (reae+prompt), table_offset, table_count}`, a name table `{name[96], dtype, rows, cols, offset, bytes}` (64 B aligned so `stream_file_*` can pread directly), then payload in block order. The name table is what lets one format hold both models.

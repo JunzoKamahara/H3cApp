@@ -257,6 +257,7 @@ typedef struct {
     int reae_frame_batch;         /* 0 = メモリから自動 */
     int reae_separate_queue;      /* 1: ReAE を別 h3_gpu + スレッドで（既定 1） */
     int keep_fc2_bf16;            /* int8 FC2 が parity を落とした場合の品質フォールバック */
+    int full_attention;           /* 1: MFSWA ではなく全注意（品質優先モード） */
 } h3_vsr_open_params;
 h3_vsr *h3_vsr_open(const char *model_dir, const h3_vsr_open_params *params,
                     h3_progress_callback on_progress, void *opaque, char *error, size_t error_size);
@@ -268,7 +269,7 @@ typedef struct {
     double estimated_seconds_per_chunk;   /* bench の較正値をトークン数で比例 */
     int tokens_per_chunk, windows_even, windows_odd;
 } h3_vsr_requirements;
-int h3_vsr_requirements(const h3_vsr *vsr, int in_w, int in_h, int out_w, int out_h, h3_vsr_requirements *out);
+int h3_vsr_check_requirements(const h3_vsr *vsr, int in_w, int in_h, int out_w, int out_h, h3_vsr_requirements *out);
 
 h3_vsr_session *h3_vsr_session_open(h3_vsr *vsr, int in_w, int in_h, int out_w, int out_h,
                                     int total_frames /* 0 = 不明 */, char *error, size_t error_size);
@@ -286,7 +287,7 @@ int  h3_vsr_session_process(h3_vsr_session *s, const h3_vsr_image *in, int in_fr
                             const volatile int *cancel_requested, char *error, size_t error_size);
 int  h3_vsr_session_pending_frames(const h3_vsr_session *s);
 void h3_vsr_session_close(h3_vsr_session *s);
-int  h3_vsr_get_stats(const h3_vsr *vsr, h3_gpu_stats *dit, h3_gpu_stats *reae);
+int  h3_vsr_get_stats(const h3_vsr *vsr, double *dit_seconds, double *reae_seconds, uint64_t *peak_live_bytes);
 ```
 
 出力枚数規則（SwiftVR）: 1 回目（28 枚入力）→ 0 枚、2 回目（24）→ チャンク 1 の 25 枚、以後 24 枚ずつ、`is_last` → 前チャンクの残り＋最終チャンク（内部で 4b+1 にパディング、エンコーダ末尾 3 複製、4b+4 デコード、実枚数に切り出し）。
@@ -303,13 +304,13 @@ int  h3_vsr_get_stats(const h3_vsr *vsr, h3_gpu_stats *dit, h3_gpu_stats *reae);
 | 全線形の bias | F32 | F32 エピローグで加算 |
 | `attn1/attn2.norm_q/norm_k.weight` | F32 | head 横断 RMSNorm |
 | `norm2.weight/bias` | F32（+BF16 複製） | 交差注意前の affine LN |
-| `scale_shift_table[6,3072] + time_proj` → `(1+scale_msa)`, `shift_msa`, `gate_msa`, `(1+c_scale)`, `c_shift`, `c_gate` | F32（LN 用に BF16 複製） | t=1000 固定 |
+| `blocks.b.mod` = `scale_shift_table[6,3072] + time_proj` [6,D]（shift, scale, gate, c_shift, c_scale, c_gate の生値。`(1+scale)` はロード時に作る） | F32 | t=1000 固定 |
 | `attn2.to_k/to_v` は保存せず **`K2_b = RMSNorm_k(ctx·Wk+bk)`, `V2_b = ctx·Wv+bv` `[512,3072]`** | BF16 | 固定プロンプト。6.3 MB/層、計 189 MB |
 | `patch_embedding [3072,48,1,2,2]` → `[3072,192]` + bias | BF16 + F32 | |
 | `norm_out` 変調（`scale_shift_table[2,3072]+temb`） | F32 | |
 | `proj_out [192,3072]` + bias | BF16 + F32（bias は unpatchify に畳む） | |
 | 条件埋め込み（time 256→3072→3072、time_proj 3072→18432、text 4096→3072→3072） | **保存しない**。ビルド時に CPU で double/F32 評価 | 出力が上の定数 |
-| ReAE 40.95M | BF16 | NAX tapconv と MPSGraph の両経路で共用 |
+| ReAE 40.95M | **キャッシュに入れない**: ロード時に `reae.safetensors`（F32 164 MB）を直接読み、必要な精度に変換。ヘッダに fingerprint のみ記録 | 小さいので変換不要。F32 のまま使う品質モードも可能 |
 
 - 定数評価（CPU、ビルド時）: `temb = L2(SiLU(L1(sinusoidal_256(1000.0))))`（diffusers `get_timestep_embedding(flip_sin_to_cos=True, downscale_freq_shift=0)`）、`time_proj = L(SiLU(temb))`→6×3072、`mod_b = scale_shift_table_b + time_proj`、`ctx = L(GELU_tanh(L(prompt_emb)))`、`K2_b/V2_b`。**harness で block-0 と突き合わせて attn2 の norm_q/norm_k 適用を確定**。
 - キャッシュ形式 `swiftvr-dit-{int8|bf16}.h3vc`（モデルディレクトリ隣、`.h3ac` と同様 gitignore）: 128 B ヘッダ `{magic "H3VC", version, model_kind, precision, blocks, dim, ffn, heads, head_dim, text_tokens, patch_in, latent_channels, fingerprint[32](transformer/), reae_fingerprint[32](reae+prompt), table_offset, table_count}`、名前表 `{name[96], dtype, rows, cols, offset, bytes}`（64 B 整列、`stream_file_*` で直接 pread）、ブロック順ペイロード。名前表にしたのは 2 モデルを 1 形式で扱うため。
