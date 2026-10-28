@@ -5304,6 +5304,18 @@ kernel void h3_vsr_gather_rows_bf16(device const ushort *input [[buffer(0)]],
         input[(size_t)index[row] * args.in_stride + args.col_offset + column];
 }
 
+/* out[index[r], 0..width) = in[r, 0..width): the owner-only attention's
+ * write-back of each window's owned rows to their tokens. Grid (width, rows). */
+kernel void h3_vsr_scatter_rows_bf16(device const ushort *input [[buffer(0)]],
+                                     device const uint *index [[buffer(1)]],
+                                     device ushort *output [[buffer(2)]],
+                                     constant vsr_rows_args &args [[buffer(3)]],
+                                     uint2 gid [[thread_position_in_grid]]) {
+    uint column = gid.x, row = gid.y;
+    if (column >= args.width || row >= args.rows) return;
+    output[(size_t)index[row] * args.width + column] = input[(size_t)row * args.width + column];
+}
+
 struct vsr_bias_gate_args { uint rows, width, has_residual, has_bias, has_gate; };
 
 /* out = residual + (y + bias) * gate, with the optional parts dropped;

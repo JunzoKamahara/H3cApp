@@ -490,6 +490,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_vsr_gelu_bias_bf16", @"h3_vsr_patchify_bf16",
             @"h3_vsr_pack_grid_bf16", @"h3_vsr_unpack_grid_f32",
             @"h3_vsr_zero_border_bf16", @"h3_vsr_zero_rows_bf16",
+            @"h3_vsr_scatter_rows_bf16",
             @"h3_vsr_pack_grid_s2d_bf16", @"h3_vsr_unpack_grid_d2s_f32",
             @"h3_vsr_grid_upsample2_bf16", @"h3_vsr_grid_split_frames_bf16",
             @"h3_vsr_grid_select_bf16", @"h3_vsr_pack_grid_clamp_bf16",
@@ -1802,6 +1803,16 @@ int h3_gpu_sdpa_batched_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
                              uint32_t head_dim, float scale) {
     return h3_gpu_sdpa_kv(opaque, output, query, key, value, batch, sequence,
                           sequence, heads, head_dim, scale, H3_GPU_BF16,
+                          MPSDataTypeBFloat16, 0, 0);
+}
+
+int h3_gpu_sdpa_batched_kv_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
+                                const h3_gpu_tensor *query, const h3_gpu_tensor *key,
+                                const h3_gpu_tensor *value, uint32_t batch,
+                                uint32_t sequence, uint32_t kv_sequence, uint32_t heads,
+                                uint32_t head_dim, float scale) {
+    return h3_gpu_sdpa_kv(opaque, output, query, key, value, batch, sequence,
+                          kv_sequence, heads, head_dim, scale, H3_GPU_BF16,
                           MPSDataTypeBFloat16, 0, 0);
 }
 
@@ -6180,4 +6191,20 @@ int h3_gpu_vsr_grid_select_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_
     vsr_grid2_args args = vsr_grid2(out, in);
     args.stride_t = stride_t; args.stride_y = stride_y; args.stride_x = stride_x;
     return VSR_GRID_DISPATCH(@"h3_vsr_grid_select_bf16", out, input, output, args);
+}
+
+int h3_gpu_vsr_scatter_rows_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                                 const h3_gpu_tensor *index, uint32_t rows, uint32_t width) {
+    H3GPU *gpu = GPU(opaque);
+    if (!h3_gpu_require_bf16(gpu, input, (size_t)rows * width, @"VSR scatter input") ||
+        !h3_gpu_require_elements(gpu, index, rows, @"VSR scatter index") || TENSOR(index).dtype != H3_GPU_U32 ||
+        !h3_gpu_require_bf16(gpu, output, width, @"VSR scatter output")) return 0;
+    vsr_rows_args args = {rows, width, width, 0};
+    return h3_gpu_dispatch_2d(gpu, @"h3_vsr_scatter_rows_bf16", width, rows,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(index).buffer offset:0 atIndex:1];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:2];
+            [encoder setBytes:&args length:sizeof(args) atIndex:3];
+        });
 }

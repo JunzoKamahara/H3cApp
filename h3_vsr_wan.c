@@ -263,9 +263,22 @@ static h3_gpu_tensor *upload_u32(h3_gpu *gpu, const int32_t *values, size_t n) {
     return t;
 }
 
+/* Owner-only attention (UPSCALE_PLAN §6.5): every token's output comes
+ * from one window, so only that window's owned rows are run as queries.
+ * Windows with the same owned count form a class and run as one batched
+ * SDPA: q [windows, owned, D] against k/v [windows, length, D]. */
+#define MAX_CLASSES 32
+typedef struct {
+    uint32_t windows, q_len;
+    h3_gpu_tensor *q_index;    /* U32 [windows * q_len]: the owned tokens (also the scatter target) */
+    h3_gpu_tensor *kv_index;   /* U32 [windows * length]: the windows' tokens */
+} owner_class;
+
 typedef struct {
     h3_gpu_tensor *indices, *owner;   /* U32 */
     uint32_t windows, length;
+    int classes;
+    owner_class cls[MAX_CLASSES];
 } gpu_layout;
 
 static int upload_layout(h3_gpu *gpu, const h3_vsr_window_layout *layout, gpu_layout *out) {
@@ -273,12 +286,89 @@ static int upload_layout(h3_gpu *gpu, const h3_vsr_window_layout *layout, gpu_la
     out->owner = upload_u32(gpu, layout->owner, (size_t)layout->tokens);
     out->windows = (uint32_t)layout->window_count;
     out->length = (uint32_t)layout->window_length;
-    return out->indices && out->owner;
+    if (!out->indices || !out->owner) return 0;
+    /* Classes by owned count, merged into at most H3_VSR_QUERY_BUCKETS
+     * (default 3) buckets: a window's owned rows are padded to its
+     * bucket's length by repeating its first owned token (the duplicate
+     * rows compute the same value and scatter to the same token). Fewer,
+     * larger SDPA dispatches beat exact classes. */
+    int Nw = layout->window_count, Lw = layout->window_length;
+    int counts[MAX_CLASSES], members[MAX_CLASSES], distinct = 0;
+    for (int w = 0; w < Nw; w++) {
+        int n = layout->owned_offset[w + 1] - layout->owned_offset[w];
+        if (n == 0) continue;
+        int c;
+        for (c = 0; c < distinct; c++) if (counts[c] == n) break;
+        if (c == distinct) {
+            if (distinct == MAX_CLASSES) return 0;
+            counts[distinct] = n; members[distinct] = 0; distinct++;
+        }
+        members[c]++;
+    }
+    /* sort distinct counts ascending */
+    for (int i = 1; i < distinct; i++)
+        for (int j = i; j > 0 && counts[j - 1] > counts[j]; j--) {
+            int t = counts[j]; counts[j] = counts[j - 1]; counts[j - 1] = t;
+            t = members[j]; members[j] = members[j - 1]; members[j - 1] = t;
+        }
+    int buckets = getenv("H3_VSR_QUERY_BUCKETS") ? atoi(getenv("H3_VSR_QUERY_BUCKETS")) : 3;
+    if (buckets < 1) buckets = 1;
+    if (buckets > distinct) buckets = distinct;
+    /* bucket boundaries (indices into the sorted counts) minimizing the
+     * padded row total; brute force over at most 3 buckets */
+    int best_cost = 0x7fffffff, split1 = distinct, split2 = distinct;
+    for (int a = 1; a <= distinct; a++) {
+        if (buckets == 1 && a != distinct) continue;
+        for (int b2 = a; b2 <= distinct; b2++) {
+            if (buckets <= 2 && b2 != distinct) continue;
+            if (buckets >= 2 && a == distinct && b2 != distinct) continue;
+            int cost = 0, from = 0, ends[3] = {a, b2, distinct};
+            for (int k = 0; k < 3; k++) {
+                if (ends[k] <= from) continue;
+                int m = 0;
+                for (int i = from; i < ends[k]; i++) m += members[i];
+                cost += counts[ends[k] - 1] * m;
+                from = ends[k];
+            }
+            if (cost < best_cost) { best_cost = cost; split1 = a; split2 = b2; }
+        }
+    }
+    int ends[3] = {split1, split2, distinct}, from = 0;
+    for (int k = 0; k < 3; k++) {
+        if (ends[k] <= from) continue;
+        int lo = counts[from], hi = counts[ends[k] - 1], m = 0;
+        for (int i = from; i < ends[k]; i++) m += members[i];
+        from = ends[k];
+        owner_class *cl = &out->cls[out->classes++];
+        cl->windows = (uint32_t)m;
+        cl->q_len = (uint32_t)hi;
+        int32_t *q = malloc((size_t)m * hi * sizeof(int32_t));
+        int32_t *kv = malloc((size_t)m * Lw * sizeof(int32_t));
+        if (!q || !kv) { free(q); free(kv); return 0; }
+        int at = 0;
+        for (int w = 0; w < Nw; w++) {
+            int n = layout->owned_offset[w + 1] - layout->owned_offset[w];
+            if (n < lo || n > hi || n == 0) continue;
+            const int32_t *owned = layout->owned_token + layout->owned_offset[w];
+            for (int i = 0; i < hi; i++) q[(size_t)at * hi + i] = owned[i < n ? i : 0];
+            memcpy(kv + (size_t)at * Lw, layout->indices + (size_t)w * Lw, (size_t)Lw * sizeof(int32_t));
+            at++;
+        }
+        cl->q_index = upload_u32(gpu, q, (size_t)m * hi);
+        cl->kv_index = upload_u32(gpu, kv, (size_t)m * Lw);
+        free(q); free(kv);
+        if (!cl->q_index || !cl->kv_index) return 0;
+    }
+    return 1;
 }
 
 static void free_layout(gpu_layout *l) {
     h3_gpu_tensor_free(l->indices);
     h3_gpu_tensor_free(l->owner);
+    for (int c = 0; c < l->classes; c++) {
+        h3_gpu_tensor_free(l->cls[c].q_index);
+        h3_gpu_tensor_free(l->cls[c].kv_index);
+    }
 }
 
 /* Development hook (H3_VSR_DUMP_DIR + H3_VSR_DUMP_TOKENS): the token
@@ -417,6 +507,7 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
     dump_tokens(gpu, "x_in", x, (size_t)N * D, 1);
     int trace_block = dump_block_index();
     int trace_dit = getenv("H3_VSR_TRACE_DIT") != NULL;
+    int all_queries = getenv("H3_VSR_ALL_QUERIES") != NULL;   /* the full-window attention of before */
     double mark = dit_now();
     for (int b = 0; b < wan->layers; b++) {
         wan_block *k = &wan->blocks[b];
@@ -438,7 +529,19 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
                                        rope_sin, N, D, heads, head_dim, 3, 1e-6f));
         TRACE("qkv_prepared", qkv, (size_t)N * 3 * D);
         MARK("qkv prepare");
-        if (layout) {
+        if (layout && !all_queries) {
+            for (int c = 0; c < layout->classes; c++) {
+                const owner_class *k2 = &layout->cls[c];
+                uint32_t q_rows = k2->windows * k2->q_len, kv_rows = k2->windows * layout->length;
+                OP(h3_gpu_vsr_gather_rows_bf16(gpu, qg, qkv, k2->q_index, q_rows, D, 3 * D, 0));
+                OP(h3_gpu_vsr_gather_rows_bf16(gpu, kg, qkv, k2->kv_index, kv_rows, D, 3 * D, D));
+                OP(h3_gpu_vsr_gather_rows_bf16(gpu, vg, qkv, k2->kv_index, kv_rows, D, 3 * D, 2 * D));
+                OP(h3_gpu_sdpa_batched_kv_bf16(gpu, ag, qg, kg, vg, k2->windows, k2->q_len, layout->length,
+                                               heads, head_dim, scale));
+                OP(h3_gpu_vsr_scatter_rows_bf16(gpu, att, ag, k2->q_index, q_rows, D));
+            }
+            MARK("owner-only attention");
+        } else if (layout) {
             uint32_t gathered = layout->windows * layout->length;
             OP(h3_gpu_vsr_gather_rows_bf16(gpu, qg, qkv, layout->indices, gathered, D, 3 * D, 0));
             OP(h3_gpu_vsr_gather_rows_bf16(gpu, kg, qkv, layout->indices, gathered, D, 3 * D, D));

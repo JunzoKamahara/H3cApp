@@ -349,6 +349,9 @@ int h3_gpu_vsr_gather_rows_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                                 const h3_gpu_tensor *input, const h3_gpu_tensor *index,
                                 uint32_t rows, uint32_t width, uint32_t in_stride,
                                 uint32_t col_offset);
+/* out[index[r]] = in[r] for r < rows (the gather's inverse). */
+int h3_gpu_vsr_scatter_rows_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                                 const h3_gpu_tensor *index, uint32_t rows, uint32_t width);
 int h3_gpu_vsr_bias_gate_add_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                                   const h3_gpu_tensor *y, const h3_gpu_tensor *bias,
                                   const h3_gpu_tensor *gate, const h3_gpu_tensor *residual,
@@ -369,6 +372,13 @@ int h3_gpu_sdpa_batched_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                              const h3_gpu_tensor *value, uint32_t batch,
                              uint32_t sequence, uint32_t heads,
                              uint32_t head_dim, float scale);
+/* Batched SDPA with separate query and key/value lengths: q [batch,
+ * sequence, heads, head_dim], k/v [batch, kv_sequence, heads, head_dim]. */
+int h3_gpu_sdpa_batched_kv_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                                const h3_gpu_tensor *query, const h3_gpu_tensor *key,
+                                const h3_gpu_tensor *value, uint32_t batch,
+                                uint32_t sequence, uint32_t kv_sequence, uint32_t heads,
+                                uint32_t head_dim, float scale);
 int h3_gpu_sdpa_cross_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                            const h3_gpu_tensor *query, const h3_gpu_tensor *key,
                            const h3_gpu_tensor *value, uint32_t sequence,
