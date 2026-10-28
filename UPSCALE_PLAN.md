@@ -495,7 +495,7 @@ The assumptions (int8 = 2× BF16, M4's effective MPSGraph TFLOP/s) are unmeasure
 | P3 ReAE | done (F32 conv3d path) | `h3_vsr_reae.c` | `tests/test_vsr_reae.c`: 2e-7 vs a double transcription; chunk / frame-batch state carry bit-exact |
 | P4 DiT | done (BF16 / int8, full-window MFSWA and full attention) | `h3_vsr_wan.c`, the `h3_vsr_*` kernels in `h3_shaders.metal`, `h3_gpu_sdpa_batched/cross_bf16` | `tests/test_vsr_wan.c`: 61 dB (bf16) / 60.8 dB (int8) vs a double reference |
 | P5 Streamer | done (one context, sequential; only the decoder's 3-frame delay) | `h3_vsr.c` | `tests/test_vsr_session.c`: 7/29/52/70 frames, counts match, deterministic, cancellation |
-| P6 App | in progress | `H3VSR.swift`, `VideoUpscale.swift` (`ChunkedFrameScaler`, `.swiftVR`), `UpscaleSheet.swift`, Localizable | build being checked. No download / acceptance UI yet (weights go into `~/Library/Application Support/H3cApp/Upscalers/SwiftVR/` by hand, converted with `build_vsr_cache`) |
+| P6 App | in progress | `H3VSR.swift`, `VideoUpscale.swift` (`ChunkedFrameScaler`, `.swiftVR`), `UpscaleSheet.swift`, Localizable | the four existing methods (standard / metalFX / Real-ESRGAN General and Anime, 2x, 39 frames at 512²) decode frame-for-frame identical to the old build's output (measured 2026-10-28 with `compare_frames`). No download / acceptance UI yet (weights go into `~/Library/Application Support/H3cApp/Upscalers/SwiftVR/` by hand, converted with `build_vsr_cache`) |
 | P7 Optimization | not started (owner-only queries, NAX for any shape, tapconv, ReAE F16, two contexts, ANE) | — | — |
 | P8 FlashVSR | not started | — | — |
 

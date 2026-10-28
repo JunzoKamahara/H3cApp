@@ -496,7 +496,7 @@ Swift（`VideoUpscale.upscale` を 3 段に。既存方式は `PerFrameChunkAdap
 | P3 ReAE | 完了（F32 conv3d 経路） | `h3_vsr_reae.c` | `tests/test_vsr_reae.c`: 倍精度転写と 2e-7、チャンク／フレームバッチの状態持ち越しはビット一致 |
 | P4 DiT | 完了（BF16 / int8、全窓 MFSWA と全注意） | `h3_vsr_wan.c`, `h3_shaders.metal` の `h3_vsr_*`, `h3_gpu_sdpa_batched/cross_bf16` | `tests/test_vsr_wan.c`: 倍精度参照と 61 dB（bf16）/ 60.8 dB（int8） |
 | P5 ストリーマ | 完了（1 コンテキスト直列、1 チャンク遅延なし＝デコーダの 3 フレーム遅延のみ） | `h3_vsr.c` | `tests/test_vsr_session.c`: 7/29/52/70 フレームで出力数一致・決定的・キャンセル |
-| P6 アプリ | 進行中 | `H3VSR.swift`, `VideoUpscale.swift`（`ChunkedFrameScaler`, `.swiftVR`）, `UpscaleSheet.swift`, Localizable | ビルド確認中。DL／同意 UI は未実装（重みは `~/Library/Application Support/H3cApp/Upscalers/SwiftVR/` に手で置き `build_vsr_cache` で変換） |
+| P6 アプリ | 進行中 | `H3VSR.swift`, `VideoUpscale.swift`（`ChunkedFrameScaler`, `.swiftVR`）, `UpscaleSheet.swift`, Localizable | 既存 4 方式（standard / metalFX / Real-ESRGAN 汎用・アニメ、2x、39 フレーム 512²）は旧ビルドの出力とデコード後フレーム単位で完全一致（2026-10-28 実測、`compare_frames`）。DL／同意 UI は未実装（重みは `~/Library/Application Support/H3cApp/Upscalers/SwiftVR/` に手で置き `build_vsr_cache` で変換） |
 | P7 最適化 | 未着手（owner 限定クエリ、NAX 任意形状、tapconv、ReAE F16、2 コンテキスト並走、ANE） | — | — |
 | P8 FlashVSR | 未着手 | — | — |
 
