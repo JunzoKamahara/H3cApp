@@ -322,12 +322,12 @@ Output count rule (SwiftVR): call 1 (28 frames in) → 0 out; call 2 (24 in) →
 ### §6.4 Per-chunk compute (960×544 → 1920×1088, 24 frames, T=6) [estimate: from the formulas]
 
 - Geometry: output 1920×1088 (multiples of 32, no padding) → latent 120×68×48 → token grid W=60, H=34 → 2040 per latent frame → **N = 12,240** (first chunk T=7 → 14,280).
-- Windows: H=34 even layers `{0,16,18}`, odd `{0,8,18}`; W=60 even `{0,16,32,44}`, odd `{0,8,24,40,44}` → **Nw = 12 / 15, Lw = 1536**. Gathered rows 18,432 (1.51N) / 23,040 (1.88N). Owner widths: even layers h 16/16/2, w 16/16/12/16; odd layers h 8/10/16, w 8/16/16/4/16.
+- Windows: H=34 even layers `{0,16,18}`, odd `{0,8,18}`; W=60 even `{0,16,32,44}`, odd `{0,8,24,40,44}` → **Nw = 12 / 15, Lw = 1536**. Gathered rows 18,432 (1.51N) / 23,040 (1.88N). Owner widths: even layers h 16/16/2, w 16/16/16/12; odd layers h 8/10/16, w 8/16/16/4/16.
 - FLOPs per block: QKV 0.693 T, out 0.231 T, attn2 q 0.231 T, attn2 out 0.231 T, FFN 2.156 T → **linears 3.54 TFLOP**. Self-attention: full windows 0.348/0.435 T, **owner-only queries (exact) 0.231 T**, dense would be 1.84 T. Cross-attention 0.077 T. Gather/scatter ≈0.65 GB, elementwise ≈0.8 GB. Block ≈3.85 TFLOP, **chunk ≈116 TFLOP** (consistent with the H100's 328 ms ⇔ 353 TFLOP/s).
 - ReAE per chunk: encoder ≈1.9 T, decoder naive 15.0 T → **12.4 T with the upsample fold**. Total ≈**14.5 TFLOP** (12.5% of the DiT).
 - Time (assumptions: NAX BF16 14 TFLOP/s measured, int8 ≈ 2× [bench needed], MPSGraph SDPA 11 TFLOP/s, NAX tapconv ≈10 TFLOP/s, M4 Pro MPSGraph ≈6 TFLOP/s and F16 conv ≈5 TFLOP/s **[unmeasured]**):
 
-| | block | DiT×30 | ReAE | **middle chunk** | 5 s / 124 fr (5 chunks) | 60 s / 1440 fr (60 chunks) |
+| | block | DiT×30 | ReAE | **middle chunk** | 5 s / 124 fr (6 chunks: 28+4×24+1) | 60 s / 1440 fr (60 chunks) |
 |---|---|---|---|---|---|---|
 | M5 int8 | 127 lin + 21 attn + 7 cross + 10 ≈ 165 ms | 5.0 s | 1.45 s | **≈6.5 s** | ≈34 s | ≈6.5 min |
 | M5 BF16 | ≈291 ms | 8.7 s | 1.45 s | ≈10.2 s | ≈53 s | ≈10 min |

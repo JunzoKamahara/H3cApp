@@ -22,7 +22,7 @@ LIB_C := h3.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c \
 
 LIB_C += h3_video_vae.c h3_video_encoder.c h3_audio_vae.c \
 	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c h3_adaln_curve.c \
-	h3_quant.c h3_gguf.c
+	h3_quant.c h3_gguf.c h3_vsr_chunk.c h3_vsr_window.c
 LIB_M := h3_metal.m h3_gpu.m h3_tokenizer.m h3_av_writer.m h3_av_reader.m
 LIB_OBJ := $(LIB_C:.c=.o) $(LIB_M:.m=.o)
 
@@ -94,6 +94,11 @@ h3_generate_cli: tools/ccv_eval/h3_generate_cli.o $(LIB_OBJ) $(CCV_EXTRA_OBJ) \
 
 h3_tests: tests/test_h3.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
+
+# One-step VSR host geometry (chunk protocol, window layout, RoPE): no GPU,
+# no weights, always run. See UPSCALE_PLAN.md §9.
+h3_vsr_tests: tests/test_vsr.o h3_vsr_chunk.o h3_vsr_window.o
+	$(CC) -o $@ $^ -lm
 
 h3_metal_tests: tests/test_metal.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
@@ -176,13 +181,14 @@ h3_real_video_vae_test: tests/test_real_video_vae.o $(LIB_OBJ)
 h3_semantic_vae_test: tests/test_semantic_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-test: h3_tests h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
+test: h3_tests h3_vsr_tests h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
 	h3_audio_gpu_tests h3_determinism_tests h3_real_audio_vae_test \
 	h3_real_audio_encoder_test h3_real_video_encoder_test \
 	h3_real_qwen_vision_test h3_real_multimodal_text_test \
 	h3_real_ref_video_text_test
 
 	./h3_tests
+	./h3_vsr_tests
 	./h3_gguf_header_tests
 	./h3_quant_tests
 	@if test -f misc/fixtures/h3_dit.safetensors && \

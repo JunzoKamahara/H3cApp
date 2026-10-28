@@ -249,11 +249,11 @@ enum {
 };
 
 #define H3_PARAMS_DEFAULT { \
-    H3_DEFAULT_WIDTH, H3_DEFAULT_HEIGHT, H3_DEFAULT_FRAMES, H3_DEFAULT_STEPS, \
-    UINT64_C(42), NULL, NULL, NULL, NULL, 0, H3_REFERENCE_IMAGE_MATCH, \
-    1, H3_DEFAULT_DIT_LAYERS, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, \
-    NULL, NULL, NULL, \
-    NULL, 0, 0, H3_SAMPLER_EULER, 0.0f, NULL, 0.0, NULL, NULL, 0, 0, NULL \
+    .width = H3_DEFAULT_WIDTH, .height = H3_DEFAULT_HEIGHT, \
+    .frames = H3_DEFAULT_FRAMES, .steps = H3_DEFAULT_STEPS, \
+    .seed = UINT64_C(42), .reference_image_size = H3_REFERENCE_IMAGE_MATCH, \
+    .denoise_reuse = 1, .dit_layers = H3_DEFAULT_DIT_LAYERS, .core_reuse = 1, \
+    .sampler = H3_SAMPLER_EULER \
 }
 
 typedef struct {
