@@ -417,8 +417,18 @@ private final class DownloadStreamDelegate: NSObject, URLSessionDataDelegate {
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        fileHandle.write(data)
-        onProgress(Int64(data.count))
+        guard let continuation else { return }
+        do {
+            try fileHandle.write(contentsOf: data)
+            onProgress(Int64(data.count))
+        } catch {
+            // A full or unplugged disk: the old write(_:) raised an
+            // Objective-C exception that ended the app. Fail the download
+            // once instead and stop writing.
+            self.continuation = nil
+            dataTask.cancel()
+            continuation.resume(throwing: error)
+        }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {

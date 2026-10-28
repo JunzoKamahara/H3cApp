@@ -55,7 +55,13 @@ enum AIDisclosure {
 
     enum ExportError: LocalizedError {
         case cannotExport
-        var errorDescription: String? { String(localized: "書き出しの準備ができませんでした") }
+        case overSource
+        var errorDescription: String? {
+            switch self {
+            case .cannotExport: return String(localized: "書き出しの準備ができませんでした")
+            case .overSource: return String(localized: "元の動画と同じファイルには書き出せません")
+            }
+        }
     }
 
     /// Writes `source` to `destination` with the metadata, with the label in
@@ -63,26 +69,40 @@ enum AIDisclosure {
     /// players without HEVC), re-encoded at `quality` for those (書き出しの
     /// 画質). Otherwise the tracks are copied as they are (an H.264 video from
     /// before HEVC stays H.264 either way).
+    ///
+    /// The video is written to a hidden file next to `destination` and put
+    /// in its place only once it is complete, so a file already there stays
+    /// as it was if this fails. Writing over `source` itself is refused.
     static func export(_ source: URL, to destination: URL, withLabel: Bool, h264: Bool,
                        quality: VideoQuality) async throws {
+        guard !VideoUpscale.isSameFile(source, destination) else { throw ExportError.overSource }
+        let manager = FileManager.default
+        // Same folder, so the finished file moves into place, not copies.
+        let staging = destination.deletingLastPathComponent()
+            .appendingPathComponent(".h3c-export-\(UUID().uuidString).mp4")
+        defer { try? manager.removeItem(at: staging) }
         let asset = AVURLAsset(url: source)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw ExportError.cannotExport
         }
         let codec = await VideoCodec.of(track)
-        try? FileManager.default.removeItem(at: destination)
         if withLabel || (h264 && codec != .h264) {
-            try await VideoRewriter.write(asset, to: destination, codec: h264 ? .h264 : .hevc,
+            try await VideoRewriter.write(asset, to: staging, codec: h264 ? .h264 : .hevc,
                                           quality: quality.value,
                                           composition: withLabel ? try await labelComposition(for: asset) : nil,
                                           metadata: metadata())
-            return
+        } else {
+            guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
+                throw ExportError.cannotExport
+            }
+            session.metadata = metadata()
+            try await session.export(to: staging, as: .mp4)
         }
-        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
-            throw ExportError.cannotExport
+        if manager.fileExists(atPath: destination.path) {
+            _ = try manager.replaceItemAt(destination, withItemAt: staging)
+        } else {
+            try manager.moveItem(at: staging, to: destination)
         }
-        session.metadata = metadata()
-        try await session.export(to: destination, as: .mp4)
     }
 
     /// The video as it is, with the label drawn over its lower right: the

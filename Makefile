@@ -116,6 +116,10 @@ h3_audio_gpu_tests: tests/test_audio_gpu.o $(LIB_OBJ)
 h3_quant_tests: tests/test_quant.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# GGUF header parsing alone: no Apple frameworks or model weights.
+h3_gguf_header_tests: tests/test_gguf.o h3_gguf.o h3_safetensors.o h3_quant.o
+	$(CC) -o $@ $^ -lm $(MINOS_FLAG)
+
 h3_determinism_tests: tests/test_determinism.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
@@ -172,13 +176,14 @@ h3_real_video_vae_test: tests/test_real_video_vae.o $(LIB_OBJ)
 h3_semantic_vae_test: tests/test_semantic_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-test: h3_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
+test: h3_tests h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
 	h3_audio_gpu_tests h3_determinism_tests h3_real_audio_vae_test \
 	h3_real_audio_encoder_test h3_real_video_encoder_test \
 	h3_real_qwen_vision_test h3_real_multimodal_text_test \
 	h3_real_ref_video_text_test
 
 	./h3_tests
+	./h3_gguf_header_tests
 	./h3_quant_tests
 	@if test -f misc/fixtures/h3_dit.safetensors && \
 	         test -f misc/fixtures/h3_dit_bf16.safetensors; then \
@@ -284,5 +289,5 @@ clean:
 		h3_real_multimodal_text_test h3_real_ref_video_text_test \
 		h3_real_dit_schedule_test h3_real_dit_test h3_semantic_dit_test \
 		h3_real_video_vae_test h3_semantic_vae_test \
-	h3_dit_bench h3_dit_bench_864 build_adaln_curve h3_adaln_curve_check h3_quant_tests h3_weight_compare h3_gguf_tool \
+	h3_dit_bench h3_dit_bench_864 build_adaln_curve h3_adaln_curve_check h3_quant_tests h3_gguf_header_tests h3_weight_compare h3_gguf_tool \
 	libh3.a *.o *.d tests/*.o tests/*.d
