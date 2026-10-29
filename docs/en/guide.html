@@ -206,7 +206,7 @@
             <tr><th scope="row">SwiftVR (AI video super-resolution, research)</th><td>An AI that looks at the whole video (a one-step restoration model built on Wan2.2) enlarges it while drawing texture and detail back in</td><td>When skin, hair or fabric should get its texture back. It works 24 frames at a time and takes far longer than Real-ESRGAN. Its weights are under a research, non-commercial license, so they are not bundled: the first time, press "モデルを準備…" to download and convert them (about 20 GB; 4.6 GB after conversion on an M5)</td></tr>
             <tr><th scope="row">SwiftVR, restore at 4x then shrink (gentler texture; research)</th><td>The same model restores at 4x and the result is brought down to the chosen size with the standard method; large frames are restored as overlapping tiles</td><td>Close-ups of faces and other cases where eyes and brows should not be redrawn and the result should stay true to the source. About five times SwiftVR's time (about 4 minutes for 5 s of 544×960 at 2x on an M5)</td></tr>
           </tbody>
-          <caption>Upscalers (v0.6.8). Every upscaler takes every scale.</caption>
+          <caption>Upscalers (v0.7.2). Every upscaler takes every scale.</caption>
         </table>
       </div>
       <ul>
@@ -214,7 +214,7 @@
         <li><strong>Sound and records</strong>: the sound and the file's AI-generated information stay as they are.</li>
         <li><strong>Continuing</strong> (from v0.6.9): an enlarged copy can be continued like any video. The continuation is made at the original's size, then enlarged the same way, with the same scale and upscaler, into a copy of its own; “<span class="ui">Join and Export</span>” joins the enlarged copies. A copy of an enlarged copy can't be continued, nor can an enlarged copy with a joined length.</li>
         <li><strong>Where it saves</strong>: the video replaces the file only once complete, so a file already there survives a failure or a cancel. It can't be saved over the original video itself.</li>
-        <li><strong>SwiftVR time</strong>: on a 24 GB M5, enlarging a 960×544 video to 1920×1088 takes about 8 s per 24-frame chunk, about 40 s for a 5-second clip. It cannot run while a generation, cache build or import is running (it needs the whole GPU).</li>
+        <li><strong>SwiftVR time</strong>: on a 24 GB M5, enlarging a 960×544 video to 1920×1088 takes about 8 s per 24-frame chunk, about 40 s for a 5-second clip; "restore at 4x then shrink" takes about five times that (about 4 minutes for 5 s of 544×960 at 2x). It cannot run while a generation, cache build or import is running (it needs the whole GPU).</li>
         <li><strong>License</strong>: the app includes Real-ESRGAN's pretrained weights (BSD-3-Clause). SwiftVR's weights are under the SwiftVR Research License (research, non-commercial) and are not included; you read and accept the license, then the app downloads them from Hugging Face. Commercial use needs the authors' permission.</li>
       </ul>
     </section>
