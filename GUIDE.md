@@ -101,7 +101,9 @@ Good to know:
     brightness (the model alone comes out slightly brighter). For 2x there
     is a toggle, "4倍で生成してから縮小する": the model restores at 4x and the
     result is shrunk to 2x, which gives a gentler texture on soft sources at
-    about four times the time; the choice also applies to the API.
+    about four times the time. When the 4x intermediate does not fit the
+    GPU's memory (on a 24 GB Mac, inputs beyond about 448x256), it quietly
+    stays at 2x. The choice also applies to the API.
 
   All of them run inside the app, with no other program. Real-ESRGAN's
   pretrained weights (BSD-3-Clause) are included in the app.

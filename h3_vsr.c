@@ -229,7 +229,7 @@ int h3_vsr_check_requirements(const h3_vsr *vsr, int in_w, int in_h,
     uint64_t budget = 0;
     if (h3_metal_probe(&device, probe_error, sizeof(probe_error)))
         budget = device.recommended_working_set ? device.recommended_working_set : device.physical_memory;
-    if (budget && out->gpu_bytes > budget * 9 / 10) {
+    if (budget && out->gpu_bytes > budget * 9 / 10 && !getenv("H3_VSR_IGNORE_BUDGET")) {   /* the env: measuring */
         snprintf(out->reason, sizeof(out->reason),
                  "about %.1f GB of GPU memory is needed; this Mac offers %.1f GB",
                  (double)(out->gpu_bytes / 1000000) / 1e3, (double)(budget / 1000000) / 1e3);
