@@ -1008,3 +1008,17 @@
 "動画の取り込み中は%@で拡大できません。取り込みが終わってから拡大してください" = "%@ can't enlarge while a video is being imported. Enlarge once the import is finished";
 "SwiftVRの重みはありますが、このMac用に変換されていません。「モデルを準備…」で変換すると選べます。" = "SwiftVR's weights are here but not converted for this Mac. Convert them with \"Set up model…\" to choose it.";
 "SwiftVRのモデルが入っていません。「モデルを準備…」で重み（約20GB）をダウンロードして変換すると選べます。" = "The SwiftVR model is not installed. Download its weights (about 20 GB) and convert them with \"Set up model…\" to choose it.";
+
+/* Removing SwiftVR's original weights after conversion: SwiftVRModelSetup.swift, VideoUpscale.swift, ModelManagerView.swift */
+"変換が終わったら、元の重み（約%@）を削除する" = "Delete the original weights (about %@) once converted";
+"元の重みを削除" = "Delete Original Weights";
+"ダウンロードした元の重み（%@）を削除し、このMac用に変換したキャッシュだけを残します。SwiftVRはこのまま使えます。アプリの更新でキャッシュの形式が変わったときなど、変換し直すときは、もう一度ダウンロードが必要です。" = "Deletes the downloaded original weights (%@) and keeps only the cache converted for this Mac. SwiftVR keeps working. Converting again, for example when an app update changes the cache format, needs a new download.";
+"変換したあとで削除しました（変換し直すときは、もう一度ダウンロードします）" = "Deleted after conversion (converting again downloads them again)";
+"元の重みを削除…" = "Delete Original Weights…";
+"変換したキャッシュだけを残して、ダウンロードした約20GBの重みを削除します" = "Deletes the downloaded weights (about 20 GB) and keeps only the converted cache";
+"すべて削除…" = "Delete All…";
+"元の重みを削除できませんでした（詳細: %@）" = "Could not delete the original weights (details: %@)";
+"変換は終わりましたが、元の重みを削除できませんでした（詳細: %@）" = "The conversion finished, but the original weights could not be deleted (details: %@)";
+"元の重みを削除したあとで、変換したキャッシュが使えなくなりました（アプリの更新でキャッシュの形式が変わったときなど）。「モデルを準備…」で重みをもう一度ダウンロードして変換すると選べます。" = "The converted cache can no longer be used and the original weights were deleted (for example, an app update changed the cache format). Download the weights again and convert them with \"Set up model…\" to choose it.";
+"使えます（%@で変換済み、元の重みは削除済み、%@）" = "Ready (converted as %@, original weights deleted, %@)";
+"元の重みを削除したあとで、キャッシュが使えなくなりました。もう一度ダウンロードと変換が必要です。" = "The cache can no longer be used and the original weights were deleted. Download and convert them again.";

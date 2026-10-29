@@ -495,7 +495,13 @@ are in `UPSCALE_PLAN.md`; the short version:
   4.6 GB) on a GPU with tensor hardware (M5), BF16 (8.9 GB) elsewhere. The
   constant conditioning (timestep 1000, the fixed prompt's cross-attention
   keys and values) is precomputed into the cache, so none of the text or
-  time embedders ever run.
+  time embedders ever run. Once converted, the 20 GB original
+  (`transformer/diffusion_pytorch_model.safetensors`) can be deleted: its
+  fingerprint is written to `transformer/H3VSR_REMOVED` first, and the cache
+  is then checked against that record instead of the file
+  (`h3_vsr_remove_original_weights`). Running reads only the cache and the
+  small files (config.json, the ReAE, the prompt embedding), so the output is
+  the same byte for byte. Converting again needs a new download.
 - **Pipeline.** The input is bilinearly resized to the target, padded to a
   multiple of 32, encoded by the ReAE (16x spatial, 4x temporal, 48
   channels) in chunks of 28 then 24 frames with the autoencoder's state

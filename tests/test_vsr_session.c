@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 static int tests_run;
@@ -376,6 +377,66 @@ int main(void) {
         unsetenv("H3_VSR_TILES");
         unsetenv("H3_VSR_TILE_OVERLAP");
         free(whole); free(tiled); free(again); free(video);
+    }
+    /* Removing the F32 weights after conversion: the cache keeps matching
+     * through the record, a new open gives the same frames, and a rebuild
+     * asks for the weights again. */
+    {
+        char weights[4300], record[4300];
+        snprintf(weights, sizeof(weights), "%s/transformer/diffusion_pytorch_model.safetensors", model_dir);
+        snprintf(record, sizeof(record), "%s/transformer/H3VSR_REMOVED", model_dir);
+        h3_vsr_info info;
+        CHECK(h3_vsr_inspect_dir(model_dir, &info, error, sizeof(error)) && info.original_weights_present == 1);
+        uint8_t *video = make_video(29, in_w, in_h, 1);
+        int total = 0, total2 = 0;
+        uint8_t *before = run_video(vsr, video, 29, in_w, in_h, out_w, out_h, 1, &total, -1);
+        /* Not without a matching cache: a cache made for other weights. */
+        char moved[4300];
+        snprintf(moved, sizeof(moved), "%s.moved", cache_path);
+        CHECK(rename(cache_path, moved) == 0);
+        uint64_t freed = 0;
+        CHECK(!h3_vsr_remove_original_weights(model_dir, &freed, error, sizeof(error)) && strstr(error, "convert"));
+        CHECK(access(weights, F_OK) == 0 && access(record, F_OK) != 0);
+        CHECK(rename(moved, cache_path) == 0);
+        struct stat st;
+        CHECK(stat(weights, &st) == 0);
+        CHECK(h3_vsr_remove_original_weights(model_dir, &freed, error, sizeof(error)));
+        CHECK(freed == (uint64_t)st.st_size && freed > 0);
+        CHECK(access(weights, F_OK) != 0 && access(record, F_OK) == 0);
+        CHECK(h3_vsr_inspect_dir(model_dir, &info, error, sizeof(error)) && info.original_weights_present == 0);
+        CHECK(h3_vsr_cache_matches(cache_path, model_dir));
+        CHECK(!h3_vsr_remove_original_weights(model_dir, &freed, error, sizeof(error)));
+        h3_vsr *vsr3 = h3_vsr_open(model_dir, &params, NULL, NULL, error, sizeof(error));
+        if (!vsr3) fprintf(stderr, "%s\n", error);
+        CHECK(vsr3 != NULL);
+        uint8_t *after = run_video(vsr3, video, 29, in_w, in_h, out_w, out_h, 1, &total2, -1);
+        CHECK(total == 29 && total2 == 29 && memcmp(before, after, (size_t)29 * out_h * out_w * 4) == 0);
+        h3_vsr_close(vsr3);
+        char rebuilt[4300];
+        snprintf(rebuilt, sizeof(rebuilt), "%s.rebuilt", cache_path);
+        CHECK(!h3_vsr_build_cache(model_dir, rebuilt, H3_VSR_PRECISION_BF16, "h3_shaders.metal", NULL, NULL,
+                                  error, sizeof(error)) && strstr(error, "download them again"));
+        CHECK(access(rebuilt, F_OK) != 0);
+        /* A damaged record matches nothing. */
+        FILE *damaged = fopen(record, "w");
+        CHECK(damaged != NULL);
+        fputs("h3vsr-removed 1 10 00000000000000000000000000000000000000000000000000000000000000ff\n", damaged);
+        fclose(damaged);
+        CHECK(!h3_vsr_cache_matches(cache_path, model_dir));
+        /* Downloaded again (new weights, new mtime): the old cache no longer
+         * matches, a rebuild works and drops the record. */
+        char again_dir[4300], again_weights[4400];
+        snprintf(again_dir, sizeof(again_dir), "%s/again", dir);
+        write_model(again_dir);
+        snprintf(again_weights, sizeof(again_weights), "%s/transformer/diffusion_pytorch_model.safetensors", again_dir);
+        struct timeval later[2] = {{st.st_mtime + 100, 0}, {st.st_mtime + 100, 0}};
+        CHECK(utimes(again_weights, later) == 0 && rename(again_weights, weights) == 0);
+        CHECK(!h3_vsr_cache_matches(cache_path, model_dir));
+        CHECK(h3_vsr_build_cache(model_dir, cache_path, H3_VSR_PRECISION_BF16, "h3_shaders.metal", NULL, NULL,
+                                 error, sizeof(error)));
+        CHECK(access(record, F_OK) != 0 && h3_vsr_cache_matches(cache_path, model_dir));
+        printf("  original weights removed after conversion: same 29 frames, rebuild needs them again\n");
+        free(before); free(after); free(video);
     }
     h3_vsr_close(vsr);
     char command[4200];

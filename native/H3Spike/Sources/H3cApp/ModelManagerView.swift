@@ -566,7 +566,14 @@ struct ModelManagerView: View {
             return String(localized: "準備中です（\(SwiftVRSetup.shared.phase.apiText)）")
         }
         if VideoUpscaler.swiftVR.isAvailable {
-            return String(localized: "使えます（\(SwiftVRModel.usesInt8 ? "int8" : "BF16")で変換済み、\(ByteCountFormatter.string(fromByteCount: SwiftVRModel.bytesOnDisk(), countStyle: .file))）")
+            let size = ByteCountFormatter.string(fromByteCount: SwiftVRModel.bytesOnDisk(), countStyle: .file)
+            if SwiftVRModel.originalRemoved {
+                return String(localized: "使えます（\(SwiftVRModel.usesInt8 ? "int8" : "BF16")で変換済み、元の重みは削除済み、\(size)）")
+            }
+            return String(localized: "使えます（\(SwiftVRModel.usesInt8 ? "int8" : "BF16")で変換済み、\(size)）")
+        }
+        if SwiftVRModel.originalRemoved {
+            return String(localized: "元の重みを削除したあとで、キャッシュが使えなくなりました。もう一度ダウンロードと変換が必要です。")
         }
         if SwiftVRModel.weightsPresent { return String(localized: "重みはありますが、このMac用に変換されていません。") }
         return String(localized: "まだありません。約20GBのダウンロードと変換が必要です。")

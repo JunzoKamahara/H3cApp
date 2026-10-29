@@ -95,7 +95,11 @@ Good to know:
     bundled: the first time, choose SwiftVR in the sheet and press
     "モデルを準備…" (also in モデル管理 → 拡大モデル), read the license, and
     the app downloads the weights (about 20 GB, resumable) and converts them
-    for this Mac (about 4.6 GB on an M5, 8.9 GB otherwise). It waits for a
+    for this Mac (about 4.6 GB on an M5, 8.9 GB otherwise). Once converted,
+    "元の重みを削除…" in the setup sheet deletes the 20 GB original weights
+    (tick "変換が終わったら、元の重みを削除する" to have it done
+    automatically). The converted cache stays and keeps working; converting
+    again, for example after an app update, needs a new download. It waits for a
     running generation to finish, since it needs the whole GPU
     (UPSCALE_PLAN.md). Its output is brought back to the input's average
     brightness (the model alone comes out slightly brighter).

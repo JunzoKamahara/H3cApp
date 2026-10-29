@@ -198,6 +198,10 @@ typedef struct {
     int int8_supported;         /* tensor hardware (M5) on this machine */
     char license_id[64];        /* "SwiftVR-Research-License" / "Apache-2.0" */
     int commercial_use_allowed;
+    /* 1: transformer/diffusion_pytorch_model.safetensors is here; 0: it was
+     * removed after conversion (h3_vsr_remove_original_weights) and only a
+     * cache that matches its recorded fingerprint can run. */
+    int original_weights_present;
 } h3_vsr_info;
 
 /* Reads config.json and the safetensors headers only. */
@@ -213,6 +217,15 @@ int h3_vsr_inspect_dir(const char *model_dir, h3_vsr_info *info,
 int h3_vsr_cache_path(const char *model_dir, h3_vsr_precision precision,
                       char *path, size_t size);
 int h3_vsr_cache_matches(const char *cache_path, const char *model_dir);
+/* Deletes the 20 GB F32 transformer weights once a cache matches them,
+ * keeping their fingerprint in transformer/H3VSR_REMOVED (written first,
+ * atomically) so that cache still matches afterwards. The small files
+ * (config.json, reae, prompt embedding) stay: the engine reads them at load
+ * time. Building a cache again then needs the weights downloaded again.
+ * Refuses when no cache in model_dir (int8 or BF16) matches the weights.
+ * *freed_bytes (may be NULL) is the size of the deleted file. */
+int h3_vsr_remove_original_weights(const char *model_dir, uint64_t *freed_bytes,
+                                   char *error, size_t error_size);
 int h3_vsr_build_cache(const char *model_dir, const char *cache_path,
                        h3_vsr_precision precision,
                        const char *shader_source_path,

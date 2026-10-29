@@ -227,12 +227,27 @@ extension GenerationViewModel {
                 if upscaler.isSwiftVR {
                     item["model_directory"] = SwiftVRModel.directory
                     item["model_installed"] = SwiftVRModel.weightsPresent
+                    item["original_removed"] = SwiftVRModel.originalRemoved
                     item["cache"] = SwiftVRModel.cachePath as Any
                     item["license_accepted"] = SwiftVRModel.licenseAcceptedAt != nil
                     item["setup"] = SwiftVRSetup.shared.phase.apiText
                 }
                 return item
             })
+        case ("POST", "/api/upscalers/swiftVR/remove-original"):
+            // Deletes the downloaded F32 weights once converted; the cache
+            // keeps running (converting again needs a new download).
+            guard !SwiftVRSetup.shared.isBusy else { return .error(409, "the SwiftVR model is being set up") }
+            guard SwiftVRModel.weightsPresent else { return .error(409, "the original SwiftVR weights are not here") }
+            guard SwiftVRModel.originalRemovable else {
+                return .error(409, "the SwiftVR weights are not converted for this Mac yet")
+            }
+            do {
+                let freed = try SwiftVRModel.removeOriginalWeights()
+                return .json(200, ["ok": true, "freed_bytes": freed, "cache": SwiftVRModel.cachePath as Any])
+            } catch {
+                return .error(500, error.localizedDescription)
+            }
         case ("GET", "/api/loras"):
             return .json(200, library.loras.map {
                 ["id": $0.id.uuidString, "name": $0.name, "path": $0.path,

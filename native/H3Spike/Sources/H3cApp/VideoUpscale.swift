@@ -113,6 +113,9 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         if isAvailable { return nil }
         switch self {
         case .swiftVR, .swiftVRFourX:
+            if SwiftVRModel.originalRemoved {
+                return String(localized: "元の重みを削除したあとで、変換したキャッシュが使えなくなりました（アプリの更新でキャッシュの形式が変わったときなど）。「モデルを準備…」で重みをもう一度ダウンロードして変換すると選べます。")
+            }
             if SwiftVRModel.weightsPresent {
                 return String(localized: "SwiftVRの重みはありますが、このMac用に変換されていません。「モデルを準備…」で変換すると選べます。")
             }

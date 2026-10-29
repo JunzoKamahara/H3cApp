@@ -17,6 +17,9 @@ public struct H3VSRInfo: Sendable {
     public let weightBytesInt8: UInt64
     public let minOutputSide: Int
     public let maxOutputSide: Int
+    /// false once the F32 transformer weights were removed after conversion
+    /// (only the matching cache runs then).
+    public let originalWeightsPresent: Bool
 }
 
 public enum H3VSRError: LocalizedError {
@@ -134,7 +137,8 @@ public final class H3VideoSuperResolver: @unchecked Sendable {
                          firstChunkFrames: Int(info.first_chunk_frames), chunkFrames: Int(info.chunk_frames),
                          int8Supported: info.int8_supported != 0,
                          weightBytesBF16: info.weight_bytes_bf16, weightBytesInt8: info.weight_bytes_int8,
-                         minOutputSide: Int(info.min_output_side), maxOutputSide: Int(info.max_output_side))
+                         minOutputSide: Int(info.min_output_side), maxOutputSide: Int(info.max_output_side),
+                         originalWeightsPresent: info.original_weights_present != 0)
     }
 
     /// Where the cache of `modelDirectory` goes for a precision.
@@ -164,6 +168,22 @@ public final class H3VideoSuperResolver: @unchecked Sendable {
 
     public static func cacheMatches(path: String, modelDirectory: String) -> Bool {
         path.withCString { p in modelDirectory.withCString { d in h3_vsr_cache_matches(p, d) != 0 } }
+    }
+
+    /// Deletes the F32 transformer weights once a cache matches them (the
+    /// cache keeps working; converting again needs them downloaded again).
+    /// Returns the bytes freed.
+    @discardableResult
+    public static func removeOriginalWeights(modelDirectory: String) throws -> UInt64 {
+        var freed: UInt64 = 0
+        var error = [CChar](repeating: 0, count: 512)
+        let ok = modelDirectory.withCString { dir in
+            error.withUnsafeMutableBufferPointer { buffer in
+                h3_vsr_remove_original_weights(dir, &freed, buffer.baseAddress, buffer.count)
+            }
+        }
+        guard ok != 0 else { throw H3VSRError.failed(String(cString: error)) }
+        return freed
     }
 
     /// Builds the cache from the downloaded weights, reporting per block.

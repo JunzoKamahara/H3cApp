@@ -60,7 +60,8 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `GET` | `/api/result/video` | 現在の結果を`video/mp4`としてストリーミング。結果が無いか、次のジョブの`generate()`呼び出しで削除された後は`404`。 |
 | `GET` | `/api/models` | 登録済みH3モデルディレクトリ一覧（id・名前・パス・アクティブかどうか）。 |
 | `GET` | `/api/loras` | 登録済みLoRAファイル一覧（id・名前・パス・強さ・推奨ステップ数・オンかどうか、モデル管理で設定したステップの進め方`sampler`と`audio_shift`、ファイルの説明による推奨`recommended_sampling`。ファイルを読み込み中は`null`）。 |
-| `GET` | `/api/upscalers` | 拡大の方法の一覧：`id`・`label`・`available`と、選べないときの`reason`（このMacでは使えない、モデルが入っていない）、生成・キャッシュ作成・取り込みの間だけ待たせるときの`busy_reason`。`swiftVR`にはさらに`model_directory`・`model_installed`・`cache`（動かすときに読む変換済み`.h3vc`、無ければnull）・`license_accepted`・`setup`（`idle`／`listing`／`downloading`／`converting n/30`／`failed: …`／`done`）。ダウンロード（約20GB、SwiftVR Research License）と変換はアプリ側で始める（動画を拡大 → モデルを準備…、またはモデル管理 → 拡大モデル）。 |
+| `GET` | `/api/upscalers` | 拡大の方法の一覧：`id`・`label`・`available`と、選べないときの`reason`（このMacでは使えない、モデルが入っていない）、生成・キャッシュ作成・取り込みの間だけ待たせるときの`busy_reason`。`swiftVR`にはさらに`model_directory`・`model_installed`（元の重みがあるか）・`original_removed`（変換したあとで元の重みを削除したか）・`cache`（動かすときに読む変換済み`.h3vc`、無ければnull）・`license_accepted`・`setup`（`idle`／`listing`／`downloading`／`converting n/30`／`failed: …`／`done`）。ダウンロード（約20GB、SwiftVR Research License）と変換はアプリ側で始める（動画を拡大 → モデルを準備…、またはモデル管理 → 拡大モデル）。 |
+| `POST` | `/api/upscalers/swiftVR/remove-original` | 変換したあとで、ダウンロードした元の重み（約20GB）を削除します。変換したキャッシュは残り、SwiftVRはそのまま使えます。`{"ok", "freed_bytes", "cache"}`を返します。元の重みが無いとき、このMac用にまだ変換していないとき、準備の最中は409。変換し直すには、もう一度ダウンロードが必要です。 |
 | `GET` | `/api/project` | 開いているプロジェクト（名前・パス・本数・動画一覧（ファイル・シード・完成日時・生成時間・`continued_from`・`can_continue`、つないだ動画なら`joined_clips`・`planned_clips`））。 |
 | `POST` | `/api/project/new` | `{"name", "directory"?}` 今のフォームからプロジェクトを作って開く（既定の場所は`~/Movies/H3cApp`）。 |
 | `POST` | `/api/project/open` | `{"path"}` プロジェクトのフォルダを開く。フォームは保存時の状態になる。 |

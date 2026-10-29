@@ -12,8 +12,11 @@ enum SwiftVRModel {
     static let repo = "H-oliday/SwiftVR"
     static let repoURL = URL(string: "https://huggingface.co/H-oliday/SwiftVR")!
     static let licenseURL = URL(string: "https://huggingface.co/H-oliday/SwiftVR/blob/main/LICENSE")!
-    /// What the engine reads (h3_vsr_inspect_dir / h3_vsr_open).
-    static let requiredFiles = ["transformer/config.json", "transformer/diffusion_pytorch_model.safetensors",
+    /// The 20 GB F32 transformer weights: only converting reads them, so
+    /// they can be removed once converted (h3_vsr_remove_original_weights).
+    static let transformerWeights = "transformer/diffusion_pytorch_model.safetensors"
+    /// What converting reads (h3_vsr_inspect_dir / h3_vsr_build_cache).
+    static let requiredFiles = ["transformer/config.json", transformerWeights,
                                 "reae.safetensors", "prompt_embedding.safetensors"]
     /// Kept beside them: the license text and the model card.
     static let downloadedFiles = requiredFiles + ["LICENSE", "README.md"]
@@ -28,6 +31,32 @@ enum SwiftVRModel {
 
     static var weightsPresent: Bool {
         requiredFiles.allSatisfy { FileManager.default.fileExists(atPath: directory + "/" + $0) }
+    }
+
+    /// The transformer weights were removed after conversion (the engine's
+    /// record of them is here, the file is not).
+    static var originalRemoved: Bool {
+        !FileManager.default.fileExists(atPath: directory + "/" + transformerWeights)
+            && FileManager.default.fileExists(atPath: directory + "/transformer/H3VSR_REMOVED")
+    }
+
+    /// Bytes of the transformer weights when they are here.
+    static var originalBytes: Int64? {
+        (try? FileManager.default.attributesOfItem(atPath: directory + "/" + transformerWeights)[.size]) as? Int64
+    }
+
+    /// Whether the original weights can be removed now: here, and a
+    /// converted cache runs without them.
+    static var originalRemovable: Bool { weightsPresent && cachePath != nil }
+
+    /// The setup's option: remove the original weights once converted.
+    static let removeOriginalAfterConversionKey = "h3c-app.swiftVRRemoveOriginalAfterConversion"
+
+    /// Deletes the transformer weights, keeping the converted cache usable.
+    /// Returns the bytes freed.
+    @discardableResult
+    static func removeOriginalWeights() throws -> Int64 {
+        Int64(try H3VideoSuperResolver.removeOriginalWeights(modelDirectory: directory))
     }
 
     /// The cache this Mac can run from, when the weights are converted.
@@ -101,6 +130,9 @@ final class SwiftVRSetup: ObservableObject {
     }
 
     @Published private(set) var phase: Phase = .idle
+    /// Why removing the original weights after the conversion failed (the
+    /// conversion itself succeeded).
+    @Published private(set) var removalNote: String?
     let downloader = ModelDownloader()
     private var task: Task<Void, Never>?
 
@@ -136,6 +168,15 @@ final class SwiftVRSetup: ObservableObject {
             guard !Task.isCancelled else { return }
             try await convert()
             guard !Task.isCancelled else { return }
+            removalNote = nil
+            if UserDefaults.standard.bool(forKey: SwiftVRModel.removeOriginalAfterConversionKey),
+               SwiftVRModel.originalRemovable {
+                do {
+                    try SwiftVRModel.removeOriginalWeights()
+                } catch {
+                    removalNote = String(localized: "変換は終わりましたが、元の重みを削除できませんでした（詳細: \(error.localizedDescription)）")
+                }
+            }
             phase = .done
         } catch is CancellationError {
             phase = .idle
@@ -211,6 +252,8 @@ struct SwiftVRSetupView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var agreed = SwiftVRModel.licenseAcceptedAt != nil
     @State private var confirmingRemoval = false
+    @State private var confirmingOriginalRemoval = false
+    @AppStorage(SwiftVRModel.removeOriginalAfterConversionKey) private var removeOriginalAfterConversion = false
     @State private var removalError: String?
     /// Bumped after a removal so the installed state is read again.
     @State private var version = 0
@@ -218,6 +261,7 @@ struct SwiftVRSetupView: View {
     private var palette: H3Palette { H3Palette(colorScheme) }
 
     private var installed: Bool { _ = version; return SwiftVRModel.weightsPresent }
+    private var originalRemoved: Bool { _ = version; return SwiftVRModel.originalRemoved }
     private var converted: Bool { _ = version; return SwiftVRModel.cachePath != nil }
 
     private func gigabytes(_ bytes: Int64) -> String {
@@ -237,6 +281,14 @@ struct SwiftVRSetupView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .disabled(setup.isBusy)
+            if !converted {
+                Toggle(isOn: $removeOriginalAfterConversion) {
+                    Text("変換が終わったら、元の重み（約\(gigabytes(SwiftVRModel.approximateDownloadBytes))）を削除する")
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .disabled(setup.isBusy)
+            }
             Divider()
             statusRows
             progressView
@@ -247,13 +299,19 @@ struct SwiftVRSetupView: View {
             footer
         }
         .padding(H3Spacing.lg)
-        .frame(width: 560, height: 520)
+        .frame(width: 600, height: 560)
         .background(palette.canvas)
         .alert("SwiftVRのモデルを削除", isPresented: $confirmingRemoval) {
             Button("削除", role: .destructive) { remove() }
             Button("キャンセル", role: .cancel) {}
         } message: {
             Text("ダウンロードした重みと変換したキャッシュ（計\(gigabytes(SwiftVRModel.bytesOnDisk()))）を削除します。また使うには、もう一度ダウンロードと変換が必要です。")
+        }
+        .alert("元の重みを削除", isPresented: $confirmingOriginalRemoval) {
+            Button("削除", role: .destructive) { removeOriginal() }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("ダウンロードした元の重み（\(gigabytes(SwiftVRModel.originalBytes ?? SwiftVRModel.approximateDownloadBytes))）を削除し、このMac用に変換したキャッシュだけを残します。SwiftVRはこのまま使えます。アプリの更新でキャッシュの形式が変わったときなど、変換し直すときは、もう一度ダウンロードが必要です。")
         }
     }
 
@@ -280,7 +338,10 @@ struct SwiftVRSetupView: View {
         Grid(alignment: .leading, horizontalSpacing: H3Spacing.md, verticalSpacing: 6) {
             GridRow {
                 Text("重み").font(.caption).foregroundStyle(palette.textSecondary)
-                Text(installed ? String(localized: "ダウンロード済み") : String(localized: "まだありません")).font(.caption)
+                Text(installed ? String(localized: "ダウンロード済み")
+                     : originalRemoved ? String(localized: "変換したあとで削除しました（変換し直すときは、もう一度ダウンロードします）")
+                     : String(localized: "まだありません")).font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             GridRow {
                 Text("変換").font(.caption).foregroundStyle(palette.textSecondary)
@@ -331,8 +392,12 @@ struct SwiftVRSetupView: View {
         case .done:
             Text("SwiftVRを使えるようになりました。「動画を拡大」で選べます。")
                 .font(.caption).foregroundStyle(palette.textSecondary)
+            if let note = setup.removalNote {
+                Text(note).font(.caption).foregroundStyle(palette.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         case .idle:
-            if !installed || !converted {
+            if !converted {
                 let needed = (installed ? 0 : SwiftVRModel.approximateDownloadBytes) + (converted ? 0 : SwiftVRModel.approximateCacheBytes)
                 let space = downloadSpaceCheck(needed: needed, destination: SwiftVRModel.directory)
                 Text(space.text).font(.caption)
@@ -352,14 +417,19 @@ struct SwiftVRSetupView: View {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: SwiftVRModel.directory)])
             }
             .disabled(!FileManager.default.fileExists(atPath: SwiftVRModel.directory))
-            Button("削除…") { confirmingRemoval = true }
+            if converted && installed {
+                Button("元の重みを削除…") { confirmingOriginalRemoval = true }
+                    .disabled(setup.isBusy)
+                    .help("変換したキャッシュだけを残して、ダウンロードした約20GBの重みを削除します")
+            }
+            Button("すべて削除…") { confirmingRemoval = true }
                 .disabled(setup.isBusy || !FileManager.default.fileExists(atPath: SwiftVRModel.directory))
             Spacer()
             Button("閉じる") { close() }
                 .keyboardShortcut(.cancelAction)
             if setup.isBusy {
                 Button("中止") { setup.cancel() }
-            } else if !(installed && converted) {
+            } else if !converted {
                 Button(installed ? String(localized: "変換する") : String(localized: "ダウンロードして変換する")) {
                     setup.start()
                 }
@@ -368,6 +438,16 @@ struct SwiftVRSetupView: View {
                 .disabled(!agreed || busy)
             }
         }
+    }
+
+    private func removeOriginal() {
+        do {
+            try SwiftVRModel.removeOriginalWeights()
+            removalError = nil
+        } catch {
+            removalError = String(localized: "元の重みを削除できませんでした（詳細: \(error.localizedDescription)）")
+        }
+        version += 1
     }
 
     private func remove() {

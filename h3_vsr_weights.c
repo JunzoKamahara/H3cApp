@@ -59,6 +59,48 @@ static int join(char *out, size_t size, const char *a, const char *b) {
 }
 
 /* ---------------------------------------------------------------- */
+/* The record left when the F32 transformer weights are removed after
+ * conversion: one line, "h3vsr-removed 1 <bytes> <64 hex fingerprint>". */
+
+#define H3_VSR_TRANSFORMER_FILE "transformer/diffusion_pytorch_model.safetensors"
+#define H3_VSR_REMOVED_RECORD "transformer/H3VSR_REMOVED"
+
+static int read_removed_record(const char *model_dir, uint8_t out[32]) {
+    char path[4096];
+    if (!join(path, sizeof(path), model_dir, H3_VSR_REMOVED_RECORD)) return 0;
+    FILE *file = fopen(path, "r");
+    if (!file) return 0;
+    char line[256] = {0}, hex[80] = {0};
+    unsigned long long bytes = 0;
+    int version = 0;
+    int ok = fgets(line, sizeof(line), file) != NULL &&
+             sscanf(line, "h3vsr-removed %d %llu %70s", &version, &bytes, hex) == 3 &&
+             version == 1 && strlen(hex) == 64;
+    fclose(file);
+    for (int i = 0; ok && i < 32; i++) {
+        unsigned value = 0;
+        ok = sscanf(hex + 2 * i, "%2x", &value) == 1;
+        out[i] = (uint8_t)value;
+    }
+    return ok;
+}
+
+/* The transformer's fingerprint: from its safetensors when they are here,
+ * else from the record of their removal. */
+static int transformer_fingerprint(const char *model_dir, uint8_t out[32]) {
+    char path[4096], transformer_dir[4096], error[256];
+    memset(out, 0, 32);
+    if (!join(path, sizeof(path), model_dir, H3_VSR_TRANSFORMER_FILE)) return 0;
+    if (!file_exists(path)) return read_removed_record(model_dir, out);
+    if (!join(transformer_dir, sizeof(transformer_dir), model_dir, "transformer")) return 0;
+    h3_weight_store *store = h3_weight_store_open(transformer_dir, error, sizeof(error));
+    if (!store) return 0;
+    h3_weight_store_fingerprint(store, out);
+    h3_weight_store_free(store);
+    return 1;
+}
+
+/* ---------------------------------------------------------------- */
 /* config.json */
 
 static const char *json_find_key(const char *json, const char *key) {
@@ -206,12 +248,13 @@ int h3_vsr_inspect_dir(const char *model_dir, h3_vsr_info *info,
              model_dir);
         return 0;
     }
-    if (!join(path, sizeof(path), model_dir,
-              "transformer/diffusion_pytorch_model.safetensors") || !file_exists(path)) {
-        fail(error, error_size, "%s has no transformer/diffusion_pytorch_model.safetensors",
-             model_dir);
+    uint8_t recorded[32];
+    int original = join(path, sizeof(path), model_dir, H3_VSR_TRANSFORMER_FILE) && file_exists(path);
+    if (!original && !read_removed_record(model_dir, recorded)) {
+        fail(error, error_size, "%s has no " H3_VSR_TRANSFORMER_FILE, model_dir);
         return 0;
     }
+    info->original_weights_present = original;
     info->kind = H3_VSR_SWIFTVR;
     snprintf(info->name, sizeof(info->name), "SwiftVR");
     info->fixed_factor_x100 = 0;
@@ -757,8 +800,19 @@ int h3_vsr_build_cache(const char *model_dir, const char *cache_path,
         return 0;
     }
 
-    char transformer_dir[4096];
-    if (!join(transformer_dir, sizeof(transformer_dir), model_dir, "transformer")) {
+    char transformer_dir[4096], weights_path[4096];
+    if (!join(transformer_dir, sizeof(transformer_dir), model_dir, "transformer") ||
+        !join(weights_path, sizeof(weights_path), model_dir, H3_VSR_TRANSFORMER_FILE)) {
+        h3_gpu_free(gpu);
+        return 0;
+    }
+    if (!file_exists(weights_path)) {
+        uint8_t recorded[32];
+        if (read_removed_record(model_dir, recorded))
+            fail(error, error_size, "the SwiftVR weights in %s were removed after conversion; "
+                 "download them again to convert them", model_dir);
+        else
+            fail(error, error_size, "%s has no " H3_VSR_TRANSFORMER_FILE, model_dir);
         h3_gpu_free(gpu);
         return 0;
     }
@@ -851,6 +905,9 @@ int h3_vsr_build_cache(const char *model_dir, const char *cache_path,
         unlink(partial);
         return 0;
     }
+    /* Weights downloaded again after a removal: the record is stale. */
+    char record[4096];
+    if (join(record, sizeof(record), model_dir, H3_VSR_REMOVED_RECORD)) unlink(record);
     return 1;
 }
 
@@ -970,18 +1027,70 @@ int h3_vsr_cache_matches(const char *cache_path, const char *model_dir) {
     h3_vsr_cache cache;
     char error[256];
     if (!h3_vsr_cache_open(cache_path, &cache, error, sizeof(error))) return 0;
-    char transformer_dir[4096];
-    int ok = join(transformer_dir, sizeof(transformer_dir), model_dir, "transformer");
     uint8_t fingerprint[32] = {0}, reae[32] = {0};
-    if (ok) {
-        h3_weight_store *store = h3_weight_store_open(transformer_dir, error, sizeof(error));
-        ok = store != NULL;
-        if (store) h3_weight_store_fingerprint(store, fingerprint);
-        h3_weight_store_free(store);
-    }
-    ok = ok && h3_vsr_reae_fingerprint(model_dir, reae) &&
-         memcmp(fingerprint, cache.header.fingerprint, 32) == 0 &&
-         memcmp(reae, cache.header.reae_fingerprint, 32) == 0;
+    int ok = transformer_fingerprint(model_dir, fingerprint) &&
+             h3_vsr_reae_fingerprint(model_dir, reae) &&
+             memcmp(fingerprint, cache.header.fingerprint, 32) == 0 &&
+             memcmp(reae, cache.header.reae_fingerprint, 32) == 0;
     h3_vsr_cache_close(&cache);
     return ok;
+}
+
+int h3_vsr_remove_original_weights(const char *model_dir, uint64_t *freed_bytes,
+                                   char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (freed_bytes) *freed_bytes = 0;
+    if (!model_dir) {
+        fail(error, error_size, "invalid model directory");
+        return 0;
+    }
+    char weights[4096], record[4096], partial[4200];
+    struct stat st;
+    if (!join(weights, sizeof(weights), model_dir, H3_VSR_TRANSFORMER_FILE) ||
+        !join(record, sizeof(record), model_dir, H3_VSR_REMOVED_RECORD) ||
+        stat(weights, &st) != 0 || !S_ISREG(st.st_mode)) {
+        fail(error, error_size, "%s has no " H3_VSR_TRANSFORMER_FILE " to remove", model_dir);
+        return 0;
+    }
+    /* Only when a converted cache can run without them. */
+    int matched = 0;
+    const h3_vsr_precision precisions[] = {H3_VSR_PRECISION_INT8, H3_VSR_PRECISION_BF16};
+    for (int i = 0; i < 2 && !matched; i++) {
+        char cache_path[4096];
+        matched = h3_vsr_cache_path(model_dir, precisions[i], cache_path, sizeof(cache_path)) &&
+                  file_exists(cache_path) && h3_vsr_cache_matches(cache_path, model_dir);
+    }
+    if (!matched) {
+        fail(error, error_size, "no converted cache in %s matches the weights; convert them before removing them",
+             model_dir);
+        return 0;
+    }
+    uint8_t fingerprint[32];
+    if (!transformer_fingerprint(model_dir, fingerprint)) {
+        fail(error, error_size, "cannot fingerprint the weights in %s", model_dir);
+        return 0;
+    }
+    char hex[65];
+    for (int i = 0; i < 32; i++) snprintf(hex + 2 * i, 3, "%02x", fingerprint[i]);
+    snprintf(partial, sizeof(partial), "%s.partial", record);
+    FILE *file = fopen(partial, "w");
+    int ok = file != NULL;
+    if (ok) {
+        ok = fprintf(file, "h3vsr-removed 1 %llu %s\n", (unsigned long long)st.st_size, hex) > 0;
+        ok = fflush(file) == 0 && ok;
+        ok = fsync(fileno(file)) == 0 && ok;
+        ok = fclose(file) == 0 && ok;
+    }
+    if (!ok || rename(partial, record) != 0) {
+        fail(error, error_size, "cannot write %s: %s", record, strerror(errno));
+        unlink(partial);
+        return 0;
+    }
+    if (unlink(weights) != 0) {
+        fail(error, error_size, "cannot remove %s: %s", weights, strerror(errno));
+        unlink(record);
+        return 0;
+    }
+    if (freed_bytes) *freed_bytes = (uint64_t)st.st_size;
+    return 1;
 }
