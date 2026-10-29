@@ -546,6 +546,12 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             [names addObject:@"h3_linear_int8_local_scales_nax_r128_k3072_n14336"];
             [names addObject:@"h3_linear_int8_local_scales_nax_r128_k14336_n3072"];
             [names addObject:@"h3_linear_int8_nax_r128_full_k14336_n3072"];
+            [names addObject:@"h3_linear_int8_nax_r128x256_full_k14336_n3072"];
+            [names addObject:@"h3_linear_int8_nax_r128x256_full_k3072_n14336"];
+            [names addObject:@"h3_linear_int8_nax_r128x256_full_k3072_n9216"];
+            [names addObject:@"h3_linear_int8_nax_r128x256_full_k3072_n3072"];
+            [names addObject:@"h3_linear_int8_split_k_nax_r128"];
+            [names addObject:@"h3_linear_sum_partials_bf16"];
             [names addObject:@"h3_gate_adaln_quantize_int8"];
             [names addObject:@"h3_gate_adaln_quantize_int8_scalar"];
             [names addObject:@"h3_linear_int8_grouped_nax_r128x64"];
@@ -4109,7 +4115,8 @@ static int h3_gpu_linear_int8_bf16_layout(
             !h3_gpu_quantize_bf16_int8_head_major_rows(
                 opaque, quantized_input, input_scales, input, rows,
                 padded_rows, heads, headDim)) return 0;
-    } else if (!h3_gpu_quantize_bf16_int8_rows(
+    } else if (!getenv("H3_BENCH_SKIP_QUANT") &&   /* diagnosis only: time the matmul alone */
+               !h3_gpu_quantize_bf16_int8_rows(
                    opaque, quantized_input, input_scales, input, rows,
                    padded_rows, input_dim, 1.0f,
                    @"int8 linear input")) return 0;
@@ -4121,21 +4128,30 @@ static int h3_gpu_linear_int8_bf16_layout(
     /* The SwiftVR DiT's shapes get static K loops (and FC2 a full-K
      * product unless H3_VSR_FC2_LOOP is set). */
     NSString *vsr_name = nil;
+    BOOL wide = NO;
     if (local_scales && getenv("H3_DISABLE_INT8_LINEAR_KNOWN") == NULL) {
-        if (input_dim == 3072 && output_dim == 3072) vsr_name = @"h3_linear_int8_local_scales_nax_r128_k3072_n3072";
-        else if (input_dim == 3072 && output_dim == 9216) vsr_name = @"h3_linear_int8_local_scales_nax_r128_k3072_n9216";
-        else if (input_dim == 3072 && output_dim == 14336) vsr_name = @"h3_linear_int8_local_scales_nax_r128_k3072_n14336";
+        /* 128x256 tiles only on request (H3_VSR_X256=1): measured slower
+         * for FC2 (114 vs 77 ms) and equal elsewhere */
+        BOOL x256 = getenv("H3_VSR_X256") != NULL && atoi(getenv("H3_VSR_X256")) != 0;
+        if (input_dim == 3072 && output_dim == 3072)
+            vsr_name = x256 ? @"h3_linear_int8_nax_r128x256_full_k3072_n3072" : @"h3_linear_int8_local_scales_nax_r128_k3072_n3072";
+        else if (input_dim == 3072 && output_dim == 9216)
+            vsr_name = x256 ? @"h3_linear_int8_nax_r128x256_full_k3072_n9216" : @"h3_linear_int8_local_scales_nax_r128_k3072_n9216";
+        else if (input_dim == 3072 && output_dim == 14336)
+            vsr_name = x256 ? @"h3_linear_int8_nax_r128x256_full_k3072_n14336" : @"h3_linear_int8_local_scales_nax_r128_k3072_n14336";
         else if (input_dim == 14336 && output_dim == 3072)
-            vsr_name = getenv("H3_VSR_FC2_LOOP") ? @"h3_linear_int8_local_scales_nax_r128_k14336_n3072"
+            vsr_name = x256 ? @"h3_linear_int8_nax_r128x256_full_k14336_n3072" :
+                       getenv("H3_VSR_FC2_LOOP") ? @"h3_linear_int8_local_scales_nax_r128_k14336_n3072"
                                                  : @"h3_linear_int8_nax_r128_full_k14336_n3072";
-        if (getenv("H3_VSR_INT8_GENERIC")) vsr_name = nil;
+        wide = vsr_name != nil && x256;
+        if (getenv("H3_VSR_INT8_GENERIC")) { vsr_name = nil; wide = NO; }
     }
     id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(
         gpu, vsr_name ? vsr_name :
              known_linear ? @"h3_linear_int8_local_scales_nax_r128_k7168" :
              local_scales ? @"h3_linear_int8_local_scales_nax_r128" :
                             @"h3_linear_int8_nax_r128");
-    if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < 256) {
+    if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < (wide ? 512u : 256u)) {
         h3_gpu_set_error(gpu, @"int8 M5 linear projection is unavailable");
         return 0;
     }
@@ -4151,9 +4167,9 @@ static int h3_gpu_linear_int8_bf16_layout(
         [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:4];
         [encoder setBytes:&args length:sizeof(args) atIndex:5];
         NSUInteger groups = (NSUInteger)(padded_rows / 128u) *
-                            (output_dim / 128u);
+                            (output_dim / (wide ? 256u : 128u));
         [encoder dispatchThreadgroups:MTLSizeMake(groups, 1, 1)
-                 threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+                 threadsPerThreadgroup:MTLSizeMake(wide ? 512 : 256, 1, 1)];
         [encoder endEncoding];
     }
     h3_gpu_stats stats = gpu.stats;
@@ -6206,5 +6222,126 @@ int h3_gpu_vsr_scatter_rows_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3
             [encoder setBuffer:TENSOR(index).buffer offset:0 atIndex:1];
             [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:2];
             [encoder setBytes:&args length:sizeof(args) atIndex:3];
+        });
+}
+
+/* ---- split-K int8 linear (see h3_linear_int8_split_k_nax_r128) ---- */
+typedef struct { uint32_t rows, input_dim, output_dim, splits; } split_k_args;
+
+int h3_gpu_linear_int8_bf16_split_k(h3_gpu *opaque, h3_gpu_tensor *output, h3_gpu_tensor *partial,
+                                    h3_gpu_tensor *quantized_input, h3_gpu_tensor *input_scales,
+                                    const h3_gpu_tensor *input, const h3_gpu_tensor *weight,
+                                    const h3_gpu_tensor *weight_scales, uint32_t rows,
+                                    uint32_t input_dim, uint32_t output_dim, uint32_t splits) {
+    H3GPU *gpu = GPU(opaque);
+    uint32_t padded_rows = (rows + 127u) & ~127u;
+    if (!gpu.tensorOpsEnabled || rows < 128 || !splits || input_dim % (128 * splits) || output_dim % 128 ||
+        !h3_gpu_require_i8(gpu, weight, (size_t)output_dim * input_dim, @"split-K weight") ||
+        !h3_gpu_require_f32(gpu, weight_scales, output_dim, @"split-K weight scales") ||
+        !h3_gpu_require_f32(gpu, partial, (size_t)splits * padded_rows * output_dim, @"split-K partials") ||
+        !h3_gpu_require_bf16(gpu, output, (size_t)rows * output_dim, @"split-K output") ||
+        !h3_gpu_require_command(gpu)) return 0;
+    if (!getenv("H3_BENCH_SKIP_QUANT") &&
+        !h3_gpu_quantize_bf16_int8_rows(opaque, quantized_input, input_scales, input, rows, padded_rows,
+                                        input_dim, 1.0f, @"split-K input")) return 0;
+    id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(gpu, @"h3_linear_int8_split_k_nax_r128");
+    id<MTLComputePipelineState> sum = h3_gpu_pipeline(gpu, @"h3_linear_sum_partials_bf16");
+    if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < 256 || !sum) {
+        h3_gpu_set_error(gpu, @"split-K int8 linear is unavailable");
+        return 0;
+    }
+    split_k_args args = {rows, input_dim, output_dim, splits};
+    @autoreleasepool {
+        id<MTLComputeCommandEncoder> encoder = [gpu.command computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:TENSOR(quantized_input).buffer offset:0 atIndex:0];
+        [encoder setBuffer:TENSOR(weight).buffer offset:0 atIndex:1];
+        [encoder setBuffer:TENSOR(input_scales).buffer offset:0 atIndex:2];
+        [encoder setBuffer:TENSOR(weight_scales).buffer offset:0 atIndex:3];
+        [encoder setBuffer:TENSOR(partial).buffer offset:0 atIndex:4];
+        [encoder setBytes:&args length:sizeof(args) atIndex:5];
+        [encoder dispatchThreadgroups:MTLSizeMake((padded_rows / 128) * (output_dim / 128), splits, 1)
+                 threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+        [encoder endEncoding];
+        id<MTLComputeCommandEncoder> adder = [gpu.command computeCommandEncoder];
+        [adder setComputePipelineState:sum];
+        [adder setBuffer:TENSOR(partial).buffer offset:0 atIndex:0];
+        [adder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
+        [adder setBytes:&args length:sizeof(args) atIndex:2];
+        NSUInteger x = 32, y = MIN((NSUInteger)8, sum.maxTotalThreadsPerThreadgroup / x);
+        [adder dispatchThreads:MTLSizeMake(output_dim, rows, 1) threadsPerThreadgroup:MTLSizeMake(x, y, 1)];
+        [adder endEncoding];
+    }
+    h3_gpu_stats stats = gpu.stats;
+    stats.direct_dispatches += 2;
+    gpu.stats = stats;
+    return 1;
+}
+
+/* The row quantizer alone (benchmarks). */
+int h3_gpu_quantize_rows_bf16_int8(h3_gpu *opaque, h3_gpu_tensor *quantized, h3_gpu_tensor *scales,
+                                   const h3_gpu_tensor *input, uint32_t rows, uint32_t columns) {
+    uint32_t padded_rows = (rows + 127u) & ~127u;
+    return h3_gpu_quantize_bf16_int8_rows(opaque, quantized, scales, input, rows, padded_rows, columns, 1.0f,
+                                          @"row quantizer");
+}
+
+/* One K-contiguous int8 product into F32 partial slot `slot` (quantizes
+ * the input first); h3_gpu_sum_partials_bf16 adds the slots. Lets a long
+ * reduction run as K-contiguous halves, which the TensorOps tile handles
+ * better than one long-stride pass. */
+int h3_gpu_linear_int8_partial_f32(h3_gpu *opaque, h3_gpu_tensor *partial, uint32_t slot,
+                                   h3_gpu_tensor *quantized_input, h3_gpu_tensor *input_scales,
+                                   const h3_gpu_tensor *input, const h3_gpu_tensor *weight,
+                                   const h3_gpu_tensor *weight_scales, uint32_t rows,
+                                   uint32_t input_dim, uint32_t output_dim) {
+    H3GPU *gpu = GPU(opaque);
+    uint32_t padded_rows = (rows + 127u) & ~127u;
+    size_t slot_elements = (size_t)padded_rows * output_dim;
+    if (!gpu.tensorOpsEnabled || rows < 128 || input_dim % 128 || output_dim % 128 ||
+        !h3_gpu_require_i8(gpu, weight, (size_t)output_dim * input_dim, @"partial weight") ||
+        !h3_gpu_require_f32(gpu, weight_scales, output_dim, @"partial weight scales") ||
+        !h3_gpu_require_f32(gpu, partial, (size_t)(slot + 1) * slot_elements, @"partials") ||
+        !h3_gpu_require_command(gpu)) return 0;
+    if (!h3_gpu_quantize_bf16_int8_rows(opaque, quantized_input, input_scales, input, rows, padded_rows,
+                                        input_dim, 1.0f, @"partial input")) return 0;
+    id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(gpu, @"h3_linear_int8_split_k_nax_r128");
+    if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < 256) {
+        h3_gpu_set_error(gpu, @"split-K int8 linear is unavailable");
+        return 0;
+    }
+    split_k_args args = {rows, input_dim, output_dim, 1};
+    @autoreleasepool {
+        id<MTLComputeCommandEncoder> encoder = [gpu.command computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:TENSOR(quantized_input).buffer offset:0 atIndex:0];
+        [encoder setBuffer:TENSOR(weight).buffer offset:0 atIndex:1];
+        [encoder setBuffer:TENSOR(input_scales).buffer offset:0 atIndex:2];
+        [encoder setBuffer:TENSOR(weight_scales).buffer offset:0 atIndex:3];
+        [encoder setBuffer:TENSOR(partial).buffer offset:(NSUInteger)slot * slot_elements * sizeof(float) atIndex:4];
+        [encoder setBytes:&args length:sizeof(args) atIndex:5];
+        [encoder dispatchThreadgroups:MTLSizeMake((padded_rows / 128) * (output_dim / 128), 1, 1)
+                 threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+        [encoder endEncoding];
+    }
+    h3_gpu_stats stats = gpu.stats;
+    stats.direct_dispatches++;
+    gpu.stats = stats;
+    return 1;
+}
+
+int h3_gpu_sum_partials_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_gpu_tensor *partial,
+                             uint32_t rows, uint32_t output_dim, uint32_t splits) {
+    H3GPU *gpu = GPU(opaque);
+    uint32_t padded_rows = (rows + 127u) & ~127u;
+    if (!splits || !h3_gpu_require_f32(gpu, partial, (size_t)splits * padded_rows * output_dim, @"partials") ||
+        !h3_gpu_require_bf16(gpu, output, (size_t)rows * output_dim, @"partials output")) return 0;
+    split_k_args args = {rows, output_dim, output_dim, splits};
+    args.input_dim = 0;
+    return h3_gpu_dispatch_2d(gpu, @"h3_linear_sum_partials_bf16", output_dim, rows,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(partial).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
+            [encoder setBytes:&args length:sizeof(args) atIndex:2];
         });
 }

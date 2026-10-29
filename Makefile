@@ -211,6 +211,9 @@ h3_real_vsr_test: tests/test_real_vsr.o $(LIB_OBJ)
 h3_vsr_bench: tests/bench_vsr.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+h3_int8_bench: tests/bench_int8.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 h3_semantic_vae_test: tests/test_semantic_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 

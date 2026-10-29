@@ -25,6 +25,11 @@ typedef struct {
 
 typedef struct {
     linear qkv, out, q2, out2, fc1, fc2;
+    /* int8: the FFN as two K-contiguous halves (fc1 output rows, fc2 input
+     * columns), because the TensorOps tile loses a third of its throughput
+     * at K = 14336 in one pass (UPSCALE_PLAN appendix A.2). */
+    linear fc1_half[2], fc2_half[2];
+    h3_gpu_tensor *fc1_bias_half[2];
     h3_gpu_tensor *qkv_bias, *out_bias, *q2_bias, *out2_bias, *fc1_bias, *fc2_bias;
     h3_gpu_tensor *norm_q, *norm_k, *norm_q2;
     h3_gpu_tensor *norm2_w, *norm2_b;          /* NULL without cross_attn_norm */
@@ -74,6 +79,36 @@ static int load_linear(h3_vsr_wan *wan, const h3_vsr_cache *cache, const char *e
     return 1;
 }
 
+/* Splits an int8 FFN into K-contiguous halves: fc1's output rows and
+ * fc2's input columns (repacked on the host), with fc1's scales and bias
+ * halved alongside. */
+static int split_ffn(h3_vsr_wan *wan, wan_block *k, uint32_t D, uint32_t F, char *error, size_t error_size) {
+    h3_gpu *gpu = wan->gpu;
+    uint32_t H = F / 2;
+    int8_t *w1 = malloc((size_t)F * D), *w2 = malloc((size_t)D * F), *half = malloc((size_t)D * H);
+    float *s1 = malloc(F * sizeof(float)), *b1 = malloc(F * sizeof(float));
+    int ok = w1 && w2 && half && s1 && b1 &&
+             h3_gpu_tensor_read_i8(k->fc1.w, w1, (size_t)F * D) &&
+             h3_gpu_tensor_read_i8(k->fc2.w, w2, (size_t)D * F) &&
+             h3_gpu_tensor_read_f32(k->fc1.scales, s1, F) &&
+             h3_gpu_tensor_read_f32(k->fc1_bias, b1, F);
+    for (int h = 0; ok && h < 2; h++) {
+        k->fc1_half[h].w = h3_gpu_tensor_from_i8(gpu, w1 + (size_t)h * H * D, (size_t)H * D);
+        k->fc1_half[h].scales = h3_gpu_tensor_from_f32(gpu, s1 + (size_t)h * H, H);
+        k->fc1_half[h].in = D; k->fc1_half[h].out = H;
+        k->fc1_bias_half[h] = h3_gpu_tensor_from_f32(gpu, b1 + (size_t)h * H, H);
+        for (uint32_t o = 0; o < D; o++)
+            memcpy(half + (size_t)o * H, w2 + (size_t)o * F + (size_t)h * H, H);
+        k->fc2_half[h].w = h3_gpu_tensor_from_i8(gpu, half, (size_t)D * H);
+        k->fc2_half[h].scales = k->fc2.scales;
+        k->fc2_half[h].in = H; k->fc2_half[h].out = D;
+        ok = k->fc1_half[h].w && k->fc1_half[h].scales && k->fc1_bias_half[h] && k->fc2_half[h].w;
+    }
+    free(w1); free(w2); free(half); free(s1); free(b1);
+    if (!ok) fail(error, error_size, "VSR DiT: cannot split the FFN weights");
+    return ok;
+}
+
 static h3_gpu_tensor *load_f32(h3_vsr_wan *wan, const h3_vsr_cache *cache, const char *name,
                                size_t elements, char *error, size_t error_size) {
     const h3_vsr_cache_entry *e = h3_vsr_cache_find(cache, name);
@@ -115,6 +150,11 @@ void h3_vsr_wan_free(h3_vsr_wan *wan) {
         wan_block *k = &wan->blocks[b];
         free_linear(&k->qkv); free_linear(&k->out); free_linear(&k->q2);
         free_linear(&k->out2); free_linear(&k->fc1); free_linear(&k->fc2);
+        for (int h = 0; h < 2; h++) {
+            h3_gpu_tensor_free(k->fc1_half[h].w); h3_gpu_tensor_free(k->fc1_half[h].scales);
+            h3_gpu_tensor_free(k->fc2_half[h].w);   /* fc2 halves share fc2's scales */
+            h3_gpu_tensor_free(k->fc1_bias_half[h]);
+        }
         h3_gpu_tensor *vectors[] = {k->qkv_bias, k->out_bias, k->q2_bias, k->out2_bias,
             k->fc1_bias, k->fc2_bias, k->norm_q, k->norm_k, k->norm_q2, k->norm2_w,
             k->norm2_b, k->k2, k->v2, k->shift, k->scale, k->gate, k->c_shift, k->c_scale,
@@ -181,7 +221,9 @@ h3_vsr_wan *h3_vsr_wan_load(h3_gpu *gpu, const char *cache_path,
             !load_linear(wan, &cache, E("ffn.fc1"), F, D, wan->int8, &k->fc1, error, error_size) ||
             !(k->fc1_bias = load_f32(wan, &cache, E("ffn.fc1.bias"), F, error, error_size)) ||
             !load_linear(wan, &cache, E("ffn.fc2"), D, F, wan->int8, &k->fc2, error, error_size) ||
-            !(k->fc2_bias = load_f32(wan, &cache, E("ffn.fc2.bias"), D, error, error_size)))
+            !(k->fc2_bias = load_f32(wan, &cache, E("ffn.fc2.bias"), D, error, error_size)) ||
+            (wan->int8 && F % 256 == 0 && !getenv("H3_VSR_FFN_WHOLE") &&
+             !split_ffn(wan, k, D, F, error, error_size)))
             goto failed;
         if (h3_vsr_cache_find(&cache, E("norm2.weight"))) {
             if (!(k->norm2_w = load_f32(wan, &cache, E("norm2.weight"), D, error, error_size)) ||
@@ -486,13 +528,20 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
     h3_gpu_tensor *att = h3_gpu_tensor_new_bf16(gpu, (size_t)rows * D);
     h3_gpu_tensor *o = h3_gpu_tensor_new_bf16(gpu, (size_t)rows * D);
     h3_gpu_tensor *f = h3_gpu_tensor_new_bf16(gpu, (size_t)rows * F);
+    h3_gpu_tensor *f_hi = h3_gpu_tensor_new_bf16(gpu, (size_t)rows * (F / 2));
     h3_gpu_tensor *v = h3_gpu_tensor_new_bf16(gpu, (size_t)N * wan->patch_out);
+    h3_gpu_tensor *partial = NULL;
+    int halves = wan->int8 && wan->blocks[0].fc2_half[1].w != NULL;
     if (wan->int8) {
         uint32_t max_in = F > D ? F : D;
         r.q_in = h3_gpu_tensor_new_i8(gpu, (size_t)r.padded * max_in);
         r.q_scales = h3_gpu_tensor_new_f32(gpu, r.padded);
+        if (halves) {
+            partial = h3_gpu_tensor_new_f32(gpu, (size_t)2 * r.padded * D);
+            if (!partial) halves = 0;
+        }
     }
-    if (!tokens || !x || !h || !qkv || !qg || !kg || !vg || !ag || !att || !o || !f || !v ||
+    if (!tokens || !x || !h || !qkv || !qg || !kg || !vg || !ag || !att || !o || !f || !f_hi || !v ||
         (wan->int8 && (!r.q_in || !r.q_scales))) {
         fail(error, error_size, "VSR DiT: out of GPU memory for %u tokens", N);
         goto failed;
@@ -587,6 +636,20 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
         OP(h3_gpu_vsr_ln_mod_bf16(gpu, h, x, k->c_scale, k->c_shift, NULL, NULL, N, D, 1e-6f));
         TRACE("norm3", h, (size_t)N * D);
         MARK("norm3");
+        if (halves && k->fc2_half[1].w) {
+            /* the FFN as two K-contiguous halves: f holds [N, F/2] twice */
+            uint32_t H = F / 2;
+            h3_gpu_tensor *fh[2] = {f, f_hi};
+            for (int hi = 0; hi < 2; hi++) {
+                OP(run_linear(&r, wan, &k->fc1_half[hi], fh[hi], h));
+                OP(h3_gpu_vsr_gelu_bias_bf16(gpu, fh[hi], k->fc1_bias_half[hi], N, H));
+                OP(h3_gpu_linear_int8_partial_f32(gpu, partial, (uint32_t)hi, r.q_in, r.q_scales, fh[hi],
+                                                  k->fc2_half[hi].w, k->fc2_half[hi].scales, r.N, H, D));
+            }
+            OP(h3_gpu_sum_partials_bf16(gpu, o, partial, r.N, D, 2));
+            TRACE("fc2", o, (size_t)N * D);
+            MARK("ffn (halves)");
+        } else {
         OP(run_linear(&r, wan, &k->fc1, f, h));
         TRACE("fc1", f, (size_t)N * F);
         MARK("fc1 linear");
@@ -596,6 +659,7 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
         OP(run_linear(&r, wan, &k->fc2, o, f));
         TRACE("fc2", o, (size_t)N * D);
         MARK("fc2 linear");
+        }
         OP(h3_gpu_vsr_bias_gate_add_bf16(gpu, x, o, k->fc2_bias, k->c_gate, x, N, D));
         MARK("gate add 2");
         OP(h3_gpu_continue(gpu));
@@ -615,7 +679,7 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
                                      (uint32_t)height, (uint32_t)width, (uint32_t)wan->latent_channels));
     OP(h3_gpu_submit(gpu));
     {
-        h3_gpu_tensor *scratch[] = {tokens, x, h, qkv, qg, kg, vg, ag, att, o, f, v, r.q_in, r.q_scales, identity};
+        h3_gpu_tensor *scratch[] = {tokens, x, h, qkv, qg, kg, vg, ag, att, o, f, f_hi, v, r.q_in, r.q_scales, identity, partial};
         for (size_t i = 0; i < sizeof(scratch) / sizeof(*scratch); i++) h3_gpu_tensor_free(scratch[i]);
     }
     free_layout(&layouts[0]);
@@ -623,7 +687,7 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
     return 1;
 failed:
     {
-        h3_gpu_tensor *scratch[] = {tokens, x, h, qkv, qg, kg, vg, ag, att, o, f, v, r.q_in, r.q_scales, identity};
+        h3_gpu_tensor *scratch[] = {tokens, x, h, qkv, qg, kg, vg, ag, att, o, f, f_hi, v, r.q_in, r.q_scales, identity, partial};
         for (size_t i = 0; i < sizeof(scratch) / sizeof(*scratch); i++) h3_gpu_tensor_free(scratch[i]);
     }
     free_layout(&layouts[0]);

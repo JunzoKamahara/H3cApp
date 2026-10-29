@@ -2817,6 +2817,73 @@ kernel void h3_linear_int8_nax_r128x256_full_k14336(
     }
 }
 
+/* The 128x256 full-K tile for the SwiftVR FC1/FC2 shapes: half the A
+ * re-reads of the 128x128 tile, which matters once K is 14336. */
+template<uint INPUT_DIM, uint OUTPUT_DIM>
+kernel void h3_linear_int8_nax_r128x256_full_k_impl(
+                           device int8_t *input [[buffer(0)]],
+                           device int8_t *weight [[buffer(1)]],
+                           device const float *input_scales [[buffer(2)]],
+                           device const float *weight_scales [[buffer(3)]],
+                           device bfloat *output [[buffer(4)]],
+                           constant linear_args &args [[buffer(5)]],
+                           uint code [[threadgroup_position_in_grid]],
+                           ushort tid [[thread_index_in_threadgroup]]) {
+    constexpr uint ROW_TILE = 128;
+    constexpr uint COLUMN_TILE = 256;
+    uint padded_rows = (args.rows + ROW_TILE - 1) & ~(ROW_TILE - 1);
+    uint row_tiles = padded_rows / ROW_TILE;
+    uint2 group = h3_morton_decode_compact(
+        code, row_tiles, OUTPUT_DIM / COLUMN_TILE);
+    uint row_start = group.x * ROW_TILE;
+    uint column_start = group.y * COLUMN_TILE;
+    threadgroup float local_input_scales[ROW_TILE];
+    threadgroup float local_weight_scales[COLUMN_TILE];
+    if (tid < COLUMN_TILE) {
+        if (tid < ROW_TILE)
+            local_input_scales[tid] = input_scales[row_start + tid];
+        local_weight_scales[tid] = weight_scales[column_start + tid];
+    }
+    auto x = tensor<device int8_t, dextents<int32_t, 2>, tensor_inline>(
+        input, dextents<int32_t, 2>((int)INPUT_DIM,
+                                    (int)padded_rows));
+    auto w = tensor<device int8_t, dextents<int32_t, 2>, tensor_inline>(
+        weight, dextents<int32_t, 2>((int)INPUT_DIM,
+                                     (int)OUTPUT_DIM));
+    constexpr auto descriptor = matmul2d_descriptor(
+        ROW_TILE, COLUMN_TILE, INPUT_DIM, false, true, true,
+        matmul2d_descriptor::mode::multiply);
+    matmul2d<descriptor, execution_simdgroups<16>> mm;
+    auto a = x.slice<ROW_TILE, INPUT_DIM>(0, (int)row_start);
+    auto b = w.slice<INPUT_DIM, COLUMN_TILE>(0, (int)column_start);
+    auto accum = mm.template get_destination_cooperative_tensor<
+        decltype(a), decltype(b), int32_t>();
+    mm.run(a, b, accum);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    #pragma clang loop unroll(full)
+    for (ushort element = 0; element < accum.get_capacity(); element++) {
+        if (!accum.is_valid_element(element)) continue;
+        auto index = accum.get_multidimensional_index(element);
+        uint row = row_start + (uint)index[1];
+        uint column = column_start + (uint)index[0];
+        if (row < args.rows)
+            output[row * OUTPUT_DIM + column] =
+                (bfloat)((float)accum[element] *
+                    local_input_scales[(uint)index[1]] *
+                    local_weight_scales[(uint)index[0]]);
+    }
+}
+
+typedef decltype(h3_linear_int8_nax_r128x256_full_k_impl<14336, 3072>) h3_linear_int8_nax_r128x256_full_k_t;
+template [[host_name("h3_linear_int8_nax_r128x256_full_k14336_n3072")]]
+kernel h3_linear_int8_nax_r128x256_full_k_t h3_linear_int8_nax_r128x256_full_k_impl<14336, 3072>;
+template [[host_name("h3_linear_int8_nax_r128x256_full_k3072_n14336")]]
+kernel h3_linear_int8_nax_r128x256_full_k_t h3_linear_int8_nax_r128x256_full_k_impl<3072, 14336>;
+template [[host_name("h3_linear_int8_nax_r128x256_full_k3072_n9216")]]
+kernel h3_linear_int8_nax_r128x256_full_k_t h3_linear_int8_nax_r128x256_full_k_impl<3072, 9216>;
+template [[host_name("h3_linear_int8_nax_r128x256_full_k3072_n3072")]]
+kernel h3_linear_int8_nax_r128x256_full_k_t h3_linear_int8_nax_r128x256_full_k_impl<3072, 3072>;
+
 /* Cache the two 128-value dequantization vectors once per projection tile.
  * The cooperative output fragment otherwise rereads them for every element. */
 template<uint INPUT_DIM, uint OUTPUT_DIM>
@@ -2889,6 +2956,89 @@ kernel void h3_linear_int8_local_scales_nax_r128_impl(
                          local_input_scales[(uint)index[1]] *
                          local_weight_scales[(uint)index[0]]);
     }
+}
+
+/* Split-K int8 linear: threadgroup (x, y, z) reduces K columns
+ * [z * K / splits, (z + 1) * K / splits) of the 128x128 output tile into
+ * F32 partials [splits][padded_rows][N]; h3_linear_sum_partials_bf16 adds
+ * them. A long K (the SwiftVR FC2's 14336) runs at half the throughput of
+ * a short one in a single pass; two or four slices restore it. */
+struct split_k_args { uint rows, input_dim, output_dim, splits; };
+
+kernel void h3_linear_int8_split_k_nax_r128(
+                           device int8_t *input [[buffer(0)]],
+                           device int8_t *weight [[buffer(1)]],
+                           device const float *input_scales [[buffer(2)]],
+                           device const float *weight_scales [[buffer(3)]],
+                           device float *partial [[buffer(4)]],
+                           constant split_k_args &args [[buffer(5)]],
+                           uint2 group [[threadgroup_position_in_grid]],
+                           ushort tid [[thread_index_in_threadgroup]]) {
+    constexpr uint TILE = 128;
+    uint padded_rows = (args.rows + TILE - 1) & ~(TILE - 1);
+    /* Morton order over the output tiles, like the other int8 linears:
+     * neighbouring threadgroups share A row tiles and B column tiles. */
+    uint2 tile = h3_morton_decode_compact(group.x, padded_rows / TILE, args.output_dim / TILE);
+    uint row_start = tile.x * TILE;
+    uint column_start = tile.y * TILE;
+    uint k_count = args.input_dim / args.splits;
+    uint k_begin = group.y * k_count;
+    threadgroup float local_input_scales[TILE];
+    threadgroup float local_weight_scales[TILE];
+    if (tid < TILE) {
+        local_input_scales[tid] = input_scales[row_start + tid];
+        local_weight_scales[tid] = weight_scales[column_start + tid];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    auto x = tensor<device int8_t, dextents<int32_t, 2>, tensor_inline>(
+        input, dextents<int32_t, 2>((int)args.input_dim, (int)padded_rows));
+    auto w = tensor<device int8_t, dextents<int32_t, 2>, tensor_inline>(
+        weight, dextents<int32_t, 2>((int)args.input_dim, (int)args.output_dim));
+    constexpr auto descriptor = matmul2d_descriptor(
+        TILE, TILE, TILE, false, true, true,
+        matmul2d_descriptor::mode::multiply_accumulate);
+    constexpr auto first_descriptor = matmul2d_descriptor(
+        TILE, TILE, TILE, false, true, true,
+        matmul2d_descriptor::mode::multiply);
+    matmul2d<descriptor, execution_simdgroups<8>> mm;
+    matmul2d<first_descriptor, execution_simdgroups<8>> first_mm;
+    auto first_a = x.slice<TILE, TILE>((int)k_begin, (int)row_start);
+    auto first_b = w.slice<TILE, TILE>((int)k_begin, (int)column_start);
+    auto accum = mm.template get_destination_cooperative_tensor<
+        decltype(first_a), decltype(first_b), int32_t>();
+    first_mm.run(first_a, first_b, accum);
+    for (uint k = k_begin + TILE; k < k_begin + k_count; k += TILE) {
+        auto a = x.slice<TILE, TILE>((int)k, (int)row_start);
+        auto b = w.slice<TILE, TILE>((int)k, (int)column_start);
+        mm.run(a, b, accum);
+    }
+    device float *out = partial + (size_t)group.y * padded_rows * args.output_dim;
+    #pragma clang loop unroll(full)
+    for (ushort element = 0; element < accum.get_capacity(); element++) {
+        if (!accum.is_valid_element(element)) continue;
+        auto index = accum.get_multidimensional_index(element);
+        uint row = row_start + (uint)index[1];
+        uint column = column_start + (uint)index[0];
+        if (row < args.rows)
+            out[(size_t)row * args.output_dim + column] =
+                (float)accum[element] * local_input_scales[(uint)index[1]] *
+                local_weight_scales[(uint)index[0]];
+    }
+}
+
+/* out[r, c] = sum over splits of partial[s][r][c], as BF16. Grid (N, rows). */
+kernel void h3_linear_sum_partials_bf16(device const float *partial [[buffer(0)]],
+                                        device bfloat *output [[buffer(1)]],
+                                        constant split_k_args &args [[buffer(2)]],
+                                        uint2 gid [[thread_position_in_grid]]) {
+    uint column = gid.x, row = gid.y;
+    if (column >= args.output_dim || row >= args.rows) return;
+    uint padded_rows = (args.rows + 127) & ~127u;
+    size_t stride = (size_t)padded_rows * args.output_dim;
+    size_t at = (size_t)row * args.output_dim + column;
+    float sum = 0.0f;
+    for (uint s = 0; s < args.splits; s++) sum += partial[s * stride + at];
+    output[at] = (bfloat)sum;
 }
 
 typedef decltype(h3_linear_int8_local_scales_nax_r128_impl<0, 0>)

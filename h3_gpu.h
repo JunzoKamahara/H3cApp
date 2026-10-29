@@ -567,6 +567,23 @@ int h3_gpu_quantize_weight_int8(h3_gpu *gpu, h3_gpu_tensor *output,
                                 h3_gpu_tensor *scales,
                                 const h3_gpu_tensor *input, uint32_t rows,
                                 uint32_t columns);
+/* The int8 linear reduced in `splits` K slices (input_dim a multiple of
+ * 128 * splits) into F32 `partial` [splits, padded rows, output_dim], then
+ * summed to BF16: faster than one pass when K is long (14336). */
+int h3_gpu_quantize_rows_bf16_int8(h3_gpu *gpu, h3_gpu_tensor *quantized, h3_gpu_tensor *scales,
+                                   const h3_gpu_tensor *input, uint32_t rows, uint32_t columns);
+int h3_gpu_linear_int8_bf16_split_k(h3_gpu *gpu, h3_gpu_tensor *output, h3_gpu_tensor *partial,
+                                    h3_gpu_tensor *quantized_input, h3_gpu_tensor *input_scales,
+                                    const h3_gpu_tensor *input, const h3_gpu_tensor *weight,
+                                    const h3_gpu_tensor *weight_scales, uint32_t rows,
+                                    uint32_t input_dim, uint32_t output_dim, uint32_t splits);
+int h3_gpu_linear_int8_partial_f32(h3_gpu *gpu, h3_gpu_tensor *partial, uint32_t slot,
+                                   h3_gpu_tensor *quantized_input, h3_gpu_tensor *input_scales,
+                                   const h3_gpu_tensor *input, const h3_gpu_tensor *weight,
+                                   const h3_gpu_tensor *weight_scales, uint32_t rows,
+                                   uint32_t input_dim, uint32_t output_dim);
+int h3_gpu_sum_partials_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *partial,
+                             uint32_t rows, uint32_t output_dim, uint32_t splits);
 int h3_gpu_linear_int8_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                             h3_gpu_tensor *quantized_input,
                             h3_gpu_tensor *input_scales,
