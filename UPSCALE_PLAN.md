@@ -656,3 +656,37 @@ Reading: on a real face SwiftVR's drawn-in skin won; on soft generated faces the
 
 - The colour match (each channel's mean shifted to the input's; the offsets were -0.8 to -4.7/255, blue the largest) raises PSNR by 0.3 to 1.3 dB and leaves the no-reference scores and the flicker unchanged. On by default (`h3_vsr_open_params.color_match`; `H3_VSR_NO_COLOR_MATCH=1` disables it).
 - 4x then half beats direct 2x on every metric on the two clips it could run (256x256 and 336x192 inputs), and on anime it brings the face LPIPS level with Real-ESRGAN Anime (0.064). The 4x intermediate costs GPU memory, though: for the three clips enlarged to 1024x1792, 1600x1088 and 1920x1088, `h3_vsr_check_requirements` refused it (45 to 53 GB estimated; the estimate was revised to 1.5 KB per pixel for the ReAE's 4-frame passes, and 3840x2176 still needs about 33 GB). On a 24 GB Mac the path fits a 4x intermediate of about 2.5 million pixels (a 448x256 input -> 1792x1024, say). Forced with `H3_VSR_IGNORE_BUDGET=1`, 672x384 -> 2688x1536 ran with a 20.3 GB footprint, swapped, and took 26 s per middle chunk (its 18.2 GB estimate exceeds 90% of the 19.1 GB budget, so it is refused by default). In the app the "4倍で生成してから縮小する" toggle (shown for 2x only, off by default) selects it, and it falls back to direct 2x silently when it does not fit. About four times the time (anime 2.1 -> 8.8 s, square 2.2 -> 9.2 s).
+
+**Wet-skin face close-ups (2026-10-29, clips generated to match the user's sample image, M5, int8 windowed)**
+
+To match the comparison image the user showed (wet slicked-back blonde hair, glistening skin with water droplets, warm light, a smile and a three-quarter turn), 5-second clips were generated in the app with the same prompt and seed (20261029) at 544x960 (portrait-large, 964 s) and 256x448 (portrait-small, 140 s). The set: `~/Movies/H3cApp/skin-eval-2026-10-29/` (clips, crop sheets, scripts). Measured two ways.
+
+(a) The real workflow: each generated clip enlarged 2x through the app's API by the five methods, no-reference scores on the face crop of frame 46 (544x960: cheek, nose and mouth, 600x700; 256x448: eyes to mouth, 400x460); there is no ground truth. At 544x960 the 4x path's 2176x3840 intermediate exceeds the memory budget and fell back silently to direct 2x (frame-identical output, 46 s); at 256x448 it ran (11 -> 39 s).
+
+| Input | Method | Time | face MUSIQ↑ | face MANIQA↑ | face flicker↓ |
+|---|---|---|---|---|---|
+| 544x960 | standard / MetalFX | 1 s / 1 s | 56.3 / 57.9 | 0.247 / 0.228 | 5.33 / 5.66 |
+| 544x960 | Real-ESRGAN General | 13 s | 62.5 | 0.268 | 5.19 |
+| 544x960 | SwiftVR 2x | 47 s | **70.1** | **0.331** | 6.23 |
+| 256x448 | standard / MetalFX | 1 s / 1 s | 56.7 / 59.2 | 0.391 / 0.385 | 4.87 / 5.25 |
+| 256x448 | Real-ESRGAN General | 3 s | 65.8 | 0.419 | 4.85 |
+| 256x448 | SwiftVR 2x / 4x then 1/2 | 11 s / 39 s | **72.4** / 72.2 | 0.526 / **0.608** | 5.81 / 5.54 |
+
+(b) With ground truth: frames 30 to 62 of the generated clip are the truth, the input is its bicubic half, each method restores it (`h3_vsr_run`; Real-ESRGAN through the app from an x264 crf 6 encode of the input). Here 4x then 1/2 fits at 544x960 too (a 1088x1920 intermediate).
+
+| Truth | Variant | PSNR | LPIPS↓ | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA |
+|---|---|---|---|---|---|---|---|---|
+| 544x960 | Lanczos / Real-ESRGAN | 43.09 / 37.01 | **0.052** / 0.080 | 3.31 / 3.46 | 40.86 / 35.21 | **0.070** / 0.090 | 52.9 / 65.5 | 0.408 / 0.445 |
+| 544x960 | SwiftVR windowed / dense | 31.55 / 31.70 | 0.119 / 0.115 | 4.13 / 4.07 | 30.25 / 30.39 | 0.143 / 0.141 | 71.0 / 70.4 | 0.513 / 0.518 |
+| 544x960 | SwiftVR 4x then 1/2 | 33.98 | 0.107 | 3.98 | 32.51 | 0.110 | **71.7** | **0.604** |
+| 256x448 | Lanczos / Real-ESRGAN | 39.25 / 34.13 | 0.084 / 0.094 | 3.21 / 3.49 | 37.60 / 32.97 | 0.100 / 0.100 | 49.5 / 59.8 | 0.446 / 0.469 |
+| 256x448 | SwiftVR 2x (windowed = dense) | 30.01 | 0.102 | 4.21 | 28.79 | 0.095 | 69.8 | 0.564 |
+| 256x448 | SwiftVR 4x then 1/2 | 33.28 | **0.057** | 3.81 | 31.92 | **0.060** | **72.3** | **0.602** |
+
+Checked on the 1:1 crops (whether the result reaches the "pores visible" look of the SeedVR2 column in the user's sample):
+- **Skin texture**: SwiftVR draws the pores and droplets most clearly and leads every no-reference score (face MUSIQ 70 to 72; Real-ESRGAN 60 to 66; standard 50 to 57). Real-ESRGAN tightens the existing shapes a little and adds no pores. Standard and MetalFX stay soft.
+- **Redrawing**: at 544x960, direct 2x SwiftVR redraws the eye region: the lashes change shape, tear-trough lines that the source lacks appear, and the skin under the eye gets concentric ripples (seen in the real workflow (a) and in (b) alike, with dense attention too). 4x then 1/2 keeps the eye shape close to the truth and loses the ripples, with faint tear-trough lines remaining. Real-ESRGAN and Lanczos change no shapes.
+- **What 4x then 1/2 buys**: at 544x960 face LPIPS 0.143 -> 0.110, PSNR +2.3 dB, flicker -4%; at 256x448 face LPIPS 0.095 -> 0.060; the no-reference scores do not drop. For skin close-ups like the sample, 4x then 1/2 beats direct 2x. But at 544x960 the app's 4x path does not fit in memory (an 8.4 Mpx intermediate); (b) fit only because its input was the half.
+- **Fidelity**: against ground truth Lanczos is best and SwiftVR is 8 to 12 dB lower in PSNR. The choice follows the purpose: standard to enlarge the generated frame as it is, SwiftVR to show pores and droplets.
+
+Conclusion: the texture closest to the sample's SeedVR2 column comes from SwiftVR, preferably 4x then 1/2, but using that path on generated video at 544x960 or larger needs either tiling of the 4x intermediate or the ReAE output layers run in smaller frame batches (not implemented; a P7 candidate). Direct 2x tends to redraw the eyes, so on face close-ups the user should check and choose.
