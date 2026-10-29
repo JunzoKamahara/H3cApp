@@ -484,7 +484,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_vsr_pad_f32", @"h3_vsr_upsample2_f32",
             @"h3_vsr_space_to_depth_f32", @"h3_vsr_depth_to_space_f32",
             @"h3_vsr_split_frames_f32", @"h3_vsr_clamp_tanh_f32",
-            @"h3_vsr_pixels_to_f32", @"h3_vsr_f32_to_pixels",
+            @"h3_vsr_pixels_to_f32", @"h3_vsr_f32_to_pixels", @"h3_vsr_tile_accumulate_f32",
             @"h3_vsr_ln_mod_bf16", @"h3_vsr_qkv_prepare_bf16",
             @"h3_vsr_gather_rows_bf16", @"h3_vsr_bias_gate_add_bf16",
             @"h3_vsr_gelu_bias_bf16", @"h3_vsr_patchify_bf16",
@@ -3018,30 +3018,35 @@ int h3_gpu_vsr_clamp_tanh_f32(h3_gpu *opaque, h3_gpu_tensor *output,
 }
 
 typedef struct {
-    uint32_t frames, in_w, in_h, in_stride, bgra, out_w, out_h, pad_w, pad_h;
+    uint32_t frames, in_w, in_h, in_stride, bgra, out_w, out_h, tile_x, tile_y, tile_w, tile_h;
 } vsr_pixels_in_args;
 
 typedef struct {
-    uint32_t frames, full_w, full_h, crop_w, crop_h, out_stride, bgra, round_mode;
+    uint32_t frames, full_w, full_h, crop_w, crop_h, out_stride, bgra, round_mode, first_frame;
 } vsr_pixels_out_args;
+
+typedef struct {
+    uint32_t frames, first_frame, tile_w, tile_h, tile_x, tile_y, out_w, out_h;
+} vsr_tile_args;
 
 int h3_gpu_vsr_pixels_to_f32(h3_gpu *opaque, h3_gpu_tensor *output,
                              const h3_gpu_tensor *pixels, uint32_t frames,
                              uint32_t in_w, uint32_t in_h, uint32_t in_stride,
                              int bgra, uint32_t out_w, uint32_t out_h,
-                             uint32_t pad_w, uint32_t pad_h) {
+                             uint32_t tile_x, uint32_t tile_y,
+                             uint32_t tile_w, uint32_t tile_h) {
     H3GPU *gpu = GPU(opaque);
-    if (!frames || !in_w || !in_h || !out_w || !out_h ||
+    if (!frames || !in_w || !in_h || !out_w || !out_h || !tile_w || !tile_h ||
         in_stride < in_w * (bgra ? 4u : 3u)) return 0;
     size_t input_count = (size_t)frames * in_h * in_stride;
-    size_t output_count = (size_t)frames * (out_h + pad_h) * (out_w + pad_w) * 3;
+    size_t output_count = (size_t)frames * tile_h * tile_w * 3;
     if (!h3_gpu_require_elements(gpu, pixels, input_count, @"VSR pixels in") ||
         TENSOR(pixels).dtype != H3_GPU_I8 ||
         !vsr_check_f32(gpu, output, output_count, @"VSR pixels out")) return 0;
     vsr_pixels_in_args args = {frames, in_w, in_h, in_stride, bgra ? 1u : 0u,
-                               out_w, out_h, pad_w, pad_h};
+                               out_w, out_h, tile_x, tile_y, tile_w, tile_h};
     return h3_gpu_dispatch_3d(gpu, @"h3_vsr_pixels_to_f32",
-        MTLSizeMake(out_w + pad_w, out_h + pad_h, frames),
+        MTLSizeMake(tile_w, tile_h, frames),
         ^(id<MTLComputeCommandEncoder> encoder) {
             [encoder setBuffer:TENSOR(pixels).buffer offset:0 atIndex:0];
             [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
@@ -3050,20 +3055,20 @@ int h3_gpu_vsr_pixels_to_f32(h3_gpu *opaque, h3_gpu_tensor *output,
 }
 
 int h3_gpu_vsr_f32_to_pixels(h3_gpu *opaque, h3_gpu_tensor *pixels,
-                             const h3_gpu_tensor *input, uint32_t frames,
-                             uint32_t full_w, uint32_t full_h, uint32_t crop_w,
-                             uint32_t crop_h, uint32_t out_stride, int bgra,
-                             int round_mode) {
+                             const h3_gpu_tensor *input, uint32_t first_frame,
+                             uint32_t frames, uint32_t full_w, uint32_t full_h,
+                             uint32_t crop_w, uint32_t crop_h, uint32_t out_stride,
+                             int bgra, int round_mode) {
     H3GPU *gpu = GPU(opaque);
     if (!frames || !full_w || !full_h || !crop_w || !crop_h || crop_w > full_w ||
         crop_h > full_h || out_stride < crop_w * (bgra ? 4u : 3u)) return 0;
-    size_t input_count = (size_t)frames * full_h * full_w * 3;
+    size_t input_count = ((size_t)first_frame + frames) * full_h * full_w * 3;
     size_t output_count = (size_t)frames * crop_h * out_stride;
     if (!vsr_check_f32(gpu, input, input_count, @"VSR frames in") ||
         !h3_gpu_require_elements(gpu, pixels, output_count, @"VSR pixels out") ||
         TENSOR(pixels).dtype != H3_GPU_I8) return 0;
     vsr_pixels_out_args args = {frames, full_w, full_h, crop_w, crop_h, out_stride,
-                                bgra ? 1u : 0u, round_mode ? 1u : 0u};
+                                bgra ? 1u : 0u, round_mode ? 1u : 0u, first_frame};
     return h3_gpu_dispatch_3d(gpu, @"h3_vsr_f32_to_pixels",
         MTLSizeMake(crop_w, crop_h, frames),
         ^(id<MTLComputeCommandEncoder> encoder) {
@@ -3071,6 +3076,39 @@ int h3_gpu_vsr_f32_to_pixels(h3_gpu *opaque, h3_gpu_tensor *pixels,
             [encoder setBuffer:TENSOR(pixels).buffer offset:0 atIndex:1];
             [encoder setBytes:&args length:sizeof(args) atIndex:2];
         });
+}
+
+int h3_gpu_vsr_tile_accumulate_f32(h3_gpu *opaque, h3_gpu_tensor *composite,
+                                   uint32_t out_w, uint32_t out_h,
+                                   const h3_gpu_tensor *tile, uint32_t first_frame,
+                                   uint32_t frames, uint32_t tile_w, uint32_t tile_h,
+                                   uint32_t tile_x, uint32_t tile_y,
+                                   const h3_gpu_tensor *weights) {
+    H3GPU *gpu = GPU(opaque);
+    if (!frames || !out_w || !out_h || !tile_w || !tile_h) return 0;
+    if (!vsr_check_f32(gpu, composite, (size_t)frames * out_h * out_w * 3, @"VSR composite") ||
+        !vsr_check_f32(gpu, tile, ((size_t)first_frame + frames) * tile_h * tile_w * 3, @"VSR tile") ||
+        !vsr_check_f32(gpu, weights, (size_t)tile_h * tile_w, @"VSR tile weights")) return 0;
+    vsr_tile_args args = {frames, first_frame, tile_w, tile_h, tile_x, tile_y, out_w, out_h};
+    return h3_gpu_dispatch_3d(gpu, @"h3_vsr_tile_accumulate_f32",
+        MTLSizeMake(tile_w, tile_h, frames),
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(composite).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(tile).buffer offset:0 atIndex:1];
+            [encoder setBuffer:TENSOR(weights).buffer offset:0 atIndex:2];
+            [encoder setBytes:&args length:sizeof(args) atIndex:3];
+        });
+}
+
+int h3_gpu_zero_f32(h3_gpu *opaque, h3_gpu_tensor *x, size_t elements) {
+    H3GPU *gpu = GPU(opaque);
+    if (!vsr_check_f32(gpu, x, elements, @"zero") || !h3_gpu_require_command(gpu)) return 0;
+    @autoreleasepool {
+        id<MTLBlitCommandEncoder> blit = [gpu.command blitCommandEncoder];
+        [blit fillBuffer:TENSOR(x).buffer range:NSMakeRange(0, elements * sizeof(float)) value:0];
+        [blit endEncoding];
+    }
+    return 1;
 }
 
 static int h3_gpu_require_bf16(H3GPU *gpu, const h3_gpu_tensor *tensor,

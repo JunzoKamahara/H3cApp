@@ -234,12 +234,74 @@ static void test_patch_indices(void) {
     CHECK(H3_VSR_TOKEN_PIXELS == 32);
 }
 
+
+static void test_tile_plan(void) {
+    h3_vsr_tile_plan plan;
+    /* One tile is the frame. */
+    CHECK(h3_vsr_tile_plan_build(2176, 3840, 1, 1, 128, &plan));
+    CHECK(plan.tile_w == 2176 && plan.tile_h == 3840 && plan.x[0] == 0 && plan.y[0] == 0);
+    /* 544x960 at 4x (2176x3840) in 2 x 2: 1152 x 1984 tiles, 128 overlap. */
+    CHECK(h3_vsr_tile_plan_build(2176, 3840, 2, 2, 128, &plan));
+    CHECK(plan.tile_w == 1152 && plan.tile_h == 1984);
+    CHECK(plan.x[0] == 0 && plan.x[1] == 1024 && plan.y[0] == 0 && plan.y[1] == 1856);
+    /* 1 x 3: 1376 rows each, origins spread evenly on the 32 grid, the last flush. */
+    CHECK(h3_vsr_tile_plan_build(2176, 3840, 1, 3, 128, &plan));
+    CHECK(plan.tile_w == 2176 && plan.tile_h == 1376);
+    CHECK(plan.y[0] == 0 && plan.y[1] == 1216 && plan.y[2] == 2464);
+    CHECK(plan.y[0] + plan.tile_h - plan.y[1] >= 128 && plan.y[1] + plan.tile_h - plan.y[2] >= 128);
+    /* Bad arguments and frames too small for the grid. */
+    CHECK(!h3_vsr_tile_plan_build(2176, 3840, 2, 2, 100, &plan));   /* overlap not a multiple of 32 */
+    CHECK(!h3_vsr_tile_plan_build(2170, 3840, 2, 2, 128, &plan));   /* frame not a multiple of 32 */
+    CHECK(!h3_vsr_tile_plan_build(160, 160, 2, 2, 128, &plan));     /* 2 tiles of >= 144 do not fit 160 */
+    CHECK(!h3_vsr_tile_plan_build(2176, 3840, 17, 1, 128, &plan));
+    /* Every grid up to 4 x 4 on a few frames: tiles multiples of 32,
+     * covering the frame, overlapping by at least the asked amount, and
+     * the weights summing to 1 at every pixel. */
+    int frames[][2] = {{2176, 3840}, {1920, 1088}, {1088, 1920}, {640, 352}};
+    for (size_t f = 0; f < sizeof(frames) / sizeof(*frames); f++)
+        for (int rows = 1; rows <= 4; rows++)
+            for (int columns = 1; columns <= 4; columns++) {
+                int full_w = frames[f][0], full_h = frames[f][1];
+                if (!h3_vsr_tile_plan_build(full_w, full_h, columns, rows, 64, &plan)) {
+                    CHECK(columns * 64 + 64 > full_w || rows * 64 + 64 > full_h || full_w < 640 || full_h < 640);
+                    continue;
+                }
+                CHECK(plan.tile_w % 32 == 0 && plan.tile_h % 32 == 0);
+                CHECK(plan.x[0] == 0 && plan.x[columns - 1] + plan.tile_w == full_w);
+                CHECK(plan.y[0] == 0 && plan.y[rows - 1] + plan.tile_h == full_h);
+                for (int i = 1; i < columns; i++) CHECK(plan.x[i] % 32 == 0 && plan.x[i - 1] + plan.tile_w - plan.x[i] >= 64);
+                for (int i = 1; i < rows; i++) CHECK(plan.y[i] % 32 == 0 && plan.y[i - 1] + plan.tile_h - plan.y[i] >= 64);
+                float *sum = calloc((size_t)full_w * full_h, sizeof(float));
+                float *w = malloc((size_t)plan.tile_w * plan.tile_h * sizeof(float));
+                CHECK(sum && w);
+                int interior_ones = 0, out_of_range = 0;
+                for (int r = 0; r < rows; r++)
+                    for (int c = 0; c < columns; c++) {
+                        h3_vsr_tile_weights(&plan, c, r, w);
+                        for (int y = 0; y < plan.tile_h; y++)
+                            for (int x = 0; x < plan.tile_w; x++) {
+                                float v = w[(size_t)y * plan.tile_w + x];
+                                if (!(v > 0.0f && v <= 1.0f + 1e-6f)) out_of_range++;
+                                if (v == 1.0f) interior_ones++;
+                                sum[(size_t)(plan.y[r] + y) * full_w + plan.x[c] + x] += v;
+                            }
+                    }
+                int bad = 0;
+                for (size_t k = 0; k < (size_t)full_w * full_h; k++) if (fabsf(sum[k] - 1.0f) > 1e-5f) bad++;
+                CHECK(out_of_range == 0);
+                CHECK(bad == 0);
+                CHECK(interior_ones > 0);   /* away from the overlaps the tile stands alone */
+                free(sum); free(w);
+            }
+}
+
 int main(void) {
     test_axis_starts();
     test_window_layout();
     test_chunk_plan();
     test_rope_table();
     test_patch_indices();
+    test_tile_plan();
     printf("ok: %d checks (vsr host geometry)\n", tests_run);
     return 0;
 }

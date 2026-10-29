@@ -336,6 +336,47 @@ int main(void) {
         free(one); free(two); free(video);
         h3_vsr_close(vsr2);
     }
+    /* Spatial tiles (H3_VSR_TILES forces a grid the memory would not ask
+     * for): the frame is 160x160 padded, so 2 x 2 tiles of 96 with 32 of
+     * overlap. Every frame comes out, deterministic, and close to the
+     * one-tile output: the ReAE is convolutional and the DiT's windows
+     * only change which tokens attend to which. */
+    {
+        uint8_t *video = make_video(29, in_w, in_h, 1);
+        int total = 0;
+        uint8_t *whole = run_video(vsr, video, 29, in_w, in_h, out_w, out_h, 1, &total, -1);
+        CHECK(total == 29);
+        setenv("H3_VSR_TILES", "2x2", 1);
+        setenv("H3_VSR_TILE_OVERLAP", "32", 1);
+        CHECK(h3_vsr_check_requirements(vsr, in_w, in_h, out_w, out_h, &req) && req.supported);
+        CHECK(req.tile_columns == 2 && req.tile_rows == 2 && req.tile_width == 96 && req.tile_height == 96);
+        CHECK(req.tokens_per_chunk == 4 * 7 * 3 * 3);
+        int total2 = 0, total3 = 0;
+        uint8_t *tiled = run_video(vsr, video, 29, in_w, in_h, out_w, out_h, 1, &total2, -1);
+        uint8_t *again = run_video(vsr, video, 29, in_w, in_h, out_w, out_h, 1, &total3, -1);
+        CHECK(total2 == 29 && total3 == 29);
+        CHECK(memcmp(tiled, again, (size_t)29 * out_h * out_w * 4) == 0);
+        double se = 0.0;
+        int alpha_ok = 1;
+        for (size_t k = 0; k < (size_t)29 * out_h * out_w; k++) {
+            for (int c = 0; c < 3; c++) {
+                double d = (double)tiled[k * 4 + c] - (double)whole[k * 4 + c];
+                se += d * d;
+            }
+            if (tiled[k * 4 + 3] != 255) alpha_ok = 0;
+        }
+        double psnr = 10.0 * log10(255.0 * 255.0 / (se / ((double)29 * out_h * out_w * 3) + 1e-12));
+        printf("  2 x 2 tiles: 29 frames, %.1f dB against one tile\n", psnr);
+        CHECK(alpha_ok);
+        CHECK(psnr > 20.0);
+        /* A grid the frame cannot hold (8 tiles of at least 64 on 160) is refused. */
+        setenv("H3_VSR_TILES", "8x8", 1);
+        CHECK(h3_vsr_check_requirements(vsr, in_w, in_h, out_w, out_h, &req) && !req.supported && req.reason[0]);
+        CHECK(h3_vsr_session_open(vsr, in_w, in_h, out_w, out_h, 0, error, sizeof(error)) == NULL);
+        unsetenv("H3_VSR_TILES");
+        unsetenv("H3_VSR_TILE_OVERLAP");
+        free(whole); free(tiled); free(again); free(video);
+    }
     h3_vsr_close(vsr);
     char command[4200];
     snprintf(command, sizeof(command), "rm -rf '%s'", dir);

@@ -521,6 +521,18 @@ are in `UPSCALE_PLAN.md`; the short version:
   with the standard resize (`HalvingChunkScaler`): on soft sources it was
   preferred to a direct 2x in a blind comparison (`UPSCALE_PLAN.md`
   appendix A.3), at about four times the time.
+- **Tiles.** When a chunk's estimate (weights + about 150 KB per token +
+  about 1.5 KB per output pixel + the F32 frames) passes 90% of the GPU's
+  recommended working set, the engine splits each frame into equal tiles
+  on the 32 px grid (overlapping by at least 128 px), restores every tile
+  with its own ReAE state and DiT pass, and blends them with linear ramps
+  across the overlaps (`h3_vsr_tile_plan`, `h3_vsr_tile_weights`, the
+  kernel `h3_vsr_tile_accumulate_f32`). The fewest tiles whose estimate
+  fits are used. 544x960 to 4x (2176x3840) becomes 2 x 2 tiles of
+  1152x1984 on a 24 GB M5: about 44 s for the first chunk, then about
+  40 s, peak resident 16.0 GiB (about five times a direct 2x).
+  `H3_VSR_TILES=CxR` forces a grid and `H3_VSR_TILE_OVERLAP` another
+  overlap, for measuring.
 - **Cost (M5, 24 GB, int8).** 960x544 -> 1920x1088: about 8.2 s per 24-frame
   chunk (ReAE encode 0.5, DiT 6.2, ReAE decode 1.7), about 40 s for a 5 s
   clip, resident GPU memory about 10 GiB. 384x272 -> 768x544: about 4 s per

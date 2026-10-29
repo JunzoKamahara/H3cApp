@@ -5244,21 +5244,23 @@ kernel void h3_vsr_clamp_tanh_f32(device const float *input [[buffer(0)]],
 struct vsr_pixels_in_args {
     uint frames, in_w, in_h, in_stride;   /* stride in bytes */
     uint bgra;                            /* 1: BGRA8, 0: RGB24 */
-    uint out_w, out_h;                    /* the bilinear target */
-    uint pad_w, pad_h;                    /* zero-filled columns/rows after it */
+    uint out_w, out_h;                    /* the bilinear target (the whole frame) */
+    uint tile_x, tile_y, tile_w, tile_h;  /* the part of it produced: pixels at or
+                                             past out_w / out_h are zero (padding) */
 };
 
-/* 8-bit frames -> F32 RGB [T, out_h + pad_h, out_w + pad_w, 3] in [0, 1]:
- * torch bilinear (align_corners=False, no antialias) from in_w x in_h to
+/* 8-bit frames -> F32 RGB [T, tile_h, tile_w, 3] in [0, 1]: the tile at
+ * (tile_x, tile_y) of the torch bilinear (align_corners=False, no antialias)
+ * resize of the in_w x in_h frames to
  * out_w x out_h, zero beyond. Grid (out_w + pad_w, out_h + pad_h, T). */
 kernel void h3_vsr_pixels_to_f32(device const uchar *input [[buffer(0)]],
                                  device float *output [[buffer(1)]],
                                  constant vsr_pixels_in_args &args [[buffer(2)]],
                                  uint3 gid [[thread_position_in_grid]]) {
-    uint x = gid.x, y = gid.y, t = gid.z;
-    uint full_w = args.out_w + args.pad_w, full_h = args.out_h + args.pad_h;
-    if (x >= full_w || y >= full_h || t >= args.frames) return;
-    size_t destination = (((size_t)t * full_h + y) * full_w + x) * 3;
+    uint lx = gid.x, ly = gid.y, t = gid.z;
+    if (lx >= args.tile_w || ly >= args.tile_h || t >= args.frames) return;
+    size_t destination = (((size_t)t * args.tile_h + ly) * args.tile_w + lx) * 3;
+    uint x = args.tile_x + lx, y = args.tile_y + ly;
     if (x >= args.out_w || y >= args.out_h) {
         output[destination] = output[destination + 1] = output[destination + 2] = 0.0f;
         return;
@@ -5288,17 +5290,18 @@ struct vsr_pixels_out_args {
     uint crop_w, crop_h, out_stride;  /* the 8-bit frame, stride in bytes */
     uint bgra;
     uint round_mode;                  /* 0: truncate (reference), 1: round */
+    uint first_frame;                 /* the F32 frame output frame 0 comes from */
 };
 
-/* F32 RGB [T, full_h, full_w, 3] -> 8-bit frames cropped to crop_w x crop_h.
- * Grid (crop_w, crop_h, T). */
+/* F32 RGB [.., full_h, full_w, 3] (from frame first_frame) -> 8-bit frames
+ * cropped to crop_w x crop_h. Grid (crop_w, crop_h, T). */
 kernel void h3_vsr_f32_to_pixels(device const float *input [[buffer(0)]],
                                  device uchar *output [[buffer(1)]],
                                  constant vsr_pixels_out_args &args [[buffer(2)]],
                                  uint3 gid [[thread_position_in_grid]]) {
     uint x = gid.x, y = gid.y, t = gid.z;
     if (x >= args.crop_w || y >= args.crop_h || t >= args.frames) return;
-    size_t source = (((size_t)t * args.full_h + y) * args.full_w + x) * 3;
+    size_t source = (((size_t)(t + args.first_frame) * args.full_h + y) * args.full_w + x) * 3;
     uint bpp = args.bgra ? 4 : 3;
     device uchar *pixel = output + (size_t)t * args.crop_h * args.out_stride +
                           (size_t)y * args.out_stride + x * bpp;
@@ -5308,6 +5311,31 @@ kernel void h3_vsr_f32_to_pixels(device const float *input [[buffer(0)]],
         pixel[args.bgra ? 2 - c : c] = uchar(min(value, 255u));
     }
     if (args.bgra) pixel[3] = 255;
+}
+
+struct vsr_tile_args {
+    uint frames, first_frame;         /* tile frames first_frame .. +frames */
+    uint tile_w, tile_h, tile_x, tile_y;
+    uint out_w, out_h;                /* the composite frame */
+};
+
+/* composite [T, out_h, out_w, 3] += tile [.., tile_h, tile_w, 3] (from frame
+ * first_frame) * weights [tile_h, tile_w] over the tile's pixels inside the
+ * out_w x out_h frame (the spatial tiles of h3_vsr.c). Grid (tile_w,
+ * tile_h, T); one thread per composite pixel, so no two add to the same. */
+kernel void h3_vsr_tile_accumulate_f32(device float *composite [[buffer(0)]],
+                                       device const float *tile [[buffer(1)]],
+                                       device const float *weights [[buffer(2)]],
+                                       constant vsr_tile_args &args [[buffer(3)]],
+                                       uint3 gid [[thread_position_in_grid]]) {
+    uint x = gid.x, y = gid.y, t = gid.z;
+    if (x >= args.tile_w || y >= args.tile_h || t >= args.frames) return;
+    uint X = args.tile_x + x, Y = args.tile_y + y;
+    if (X >= args.out_w || Y >= args.out_h) return;
+    float w = weights[(size_t)y * args.tile_w + x];
+    size_t source = (((size_t)(t + args.first_frame) * args.tile_h + y) * args.tile_w + x) * 3;
+    size_t destination = (((size_t)t * args.out_h + Y) * args.out_w + X) * 3;
+    for (uint c = 0; c < 3; c++) composite[destination + c] += tile[source + c] * w;
 }
 
 /* ------------------------------------------------------------------ */

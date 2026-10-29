@@ -77,8 +77,9 @@ int main(int argc, char **argv) {
     printf("open: %.1f s (%s, %s attention, reae batch %d)\n", now() - t0, precision == H3_VSR_PRECISION_INT8 ? "int8" : "bf16", full ? "dense" : "MFSWA", params.reae_frame_batch);
     h3_vsr_requirements req;
     if (h3_vsr_check_requirements(vsr, in_w, in_h, out_w, out_h, &req))
-        printf("requirements: %s, tokens/chunk %d, windows %d/%d, estimate %.1f s/chunk, gpu %.1f GB\n",
+        printf("requirements: %s, tokens/chunk %d, windows %d/%d, tiles %d x %d of %d x %d, estimate %.1f s/chunk, gpu %.1f GB\n",
                req.supported ? "supported" : req.reason, req.tokens_per_chunk, req.windows_even, req.windows_odd,
+               req.tile_columns, req.tile_rows, req.tile_width, req.tile_height,
                req.estimated_seconds_per_chunk, (double)req.gpu_bytes / 1e9);
     int frames = H3_VSR_CLIP_FRAMES + 4 + (chunks - 1) * H3_VSR_CLIP_FRAMES;
     h3_vsr_session *s = h3_vsr_session_open(vsr, in_w, in_h, out_w, out_h, frames, error, sizeof(error));

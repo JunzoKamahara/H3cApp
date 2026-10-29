@@ -218,7 +218,8 @@ private final class VSRChunkScaler: ChunkedFrameScaler {
 /// SwiftVR's "4倍で生成して縮小": the engine restores to 4x, and each frame
 /// is brought down to the asked-for size with the standard resize. Gentler
 /// than a direct 2x on soft sources (UPSCALE_PLAN appendix A.3), at about
-/// four times the time.
+/// four times the time. When the 4x frame does not fit the GPU's memory in
+/// one piece the engine restores it as overlapping tiles and blends them.
 private final class HalvingChunkScaler: ChunkedFrameScaler {
     let inner: ChunkedFrameScaler
     private let largeWidth: Int, largeHeight: Int
@@ -383,8 +384,8 @@ enum VideoUpscale {
             } catch {
                 throw UpscaleError.cannotWrite(error.localizedDescription)
             }
-            // 4倍で生成して縮小: restore at 4x when asked and the engine takes it;
-            // otherwise the size asked for.
+            // 4倍で生成して縮小: restore at 4x when asked and the engine takes it
+            // (in tiles when the frame is large); otherwise the size asked for.
             var engineWidth = width, engineHeight = height
             if swiftVRUsesFourX(factor: factor, inputWidth: inputWidth, inputHeight: inputHeight) {
                 let (w4, h4) = UpscaleFactor.four.size(width: inputWidth, height: inputHeight)

@@ -126,7 +126,8 @@ static h3_gpu_tensor *preprocess(h3_gpu *gpu, const uint8_t *rgb, int frames, in
     CHECK(pixels && out);
     CHECK(h3_gpu_begin(gpu));
     CHECK(h3_gpu_vsr_pixels_to_f32(gpu, out, pixels, (uint32_t)frames, (uint32_t)in_w, (uint32_t)in_h,
-                                   (uint32_t)in_w * 3, 0, (uint32_t)out_w, (uint32_t)out_h, (uint32_t)pad_w, (uint32_t)pad_h));
+                                   (uint32_t)in_w * 3, 0, (uint32_t)out_w, (uint32_t)out_h, 0, 0,
+                                   (uint32_t)(out_w + pad_w), (uint32_t)(out_h + pad_h)));
     CHECK(h3_gpu_submit(gpu));
     h3_gpu_tensor_free(pixels);
     return out;

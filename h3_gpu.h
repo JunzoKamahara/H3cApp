@@ -468,16 +468,33 @@ int h3_gpu_vsr_channel_means_f32(h3_gpu *gpu, const h3_gpu_tensor *input, uint32
                                  uint32_t real_width, float means[3]);
 /* x[p, c] += offsets[c] for `pixels` RGB pixels (inside begin/submit). */
 int h3_gpu_vsr_add_channel_offsets_f32(h3_gpu *gpu, h3_gpu_tensor *x, uint32_t pixels, const float offsets[3]);
+/* 8-bit frames -> the tile (tile_x, tile_y, tile_w, tile_h) of their
+ * bilinear resize to out_w x out_h as F32 RGB [frames, tile_h, tile_w, 3];
+ * pixels at or past out_w / out_h are zero (the padding). */
 int h3_gpu_vsr_pixels_to_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                              const h3_gpu_tensor *pixels, uint32_t frames,
                              uint32_t in_w, uint32_t in_h, uint32_t in_stride,
                              int bgra, uint32_t out_w, uint32_t out_h,
-                             uint32_t pad_w, uint32_t pad_h);
+                             uint32_t tile_x, uint32_t tile_y,
+                             uint32_t tile_w, uint32_t tile_h);
+/* F32 RGB frames first_frame .. first_frame + frames of [.., full_h, full_w, 3]
+ * -> 8-bit frames cropped to crop_w x crop_h. */
 int h3_gpu_vsr_f32_to_pixels(h3_gpu *gpu, h3_gpu_tensor *pixels,
-                             const h3_gpu_tensor *input, uint32_t frames,
-                             uint32_t full_w, uint32_t full_h, uint32_t crop_w,
-                             uint32_t crop_h, uint32_t out_stride, int bgra,
-                             int round_mode);
+                             const h3_gpu_tensor *input, uint32_t first_frame,
+                             uint32_t frames, uint32_t full_w, uint32_t full_h,
+                             uint32_t crop_w, uint32_t crop_h, uint32_t out_stride,
+                             int bgra, int round_mode);
+/* composite [frames, out_h, out_w, 3] += tile frames first_frame .. of
+ * [.., tile_h, tile_w, 3] * weights [tile_h, tile_w], placed at (tile_x,
+ * tile_y) and clipped to the composite (inside begin/submit). */
+int h3_gpu_vsr_tile_accumulate_f32(h3_gpu *gpu, h3_gpu_tensor *composite,
+                                   uint32_t out_w, uint32_t out_h,
+                                   const h3_gpu_tensor *tile, uint32_t first_frame,
+                                   uint32_t frames, uint32_t tile_w, uint32_t tile_h,
+                                   uint32_t tile_x, uint32_t tile_y,
+                                   const h3_gpu_tensor *weights);
+/* Fills `elements` floats with zero (a blit inside begin/submit). */
+int h3_gpu_zero_f32(h3_gpu *gpu, h3_gpu_tensor *x, size_t elements);
 
 /* Visual-VAE encoder tensors use channels-last [B,T,H,W,C] storage. Spatial
  * padding reflects pixels while temporal front padding is zero-filled. */

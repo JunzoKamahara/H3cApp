@@ -75,6 +75,38 @@ int h3_vsr_chunk_plan(int raw_frames, int clip_frames,
                       h3_vsr_chunk *chunks, int capacity);
 
 /* ------------------------------------------------------------------ */
+/* Spatial tiles (h3_vsr_chunk.c). A frame too large for the GPU's memory
+ * is restored as a grid of equal tiles - each a multiple of 32 pixels a
+ * side, overlapping its neighbours by at least `overlap` pixels (a
+ * multiple of 32) - and the tiles are blended with linear ramps across
+ * the overlaps. One tile means the whole frame. */
+#define H3_VSR_MAX_TILES_PER_AXIS 16
+#define H3_VSR_TILE_OVERLAP 128    /* default overlap in output pixels */
+
+typedef struct {
+    int full_w, full_h;        /* the padded frame (multiples of 32) */
+    int columns, rows;
+    int tile_w, tile_h;        /* every tile's size (multiples of 32) */
+    int overlap;               /* the least overlap between neighbours */
+    int x[H3_VSR_MAX_TILES_PER_AXIS], y[H3_VSR_MAX_TILES_PER_AXIS];   /* tile origins */
+} h3_vsr_tile_plan;
+
+/* Lays columns x rows tiles over a full_w x full_h frame. Tiles are the
+ * smallest multiple of 32 that leaves at least `overlap` between
+ * neighbours; the first starts at 0, the last ends at the frame's edge and
+ * the others are spread evenly (origins multiples of 32). Returns 0 when
+ * the frame cannot hold that many tiles (or on bad arguments). */
+int h3_vsr_tile_plan_build(int full_w, int full_h, int columns, int rows,
+                           int overlap, h3_vsr_tile_plan *plan);
+
+/* Blend weight of tile (column, row) at each of its tile_h x tile_w
+ * pixels, row-major: 1 inside, falling linearly to 0 across each overlap
+ * it shares with a neighbour, normalised along each axis so that every
+ * pixel's weights over all tiles sum to 1 (the ramps are separable). */
+void h3_vsr_tile_weights(const h3_vsr_tile_plan *plan, int column, int row,
+                         float *weights);
+
+/* ------------------------------------------------------------------ */
 /* Mask-free shifted-window attention layout (h3_vsr_window.c).        */
 
 /* Window starts along one axis (LightX2V axis_window_starts): {0} when the
@@ -215,9 +247,15 @@ void h3_vsr_close(h3_vsr *vsr);
 typedef struct {
     int supported;
     char reason[256];
-    uint64_t gpu_bytes, host_bytes;
+    uint64_t gpu_bytes, host_bytes;   /* the peak estimate with the tiles below */
     double estimated_seconds_per_chunk;
-    int tokens_per_chunk, windows_even, windows_odd;
+    int tokens_per_chunk;             /* DiT tokens of a first chunk, all tiles */
+    int windows_even, windows_odd;    /* per tile */
+    /* How the frame is split when it does not fit in one piece (1 x 1
+     * otherwise): H3_VSR_TILE_OVERLAP pixels of overlap, blended. The
+     * environment variable H3_VSR_TILES=CxR forces a grid (measuring),
+     * H3_VSR_TILE_OVERLAP another overlap. */
+    int tile_columns, tile_rows, tile_width, tile_height;
 } h3_vsr_requirements;
 
 int h3_vsr_check_requirements(const h3_vsr *vsr, int in_w, int in_h,

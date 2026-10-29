@@ -37,6 +37,9 @@ public struct H3VSRRequirements: Sendable {
     public let gpuBytes: UInt64
     public let estimatedSecondsPerChunk: Double
     public let tokensPerChunk: Int
+    /// Spatial tiles the engine splits each frame into when one piece would
+    /// not fit the GPU's memory (1 otherwise); they overlap and are blended.
+    public let tiles: Int
 }
 
 public struct H3VSRCacheProgress: Sendable {
@@ -229,7 +232,8 @@ public final class H3VideoSuperResolver: @unchecked Sendable {
         _ = h3_vsr_check_requirements(handle, Int32(inputWidth), Int32(inputHeight), Int32(outputWidth), Int32(outputHeight), &req)
         return H3VSRRequirements(supported: req.supported != 0, reason: cString(req.reason), gpuBytes: req.gpu_bytes,
                                  estimatedSecondsPerChunk: req.estimated_seconds_per_chunk,
-                                 tokensPerChunk: Int(req.tokens_per_chunk))
+                                 tokensPerChunk: Int(req.tokens_per_chunk),
+                                 tiles: max(1, Int(req.tile_columns) * Int(req.tile_rows)))
     }
 
     /// GPU seconds spent so far and the peak live bytes.
