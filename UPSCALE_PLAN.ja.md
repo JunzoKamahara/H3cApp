@@ -496,7 +496,8 @@ Swift（`VideoUpscale.upscale` を 3 段に。既存方式は `PerFrameChunkAdap
 | P3 ReAE | 完了（F32 conv3d 経路） | `h3_vsr_reae.c` | `tests/test_vsr_reae.c`: 倍精度転写と 2e-7、チャンク／フレームバッチの状態持ち越しはビット一致 |
 | P4 DiT | 完了（BF16 / int8、全窓 MFSWA と全注意） | `h3_vsr_wan.c`, `h3_shaders.metal` の `h3_vsr_*`, `h3_gpu_sdpa_batched/cross_bf16` | `tests/test_vsr_wan.c`: 倍精度参照と 61 dB（bf16）/ 60.8 dB（int8） |
 | P5 ストリーマ | 完了（1 コンテキスト直列、1 チャンク遅延なし＝デコーダの 3 フレーム遅延のみ） | `h3_vsr.c` | `tests/test_vsr_session.c`: 7/29/52/70 フレームで出力数一致・決定的・キャンセル |
-| P6 アプリ | 完了（実重みでの動作確認は P1 待ち） | `H3VSR.swift`, `VideoUpscale.swift`（`ChunkedFrameScaler`, `.swiftVR`, 生成中ガード `upscaleBlockedReason`）, `UpscaleSheet.swift`, `SwiftVRModelSetup.swift`（ライセンス同意・DL・変換、`SwiftVRSetup.shared`）, `ModelManagerView.swift`（「拡大モデル」節）, API `GET /api/upscalers`, Localizable | 既存 4 方式（standard / metalFX / Real-ESRGAN 汎用・アニメ、2x、39 フレーム 512²）は旧ビルドの出力とデコード後フレーム単位で完全一致（2026-10-28 実測、`compare_frames`）。進捗は DiT ブロック単位（`h3_vsr_wan_predict` の `on_block`）、中止もブロック境界で効く。DL は `ModelDownloader`（再開可）、変換は `h3_vsr_build_cache`。「変換後に原本を削除」は未対応（ReAE を `reae.safetensors` から読み、キャッシュの fingerprint が `transformer/` の実体を要求するため。対応するならキャッシュに ReAE と fingerprint の写しを持たせる） |
+| P5.5 品質評価 | 一部（付録 A.3: 評価セット 5 本、忠実度・無参照指標・フリッカ、顔の A/B 画像。SeedVR2 参照とユーザーのブラインド採点は未） | `tools/quality_metrics.py`, `tools/quality_report.py`, `tests/vsr_run.c`, `misc/quality/set-v1/` | 付録 A.3 の表 |
+| P6 アプリ | 完了（実重みでの動作確認は P1 待ち） | `H3VSR.swift`, `VideoUpscale.swift`（`ChunkedFrameScaler`, `.swiftVR`, 生成中ガード `upscaleBlockedReason`）, `UpscaleSheet.swift`, `SwiftVRModelSetup.swift`（ライセンス同意・DL・変換、`SwiftVRSetup.shared`）, `ModelManagerView.swift`（「拡大モデル」節）, API `GET /api/upscalers`, Localizable | 既存 4 方式（standard / metalFX / Real-ESRGAN 汎用・アニメ、2x、39 フレーム 512²）は旧ビルドの出力とデコード後フレーム単位で完全一致（2026-10-28 実測、`compare_frames`）。進捗は DiT ブロック単位（`h3_vsr_wan_predict` の `on_block`）、中止もブロック境界で効く。DL は `ModelDownloader`（再開可）、変換は `h3_vsr_build_cache`。計画にあった品質優先／速度モードの UI 切替（全注意・精度・overlap）は未実装（エンジンの `full_attention` は Swift ブリッジまで、`dit_overlap` は未配線）。「変換後に原本を削除」は未対応（ReAE を `reae.safetensors` から読み、キャッシュの fingerprint が `transformer/` の実体を要求するため。対応するならキャッシュに ReAE と fingerprint の写しを持たせる） |
 | P7 最適化 | 未着手（owner 限定クエリ、NAX 任意形状、tapconv、ReAE F16、2 コンテキスト並走、ANE） | — | — |
 | P8 FlashVSR | 未着手 | — | — |
 
@@ -550,3 +551,84 @@ int8 線形は 128 行以上を要求するためトークン行を 128 単位�
 - FFN の 4 分割も測った（`H3_VSR_FFN_SPLITS=4`）: ブロック 1 の FFN は 2 分割 127 ms、4 分割 131 ms、中間チャンクの DiT は 6.20 s と 6.27 s で、分割の固定費（量子化・部分和の書き出し）が K 短縮の利得を食う。既定は 2 分割のまま。
 - P7 の到達点は 1080p 中間チャンク 17.6 → 約 8.2 s（encode 0.46、DiT 6.0〜6.3、decode 1.66）。これ以上は int8 線形そのものの効率（約 25 TFLOP/s）と MPSGraph SDPA に依存する。
 - 5 秒クリップ（124 フレーム ≈ 5 チャンク）は約 50〜55 s の見込みで、§1 の目標（M5 で 2 分以内）に入る。LAST チャンクは参照プロトコルどおり前チャンクの潜在を前置した 7 潜在の DiT を走らせるので、残り 1 フレームでも 1 チャンク分かかる。
+
+### 付録 A.3: P5.5 品質評価（2026-10-29, M5, int8）
+
+§9.5 の品質プログラムのうち、この Mac でできる範囲を実施した。**SeedVR2 の参照出力は作れていない**（64 GB 以上の Mac かクラウド GPU が要る）ので、§1 の「SeedVR2-3B の 95%」は未判定。ここにあるのは、元動画に対する忠実度（PSNR/SSIM/LPIPS）、無参照の画質指標（MUSIQ・MANIQA、pyiqa、8 フレーム）、フリッカ（隣接フレームの平均絶対差）と、顔の切り出しの同じ指標、そして目視の所見である。評価セットは `misc/quality/set-v1/`（gitignore）: 生成動画 4 本と実写 1 本を 33 フレームずつ切り出し、元を 2 分の 1（bicubic）に縮小したものを入力とし、元を正解とする。方式の生成は `h3_vsr_run`（`make h3_vsr_run`、精度と注意を選べる）とアプリの API、指標は `tools/quality_metrics.py`、表と顔の A/B 画像は `tools/quality_report.py`。顔の切り出し枠は `crops.txt`。
+
+| クリップ | 元 | 入力 | 内容 |
+|---|---|---|---|
+| face-photo-tall | 1024x1792 | 512x896 | 生成（実写風の少女、教室） |
+| face-photo-square | 512x512 | 256x256（4x 比較は 128x128） | 生成（実写風の女性、室内） |
+| face-real-webcam | 1600x1088 | 800x544 | 実写（Web カメラ、男性） |
+| leopard-man | 1920x1088 | 960x544 | 生成（豹頭の男、毛皮と肌） |
+| anime-face | 672x384 | 336x192 | 生成（アニメ調の少女） |
+
+### anime-face
+
+| variant | PSNR | SSIM | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 元（GT） | — | — | — | 70.8 | 0.3943 | 4.698 | — | — | — | — |
+| bilinear | 32.56 | 0.9479 | 0.1282 | 46.1 | 0.2609 | 3.550 | 29.10 | 0.1709 | 26.2 | 0.2116 |
+| SwiftVR int8 全注意 | 25.68 | 0.8533 | 0.1020 | 73.4 | 0.4306 | 5.602 | 22.26 | 0.1128 | 50.2 | 0.3563 |
+| SwiftVR int8 窓 | 25.65 | 0.8530 | 0.1028 | 73.4 | 0.4320 | 5.594 | 22.20 | 0.1134 | 50.2 | 0.3550 |
+| Real-ESRGAN アニメ | 31.45 | 0.9280 | 0.0937 | 70.9 | 0.3715 | 4.586 | 28.50 | 0.0638 | 46.8 | 0.3231 |
+| Real-ESRGAN 汎用 | 29.15 | 0.9235 | 0.0886 | 74.5 | 0.4552 | 5.306 | 26.13 | 0.0764 | 54.3 | 0.3842 |
+| 標準 | 34.04 | 0.9510 | 0.0802 | 53.4 | 0.2675 | 4.176 | 30.77 | 0.1219 | 32.3 | 0.2405 |
+
+### face-photo-square
+
+| variant | PSNR | SSIM | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 元（GT） | — | — | — | 77.4 | 0.5439 | 1.403 | — | — | — | — |
+| bilinear | 34.16 | 0.9496 | 0.1243 | 60.9 | 0.3134 | 1.030 | 32.72 | 0.1110 | 34.7 | 0.3130 |
+| SwiftVR int8 全注意 | 29.29 | 0.8980 | 0.0794 | 78.4 | 0.5477 | 1.333 | 26.63 | 0.0771 | 57.7 | 0.5076 |
+| SwiftVR int8 4x→1/2 | 29.47 | 0.8838 | 0.0775 | 77.9 | 0.5143 | 1.162 | 27.38 | 0.0578 | 52.2 | 0.4874 |
+| SwiftVR int8 窓 | 29.29 | 0.8980 | 0.0794 | 78.4 | 0.5477 | 1.333 | 26.63 | 0.0771 | 57.7 | 0.5076 |
+| Real-ESRGAN 汎用 | 32.53 | 0.9401 | 0.0654 | 78.0 | 0.5140 | 1.073 | 30.33 | 0.0698 | 54.3 | 0.4513 |
+| 標準 | 34.85 | 0.9486 | 0.0998 | 69.0 | 0.3473 | 1.098 | 33.77 | 0.0734 | 39.5 | 0.3419 |
+
+### face-photo-tall
+
+| variant | PSNR | SSIM | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 元（GT） | — | — | — | 45.9 | 0.3051 | 6.021 | — | — | — | — |
+| bilinear | 44.09 | 0.9906 | 0.0289 | 35.7 | 0.3031 | 5.759 | 39.85 | 0.0482 | 38.9 | 0.3313 |
+| SwiftVR int8 全注意 | 30.45 | 0.9227 | 0.1042 | 63.5 | 0.3614 | 5.773 | 27.05 | 0.1678 | 63.3 | 0.4354 |
+| SwiftVR int8 窓 | 30.09 | 0.9206 | 0.1054 | 64.3 | 0.3611 | 5.908 | 26.89 | 0.1724 | 63.1 | 0.4288 |
+| Real-ESRGAN 汎用 | 33.93 | 0.9635 | 0.0889 | 71.5 | 0.4092 | 6.312 | 30.66 | 0.1373 | 66.8 | 0.4843 |
+| 標準 | 38.30 | 0.9859 | 0.0217 | 40.8 | 0.3118 | 5.926 | 38.00 | 0.0215 | 42.1 | 0.3330 |
+
+### face-real-webcam
+
+| variant | PSNR | SSIM | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 元（GT） | — | — | — | 37.0 | 0.2083 | 0.991 | — | — | — | — |
+| bilinear | 44.76 | 0.9917 | 0.0308 | 30.1 | 0.2107 | 0.917 | 45.15 | 0.0328 | 36.6 | 0.2041 |
+| SwiftVR int8 全注意 | 30.19 | 0.9280 | 0.1472 | 67.0 | 0.3572 | 1.407 | 30.51 | 0.1363 | 59.9 | 0.3172 |
+| SwiftVR int8 窓 | 29.59 | 0.9233 | 0.1580 | 64.8 | 0.3667 | 1.423 | 30.30 | 0.1296 | 59.3 | 0.3094 |
+| Real-ESRGAN 汎用 | 33.30 | 0.9575 | 0.1075 | 54.3 | 0.3536 | 1.065 | 35.87 | 0.0765 | 51.8 | 0.2762 |
+| 標準 | 40.12 | 0.9835 | 0.0237 | 32.9 | 0.2090 | 1.031 | 41.52 | 0.0292 | 38.0 | 0.1958 |
+
+### leopard-man
+
+| variant | PSNR | SSIM | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 元（GT） | — | — | — | 46.2 | 0.1896 | 4.319 | — | — | — | — |
+| bilinear | 43.53 | 0.9880 | 0.0455 | 38.0 | 0.1950 | 3.896 | 38.28 | 0.0459 | 48.2 | 0.3571 |
+| SwiftVR int8 全注意 | 28.96 | 0.8471 | 0.2781 | 71.6 | 0.3053 | 5.324 | 25.06 | 0.2727 | 75.7 | 0.5133 |
+| SwiftVR int8 窓 | 28.81 | 0.8498 | 0.2647 | 70.9 | 0.2956 | 5.454 | 25.11 | 0.2632 | 75.6 | 0.5073 |
+| Real-ESRGAN 汎用 | 35.51 | 0.9534 | 0.1099 | 58.0 | 0.2418 | 4.359 | 31.34 | 0.1008 | 67.3 | 0.4101 |
+| 標準 | 41.21 | 0.9773 | 0.0285 | 42.1 | 0.1938 | 4.176 | 39.62 | 0.0187 | 51.3 | 0.3586 |
+
+所見（フレーム 16 の顔の切り出しを並べて見た。`misc/quality/set-v1/*/ab-crops.png`）:
+
+- **SwiftVR は細部を描き足す方式なので、元に対する忠実度（PSNR/SSIM/LPIPS）は 5 本中 4 本で最低**だが、無参照の画質指標（MUSIQ・MANIQA）は実写風・実写の顔で最高か同等。生成動画の元自身が柔らかい（MUSIQ 37〜46）ので、「元より鮮明」になる。
+- **肌**: 実写（face-real-webcam）では SwiftVR が毛穴・陰影のある肌を描き、Real-ESRGAN は滑らかで蝋のよう、標準はぼける。生成の少女（face-photo-tall）では SwiftVR の肌はやや平滑で明るく、Real-ESRGAN は絵のような硬さ。女性（face-photo-square）では SwiftVR が肌の赤みをやや強める。4x→1/2 は同じクリップで顔の LPIPS が 0.077 → 0.058、フリッカ 1.33 → 1.16 と、2x 直接より穏やかで元に近い（無参照指標は少し下がる）。
+- **系統的な明るさの上昇**: SwiftVR の出力は顔の輝度が元より +2.9〜+3.7（0〜255）一様に明るく、コントラスト（標準偏差）は 1.01〜1.07 倍。他方式は ±0.3 以内（Real-ESRGAN は −1.5〜−2.5）。これは内容によらず一定なので、入力の平均輝度に合わせる補正（FlashVSR の色補正と同じ考え）で消せる見込み。未実装。
+- **フリッカ**: SwiftVR は実写と豹で元より 1.2〜1.4 倍（描き足した質感がフレーム間で揺れる）。4x→1/2 は元より低い。
+- **アニメ**: SwiftVR は平坦な面にノイズ状の質感を足してしまい、顔の LPIPS は Real-ESRGAN アニメ（0.064）の方がずっと良い。アニメ調の動画には Real-ESRGAN アニメを使うべき。
+- **全注意 vs 窓（MFSWA）**: 差はわずか（PSNR で +0.1〜0.6 dB、顔の指標は同等）。速度優先の窓で十分。256x256 入力（単一窓）では両者は同一。
+- 精度 bf16 vs int8 はディスク容量の都合で同じ比較にかけていない。付録 A.1 の公式実装との一致（bf16 51 dB / int8 48 dB の 8 ビット出力）から、両者の差は約 48 dB 相当で目視では分からない水準。
+
+未了: SeedVR2 との比較、ユーザーのブラインド A/B（肌・髪・毛皮・文字・暗部の採点）、評価セットの実写の追加、DOVER、overlap=1、前処理（bicubic/Lanczos）の比較。

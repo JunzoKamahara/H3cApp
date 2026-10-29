@@ -495,7 +495,8 @@ The assumptions (int8 = 2× BF16, M4's effective MPSGraph TFLOP/s) are unmeasure
 | P3 ReAE | done (F32 conv3d path) | `h3_vsr_reae.c` | `tests/test_vsr_reae.c`: 2e-7 vs a double transcription; chunk / frame-batch state carry bit-exact |
 | P4 DiT | done (BF16 / int8, full-window MFSWA and full attention) | `h3_vsr_wan.c`, the `h3_vsr_*` kernels in `h3_shaders.metal`, `h3_gpu_sdpa_batched/cross_bf16` | `tests/test_vsr_wan.c`: 61 dB (bf16) / 60.8 dB (int8) vs a double reference |
 | P5 Streamer | done (one context, sequential; only the decoder's 3-frame delay) | `h3_vsr.c` | `tests/test_vsr_session.c`: 7/29/52/70 frames, counts match, deterministic, cancellation |
-| P6 App | done (running on real weights waits for P1) | `H3VSR.swift`, `VideoUpscale.swift` (`ChunkedFrameScaler`, `.swiftVR`, the generation guard `upscaleBlockedReason`), `UpscaleSheet.swift`, `SwiftVRModelSetup.swift` (license agreement, download, conversion; `SwiftVRSetup.shared`), `ModelManagerView.swift` (the 拡大モデル section), API `GET /api/upscalers`, Localizable | the four existing methods (standard / metalFX / Real-ESRGAN General / Anime, 2x, 39 frames 512²) are identical frame for frame, after decoding, to the pre-change app's output (measured 2026-10-28, `compare_frames`). Progress is per DiT block (`h3_vsr_wan_predict`'s `on_block`) and 中止 lands at a block boundary. The download goes through `ModelDownloader` (resumable), the conversion through `h3_vsr_build_cache`. "Delete the originals after conversion" is not supported: the ReAE is read from `reae.safetensors` and the cache fingerprint wants the `transformer/` files present (to support it, the cache would carry the ReAE and a copy of the fingerprint) |
+| P5.5 Quality | partly (appendix A.3: a 5-clip set, fidelity, no-reference metrics, flicker, face A/B sheets; the SeedVR2 reference and the user's blind scoring are still missing) | `tools/quality_metrics.py`, `tools/quality_report.py`, `tests/vsr_run.c`, `misc/quality/set-v1/` | the tables of appendix A.3 |
+| P6 App | done (running on real weights waits for P1) | `H3VSR.swift`, `VideoUpscale.swift` (`ChunkedFrameScaler`, `.swiftVR`, the generation guard `upscaleBlockedReason`), `UpscaleSheet.swift`, `SwiftVRModelSetup.swift` (license agreement, download, conversion; `SwiftVRSetup.shared`), `ModelManagerView.swift` (the 拡大モデル section), API `GET /api/upscalers`, Localizable | the four existing methods (standard / metalFX / Real-ESRGAN General / Anime, 2x, 39 frames 512²) are identical frame for frame, after decoding, to the pre-change app's output (measured 2026-10-28, `compare_frames`). Progress is per DiT block (`h3_vsr_wan_predict`'s `on_block`) and 中止 lands at a block boundary. The download goes through `ModelDownloader` (resumable), the conversion through `h3_vsr_build_cache`. The planned quality / speed mode switch in the UI (full attention, precision, overlap) is not implemented (the engine's `full_attention` reaches the Swift bridge only; `dit_overlap` is not wired). "Delete the originals after conversion" is not supported: the ReAE is read from `reae.safetensors` and the cache fingerprint wants the `transformer/` files present (to support it, the cache would carry the ReAE and a copy of the fingerprint) |
 | P7 Optimization | not started (owner-only queries, NAX for any shape, tapconv, ReAE F16, two contexts, ANE) | — | — |
 | P8 FlashVSR | not started | — | — |
 
@@ -549,3 +550,84 @@ Measured with `tests/bench_vsr.c` (`make h3_vsr_bench`; `./h3_vsr_bench [in_w in
 - Four FFN slices were measured too (`H3_VSR_FFN_SPLITS=4`): block 1's FFN 127 ms with two slices, 131 ms with four, and a middle chunk's DiT 6.20 s against 6.27 s; the per-slice overhead (quantization, partial writes) eats the gain from the shorter K. Two slices stay the default.
 - Where P7 stands: a 1080p middle chunk 17.6 -> about 8.2 s (encode 0.46, DiT 6.0 to 6.3, decode 1.66). Beyond this the time rests on the int8 linear itself (about 25 TFLOP/s) and MPSGraph's SDPA.
 - A 5-second clip (124 frames, about 5 chunks) should take 50 to 55 s, within the §1 target (2 minutes on M5). The LAST chunk runs a 7-latent DiT with the previous chunk's latents prepended, as the reference protocol does, so even one leftover frame costs a chunk.
+
+### Appendix A.3: P5.5 quality evaluation (2026-10-29, M5, int8)
+
+The part of the §9.5 quality programme this Mac can run. **No SeedVR2 reference was made** (it needs a 64 GB Mac or a cloud GPU), so the §1 criterion ("95% of SeedVR2-3B") remains unjudged. What is here: fidelity to the source (PSNR/SSIM/LPIPS), no-reference quality (MUSIQ, MANIQA via pyiqa, 8 frames), flicker (mean absolute difference between consecutive frames), the same on a face crop, and visual notes. The evaluation set is `misc/quality/set-v1/` (git-ignored): four generated clips and one real one, 33 frames each, the source downscaled by 2 (bicubic) as the input and the source as the ground truth. Variants come from `h3_vsr_run` (`make h3_vsr_run`; precision and attention selectable) and the app's API; metrics from `tools/quality_metrics.py`; the tables and the face A/B sheets from `tools/quality_report.py`. The face boxes are in `crops.txt`.
+
+| Clip | Source | Input | Content |
+|---|---|---|---|
+| face-photo-tall | 1024x1792 | 512x896 | generated (photoreal girl, classroom) |
+| face-photo-square | 512x512 | 256x256 (128x128 for the 4x comparison) | generated (photoreal woman, indoors) |
+| face-real-webcam | 1600x1088 | 800x544 | real (webcam, a man) |
+| leopard-man | 1920x1088 | 960x544 | generated (leopard-headed man, fur and skin) |
+| anime-face | 672x384 | 336x192 | generated (anime girl) |
+
+### anime-face
+
+| variant | PSNR | SSIM | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ground truth | — | — | — | 70.8 | 0.3943 | 4.698 | — | — | — | — |
+| bilinear | 32.56 | 0.9479 | 0.1282 | 46.1 | 0.2609 | 3.550 | 29.10 | 0.1709 | 26.2 | 0.2116 |
+| SwiftVR int8 dense | 25.68 | 0.8533 | 0.1020 | 73.4 | 0.4306 | 5.602 | 22.26 | 0.1128 | 50.2 | 0.3563 |
+| SwiftVR int8 window | 25.65 | 0.8530 | 0.1028 | 73.4 | 0.4320 | 5.594 | 22.20 | 0.1134 | 50.2 | 0.3550 |
+| Real-ESRGAN Anime | 31.45 | 0.9280 | 0.0937 | 70.9 | 0.3715 | 4.586 | 28.50 | 0.0638 | 46.8 | 0.3231 |
+| Real-ESRGAN General | 29.15 | 0.9235 | 0.0886 | 74.5 | 0.4552 | 5.306 | 26.13 | 0.0764 | 54.3 | 0.3842 |
+| standard | 34.04 | 0.9510 | 0.0802 | 53.4 | 0.2675 | 4.176 | 30.77 | 0.1219 | 32.3 | 0.2405 |
+
+### face-photo-square
+
+| variant | PSNR | SSIM | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ground truth | — | — | — | 77.4 | 0.5439 | 1.403 | — | — | — | — |
+| bilinear | 34.16 | 0.9496 | 0.1243 | 60.9 | 0.3134 | 1.030 | 32.72 | 0.1110 | 34.7 | 0.3130 |
+| SwiftVR int8 dense | 29.29 | 0.8980 | 0.0794 | 78.4 | 0.5477 | 1.333 | 26.63 | 0.0771 | 57.7 | 0.5076 |
+| SwiftVR int8 4x→1/2 | 29.47 | 0.8838 | 0.0775 | 77.9 | 0.5143 | 1.162 | 27.38 | 0.0578 | 52.2 | 0.4874 |
+| SwiftVR int8 window | 29.29 | 0.8980 | 0.0794 | 78.4 | 0.5477 | 1.333 | 26.63 | 0.0771 | 57.7 | 0.5076 |
+| Real-ESRGAN General | 32.53 | 0.9401 | 0.0654 | 78.0 | 0.5140 | 1.073 | 30.33 | 0.0698 | 54.3 | 0.4513 |
+| standard | 34.85 | 0.9486 | 0.0998 | 69.0 | 0.3473 | 1.098 | 33.77 | 0.0734 | 39.5 | 0.3419 |
+
+### face-photo-tall
+
+| variant | PSNR | SSIM | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ground truth | — | — | — | 45.9 | 0.3051 | 6.021 | — | — | — | — |
+| bilinear | 44.09 | 0.9906 | 0.0289 | 35.7 | 0.3031 | 5.759 | 39.85 | 0.0482 | 38.9 | 0.3313 |
+| SwiftVR int8 dense | 30.45 | 0.9227 | 0.1042 | 63.5 | 0.3614 | 5.773 | 27.05 | 0.1678 | 63.3 | 0.4354 |
+| SwiftVR int8 window | 30.09 | 0.9206 | 0.1054 | 64.3 | 0.3611 | 5.908 | 26.89 | 0.1724 | 63.1 | 0.4288 |
+| Real-ESRGAN General | 33.93 | 0.9635 | 0.0889 | 71.5 | 0.4092 | 6.312 | 30.66 | 0.1373 | 66.8 | 0.4843 |
+| standard | 38.30 | 0.9859 | 0.0217 | 40.8 | 0.3118 | 5.926 | 38.00 | 0.0215 | 42.1 | 0.3330 |
+
+### face-real-webcam
+
+| variant | PSNR | SSIM | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ground truth | — | — | — | 37.0 | 0.2083 | 0.991 | — | — | — | — |
+| bilinear | 44.76 | 0.9917 | 0.0308 | 30.1 | 0.2107 | 0.917 | 45.15 | 0.0328 | 36.6 | 0.2041 |
+| SwiftVR int8 dense | 30.19 | 0.9280 | 0.1472 | 67.0 | 0.3572 | 1.407 | 30.51 | 0.1363 | 59.9 | 0.3172 |
+| SwiftVR int8 window | 29.59 | 0.9233 | 0.1580 | 64.8 | 0.3667 | 1.423 | 30.30 | 0.1296 | 59.3 | 0.3094 |
+| Real-ESRGAN General | 33.30 | 0.9575 | 0.1075 | 54.3 | 0.3536 | 1.065 | 35.87 | 0.0765 | 51.8 | 0.2762 |
+| standard | 40.12 | 0.9835 | 0.0237 | 32.9 | 0.2090 | 1.031 | 41.52 | 0.0292 | 38.0 | 0.1958 |
+
+### leopard-man
+
+| variant | PSNR | SSIM | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ground truth | — | — | — | 46.2 | 0.1896 | 4.319 | — | — | — | — |
+| bilinear | 43.53 | 0.9880 | 0.0455 | 38.0 | 0.1950 | 3.896 | 38.28 | 0.0459 | 48.2 | 0.3571 |
+| SwiftVR int8 dense | 28.96 | 0.8471 | 0.2781 | 71.6 | 0.3053 | 5.324 | 25.06 | 0.2727 | 75.7 | 0.5133 |
+| SwiftVR int8 window | 28.81 | 0.8498 | 0.2647 | 70.9 | 0.2956 | 5.454 | 25.11 | 0.2632 | 75.6 | 0.5073 |
+| Real-ESRGAN General | 35.51 | 0.9534 | 0.1099 | 58.0 | 0.2418 | 4.359 | 31.34 | 0.1008 | 67.3 | 0.4101 |
+| standard | 41.21 | 0.9773 | 0.0285 | 42.1 | 0.1938 | 4.176 | 39.62 | 0.0187 | 51.3 | 0.3586 |
+
+Observations (face crops of frame 16 side by side: `misc/quality/set-v1/*/ab-crops.png`):
+
+- **SwiftVR draws detail in, so its fidelity to the source (PSNR/SSIM/LPIPS) is the lowest on 4 of 5 clips**, while its no-reference scores (MUSIQ, MANIQA) are the best or equal on photoreal and real faces. The generated sources are soft themselves (MUSIQ 37 to 46), so the output is "sharper than the original".
+- **Skin**: on the real clip (face-real-webcam) SwiftVR draws skin with pores and shading, Real-ESRGAN is smooth and waxy, standard is blurred. On the generated girl (face-photo-tall) SwiftVR's skin is somewhat flat and brighter, Real-ESRGAN painterly. On the woman (face-photo-square) SwiftVR deepens the skin's redness a little. 4x then 1/2 on the same clip is gentler and closer to the source (face LPIPS 0.077 -> 0.058, flicker 1.33 -> 1.16) at slightly lower no-reference scores.
+- **A systematic brightening**: SwiftVR's faces are +2.9 to +3.7 (of 255) brighter than the source, uniformly, with contrast (standard deviation) x1.01 to x1.07; the other methods stay within ±0.3 (Real-ESRGAN -1.5 to -2.5). Being content-independent, this should disappear with a mean-luma match to the input (the idea behind FlashVSR's colour correction). Not implemented.
+- **Flicker**: SwiftVR is 1.2 to 1.4x the source on the real clip and the leopard (the added texture moves between frames); 4x then 1/2 is below the source.
+- **Anime**: SwiftVR adds noise-like texture to flat areas; the face LPIPS of Real-ESRGAN Anime (0.064) is far better. Anime-style video should use Real-ESRGAN Anime.
+- **Dense vs windowed (MFSWA) attention**: marginal (+0.1 to 0.6 dB PSNR, equal face metrics); the faster windowed mode is enough. At a 256x256 input (one window) they are identical.
+- bf16 vs int8 was not put through the same comparison for lack of disk; by the parity with the official implementation in appendix A.1 (51 dB bf16 / 48 dB int8 on 8-bit frames) they differ by about 48 dB, below what the eye sees.
+
+Left: the SeedVR2 comparison, the user's blind A/B (skin, hair, fur, text, dark areas), more real footage in the set, DOVER, overlap=1, and the preprocessing (bicubic / Lanczos) comparison.

@@ -214,6 +214,10 @@ h3_vsr_bench: tests/bench_vsr.o $(LIB_OBJ)
 h3_int8_bench: tests/bench_int8.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# Runs the SwiftVR engine on raw RGB frames (quality evaluation; not in `make test`).
+h3_vsr_run: tests/vsr_run.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 h3_semantic_vae_test: tests/test_semantic_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
