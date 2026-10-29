@@ -631,3 +631,15 @@ Observations (face crops of frame 16 side by side: `misc/quality/set-v1/*/ab-cro
 - bf16 vs int8 was not put through the same comparison for lack of disk; by the parity with the official implementation in appendix A.1 (51 dB bf16 / 48 dB int8 on 8-bit frames) they differ by about 48 dB, below what the eye sees.
 
 Left: the SeedVR2 comparison, the user's blind A/B (skin, hair, fur, text, dark areas), more real footage in the set, DOVER, overlap=1, and the preprocessing (bicubic / Lanczos) comparison.
+
+**Blind scoring (2026-10-29, the user; face crops of frame 16, shuffled, the source among the candidates)**
+
+| Clip | Best | Runner-up | Relation to the metrics |
+|---|---|---|---|
+| face-photo-tall (generated girl) | **standard** (the resize) | — | the method with the best fidelity (PSNR 38.3, face LPIPS 0.022); on a soft generated source, the drawn-in detail (SwiftVR face LPIPS 0.17, Real-ESRGAN 0.14) was not preferred |
+| face-photo-square (generated woman) | **SwiftVR 4x then 1/2** | — | best face LPIPS (0.058), least flicker (1.16); gentler than direct 2x (0.077) and chosen over it |
+| face-real-webcam (real) | **SwiftVR windowed** | SwiftVR dense | best no-reference scores (face MUSIQ 59); the lowest fidelity, yet the drawn-in skin was preferred on real footage |
+| leopard-man (generated fur and skin) | **Real-ESRGAN General** | — | between fidelity and no-reference (PSNR 35.5, face MUSIQ 67); SwiftVR (face MUSIQ 76) presumably lost on the brightening and the flicker |
+| anime-face (anime) | **Real-ESRGAN Anime** | Real-ESRGAN General | best face LPIPS (0.064); matches the metrics' order |
+
+Reading: on a real face SwiftVR's drawn-in skin won; on soft generated faces the gentler methods won (standard, or SwiftVR's 4x then 1/2); on fur and anime Real-ESRGAN won. Direct 2x SwiftVR was best on no clip. Implications: (1) a "generate at 4x, downscale by 1/2" path is worth making SwiftVR's default candidate (better LPIPS, flicker and score than direct 2x), (2) the systematic +3/255 brightening should be corrected, (3) the default method should follow the content (anime: Real-ESRGAN Anime; real footage: SwiftVR; soft generated faces: standard or 4x then 1/2). The SeedVR2 comparison is still missing.
