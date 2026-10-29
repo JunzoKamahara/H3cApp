@@ -45,3 +45,4 @@ h3_generate_cli
 
 # Swift Package Manager build output.
 native/H3Spike/.build/
+h3_vsr_run
