@@ -98,14 +98,15 @@ Good to know:
     for this Mac (about 4.6 GB on an M5, 8.9 GB otherwise). It waits for a
     running generation to finish, since it needs the whole GPU
     (UPSCALE_PLAN.md). Its output is brought back to the input's average
-    brightness (the model alone comes out slightly brighter). For 2x there
-    is a toggle, "4倍で生成してから縮小する": the model restores at 4x and the
-    result is shrunk to 2x, which gives a gentler texture on soft sources at
-    about four times the time. When the 4x intermediate does not fit the
-    GPU's memory in one piece (on a 24 GB Mac, inputs beyond about 448x256),
-    it is restored as overlapping tiles blended smoothly at the seams, which
-    takes somewhat longer; when even tiles would not fit, it quietly stays at
-    2x. The choice also applies to the API.
+    brightness (the model alone comes out slightly brighter).
+  - **SwiftVR, restore at 4x then shrink**: the same model restores at 4x and
+    the result is brought down to the chosen size with the standard resize.
+    It redraws eyes and brows less, with a gentler texture truer to the
+    source, at about five times SwiftVR's time. When the 4x intermediate
+    does not fit the GPU's memory in one piece (on a 24 GB Mac, inputs beyond
+    about 448x256), it is restored as overlapping tiles blended smoothly at
+    the seams; when even tiles would not fit, it quietly stays at the chosen
+    scale. At 4x it is the same as SwiftVR.
 
   All of them run inside the app, with no other program. Real-ESRGAN's
   pretrained weights (BSD-3-Clause) are included in the app.

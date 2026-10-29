@@ -224,7 +224,7 @@ extension GenerationViewModel {
                                            "available": upscaler.isAvailable]
                 if let reason = upscaler.unavailableReason { item["reason"] = reason }
                 if let reason = upscaleBlockedReason(upscaler) { item["busy_reason"] = reason }
-                if upscaler == .swiftVR {
+                if upscaler.isSwiftVR {
                     item["model_directory"] = SwiftVRModel.directory
                     item["model_installed"] = SwiftVRModel.weightsPresent
                     item["cache"] = SwiftVRModel.cachePath as Any

@@ -1001,7 +1001,8 @@
 "変換する" = "Convert";
 "ダウンロードして変換する" = "Download and convert";
 "モデルを管理…" = "Manage model…";
-"4倍で生成してから縮小する（質感が穏やかになり、時間は約4倍）" = "Restore at 4x, then shrink (gentler texture; about four times the time)";
+"SwiftVR 4倍で生成してから縮小（質感が穏やか・研究用）" = "SwiftVR, restore at 4x then shrink (gentler texture; research)";
+"SwiftVRに4倍で復元させてから、標準の拡大と同じ方法で選んだ大きさに縮めます。目や眉を描き直しにくく、質感が穏やかで元の動画に忠実になります。4倍の途中の画面がGPUのメモリに入らない大きさでは、重なりを持たせたタイルに分けて復元します。時間はSwiftVRの約5倍です（M5で5秒の544×960を2倍にするのに約4分）。" = "SwiftVR restores at 4x and the frames are brought down to the chosen size with the same method as the standard enlargement. It redraws eyes and brows less, with a gentler texture truer to the source. When the 4x intermediate does not fit the GPU's memory it is restored as overlapping tiles. About five times SwiftVR's time (about 4 minutes for 5 s of 544×960 at 2x on an M5).";
 "モデルを準備…" = "Set up model…";
 "生成中は%@で拡大できません。生成が終わってから拡大してください" = "%@ can't enlarge while a video is being generated. Enlarge once the generation is finished";
 "動画の取り込み中は%@で拡大できません。取り込みが終わってから拡大してください" = "%@ can't enlarge while a video is being imported. Enlarge once the import is finished";

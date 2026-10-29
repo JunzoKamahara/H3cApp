@@ -204,6 +204,7 @@
             <tr><th scope="row">Real-ESRGAN General (AI upscaling)</th><td>AI that fills in detail while enlarging</td><td>Live action and general footage; since it draws in detail, patterns the original doesn't have can appear</td></tr>
             <tr><th scope="row">Real-ESRGAN Anime (AI upscaling)</th><td>AI that crisps up lines and flat colours</td><td>Anime and illustration-style video</td></tr>
             <tr><th scope="row">SwiftVR (AI video super-resolution, research)</th><td>An AI that looks at the whole video (a one-step restoration model built on Wan2.2) enlarges it while drawing texture and detail back in</td><td>When skin, hair or fabric should get its texture back. It works 24 frames at a time and takes far longer than Real-ESRGAN. Its weights are under a research, non-commercial license, so they are not bundled: the first time, press "モデルを準備…" to download and convert them (about 20 GB; 4.6 GB after conversion on an M5)</td></tr>
+            <tr><th scope="row">SwiftVR, restore at 4x then shrink (gentler texture; research)</th><td>The same model restores at 4x and the result is brought down to the chosen size with the standard method; large frames are restored as overlapping tiles</td><td>Close-ups of faces and other cases where eyes and brows should not be redrawn and the result should stay true to the source. About five times SwiftVR's time (about 4 minutes for 5 s of 544×960 at 2x on an M5)</td></tr>
           </tbody>
           <caption>Upscalers (v0.6.8). Every upscaler takes every scale.</caption>
         </table>

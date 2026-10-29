@@ -30,6 +30,11 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
     /// engine (h3_vsr.h) from weights the user downloaded: AI video
     /// super-resolution with generated detail. Research license.
     case swiftVR
+    /// The same model restoring at 4x (in tiles when the frame is large)
+    /// and the frames brought down to the chosen size with the standard
+    /// resize: gentler texture, truer to the source, about five times the
+    /// time of a direct 2x (UPSCALE_PLAN appendix A.3).
+    case swiftVRFourX
 
     var id: String { rawValue }
 
@@ -40,6 +45,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         case .realESRGANGeneral: return String(localized: "Real-ESRGAN 汎用（AI超解像）")
         case .realESRGANAnime: return String(localized: "Real-ESRGAN アニメ（AI超解像）")
         case .swiftVR: return String(localized: "SwiftVR（AI動画超解像・研究用）")
+        case .swiftVRFourX: return String(localized: "SwiftVR 4倍で生成してから縮小（質感が穏やか・研究用）")
         }
     }
 
@@ -63,9 +69,12 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return Bundle.main.url(forResource: "realesr-general-x4v3", withExtension: "safetensors", subdirectory: "Upscalers")
         case .realESRGANAnime:
             return Bundle.main.url(forResource: "realesr-animevideov3", withExtension: "safetensors", subdirectory: "Upscalers")
-        case .swiftVR: return nil
+        case .swiftVR, .swiftVRFourX: return nil
         }
     }
+
+    /// Whether it is SwiftVR in either form (the same model and setup).
+    var isSwiftVR: Bool { self == .swiftVR || self == .swiftVRFourX }
 
     /// What it is and what it suits, for the sheet.
     var detail: String {
@@ -80,6 +89,8 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return String(localized: "AIで線や色の面をくっきりさせながら拡大します（Real-ESRGAN realesr-animevideov3）。アニメやイラスト調の映像向けで、汎用より速く処理します。")
         case .swiftVR:
             return String(localized: "動画全体を一度に見るAIモデル（SwiftVR、Wan2.2ベース）で、質感や細部を描き起こしながら拡大します。24フレームずつ処理し、Real-ESRGANより大幅に時間がかかります（M5で5秒の動画に1分前後）。重みはSwiftVR Research License（研究・非商用）のため同梱せず、ダウンロードした重みをアプリで変換して使います。")
+        case .swiftVRFourX:
+            return String(localized: "SwiftVRに4倍で復元させてから、標準の拡大と同じ方法で選んだ大きさに縮めます。目や眉を描き直しにくく、質感が穏やかで元の動画に忠実になります。4倍の途中の画面がGPUのメモリに入らない大きさでは、重なりを持たせたタイルに分けて復元します。時間はSwiftVRの約5倍です（M5で5秒の544×960を2倍にするのに約4分）。")
         }
     }
 
@@ -92,7 +103,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return MTLFXSpatialScalerDescriptor.supportsDevice(device)
         case .realESRGANGeneral, .realESRGANAnime:
             return weightsURL != nil && MTLCreateSystemDefaultDevice() != nil
-        case .swiftVR:
+        case .swiftVR, .swiftVRFourX:
             return Self.swiftVRCachePath != nil && MTLCreateSystemDefaultDevice() != nil
         }
     }
@@ -101,7 +112,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
     var unavailableReason: String? {
         if isAvailable { return nil }
         switch self {
-        case .swiftVR:
+        case .swiftVR, .swiftVRFourX:
             if SwiftVRModel.weightsPresent {
                 return String(localized: "SwiftVRの重みはありますが、このMac用に変換されていません。「モデルを準備…」で変換すると選べます。")
             }
@@ -112,7 +123,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
     }
 
     /// Whether it wants the GPU to itself (so it waits for a generation).
-    var needsIdleGPU: Bool { self == .swiftVR }
+    var needsIdleGPU: Bool { isSwiftVR }
 }
 
 /// How much bigger (the sheet's 倍率). Every upscaler takes each of them.
@@ -215,7 +226,7 @@ private final class VSRChunkScaler: ChunkedFrameScaler {
     func cancel() { session.cancel() }
 }
 
-/// SwiftVR's "4倍で生成して縮小": the engine restores to 4x, and each frame
+/// SwiftVR's "4倍で生成してから縮小": the engine restores to 4x, and each frame
 /// is brought down to the asked-for size with the standard resize. Gentler
 /// than a direct 2x on soft sources (UPSCALE_PLAN appendix A.3), at about
 /// four times the time. When the 4x frame does not fit the GPU's memory in
@@ -265,16 +276,6 @@ private final class HalvingChunkScaler: ChunkedFrameScaler {
 }
 
 enum VideoUpscale {
-    /// UserDefaults key of SwiftVR's 4x-then-resize option (the 拡大 sheet's toggle).
-    static let swiftVRFourXKey = "h3c-app.swiftVRFourX"
-    /// Whether the 4x-then-resize path applies: chosen, a 2x request, and the
-    /// 4x intermediate within the size the engine and the writer take.
-    static func swiftVRUsesFourX(factor: UpscaleFactor, inputWidth: Int, inputHeight: Int) -> Bool {
-        guard factor == .two, UserDefaults.standard.bool(forKey: swiftVRFourXKey) else { return false }
-        let (w, h) = UpscaleFactor.four.size(width: inputWidth, height: inputHeight)
-        return w <= maximumSide && h <= maximumSide
-    }
-
     enum UpscaleError: LocalizedError {
         case noVideoTrack
         case tooLarge(width: Int, height: Int)
@@ -376,7 +377,7 @@ enum VideoUpscale {
                                                                                           height: inputHeight,
                                                                                           scale: factor == .two ? 2 : 4),
                                                                outputWidth: width, outputHeight: height))
-        case .swiftVR:
+        case .swiftVR, .swiftVRFourX:
             guard let cachePath = VideoUpscaler.swiftVRCachePath else { throw UpscaleError.unavailable(upscaler.label) }
             let resolver: H3VideoSuperResolver
             do {
@@ -384,13 +385,15 @@ enum VideoUpscale {
             } catch {
                 throw UpscaleError.cannotWrite(error.localizedDescription)
             }
-            // 4倍で生成して縮小: restore at 4x when asked and the engine takes it
-            // (in tiles when the frame is large); otherwise the size asked for.
+            // 4倍で生成してから縮小: restore at 4x (in tiles when the frame
+            // is large) when the engine takes it and the writer's limit allows
+            // it; otherwise the size asked for.
             var engineWidth = width, engineHeight = height
-            if swiftVRUsesFourX(factor: factor, inputWidth: inputWidth, inputHeight: inputHeight) {
+            if upscaler == .swiftVRFourX && factor != .four {
                 let (w4, h4) = UpscaleFactor.four.size(width: inputWidth, height: inputHeight)
-                if resolver.requirements(inputWidth: inputWidth, inputHeight: inputHeight,
-                                         outputWidth: w4, outputHeight: h4).supported {
+                if w4 <= maximumSide && h4 <= maximumSide &&
+                    resolver.requirements(inputWidth: inputWidth, inputHeight: inputHeight,
+                                          outputWidth: w4, outputHeight: h4).supported {
                     engineWidth = w4; engineHeight = h4
                 }
             }

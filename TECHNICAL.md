@@ -517,8 +517,9 @@ are in `UPSCALE_PLAN.md`; the short version:
 - **Output matching.** Each chunk's decoded frames are shifted per channel
   so their means equal the input's (the model's output is about 3/255
   brighter, uniformly; `color_match` in `h3_vsr_open_params`, off for the
-  parity test). "4倍で生成してから縮小する" restores at 4x and shrinks the frames
-  with the standard resize (`HalvingChunkScaler`): on soft sources it was
+  parity test). The method "SwiftVR 4倍で生成してから縮小" (`swiftVRFourX` in the
+  API) restores at 4x and shrinks the frames with the standard resize
+  (`HalvingChunkScaler`): on soft sources it was
   preferred to a direct 2x in a blind comparison (`UPSCALE_PLAN.md`
   appendix A.3), at about four times the time.
 - **Tiles.** When a chunk's estimate (weights + about 150 KB per token +
