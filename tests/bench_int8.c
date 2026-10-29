@@ -36,7 +36,7 @@ static void bench(h3_gpu *gpu, const char *label, uint32_t rows, uint32_t K, uin
             int ok = splits > 1
                 ? h3_gpu_linear_int8_bf16_split_k(gpu, out_t, partial, q_in, q_sc, in_t, w_t, sc_t, rows, K, N, (uint32_t)splits)
                 : splits < 0
-                ? (h3_gpu_linear_int8_partial_f32(gpu, partial, 0, q_in, q_sc, in_t, w_t, sc_t, rows, K, N) &&
+                ? (h3_gpu_linear_int8_partial_f32(gpu, partial, 0, q_in, q_sc, in_t, w_t, sc_t, rows, K, N, 0) &&
                    h3_gpu_sum_partials_bf16(gpu, out_t, partial, rows, N, 1))
                 : h3_gpu_linear_int8_bf16(gpu, out_t, q_in, q_sc, in_t, w_t, sc_t, rows, K, N, 0);
             if (!ok) { fprintf(stderr, "%s: %s\n", label, h3_gpu_error(gpu)); exit(1); }

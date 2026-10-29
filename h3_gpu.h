@@ -581,7 +581,12 @@ int h3_gpu_linear_int8_partial_f32(h3_gpu *gpu, h3_gpu_tensor *partial, uint32_t
                                    h3_gpu_tensor *quantized_input, h3_gpu_tensor *input_scales,
                                    const h3_gpu_tensor *input, const h3_gpu_tensor *weight,
                                    const h3_gpu_tensor *weight_scales, uint32_t rows,
-                                   uint32_t input_dim, uint32_t output_dim);
+                                   uint32_t input_dim, uint32_t output_dim, int prequantized);
+/* gelu_tanh(x + bias) quantized per row to int8 (+ F32 scales) in one
+ * pass; columns a multiple of 4, at most 8192. */
+int h3_gpu_vsr_gelu_quantize_int8_rows(h3_gpu *gpu, h3_gpu_tensor *quantized, h3_gpu_tensor *scales,
+                                       const h3_gpu_tensor *input, const h3_gpu_tensor *bias,
+                                       uint32_t rows, uint32_t columns);
 int h3_gpu_sum_partials_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *partial,
                              uint32_t rows, uint32_t output_dim, uint32_t splits);
 int h3_gpu_linear_int8_bf16(h3_gpu *gpu, h3_gpu_tensor *output,

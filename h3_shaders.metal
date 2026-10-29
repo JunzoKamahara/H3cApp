@@ -5466,6 +5466,55 @@ kernel void h3_vsr_scatter_rows_bf16(device const ushort *input [[buffer(0)]],
     output[(size_t)index[row] * args.width + column] = input[(size_t)row * args.width + column];
 }
 
+/* y = gelu_tanh(x + bias) quantized per row to int8 with its F32 scale,
+ * in one pass over the row (the values stay in registers between the max
+ * and the quantization): the FFN's activation feeding the int8 fc2.
+ * One 256-thread threadgroup per row; columns a multiple of 4, at most
+ * 8192; rows past `rows` are zeroed with scale 1 like the plain quantizer. */
+struct vsr_gelu_quant_args { uint rows, columns; };
+
+kernel void h3_vsr_gelu_quantize_int8_rows(device const bfloat *input [[buffer(0)]],
+                                           device const float *bias [[buffer(1)]],
+                                           device int8_t *output [[buffer(2)]],
+                                           device float *scales [[buffer(3)]],
+                                           constant vsr_gelu_quant_args &args [[buffer(4)]],
+                                           uint tid [[thread_index_in_threadgroup]],
+                                           ushort simdgroup [[simdgroup_index_in_threadgroup]],
+                                           ushort lane [[thread_index_in_simdgroup]],
+                                           uint row [[threadgroup_position_in_grid]]) {
+    uint vectors = args.columns / 4;
+    uint vector_base = row * vectors;
+    device char4 *output4 = reinterpret_cast<device char4 *>(output);
+    if (row >= args.rows) {
+        for (uint column = tid; column < vectors; column += 256) output4[vector_base + column] = char4(0);
+        if (tid == 0) scales[row] = 1.0f;
+        return;
+    }
+    device const bfloat4 *input4 = reinterpret_cast<device const bfloat4 *>(input);
+    device const float4 *bias4 = reinterpret_cast<device const float4 *>(bias);
+    threadgroup float scratch[8];
+    float4 kept[8];
+    float local_max = 0.0f;
+    const float k = 0.7978845608028654f;
+    uint n = 0;
+    for (uint column = tid; column < vectors && n < 8; column += 256, n++) {
+        float4 v = float4(input4[vector_base + column]) + bias4[column];
+        float4 t = clamp(k * (v + 0.044715f * v * v * v), -20.0f, 20.0f);
+        float4 g = 0.5f * v * (1.0f + tanh(t));
+        kept[n] = g;
+        local_max = max(local_max, max(max(fabs(g.x), fabs(g.y)), max(fabs(g.z), fabs(g.w))));
+    }
+    float max_abs = h3_int8_reduce_max(local_max, scratch, simdgroup, lane);
+    float scale = max_abs > 0.0f ? max_abs / 127.0f : 1.0f / 127.0f;
+    float inverse = max_abs > 0.0f ? 127.0f / max_abs : 127.0f;
+    if (tid == 0) scales[row] = scale;
+    n = 0;
+    for (uint column = tid; column < vectors && n < 8; column += 256, n++) {
+        int4 quantized = int4(rint(kept[n] * inverse));
+        output4[vector_base + column] = char4(clamp(quantized, int4(-127), int4(127)));
+    }
+}
+
 struct vsr_bias_gate_args { uint rows, width, has_residual, has_bias, has_gate; };
 
 /* out = residual + (y + bias) * gate, with the optional parts dropped;

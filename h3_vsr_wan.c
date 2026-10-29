@@ -532,6 +532,7 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
     h3_gpu_tensor *v = h3_gpu_tensor_new_bf16(gpu, (size_t)N * wan->patch_out);
     h3_gpu_tensor *partial = NULL;
     int halves = wan->int8 && wan->blocks[0].fc2_half[1].w != NULL;
+    int fused_gelu = !getenv("H3_VSR_GELU_SEPARATE") && F / 2 <= 8192;
     if (wan->int8) {
         uint32_t max_in = F > D ? F : D;
         r.q_in = h3_gpu_tensor_new_i8(gpu, (size_t)r.padded * max_in);
@@ -642,9 +643,16 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
             h3_gpu_tensor *fh[2] = {f, f_hi};
             for (int hi = 0; hi < 2; hi++) {
                 OP(run_linear(&r, wan, &k->fc1_half[hi], fh[hi], h));
-                OP(h3_gpu_vsr_gelu_bias_bf16(gpu, fh[hi], k->fc1_bias_half[hi], N, H));
-                OP(h3_gpu_linear_int8_partial_f32(gpu, partial, (uint32_t)hi, r.q_in, r.q_scales, fh[hi],
-                                                  k->fc2_half[hi].w, k->fc2_half[hi].scales, r.N, H, D));
+                if (fused_gelu) {
+                    /* bias + GELU + the int8 row quantization in one pass */
+                    OP(h3_gpu_vsr_gelu_quantize_int8_rows(gpu, r.q_in, r.q_scales, fh[hi], k->fc1_bias_half[hi], r.N, H));
+                    OP(h3_gpu_linear_int8_partial_f32(gpu, partial, (uint32_t)hi, r.q_in, r.q_scales, fh[hi],
+                                                      k->fc2_half[hi].w, k->fc2_half[hi].scales, r.N, H, D, 1));
+                } else {
+                    OP(h3_gpu_vsr_gelu_bias_bf16(gpu, fh[hi], k->fc1_bias_half[hi], N, H));
+                    OP(h3_gpu_linear_int8_partial_f32(gpu, partial, (uint32_t)hi, r.q_in, r.q_scales, fh[hi],
+                                                      k->fc2_half[hi].w, k->fc2_half[hi].scales, r.N, H, D, 0));
+                }
             }
             OP(h3_gpu_sum_partials_bf16(gpu, o, partial, r.N, D, 2));
             TRACE("fc2", o, (size_t)N * D);

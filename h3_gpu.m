@@ -490,7 +490,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_vsr_gelu_bias_bf16", @"h3_vsr_patchify_bf16",
             @"h3_vsr_pack_grid_bf16", @"h3_vsr_unpack_grid_f32",
             @"h3_vsr_zero_border_bf16", @"h3_vsr_zero_rows_bf16",
-            @"h3_vsr_scatter_rows_bf16",
+            @"h3_vsr_scatter_rows_bf16", @"h3_vsr_gelu_quantize_int8_rows",
             @"h3_vsr_pack_grid_s2d_bf16", @"h3_vsr_unpack_grid_d2s_f32",
             @"h3_vsr_grid_upsample2_bf16", @"h3_vsr_grid_split_frames_bf16",
             @"h3_vsr_grid_select_bf16", @"h3_vsr_pack_grid_clamp_bf16",
@@ -6294,7 +6294,7 @@ int h3_gpu_linear_int8_partial_f32(h3_gpu *opaque, h3_gpu_tensor *partial, uint3
                                    h3_gpu_tensor *quantized_input, h3_gpu_tensor *input_scales,
                                    const h3_gpu_tensor *input, const h3_gpu_tensor *weight,
                                    const h3_gpu_tensor *weight_scales, uint32_t rows,
-                                   uint32_t input_dim, uint32_t output_dim) {
+                                   uint32_t input_dim, uint32_t output_dim, int prequantized) {
     H3GPU *gpu = GPU(opaque);
     uint32_t padded_rows = (rows + 127u) & ~127u;
     size_t slot_elements = (size_t)padded_rows * output_dim;
@@ -6303,8 +6303,11 @@ int h3_gpu_linear_int8_partial_f32(h3_gpu *opaque, h3_gpu_tensor *partial, uint3
         !h3_gpu_require_f32(gpu, weight_scales, output_dim, @"partial weight scales") ||
         !h3_gpu_require_f32(gpu, partial, (size_t)(slot + 1) * slot_elements, @"partials") ||
         !h3_gpu_require_command(gpu)) return 0;
-    if (!h3_gpu_quantize_bf16_int8_rows(opaque, quantized_input, input_scales, input, rows, padded_rows,
-                                        input_dim, 1.0f, @"partial input")) return 0;
+    if (prequantized) {
+        if (!h3_gpu_require_i8(gpu, quantized_input, (size_t)padded_rows * input_dim, @"partial quantized input") ||
+            !h3_gpu_require_f32(gpu, input_scales, padded_rows, @"partial input scales")) return 0;
+    } else if (!h3_gpu_quantize_bf16_int8_rows(opaque, quantized_input, input_scales, input, rows, padded_rows,
+                                               input_dim, 1.0f, @"partial input")) return 0;
     id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(gpu, @"h3_linear_int8_split_k_nax_r128");
     if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < 256) {
         h3_gpu_set_error(gpu, @"split-K int8 linear is unavailable");
@@ -6344,4 +6347,40 @@ int h3_gpu_sum_partials_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_gpu
             [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
             [encoder setBytes:&args length:sizeof(args) atIndex:2];
         });
+}
+
+typedef struct { uint32_t rows, columns; } vsr_gelu_quant_args;
+
+int h3_gpu_vsr_gelu_quantize_int8_rows(h3_gpu *opaque, h3_gpu_tensor *quantized, h3_gpu_tensor *scales,
+                                       const h3_gpu_tensor *input, const h3_gpu_tensor *bias,
+                                       uint32_t rows, uint32_t columns) {
+    H3GPU *gpu = GPU(opaque);
+    uint32_t padded_rows = (rows + 127u) & ~127u;
+    if (!rows || columns % 4 || columns > 8192 ||
+        !h3_gpu_require_bf16(gpu, input, (size_t)rows * columns, @"VSR gelu-quantize input") ||
+        !vsr_check_f32(gpu, bias, columns, @"VSR gelu-quantize bias") ||
+        !h3_gpu_require_i8(gpu, quantized, (size_t)padded_rows * columns, @"VSR gelu-quantize output") ||
+        !h3_gpu_require_f32(gpu, scales, padded_rows, @"VSR gelu-quantize scales") ||
+        !h3_gpu_require_command(gpu)) return 0;
+    id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(gpu, @"h3_vsr_gelu_quantize_int8_rows");
+    if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < 256) {
+        h3_gpu_set_error(gpu, @"VSR gelu-quantize is unavailable");
+        return 0;
+    }
+    vsr_gelu_quant_args args = {rows, columns};
+    @autoreleasepool {
+        id<MTLComputeCommandEncoder> encoder = [gpu.command computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+        [encoder setBuffer:TENSOR(bias).buffer offset:0 atIndex:1];
+        [encoder setBuffer:TENSOR(quantized).buffer offset:0 atIndex:2];
+        [encoder setBuffer:TENSOR(scales).buffer offset:0 atIndex:3];
+        [encoder setBytes:&args length:sizeof(args) atIndex:4];
+        [encoder dispatchThreadgroups:MTLSizeMake(padded_rows, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+        [encoder endEncoding];
+    }
+    h3_gpu_stats stats = gpu.stats;
+    stats.direct_dispatches++;
+    gpu.stats = stats;
+    return 1;
 }
