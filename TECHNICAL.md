@@ -480,6 +480,51 @@ value. An extreme case is refused outright with a clear error (a 512 MiB
 attention-mask cap in the MPSGraph fallback path, see [h3_gpu.m](h3_gpu.m))
 rather than risking an out-of-memory crash.
 
+## AI video super-resolution (SwiftVR)
+
+"動画を拡大" has, next to the resize, MetalFX and Real-ESRGAN upscalers, the
+engine's own implementation of SwiftVR (arXiv 2606.09516): a one-step video
+restoration model built on Wan2.2-TI2V-5B with a small causal autoencoder
+(the Restoration-aware Autoencoder, ReAE). The design and every measurement
+are in `UPSCALE_PLAN.md`; the short version:
+
+- **Weights.** Not bundled (SwiftVR Research License, non-commercial). The
+  app downloads the 20 GB float32 safetensors from Hugging Face into
+  `~/Library/Application Support/H3cApp/Upscalers/SwiftVR` after the license
+  notice, and converts them once into an `.h3vc` cache: int8 (per-row scales,
+  4.6 GB) on a GPU with tensor hardware (M5), BF16 (8.9 GB) elsewhere. The
+  constant conditioning (timestep 1000, the fixed prompt's cross-attention
+  keys and values) is precomputed into the cache, so none of the text or
+  time embedders ever run.
+- **Pipeline.** The input is bilinearly resized to the target, padded to a
+  multiple of 32, encoded by the ReAE (16x spatial, 4x temporal, 48
+  channels) in chunks of 28 then 24 frames with the autoencoder's state
+  carried across chunks, restored by the 30-block DiT in a single pass
+  (`z_hq = z_lq - v`), and decoded. The DiT's self-attention is the
+  mask-free shifted-window scheme (16x16 token windows, full temporal
+  extent, alternating half-window shifts); only each window's owned rows run
+  as queries. Chunks follow the reference protocol exactly (the last chunk
+  pads to 4k+1 frames and prepends the previous chunk's latents), so the
+  output matches the official implementation: 51 dB on the restored latents
+  and 48 dB on the 8-bit frames (int8; 60 and 51 dB on BF16) against a
+  float32 run of the authors' code.
+- **Kernels.** The DiT runs on the same int8/BF16 TensorOps linears as the
+  generator; the FFN's 14336-wide reduction runs as two K-contiguous halves
+  with the GELU fused into the quantization. The ReAE's 3x3 convolutions and
+  MemBlocks run as tap-accumulated `matmul2d` products on a padded BF16
+  "grid" (`h3_vsr_tapconv_bf16_nax`), the rest of its layers on small grid
+  kernels; on Macs without tensor hardware it falls back to F32 MPSGraph.
+- **Cost (M5, 24 GB, int8).** 960x544 -> 1920x1088: about 8.2 s per 24-frame
+  chunk (ReAE encode 0.5, DiT 6.2, ReAE decode 1.7), about 40 s for a 5 s
+  clip, resident GPU memory about 10 GiB. 384x272 -> 768x544: about 4 s per
+  chunk. Progress is reported per DiT block and 中止 lands at a block
+  boundary. SwiftVR is refused while a generation, cache build or import is
+  running, since it needs the whole GPU.
+- **Tools.** `build_vsr_cache` converts weights from the command line;
+  `tests/test_real_vsr.c` checks the engine against a dump of the official
+  implementation (`tools/dump_swiftvr_fixture.py`); `h3_vsr_bench` times the
+  stages of a chunk.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Third-party notices (a Metal kernel design

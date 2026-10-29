@@ -125,6 +125,7 @@ The model weights are **not bundled**. They are published separately by the
 SwiftVR authors at https://huggingface.co/H-oliday/SwiftVR under the
 "SwiftVR Research License", which permits research and other non-commercial
 use only; commercial use needs the authors' written permission. The app only
-reads weights the user has downloaded and converted (`build_vsr_cache`), and
-shows this notice before they are used.
+reads weights the user has downloaded and converted for this Mac (the
+"SwiftVRのモデルを準備" sheet, or the `build_vsr_cache` tool), and shows this
+notice, with the license, before the download.
 
