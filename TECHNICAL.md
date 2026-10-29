@@ -514,6 +514,13 @@ are in `UPSCALE_PLAN.md`; the short version:
   MemBlocks run as tap-accumulated `matmul2d` products on a padded BF16
   "grid" (`h3_vsr_tapconv_bf16_nax`), the rest of its layers on small grid
   kernels; on Macs without tensor hardware it falls back to F32 MPSGraph.
+- **Output matching.** Each chunk's decoded frames are shifted per channel
+  so their means equal the input's (the model's output is about 3/255
+  brighter, uniformly; `color_match` in `h3_vsr_open_params`, off for the
+  parity test). "4倍で生成してから縮小する" restores at 4x and shrinks the frames
+  with the standard resize (`HalvingChunkScaler`): on soft sources it was
+  preferred to a direct 2x in a blind comparison (`UPSCALE_PLAN.md`
+  appendix A.3), at about four times the time.
 - **Cost (M5, 24 GB, int8).** 960x544 -> 1920x1088: about 8.2 s per 24-frame
   chunk (ReAE encode 0.5, DiT 6.2, ReAE decode 1.7), about 40 s for a 5 s
   clip, resident GPU memory about 10 GiB. 384x272 -> 768x544: about 4 s per

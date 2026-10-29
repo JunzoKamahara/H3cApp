@@ -460,6 +460,14 @@ int h3_gpu_vsr_grid_split_frames_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const 
 int h3_gpu_vsr_grid_select_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_vsr_grid *out,
                                 const h3_gpu_tensor *input, const h3_vsr_grid *in,
                                 uint32_t stride_t, uint32_t stride_y, uint32_t stride_x);
+/* Per-channel means of an F32 [frames, height, width, 3] image over its
+ * real (unpadded) top-left real_height x real_width area; begins, submits
+ * and waits on its own. */
+int h3_gpu_vsr_channel_means_f32(h3_gpu *gpu, const h3_gpu_tensor *input, uint32_t frames,
+                                 uint32_t height, uint32_t width, uint32_t real_height,
+                                 uint32_t real_width, float means[3]);
+/* x[p, c] += offsets[c] for `pixels` RGB pixels (inside begin/submit). */
+int h3_gpu_vsr_add_channel_offsets_f32(h3_gpu *gpu, h3_gpu_tensor *x, uint32_t pixels, const float offsets[3]);
 int h3_gpu_vsr_pixels_to_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                              const h3_gpu_tensor *pixels, uint32_t frames,
                              uint32_t in_w, uint32_t in_h, uint32_t in_stride,

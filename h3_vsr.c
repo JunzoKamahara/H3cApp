@@ -59,6 +59,7 @@ struct h3_vsr_session {
         int valid, chunk_index, count, skip, latents;
         h3_gpu_tensor *own;        /* its latents */
         h3_gpu_tensor *decoded;    /* [latents * 4, full_h, full_w, 3] */
+        float input_means[3];      /* of the chunk's input frames (colour match) */
     } pending;
 };
 
@@ -118,6 +119,7 @@ h3_vsr *h3_vsr_open(const char *model_dir, const h3_vsr_open_params *params,
     /* 0 = "auto": 4 frames per ReAE pass (one latent step when decoding)
      * bounds the activations; larger batches measured no faster (bench_vsr). */
     if (vsr->params.reae_frame_batch <= 0) vsr->params.reae_frame_batch = 4;
+    if (getenv("H3_VSR_NO_COLOR_MATCH")) vsr->params.color_match = -1;
     vsr->clip_latents = H3_VSR_CLIP_FRAMES / H3_VSR_TEMPORAL;
     if (!h3_vsr_inspect_dir(model_dir, &vsr->info, error, error_size)) goto failed;
     if (!h3_vsr_cache_matches(params->cache_path, model_dir)) {
@@ -210,14 +212,16 @@ int h3_vsr_check_requirements(const h3_vsr *vsr, int in_w, int in_h,
     out->tokens_per_chunk = tokens;
     out->windows_even = he * we;
     out->windows_odd = ho * wo;
-    /* Memory (UPSCALE_PLAN §6.4): weights, about 150 KB per token of DiT
-     * activations, the ReAE stages (about 1 KB per output pixel per frame
-     * in flight) and the F32 frame buffers of one chunk. */
+    /* Memory: weights, about 150 KB per token of DiT activations, the
+     * ReAE's 4-frame passes on the BF16 grid (three 64-channel activations
+     * live at full resolution: about 1.5 KB per output pixel) and the F32
+     * frame buffers of one chunk in and out. Measured 9.9 GiB live at
+     * 1920x1088 on int8 (UPSCALE_PLAN appendix A.2); this says 11.7 GB. */
     int int8 = h3_vsr_wan_is_int8(vsr->wan);
     uint64_t weights = int8 ? info->weight_bytes_int8 : info->weight_bytes_bf16;
     uint64_t pixels = (uint64_t)full_w * full_h;
     uint64_t frames = (uint64_t)(H3_VSR_CLIP_FRAMES + 4 + 3);
-    out->gpu_bytes = weights + (uint64_t)tokens * 150000 + pixels * 1000 * 4 +
+    out->gpu_bytes = weights + (uint64_t)tokens * 150000 + pixels * 1536 +
                      frames * pixels * 3 * 4 * 2;
     out->host_bytes = frames * pixels * 4 * 2;
     h3_device_info device;
@@ -411,6 +415,30 @@ failed:
     return 0;
 }
 
+/* Shifts `decoded`'s channel means to `input_means` (the chunk's input
+ * frames): the model's output comes out about 3/255 brighter than its
+ * input, uniformly, and this takes it back. */
+static int color_match(h3_vsr_session *s, h3_gpu *gpu, h3_gpu_tensor *decoded, int frames,
+                       const float input_means[3], char *error, size_t error_size) {
+    float out_means[3], offsets[3];
+    if (!h3_gpu_vsr_channel_means_f32(gpu, decoded, (uint32_t)frames, (uint32_t)s->full_h, (uint32_t)s->full_w,
+                                      (uint32_t)s->out_h, (uint32_t)s->out_w, out_means)) {
+        fail(error, error_size, "vsr colour match: %s", h3_gpu_error(gpu));
+        return 0;
+    }
+    for (int c = 0; c < 3; c++) offsets[c] = input_means[c] - out_means[c];
+    if (getenv("H3_VSR_TRACE_STAGES"))
+        fprintf(stderr, "vsr colour match: offsets %+.4f %+.4f %+.4f (x255: %+.1f %+.1f %+.1f)\n",
+                offsets[0], offsets[1], offsets[2], offsets[0] * 255, offsets[1] * 255, offsets[2] * 255);
+    if (!h3_gpu_begin(gpu) ||
+        !h3_gpu_vsr_add_channel_offsets_f32(gpu, decoded, (uint32_t)((size_t)frames * s->full_h * s->full_w), offsets) ||
+        !h3_gpu_submit(gpu)) {
+        fail(error, error_size, "vsr colour match: %s", h3_gpu_error(gpu));
+        return 0;
+    }
+    return 1;
+}
+
 /* Waits for the chunk decoding on the second context and writes its
  * frames. No-op without one. */
 static int finish_pending(h3_vsr_session *s, h3_vsr_image_out *out, int out_capacity, int *written,
@@ -419,6 +447,9 @@ static int finish_pending(h3_vsr_session *s, h3_vsr_image_out *out, int out_capa
     h3_vsr *vsr = s->vsr;
     size_t fplane = (size_t)s->full_h * s->full_w * 3;
     int ok = h3_vsr_reae_finish(vsr->reae_b, error, error_size);
+    if (ok && vsr->params.color_match >= 0)
+        ok = color_match(s, vsr->gpu_b, s->pending.decoded, s->pending.latents * 4, s->pending.input_means,
+                         error, error_size);
     if (ok && *written + s->pending.count > out_capacity) {
         fail(error, error_size, "vsr: %d output frames do not fit in %d", *written + s->pending.count, out_capacity);
         ok = 0;
@@ -508,6 +539,13 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
     trace_live(gpu, "after resize encode");
     STEP(h3_gpu_submit(gpu), "vsr resize submit");
     trace_stage(&mark, "pack + resize");
+    float input_means[3] = {0, 0, 0};
+    if (vsr->params.color_match >= 0 &&
+        !h3_gpu_vsr_channel_means_f32(gpu, frames, (uint32_t)enc_frames, (uint32_t)s->full_h, (uint32_t)s->full_w,
+                                      (uint32_t)s->out_h, (uint32_t)s->out_w, input_means)) {
+        fail(error, error_size, "vsr colour match: %s", h3_gpu_error(gpu));
+        goto failed;
+    }
     if (chunk->index == 0) dump_f32(chunk->index, "frames", frames, (size_t)enc_frames * fplane);
     trace_live(gpu, "chunk buffers allocated");
     if (on_progress && on_progress("vsr encode", 0, 1, opaque)) goto cancelled;
@@ -613,6 +651,7 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
         s->pending.latents = latents;
         s->pending.own = own;
         s->pending.decoded = decoded;
+        memcpy(s->pending.input_means, input_means, sizeof(input_means));
         own = decoded = NULL;
         trace_stage(&mark, "reae decode (launched)");
         if (chunk->type == H3_VSR_CHUNK_LAST &&
@@ -624,6 +663,8 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
             goto failed;
         trace_live(gpu, "after decode");
         trace_stage(&mark, "reae decode");
+        if (vsr->params.color_match >= 0 &&
+            !color_match(s, gpu, decoded, decoded_frames, input_means, error, error_size)) goto failed;
         if (on_progress && on_progress("vsr decode", 1, 1, opaque)) goto cancelled;
         if (chunk->index == 0) dump_f32(chunk->index, "decoded", decoded, (size_t)decoded_frames * fplane);
         if (!emit_frames(s, gpu, decoded, skip, count, out, written, error, error_size)) goto failed;

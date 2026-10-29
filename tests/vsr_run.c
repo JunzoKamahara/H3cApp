@@ -37,6 +37,7 @@ int main(int argc, char **argv) {
     h3_vsr_open_params params = {0};
     params.precision = precision; params.cache_path = cache_path; params.shader_source_path = "h3_shaders.metal";
     params.full_attention = dense;
+    params.color_match = getenv("H3_VSR_RUN_NO_MATCH") ? -1 : 0;
     h3_vsr *vsr = h3_vsr_open(model_dir, &params, NULL, NULL, error, sizeof(error));
     if (!vsr) { fprintf(stderr, "%s\n", error); return 1; }
     h3_vsr_session *s = h3_vsr_session_open(vsr, in_w, in_h, out_w, out_h, frames, error, sizeof(error));

@@ -97,7 +97,11 @@ Good to know:
     the app downloads the weights (about 20 GB, resumable) and converts them
     for this Mac (about 4.6 GB on an M5, 8.9 GB otherwise). It waits for a
     running generation to finish, since it needs the whole GPU
-    (UPSCALE_PLAN.md).
+    (UPSCALE_PLAN.md). Its output is brought back to the input's average
+    brightness (the model alone comes out slightly brighter). For 2x there
+    is a toggle, "4倍で生成してから縮小する": the model restores at 4x and the
+    result is shrunk to 2x, which gives a gentler texture on soft sources at
+    about four times the time; the choice also applies to the API.
 
   All of them run inside the app, with no other program. Real-ESRGAN's
   pretrained weights (BSD-3-Clause) are included in the app.

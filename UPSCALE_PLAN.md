@@ -643,3 +643,16 @@ Left: the SeedVR2 comparison, the user's blind A/B (skin, hair, fur, text, dark 
 | anime-face (anime) | **Real-ESRGAN Anime** | Real-ESRGAN General | best face LPIPS (0.064); matches the metrics' order |
 
 Reading: on a real face SwiftVR's drawn-in skin won; on soft generated faces the gentler methods won (standard, or SwiftVR's 4x then 1/2); on fur and anime Real-ESRGAN won. Direct 2x SwiftVR was best on no clip. Implications: (1) a "generate at 4x, downscale by 1/2" path is worth making SwiftVR's default candidate (better LPIPS, flicker and score than direct 2x), (2) the systematic +3/255 brightening should be corrected, (3) the default method should follow the content (anime: Real-ESRGAN Anime; real footage: SwiftVR; soft generated faces: standard or 4x then 1/2). The SeedVR2 comparison is still missing.
+
+**Re-measured after the colour match and the 4x-then-half path (2026-10-29, the same set, int8 windowed; `int8-window` = no correction, `int8-match` = colour match (the default), `int8-4x-half` = restored at 4x from the same input and halved with Lanczos (colour match on), `standard` = the Lanczos resize, the app's standard method without compression)**
+
+| Clip | Variants | PSNR | LPIPS↓ | MUSIQ | flicker | face PSNR | face LPIPS↓ | face MUSIQ |
+|---|---|---|---|---|---|---|---|---|
+| face-photo-tall | no match / match | 30.09 / 31.43 | 0.105 / 0.105 | 64.3 / 64.7 | 5.91 / 5.90 | 26.89 / 27.40 | 0.172 / 0.172 | 63.1 / 63.5 |
+| face-photo-square | no match / match / 4x-half | 29.29 / 30.08 / **33.85** | 0.079 / 0.077 / **0.042** | 78.4 / 78.4 / 78.3 | 1.33 / 1.33 / **1.03** | 26.63 / 26.97 / **30.91** | 0.077 / 0.075 / **0.039** | 57.7 / 57.7 / **64.1** |
+| face-real-webcam | no match / match | 29.59 / 30.51 | 0.158 / 0.156 | 64.8 / 65.6 | 1.42 / 1.43 | 30.30 / 31.41 | 0.130 / 0.128 | 59.3 / 59.2 |
+| leopard-man | no match / match | 28.81 / 29.43 | 0.265 / 0.262 | 70.9 / 70.7 | 5.45 / 5.39 | 25.11 / 25.27 | 0.263 / 0.260 | 75.6 / 75.6 |
+| anime-face | no match / match / 4x-half | 25.65 / 25.90 / **29.59** | 0.103 / 0.102 / **0.079** | 73.4 / 73.1 / 74.8 | 5.59 / 5.59 / **5.19** | 22.20 / 22.32 / **26.65** | 0.113 / 0.114 / **0.063** | 50.2 / 50.7 / **57.2** |
+
+- The colour match (each channel's mean shifted to the input's; the offsets were -0.8 to -4.7/255, blue the largest) raises PSNR by 0.3 to 1.3 dB and leaves the no-reference scores and the flicker unchanged. On by default (`h3_vsr_open_params.color_match`; `H3_VSR_NO_COLOR_MATCH=1` disables it).
+- 4x then half beats direct 2x on every metric on the two clips it could run (256x256 and 336x192 inputs), and on anime it brings the face LPIPS level with Real-ESRGAN Anime (0.064). The 4x intermediate costs GPU memory, though: for the three clips enlarged to 1024x1792, 1600x1088 and 1920x1088, `h3_vsr_check_requirements` refused it (45 to 53 GB estimated; the estimate was revised to 1.5 KB per pixel for the ReAE's 4-frame passes, and 3840x2176 still needs about 33 GB). On a 24 GB Mac the path fits inputs up to about 672x384 (a 2688x1536 intermediate). In the app the "4倍で生成してから縮小する" toggle (shown for 2x only, off by default) selects it, and it falls back to direct 2x silently when it does not fit. About four times the time (anime 2.1 -> 8.8 s, square 2.2 -> 9.2 s).

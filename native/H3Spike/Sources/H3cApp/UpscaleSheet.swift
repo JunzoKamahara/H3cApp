@@ -7,6 +7,7 @@ struct UpscaleSheet: View {
     var close: () -> Void
     @State private var upscaler: VideoUpscaler = .standard
     @State private var factor: UpscaleFactor
+    @AppStorage(VideoUpscale.swiftVRFourXKey) private var swiftVRFourX = false
     @State private var showingSwiftVRSetup = false
     @Environment(\.colorScheme) private var colorScheme
     private var palette: H3Palette { H3Palette(colorScheme) }
@@ -57,6 +58,11 @@ struct UpscaleSheet: View {
                     Text(reason).foregroundStyle(.orange)
                 } else if let reason = viewModel.upscaleBlockedReason(upscaler) {
                     Text(reason).foregroundStyle(.orange)
+                }
+                if upscaler == .swiftVR && factor == .two
+                    && UpscaleFactor.four.fits(width: pending.width, height: pending.height) {
+                    Toggle("4倍で生成してから縮小する（質感が穏やかになり、時間は約4倍）", isOn: $swiftVRFourX)
+                        .font(.callout)
                 }
                 if upscaler == .swiftVR {
                     HStack {

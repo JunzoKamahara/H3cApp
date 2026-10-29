@@ -215,7 +215,65 @@ private final class VSRChunkScaler: ChunkedFrameScaler {
     func cancel() { session.cancel() }
 }
 
+/// SwiftVR's "4倍で生成して縮小": the engine restores to 4x, and each frame
+/// is brought down to the asked-for size with the standard resize. Gentler
+/// than a direct 2x on soft sources (UPSCALE_PLAN appendix A.3), at about
+/// four times the time.
+private final class HalvingChunkScaler: ChunkedFrameScaler {
+    let inner: ChunkedFrameScaler
+    private let largeWidth: Int, largeHeight: Int
+    private var largePool: CVPixelBufferPool?
+    private let resizer = VImageScaler()
+    init(inner: ChunkedFrameScaler, largeWidth: Int, largeHeight: Int) {
+        self.inner = inner
+        self.largeWidth = largeWidth
+        self.largeHeight = largeHeight
+    }
+    var chunkFrames: Int { inner.chunkFrames }
+    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
+                 progress: @escaping (Double) -> Void) throws -> [CVPixelBuffer] {
+        if largePool == nil {
+            let attributes: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: largeWidth,
+                kCVPixelBufferHeightKey as String: largeHeight,
+                kCVPixelBufferMetalCompatibilityKey as String: true,
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+            ]
+            var made: CVPixelBufferPool?
+            CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &made)
+            largePool = made
+        }
+        guard let largePool else {
+            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
+        }
+        let large = try inner.process(frames, isLast: isLast, pool: largePool, progress: progress)
+        var outputs: [CVPixelBuffer] = []
+        for frame in large {
+            var halved: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &halved)
+            guard let halved else {
+                throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
+            }
+            try resizer.scale(frame, into: halved)
+            outputs.append(halved)
+        }
+        return outputs
+    }
+    func cancel() { inner.cancel() }
+}
+
 enum VideoUpscale {
+    /// UserDefaults key of SwiftVR's 4x-then-resize option (the 拡大 sheet's toggle).
+    static let swiftVRFourXKey = "h3c-app.swiftVRFourX"
+    /// Whether the 4x-then-resize path applies: chosen, a 2x request, and the
+    /// 4x intermediate within the size the engine and the writer take.
+    static func swiftVRUsesFourX(factor: UpscaleFactor, inputWidth: Int, inputHeight: Int) -> Bool {
+        guard factor == .two, UserDefaults.standard.bool(forKey: swiftVRFourXKey) else { return false }
+        let (w, h) = UpscaleFactor.four.size(width: inputWidth, height: inputHeight)
+        return w <= maximumSide && h <= maximumSide
+    }
+
     enum UpscaleError: LocalizedError {
         case noVideoTrack
         case tooLarge(width: Int, height: Int)
@@ -325,13 +383,25 @@ enum VideoUpscale {
             } catch {
                 throw UpscaleError.cannotWrite(error.localizedDescription)
             }
+            // 4倍で生成して縮小: restore at 4x when asked and the engine takes it;
+            // otherwise the size asked for.
+            var engineWidth = width, engineHeight = height
+            if swiftVRUsesFourX(factor: factor, inputWidth: inputWidth, inputHeight: inputHeight) {
+                let (w4, h4) = UpscaleFactor.four.size(width: inputWidth, height: inputHeight)
+                if resolver.requirements(inputWidth: inputWidth, inputHeight: inputHeight,
+                                         outputWidth: w4, outputHeight: h4).supported {
+                    engineWidth = w4; engineHeight = h4
+                }
+            }
             let requirements = resolver.requirements(inputWidth: inputWidth, inputHeight: inputHeight,
-                                                     outputWidth: width, outputHeight: height)
+                                                     outputWidth: engineWidth, outputHeight: engineHeight)
             guard requirements.supported else { throw UpscaleError.cannotWrite(requirements.reason) }
             do {
-                scaler = VSRChunkScaler(session: try resolver.openSession(inputWidth: inputWidth, inputHeight: inputHeight,
-                                                                          outputWidth: width, outputHeight: height),
-                                        isCancelled: isCancelled)
+                let direct = VSRChunkScaler(session: try resolver.openSession(inputWidth: inputWidth, inputHeight: inputHeight,
+                                                                              outputWidth: engineWidth, outputHeight: engineHeight),
+                                            isCancelled: isCancelled)
+                scaler = engineWidth == width ? direct
+                    : HalvingChunkScaler(inner: direct, largeWidth: engineWidth, largeHeight: engineHeight)
             } catch {
                 throw UpscaleError.cannotWrite(error.localizedDescription)
             }

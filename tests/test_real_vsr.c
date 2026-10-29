@@ -140,6 +140,8 @@ typedef struct {
 
 int main(void) {
     setvbuf(stdout, NULL, _IOLBF, 0);
+    /* parity with the official implementation, which has no colour match */
+    setenv("H3_VSR_NO_COLOR_MATCH", "1", 1);
     const char *fixture = getenv("H3_VSR_FIXTURE");
     if (!fixture || !fixture[0]) fixture = "misc/fixtures/swiftvr-768x544";
     const char *model_dir = getenv("H3_VSR_MODEL_DIR");

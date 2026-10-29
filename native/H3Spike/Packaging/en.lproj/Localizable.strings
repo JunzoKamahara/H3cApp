@@ -1001,6 +1001,7 @@
 "変換する" = "Convert";
 "ダウンロードして変換する" = "Download and convert";
 "モデルを管理…" = "Manage model…";
+"4倍で生成してから縮小する（質感が穏やかになり、時間は約4倍）" = "Restore at 4x, then shrink (gentler texture; about four times the time)";
 "モデルを準備…" = "Set up model…";
 "生成中は%@で拡大できません。生成が終わってから拡大してください" = "%@ can't enlarge while a video is being generated. Enlarge once the generation is finished";
 "動画の取り込み中は%@で拡大できません。取り込みが終わってから拡大してください" = "%@ can't enlarge while a video is being imported. Enlarge once the import is finished";

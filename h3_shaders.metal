@@ -5853,3 +5853,42 @@ kernel void h3_vsr_pack_grid_clamp_bf16(device const float *input [[buffer(0)]],
     }
     output[vsr_grid_row(args.guard, t, hp, wp, y, x) * args.padded_channels + c] = h3_f32_to_bf16(v);
 }
+
+/* ---- VSR colour match: per-channel sums of an F32 [T, H, W, 3] image
+ * over its real (unpadded) area, one partial per threadgroup, and the
+ * per-channel offset that applies the match. ---- */
+struct vsr_sum_args { uint frames, height, width, real_height, real_width, groups; };
+
+kernel void h3_vsr_channel_sums_f32(device const float *input [[buffer(0)]],
+                                    device float *partials [[buffer(1)]],
+                                    constant vsr_sum_args &args [[buffer(2)]],
+                                    uint tid [[thread_index_in_threadgroup]],
+                                    uint group [[threadgroup_position_in_grid]]) {
+    threadgroup float scratch[3][256];
+    float3 sum = 0.0f;
+    size_t pixels = (size_t)args.frames * args.real_height * args.real_width;
+    for (size_t p = (size_t)group * 256 + tid; p < pixels; p += (size_t)args.groups * 256) {
+        uint t = (uint)(p / ((size_t)args.real_height * args.real_width));
+        uint rem = (uint)(p % ((size_t)args.real_height * args.real_width));
+        uint y = rem / args.real_width, x = rem % args.real_width;
+        size_t at = (((size_t)t * args.height + y) * args.width + x) * 3;
+        sum += float3(input[at], input[at + 1], input[at + 2]);
+    }
+    scratch[0][tid] = sum.x; scratch[1][tid] = sum.y; scratch[2][tid] = sum.z;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 128; stride; stride >>= 1) {
+        if (tid < stride)
+            for (uint c = 0; c < 3; c++) scratch[c][tid] += scratch[c][tid + stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (tid == 0) for (uint c = 0; c < 3; c++) partials[(size_t)group * 3 + c] = scratch[c][0];
+}
+
+kernel void h3_vsr_add_channel_offsets_f32(device float *x [[buffer(0)]],
+                                           constant float3 &offsets [[buffer(1)]],
+                                           constant uint &pixels [[buffer(2)]],
+                                           uint gid [[thread_position_in_grid]]) {
+    if (gid >= pixels) return;
+    size_t at = (size_t)gid * 3;
+    x[at] += offsets.x; x[at + 1] += offsets.y; x[at + 2] += offsets.z;
+}

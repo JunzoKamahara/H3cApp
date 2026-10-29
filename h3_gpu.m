@@ -491,6 +491,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_vsr_pack_grid_bf16", @"h3_vsr_unpack_grid_f32",
             @"h3_vsr_zero_border_bf16", @"h3_vsr_zero_rows_bf16",
             @"h3_vsr_scatter_rows_bf16", @"h3_vsr_gelu_quantize_int8_rows",
+            @"h3_vsr_channel_sums_f32", @"h3_vsr_add_channel_offsets_f32",
             @"h3_vsr_pack_grid_s2d_bf16", @"h3_vsr_unpack_grid_d2s_f32",
             @"h3_vsr_grid_upsample2_bf16", @"h3_vsr_grid_split_frames_bf16",
             @"h3_vsr_grid_select_bf16", @"h3_vsr_pack_grid_clamp_bf16",
@@ -6383,4 +6384,58 @@ int h3_gpu_vsr_gelu_quantize_int8_rows(h3_gpu *opaque, h3_gpu_tensor *quantized,
     stats.direct_dispatches++;
     gpu.stats = stats;
     return 1;
+}
+
+/* ---- VSR colour match ---- */
+typedef struct { uint32_t frames, height, width, real_height, real_width, groups; } vsr_sum_args;
+
+int h3_gpu_vsr_channel_means_f32(h3_gpu *opaque, const h3_gpu_tensor *input, uint32_t frames,
+                                 uint32_t height, uint32_t width, uint32_t real_height,
+                                 uint32_t real_width, float means[3]) {
+    H3GPU *gpu = GPU(opaque);
+    if (!frames || !real_height || !real_width || real_height > height || real_width > width ||
+        !vsr_check_f32(gpu, input, (size_t)frames * height * width * 3, @"VSR channel means")) return 0;
+    const uint32_t groups = 512;
+    h3_gpu_tensor *partials = h3_gpu_tensor_new_f32(opaque, (size_t)groups * 3);
+    if (!partials) return 0;
+    vsr_sum_args args = {frames, height, width, real_height, real_width, groups};
+    int ok = h3_gpu_begin(opaque) && h3_gpu_require_command(gpu);
+    if (ok) {
+        id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(gpu, @"h3_vsr_channel_sums_f32");
+        if (!pipeline) ok = 0;
+        else @autoreleasepool {
+            id<MTLComputeCommandEncoder> encoder = [gpu.command computeCommandEncoder];
+            [encoder setComputePipelineState:pipeline];
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(partials).buffer offset:0 atIndex:1];
+            [encoder setBytes:&args length:sizeof(args) atIndex:2];
+            [encoder dispatchThreadgroups:MTLSizeMake(groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+            [encoder endEncoding];
+        }
+    }
+    ok = ok && h3_gpu_submit(opaque);
+    float *host = malloc((size_t)groups * 3 * sizeof(float));
+    ok = ok && host && h3_gpu_tensor_read_f32(partials, host, (size_t)groups * 3);
+    if (ok) {
+        double sum[3] = {0, 0, 0};
+        for (uint32_t g = 0; g < groups; g++) for (int c = 0; c < 3; c++) sum[c] += host[(size_t)g * 3 + c];
+        double pixels = (double)frames * real_height * real_width;
+        for (int c = 0; c < 3; c++) means[c] = (float)(sum[c] / pixels);
+    }
+    free(host);
+    h3_gpu_tensor_free(partials);
+    return ok;
+}
+
+int h3_gpu_vsr_add_channel_offsets_f32(h3_gpu *opaque, h3_gpu_tensor *x, uint32_t pixels, const float offsets[3]) {
+    H3GPU *gpu = GPU(opaque);
+    if (!vsr_check_f32(gpu, x, (size_t)pixels * 3, @"VSR channel offsets")) return 0;
+    struct { float v[4]; } off = {{offsets[0], offsets[1], offsets[2], 0.0f}};
+    uint32_t count = pixels;
+    return h3_gpu_dispatch_1d(gpu, @"h3_vsr_add_channel_offsets_f32", pixels,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(x).buffer offset:0 atIndex:0];
+            [encoder setBytes:&off length:sizeof(off) atIndex:1];
+            [encoder setBytes:&count length:sizeof(count) atIndex:2];
+        });
 }

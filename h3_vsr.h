@@ -201,6 +201,10 @@ typedef struct {
                                      context */
     int keep_fc2_bf16;            /* quality fallback for int8 */
     int full_attention;           /* 1: dense attention instead of MFSWA */
+    int color_match;              /* 0 (default) or 1: shift each output
+                                     chunk's channel means to the input's
+                                     (SwiftVR brightens by about 3/255);
+                                     -1: no correction, the model's output */
 } h3_vsr_open_params;
 
 h3_vsr *h3_vsr_open(const char *model_dir, const h3_vsr_open_params *params,
