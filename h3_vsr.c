@@ -25,6 +25,10 @@ struct h3_vsr {
     h3_gpu *gpu;
     h3_vsr_wan *wan;
     h3_vsr_reae *reae;
+    /* The decoder on its own context: a chunk's frames are decoded while
+     * the next chunk's DiT runs (NULL = everything on one context). */
+    h3_gpu *gpu_b;
+    h3_vsr_reae *reae_b;
     h3_vsr_info info;
     h3_vsr_open_params params;
     int clip_latents;    /* 6 */
@@ -50,6 +54,12 @@ struct h3_vsr_session {
     h3_gpu_tensor *prev_lq;        /* F32 [prev_count, lh, lw, 48]: the last LQ latents */
     int prev_count;
     layout_slot layouts[4];
+    /* A chunk whose decode is running on the second context. */
+    struct {
+        int valid, chunk_index, count, skip, latents;
+        h3_gpu_tensor *own;        /* its latents */
+        h3_gpu_tensor *decoded;    /* [latents * 4, full_h, full_w, 3] */
+    } pending;
 };
 
 static void fail(char *error, size_t error_size, const char *format, ...) {
@@ -88,6 +98,8 @@ void h3_vsr_close(h3_vsr *vsr) {
     if (!vsr) return;
     h3_vsr_wan_free(vsr->wan);
     h3_vsr_reae_free(vsr->reae);
+    h3_vsr_reae_free(vsr->reae_b);
+    h3_gpu_free(vsr->gpu_b);
     h3_gpu_free(vsr->gpu);
     free(vsr);
 }
@@ -125,6 +137,15 @@ h3_vsr *h3_vsr_open(const char *model_dir, const h3_vsr_open_params *params,
     vsr->reae = h3_vsr_reae_load(model_dir, vsr->gpu, error, error_size);
     if (!vsr->reae) goto failed;
     trace_live(vsr->gpu, "after reae load");
+    /* Off by default: measured no faster at 1080p on M5, where the DiT
+     * already saturates the GPU (UPSCALE_PLAN appendix A.2). */
+    if (params->reae_separate_queue > 0 || getenv("H3_VSR_OVERLAP")) {
+        vsr->gpu_b = h3_gpu_create(params->shader_source_path ? params->shader_source_path : "h3_shaders.metal",
+                                   error, error_size);
+        if (!vsr->gpu_b) goto failed;
+        vsr->reae_b = h3_vsr_reae_load(model_dir, vsr->gpu_b, error, error_size);
+        if (!vsr->reae_b) goto failed;
+    }
     if (on_progress && on_progress("vsr load", 3, 3, opaque)) goto cancelled;
     return vsr;
 cancelled:
@@ -139,10 +160,18 @@ int h3_vsr_get_stats(const h3_vsr *vsr, double *dit_seconds,
     if (!vsr) return 0;
     h3_gpu_stats stats;
     if (!h3_gpu_get_stats(vsr->gpu, &stats)) return 0;
-    /* One context runs both stages in this version. */
+    /* The main context runs the encoder and the DiT; the decoder has its
+     * own when the chunks overlap. */
     if (dit_seconds) *dit_seconds = stats.gpu_seconds;
     if (reae_seconds) *reae_seconds = 0.0;
     if (peak_live_bytes) *peak_live_bytes = stats.peak_live_bytes;
+    if (vsr->gpu_b) {
+        h3_gpu_stats b;
+        if (h3_gpu_get_stats(vsr->gpu_b, &b)) {
+            if (reae_seconds) *reae_seconds = b.gpu_seconds;
+            if (peak_live_bytes) *peak_live_bytes = stats.peak_live_bytes + b.peak_live_bytes;
+        }
+    }
     return 1;
 }
 
@@ -235,6 +264,13 @@ static layout_slot *session_layouts(h3_vsr_session *s, int frames) {
 
 void h3_vsr_session_close(h3_vsr_session *s) {
     if (!s) return;
+    if (s->pending.valid) {
+        char ignored[64];
+        h3_vsr_reae_finish(s->vsr->reae_b, ignored, sizeof(ignored));
+        h3_gpu_tensor_free(s->pending.own);
+        h3_gpu_tensor_free(s->pending.decoded);
+        s->pending.valid = 0;
+    }
     h3_vsr_reae_state_free(s->enc_state);
     h3_vsr_reae_state_free(s->dec_state);
     h3_gpu_tensor_free(s->prev_lq);
@@ -268,7 +304,7 @@ h3_vsr_session *h3_vsr_session_open(h3_vsr *vsr, int in_w, int in_h,
     s->latent_h = s->full_h / H3_VSR_SPATIAL;
     s->latent_w = s->full_w / H3_VSR_SPATIAL;
     s->enc_state = h3_vsr_reae_state_new(vsr->reae, 1, s->full_h, s->full_w);
-    s->dec_state = h3_vsr_reae_state_new(vsr->reae, 0, s->full_h, s->full_w);
+    s->dec_state = h3_vsr_reae_state_new(vsr->reae_b ? vsr->reae_b : vsr->reae, 0, s->full_h, s->full_w);
     if (!s->enc_state || !s->dec_state) {
         fail(error, error_size, "cannot allocate the ReAE state");
         h3_vsr_session_close(s);
@@ -326,6 +362,81 @@ static void dump_f32(int chunk, const char *stage, h3_gpu_tensor *tensor, size_t
     free(host);
 }
 
+/* Crops `count` decoded frames (from `skip`) to the target size as 8-bit
+ * pixels and copies them into out[*written ..]. `gpu` is the context the
+ * frames were decoded on. */
+static int emit_frames(h3_vsr_session *s, h3_gpu *gpu, h3_gpu_tensor *decoded, int skip, int count,
+                       h3_vsr_image_out *out, int *written, char *error, size_t error_size) {
+    size_t fplane = (size_t)s->full_h * s->full_w * 3;
+    h3_gpu_tensor *out_pixels = NULL, *view = NULL;
+    int8_t *out_bytes = NULL;
+    if (count <= 0) return 1;
+    int out_bpp = out[*written].format == H3_VSR_BGRA8 ? 4 : 3;
+    size_t out_stride = (size_t)s->out_w * out_bpp;
+    out_pixels = h3_gpu_tensor_new_i8(gpu, (size_t)count * s->out_h * out_stride);
+    view = h3_gpu_tensor_new_f32(gpu, (size_t)count * fplane);
+    if (!out_pixels || !view) { fail(error, error_size, "vsr: out of memory"); goto failed; }
+    STEP(h3_gpu_begin(gpu), "vsr begin");
+    STEP(h3_gpu_copy_f32(gpu, view, 0, decoded, (size_t)skip * fplane, (size_t)count * fplane),
+         "vsr output copy");
+    STEP(h3_gpu_vsr_f32_to_pixels(gpu, out_pixels, view, (uint32_t)count, (uint32_t)s->full_w,
+                                  (uint32_t)s->full_h, (uint32_t)s->out_w, (uint32_t)s->out_h,
+                                  (uint32_t)out_stride, out_bpp == 4, 1), "vsr pixels");
+    STEP(h3_gpu_submit(gpu), "vsr submit");
+    out_bytes = malloc((size_t)count * s->out_h * out_stride);
+    if (!out_bytes) { fail(error, error_size, "vsr: out of memory"); goto failed; }
+    STEP(h3_gpu_tensor_read_i8(out_pixels, out_bytes, (size_t)count * s->out_h * out_stride),
+         "vsr read pixels");
+    for (int f = 0; f < count; f++) {
+        h3_vsr_image_out *image = &out[*written + f];
+        if (image->width != s->out_w || image->height != s->out_h ||
+            (image->format == H3_VSR_BGRA8 ? 4 : 3) != out_bpp ||
+            image->stride_bytes < (int)out_stride) {
+            fail(error, error_size, "vsr: output frame %d has the wrong size or format", *written + f);
+            goto failed;
+        }
+        for (int y = 0; y < s->out_h; y++)
+            memcpy(image->pixels + (size_t)y * image->stride_bytes,
+                   out_bytes + ((size_t)f * s->out_h + y) * out_stride, out_stride);
+    }
+    *written += count;
+    free(out_bytes);
+    h3_gpu_tensor_free(out_pixels);
+    h3_gpu_tensor_free(view);
+    return 1;
+failed:
+    free(out_bytes);
+    h3_gpu_tensor_free(out_pixels);
+    h3_gpu_tensor_free(view);
+    return 0;
+}
+
+/* Waits for the chunk decoding on the second context and writes its
+ * frames. No-op without one. */
+static int finish_pending(h3_vsr_session *s, h3_vsr_image_out *out, int out_capacity, int *written,
+                          h3_progress_callback on_progress, void *opaque, char *error, size_t error_size) {
+    if (!s->pending.valid) return 1;
+    h3_vsr *vsr = s->vsr;
+    size_t fplane = (size_t)s->full_h * s->full_w * 3;
+    int ok = h3_vsr_reae_finish(vsr->reae_b, error, error_size);
+    if (ok && *written + s->pending.count > out_capacity) {
+        fail(error, error_size, "vsr: %d output frames do not fit in %d", *written + s->pending.count, out_capacity);
+        ok = 0;
+    }
+    if (ok && s->pending.chunk_index == 0)
+        dump_f32(0, "decoded", s->pending.decoded, (size_t)s->pending.latents * 4 * fplane);
+    if (ok) ok = emit_frames(s, vsr->gpu_b, s->pending.decoded, s->pending.skip, s->pending.count, out, written,
+                             error, error_size);
+    h3_gpu_tensor_free(s->pending.own);
+    h3_gpu_tensor_free(s->pending.decoded);
+    memset(&s->pending, 0, sizeof(s->pending));
+    if (ok && on_progress && on_progress("vsr decode", 1, 1, opaque)) {
+        fail(error, error_size, "vsr cancelled");
+        return 0;
+    }
+    return ok;
+}
+
 /* Runs one chunk: `frames` padded input frames taken from `in` (real
  * frames 0..in_count-1, the last one repeated past them), writes its
  * output frames to `out` from *written on. */
@@ -348,10 +459,9 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
     size_t in_stride = (size_t)s->in_w * bpp;
     double mark = trace_now();
     h3_gpu_tensor *pixels = NULL, *frames = NULL, *latent = NULL, *z_lq = NULL, *z_hq = NULL;
-    h3_gpu_tensor *decoded = NULL, *rope_cos = NULL, *rope_sin = NULL, *out_pixels = NULL;
+    h3_gpu_tensor *decoded = NULL, *rope_cos = NULL, *rope_sin = NULL, *own = NULL;
     int8_t *packed = NULL;
     float *cs = NULL, *sn = NULL;
-    int8_t *out_bytes = NULL;
     int decoded_frames = latents * H3_VSR_TEMPORAL;
     int skip = chunk->type == H3_VSR_CHUNK_FIRST ? H3_VSR_FRAMES_TO_TRIM : 0;
     int count = chunk->output_stop - chunk->output_start;
@@ -361,8 +471,12 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
         fail(error, error_size, "vsr cancelled");
         return 0;
     }
-    if (*written + count > out_capacity) {
-        fail(error, error_size, "vsr: %d output frames do not fit in %d", *written + count, out_capacity);
+    /* What this call writes: the pending chunk's frames and, when the
+     * decode is not deferred (one context, or a LAST chunk), this one's. */
+    int will_write = (s->pending.valid ? s->pending.count : 0) +
+                     (vsr->reae_b && chunk->type != H3_VSR_CHUNK_LAST ? 0 : count);
+    if (*written + will_write > out_capacity) {
+        fail(error, error_size, "vsr: %d output frames do not fit in %d", *written + will_write, out_capacity);
         return 0;
     }
 
@@ -472,63 +586,54 @@ static int run_chunk(h3_vsr_session *s, const h3_vsr_chunk *chunk,
         s->prev_count = keep;
     }
 
-    /* 4. Decode this chunk's latents (the prefix is dropped). */
+    /* 4. This chunk's latents for the decoder (the prefix is dropped). */
     {
-        h3_gpu_tensor *own = h3_gpu_tensor_new_f32(gpu, (size_t)latents * lplane);
+        h3_gpu *dgpu = vsr->gpu_b ? vsr->gpu_b : gpu;
+        own = h3_gpu_tensor_new_f32(dgpu, (size_t)latents * lplane);
         if (!own) goto oom;
         STEP(h3_gpu_begin(gpu), "vsr begin");
         STEP(h3_gpu_copy_f32(gpu, own, 0, z_hq, (size_t)prefix * lplane, (size_t)latents * lplane),
              "vsr z_hq copy");
         STEP(h3_gpu_submit(gpu), "vsr submit");
-        int ok = h3_vsr_reae_decode(vsr->reae, s->dec_state, own, latents, s->latent_h, s->latent_w,
-                                    vsr->params.reae_frame_batch > 0 ? 1 : 0, decoded, error, error_size);
-        h3_gpu_tensor_free(own);
-        if (!ok) goto failed;
     }
-    if (chunk->index == 0) dump_f32(chunk->index, "decoded", decoded, (size_t)decoded_frames * fplane);
-    trace_live(gpu, "after decode");
-    trace_stage(&mark, "reae decode");
-    if (on_progress && on_progress("vsr decode", 1, 1, opaque)) goto cancelled;
-
-    /* 5. Crop to the target size and hand the real frames over. */
-    if (count > 0) {
-        int out_bpp = out[*written].format == H3_VSR_BGRA8 ? 4 : 3;
-        size_t out_stride = (size_t)s->out_w * out_bpp;
-        out_pixels = h3_gpu_tensor_new_i8(gpu, (size_t)count * s->out_h * out_stride);
-        h3_gpu_tensor *view = h3_gpu_tensor_new_f32(gpu, (size_t)count * fplane);
-        if (!out_pixels || !view) { h3_gpu_tensor_free(view); goto oom; }
-        STEP(h3_gpu_begin(gpu), "vsr begin");
-        STEP(h3_gpu_copy_f32(gpu, view, 0, decoded, (size_t)skip * fplane, (size_t)count * fplane),
-             "vsr output copy");
-        STEP(h3_gpu_vsr_f32_to_pixels(gpu, out_pixels, view, (uint32_t)count, (uint32_t)s->full_w,
-                                      (uint32_t)s->full_h, (uint32_t)s->out_w, (uint32_t)s->out_h,
-                                      (uint32_t)out_stride, out_bpp == 4, 1), "vsr pixels");
-        STEP(h3_gpu_submit(gpu), "vsr submit");
-        h3_gpu_tensor_free(view);
-        out_bytes = malloc((size_t)count * s->out_h * out_stride);
-        if (!out_bytes) goto oom;
-        STEP(h3_gpu_tensor_read_i8(out_pixels, out_bytes, (size_t)count * s->out_h * out_stride),
-             "vsr read pixels");
-        for (int f = 0; f < count; f++) {
-            h3_vsr_image_out *image = &out[*written + f];
-            if (image->width != s->out_w || image->height != s->out_h ||
-                (image->format == H3_VSR_BGRA8 ? 4 : 3) != out_bpp ||
-                image->stride_bytes < (int)out_stride) {
-                fail(error, error_size, "vsr: output frame %d has the wrong size or format", *written + f);
-                goto failed;
-            }
-            for (int y = 0; y < s->out_h; y++)
-                memcpy(image->pixels + (size_t)y * image->stride_bytes,
-                       out_bytes + ((size_t)f * s->out_h + y) * out_stride, out_stride);
-        }
-        *written += count;
+    /* 5. The previous chunk's frames: decoded on the second context while
+     * this chunk's DiT ran. */
+    if (!finish_pending(s, out, out_capacity, written, on_progress, opaque, error, error_size)) goto failed;
+    /* 6. Decode: deferred onto the second context, or right now. */
+    decoded = h3_gpu_tensor_new_f32(vsr->gpu_b ? vsr->gpu_b : gpu, (size_t)decoded_frames * fplane);
+    if (!decoded) goto oom;
+    if (vsr->reae_b) {
+        if (!h3_vsr_reae_decode_begin(vsr->reae_b, s->dec_state, own, latents, s->latent_h, s->latent_w,
+                                      vsr->params.reae_frame_batch > 0 ? 1 : 0, decoded, error, error_size))
+            goto failed;
+        s->pending.valid = 1;
+        s->pending.chunk_index = chunk->index;
+        s->pending.count = count;
+        s->pending.skip = skip;
+        s->pending.latents = latents;
+        s->pending.own = own;
+        s->pending.decoded = decoded;
+        own = decoded = NULL;
+        trace_stage(&mark, "reae decode (launched)");
+        if (chunk->type == H3_VSR_CHUNK_LAST &&
+            !finish_pending(s, out, out_capacity, written, on_progress, opaque, error, error_size))
+            goto failed;
+    } else {
+        if (!h3_vsr_reae_decode(vsr->reae, s->dec_state, own, latents, s->latent_h, s->latent_w,
+                                vsr->params.reae_frame_batch > 0 ? 1 : 0, decoded, error, error_size))
+            goto failed;
+        trace_live(gpu, "after decode");
+        trace_stage(&mark, "reae decode");
+        if (on_progress && on_progress("vsr decode", 1, 1, opaque)) goto cancelled;
+        if (chunk->index == 0) dump_f32(chunk->index, "decoded", decoded, (size_t)decoded_frames * fplane);
+        if (!emit_frames(s, gpu, decoded, skip, count, out, written, error, error_size)) goto failed;
+        trace_stage(&mark, "output pixels");
     }
-    trace_stage(&mark, "output pixels");
     (void)real_total;
-    free(packed); free(cs); free(sn); free(out_bytes);
+    free(packed); free(cs); free(sn);
     h3_gpu_tensor_free(pixels); h3_gpu_tensor_free(frames); h3_gpu_tensor_free(latent);
-    h3_gpu_tensor_free(z_lq); h3_gpu_tensor_free(z_hq); h3_gpu_tensor_free(decoded);
-    h3_gpu_tensor_free(rope_cos); h3_gpu_tensor_free(rope_sin); h3_gpu_tensor_free(out_pixels);
+    h3_gpu_tensor_free(z_lq); h3_gpu_tensor_free(z_hq); h3_gpu_tensor_free(decoded); h3_gpu_tensor_free(own);
+    h3_gpu_tensor_free(rope_cos); h3_gpu_tensor_free(rope_sin);
     return 1;
 oom:
     fail(error, error_size, "vsr: out of memory");
@@ -536,10 +641,10 @@ oom:
 cancelled:
     fail(error, error_size, "vsr cancelled");
 failed:
-    free(packed); free(cs); free(sn); free(out_bytes);
+    free(packed); free(cs); free(sn);
     h3_gpu_tensor_free(pixels); h3_gpu_tensor_free(frames); h3_gpu_tensor_free(latent);
-    h3_gpu_tensor_free(z_lq); h3_gpu_tensor_free(z_hq); h3_gpu_tensor_free(decoded);
-    h3_gpu_tensor_free(rope_cos); h3_gpu_tensor_free(rope_sin); h3_gpu_tensor_free(out_pixels);
+    h3_gpu_tensor_free(z_lq); h3_gpu_tensor_free(z_hq); h3_gpu_tensor_free(decoded); h3_gpu_tensor_free(own);
+    h3_gpu_tensor_free(rope_cos); h3_gpu_tensor_free(rope_sin);
     return 0;
 }
 

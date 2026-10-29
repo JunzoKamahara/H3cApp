@@ -121,10 +121,13 @@ int main(int argc, char **argv) {
         double end = now();
         double dit_s, reae_s; uint64_t peak;
         h3_vsr_get_stats(vsr, &dit_s, &reae_s, &peak);
+        /* The callbacks fire while the CPU encodes, so these splits are
+         * encode pace, not GPU time: H3_VSR_TRACE_STAGES=1 for that. */
+        double decode_s = t.decode_end > 0 ? t.decode_end - t.dit_end : 0.0;
         printf("chunk %d (%d frames in, %d out): total %.2f s = resize+encode %.2f, dit %.2f (%.0f ms/block over %d), decode %.2f, output %.2f; gpu busy %.2f s, peak live %.2f GiB\n",
                chunk, n, got, end - t.start, t.encode_end - t.start, t.dit_end - t.dit_begin,
                t.blocks > 1 ? 1000.0 * (t.block_last - t.block_first) / (t.blocks - 1) : 0.0, t.blocks,
-               t.decode_end - t.dit_end, end - t.decode_end, dit_s - gpu_prev, (double)peak / 1073741824.0);
+               decode_s, t.decode_end > 0 ? end - t.decode_end : end - t.dit_end, dit_s - gpu_prev, (double)peak / 1073741824.0);
         gpu_prev = dit_s;
         h3_gpu_stats st;
         if (h3_vsr_gpu_stats(vsr, &st))

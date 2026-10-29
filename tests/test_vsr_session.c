@@ -317,6 +317,25 @@ int main(void) {
     }
     double dit = 0, reae = 0; uint64_t peak = 0;
     CHECK(h3_vsr_get_stats(vsr, &dit, &reae, &peak) && dit > 0.0 && peak > 0);
+    /* The decoder on its own context (output one chunk behind): the same
+     * frames, bit for bit. */
+    {
+        h3_vsr_open_params overlap = params;
+        overlap.reae_separate_queue = 1;
+        h3_vsr *vsr2 = h3_vsr_open(model_dir, &overlap, NULL, NULL, error, sizeof(error));
+        if (!vsr2) fprintf(stderr, "%s\n", error);
+        CHECK(vsr2 != NULL);
+        uint8_t *video = make_video(52, in_w, in_h, 0);
+        int total = 0, total2 = 0;
+        uint8_t *one = run_video(vsr, video, 52, in_w, in_h, out_w, out_h, 0, &total, -1);
+        uint8_t *two = run_video(vsr2, video, 52, in_w, in_h, out_w, out_h, 0, &total2, -1);
+        CHECK(total == 52 && total2 == 52 && memcmp(one, two, (size_t)52 * out_h * out_w * 3) == 0);
+        double dit2 = 0, reae2 = 0; uint64_t peak2 = 0;
+        CHECK(h3_vsr_get_stats(vsr2, &dit2, &reae2, &peak2) && reae2 > 0.0);
+        printf("  decoder on a second context: 52 frames identical\n");
+        free(one); free(two); free(video);
+        h3_vsr_close(vsr2);
+    }
     h3_vsr_close(vsr);
     char command[4200];
     snprintf(command, sizeof(command), "rm -rf '%s'", dir);

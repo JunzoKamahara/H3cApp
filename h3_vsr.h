@@ -194,7 +194,11 @@ typedef struct {
     int dit_overlap;              /* latents prepended from the previous chunk;
                                      0 = the reference restore_video */
     int reae_frame_batch;         /* 0 = auto from memory */
-    int reae_separate_queue;      /* 1: ReAE on its own h3_gpu and thread */
+    int reae_separate_queue;      /* 1: the decoder runs on its own GPU
+                                     context under the next chunk's DiT, so
+                                     output lags one chunk (no faster where
+                                     the DiT saturates the GPU); 0: one
+                                     context */
     int keep_fc2_bf16;            /* quality fallback for int8 */
     int full_attention;           /* 1: dense attention instead of MFSWA */
 } h3_vsr_open_params;
@@ -233,8 +237,10 @@ typedef struct {
     h3_vsr_pixel_format format;
 } h3_vsr_image_out;
 
-/* Feeds one input chunk and writes the finished output frames (in order,
- * one chunk behind; is_last flushes everything so total out == total in).
+/* Feeds one input chunk and writes the finished output frames (in order;
+ * with the decoder on its own context a call returns the previous chunk's
+ * frames, and is_last flushes everything so total out == total in; size
+ * `out` for h3_vsr_session_pending_frames() + in_frames).
  * Progress phases: "vsr encode", "vsr dit" (block / 30), "vsr decode". A
  * non-zero callback return or *cancel_requested stops at the next block or
  * phase boundary with the error "vsr cancelled". */

@@ -272,8 +272,12 @@ public final class H3VideoSuperResolver: @unchecked Sendable {
             let bridge = progress.map { VSRProcessBridge(progress: $0, cancelFlag: cancelFlag) }
             let bridgeHandle = bridge.map { Unmanaged.passRetained($0) }
             defer { bridgeHandle?.release() }
+            // Output buffers for everything the engine may hand back: the frames
+            // still inside it (a chunk decodes on its own GPU context while the next
+            // one runs, so a call returns the previous chunk's frames) plus these.
+            let capacity = Int(h3_vsr_session_pending_frames(handle)) + frames.count + 3
             var outputs: [CVPixelBuffer] = []
-            for _ in 0 ..< frames.count + 3 {
+            for _ in 0 ..< capacity {
                 var buffer: CVPixelBuffer?
                 CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
                 guard let buffer else { throw H3VSRError.failed(String(localized: "出力フレームを確保できませんでした")) }

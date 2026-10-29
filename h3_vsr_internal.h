@@ -145,6 +145,15 @@ int h3_vsr_reae_decode(h3_vsr_reae *reae, h3_vsr_reae_state *state,
                        const h3_gpu_tensor *latent, int latent_count,
                        int latent_height, int latent_width, int latent_batch,
                        h3_gpu_tensor *frames, char *error, size_t error_size);
+/* The same decode committed without waiting: the context keeps running
+ * it (e.g. under the next chunk's DiT on another context) until
+ * h3_vsr_reae_finish waits for it. Nothing else may use that reae
+ * in between. */
+int h3_vsr_reae_decode_begin(h3_vsr_reae *reae, h3_vsr_reae_state *state,
+                             const h3_gpu_tensor *latent, int latent_count,
+                             int latent_height, int latent_width, int latent_batch,
+                             h3_gpu_tensor *frames, char *error, size_t error_size);
+int h3_vsr_reae_finish(h3_vsr_reae *reae, char *error, size_t error_size);
 
 /* ---------------------------------------------------------------- */
 /* Wan DiT runner (h3_vsr_wan.c): the 30 blocks of the one-step model from

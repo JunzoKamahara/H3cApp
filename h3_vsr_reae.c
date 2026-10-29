@@ -934,7 +934,7 @@ static int run_table(h3_vsr_reae *reae, const layer *layers, int count,
                      h3_vsr_reae_state *state, const h3_gpu_tensor *input,
                      int in_t, int in_h, int in_w, int in_c, int batch,
                      h3_gpu_tensor *output, int out_t, int out_h, int out_w, int out_c,
-                     char *error, size_t error_size) {
+                     int async, char *error, size_t error_size) {
     h3_gpu *gpu = reae->gpu;
     if (batch <= 0 || batch > in_t) batch = in_t;
     size_t in_frame = (size_t)in_h * in_w * in_c;
@@ -1072,13 +1072,21 @@ static int run_table(h3_vsr_reae *reae, const layer *layers, int count,
                     reae->pool_count);
         }
     }
-    if (!h3_gpu_submit(gpu)) {
-        fail(error, error_size, "ReAE: GPU submit failed: %s", h3_gpu_error(gpu));
-        return 0;
+    if (async) {
+        /* committed, not waited for: h3_vsr_reae_finish() does that */
+        if (!h3_gpu_continue(gpu)) {
+            fail(error, error_size, "ReAE: GPU commit failed: %s", h3_gpu_error(gpu));
+            return 0;
+        }
+    } else {
+        if (!h3_gpu_submit(gpu)) {
+            fail(error, error_size, "ReAE: GPU submit failed: %s", h3_gpu_error(gpu));
+            return 0;
+        }
+        /* The pool serves the batch loop; the buffers go back to the system
+         * between calls so the DiT has the memory. */
+        if (!getenv("H3_VSR_REAE_KEEP_POOL")) pool_drain(reae);
     }
-    /* The pool serves the batch loop; the buffers go back to the system
-     * between calls so the DiT has the memory. */
-    if (!getenv("H3_VSR_REAE_KEEP_POOL")) pool_drain(reae);
     if (out_at != out_t) {
         fail(error, error_size, "ReAE: produced %d of %d frames", out_at, out_t);
         return 0;
@@ -1103,7 +1111,7 @@ int h3_vsr_reae_encode(h3_vsr_reae *reae, h3_vsr_reae_state *state,
     if (frame_batch > 0 && frame_batch % 4) frame_batch += 4 - frame_batch % 4;
     return run_table(reae, reae->encoder, reae->encoder_count, state, frames, frame_count,
                      height, width, 3, frame_batch, latent, frame_count / 4, height / 16,
-                     width / 16, H3_VSR_LATENT_CHANNELS, error, error_size);
+                     width / 16, H3_VSR_LATENT_CHANNELS, 0, error, error_size);
 }
 
 int h3_vsr_reae_decode(h3_vsr_reae *reae, h3_vsr_reae_state *state,
@@ -1122,5 +1130,35 @@ int h3_vsr_reae_decode(h3_vsr_reae *reae, h3_vsr_reae_state *state,
     }
     return run_table(reae, reae->decoder, reae->decoder_count, state, latent, latent_count,
                      latent_height, latent_width, H3_VSR_LATENT_CHANNELS, latent_batch, frames,
-                     latent_count * 4, latent_height * 16, latent_width * 16, 3, error, error_size);
+                     latent_count * 4, latent_height * 16, latent_width * 16, 3, 0, error, error_size);
+}
+
+int h3_vsr_reae_decode_begin(h3_vsr_reae *reae, h3_vsr_reae_state *state,
+                             const h3_gpu_tensor *latent, int latent_count,
+                             int latent_height, int latent_width, int latent_batch,
+                             h3_gpu_tensor *frames, char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (!reae || !latent || !frames || latent_count < 1 || latent_height < 2 || latent_width < 2) {
+        fail(error, error_size, "ReAE decode: bad arguments");
+        return 0;
+    }
+    if (state && (state->encoder || state->height != latent_height * 16 ||
+                  state->width != latent_width * 16)) {
+        fail(error, error_size, "ReAE decode: state belongs to another size");
+        return 0;
+    }
+    return run_table(reae, reae->decoder, reae->decoder_count, state, latent, latent_count,
+                     latent_height, latent_width, H3_VSR_LATENT_CHANNELS, latent_batch, frames,
+                     latent_count * 4, latent_height * 16, latent_width * 16, 3, 1, error, error_size);
+}
+
+int h3_vsr_reae_finish(h3_vsr_reae *reae, char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (!reae) return 0;
+    if (!h3_gpu_submit(reae->gpu)) {
+        fail(error, error_size, "ReAE: GPU wait failed: %s", h3_gpu_error(reae->gpu));
+        return 0;
+    }
+    if (!getenv("H3_VSR_REAE_KEEP_POOL")) pool_drain(reae);
+    return 1;
 }
