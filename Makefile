@@ -255,6 +255,9 @@ test: h3_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests h3_vsr_wan_test
 		echo "skip: MLX Qwen fixture is not installed"; \
 	fi
 	./h3_audio_gpu_tests
+# Again with TensorOps off: the shader library must also compile without
+# H3_METAL_HAS_TENSOR (pre-M5 Macs, and the fallback after a failed Metal 4 compile).
+	H3_NAX=0 ./h3_audio_gpu_tests
 	./h3_determinism_tests
 	@if test -f MiniMax-H3/FL2VA/audio_vae/model.safetensors && \
 	         test -f misc/fixtures/h3_real_audio_vae_37.safetensors; then \

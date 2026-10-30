@@ -5636,6 +5636,10 @@ struct vsr_tapconv_args {
     int offsets[9];
 };
 
+/* Metal 4 tensor API: compiled only with H3_METAL_HAS_TENSOR, like the other
+ * *_nax kernels, so the library still builds on Macs without TensorOps (and
+ * for the no-TensorOps retry in h3_gpu.m). */
+#ifdef H3_METAL_HAS_TENSOR
 kernel void h3_vsr_tapconv_bf16_nax(device bfloat *x0 [[buffer(0)]],
                                     device bfloat *x1 [[buffer(1)]],
                                     device bfloat *w0 [[buffer(2)]],
@@ -5698,6 +5702,7 @@ kernel void h3_vsr_tapconv_bf16_nax(device bfloat *x0 [[buffer(0)]],
         output[at] = (bfloat)v;
     }
 }
+#endif
 
 struct vsr_grid_args { uint frames, height, width, channels, padded_channels, guard; };
 
