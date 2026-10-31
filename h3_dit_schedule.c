@@ -1,6 +1,7 @@
 #include "h3_dit_schedule.h"
 
 #include "h3_adaln_curve.h"
+#include "h3_lora.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -397,6 +398,7 @@ static h3_gpu_tensor *curve_projection(const h3_adaln_curve *curve,
                                        h3_gpu *gpu, const char *prefix,
                                        const h3_gpu_tensor *coordinates,
                                        uint32_t rows, uint32_t outputs,
+                                       const float *delta,
                                        char *error, size_t error_size) {
     uint32_t rank = h3_adaln_curve_rank(curve);
     h3_gpu_tensor *weight = h3_adaln_curve_load_weight(
@@ -405,14 +407,23 @@ static h3_gpu_tensor *curve_projection(const h3_adaln_curve *curve,
         curve, gpu, prefix, outputs, error, error_size) : NULL;
     h3_gpu_tensor *wide = h3_gpu_tensor_new_f32(gpu, (size_t)rows * outputs);
     h3_gpu_tensor *result = h3_gpu_tensor_new_bf16(gpu, (size_t)rows * outputs);
-    if (!weight || !bias || !wide || !result) {
+    /* A LoRA curve branch: weight += delta before the projection. */
+    h3_gpu_tensor *patch = delta ? h3_gpu_tensor_from_f32(
+        gpu, delta, (size_t)outputs * rank) : NULL;
+    h3_gpu_tensor *patched = delta ? h3_gpu_tensor_new_f32(
+        gpu, (size_t)outputs * rank) : NULL;
+    if (!weight || !bias || !wide || !result || (delta && (!patch || !patched))) {
         if (!error || !*error)
             fail(error, error_size, "cannot allocate %s: %s", prefix,
                  h3_gpu_error(gpu));
         goto failed;
     }
     if (!gpu_op(gpu, h3_gpu_begin(gpu), error, error_size, prefix) ||
-        !gpu_op(gpu, h3_gpu_linear_f32(gpu, wide, coordinates, weight, bias,
+        (delta && !gpu_op(gpu, h3_gpu_add_scaled_f32(gpu, patched, weight, patch,
+                                                     1.0f, 1.0f, outputs * rank),
+                          error, error_size, prefix)) ||
+        !gpu_op(gpu, h3_gpu_linear_f32(gpu, wide, coordinates,
+                                       delta ? patched : weight, bias,
                                        rows, rank, outputs),
                 error, error_size, prefix) ||
         !gpu_op(gpu, h3_gpu_cast_f32_to_bf16(gpu, result, wide,
@@ -423,16 +434,21 @@ static h3_gpu_tensor *curve_projection(const h3_adaln_curve *curve,
     free_tensor(&weight);
     free_tensor(&bias);
     free_tensor(&wide);
+    free_tensor(&patch);
+    free_tensor(&patched);
     return result;
 failed:
     free_tensor(&weight);
     free_tensor(&bias);
     free_tensor(&wide);
+    free_tensor(&patch);
+    free_tensor(&patched);
     free_tensor(&result);
     return NULL;
 }
 
 h3_dit_schedule *h3_dit_schedule_precompute_curve(
+    const h3_lora_set *loras,
     const h3_adaln_curve *curve, h3_gpu *gpu,
     const h3_sigma_schedule *sigmas, int visual_condition,
     int audio_condition,
@@ -473,16 +489,24 @@ h3_dit_schedule *h3_dit_schedule_precompute_curve(
     for (unsigned block = 0; block < H3_DIT_BLOCKS; block++) {
         char prefix[96];
         snprintf(prefix, sizeof(prefix), "blocks.%u.adaln_proj.linear", block);
+        uint32_t delta_rank = 0;
+        const float *delta = h3_lora_set_adaln_delta(loras, block, &delta_rank);
+        if (delta && delta_rank != rank) {
+            fail(error, error_size, "a LoRA's AdaLN curve branch expects a "
+                 "%u-dim curve, this checkpoint's curve is %u-dim",
+                 delta_rank, rank);
+            goto failed;
+        }
         schedule->blocks[block] = curve_projection(
             curve, gpu, prefix, coordinate_tensor, schedule->time_rows,
-            BLOCK_OUTPUT, error, error_size);
+            BLOCK_OUTPUT, delta, error, error_size);
         if (!schedule->blocks[block]) goto failed;
         if (progress) progress((int)block + 1, (int)H3_DIT_BLOCKS,
                                progress_opaque);
     }
     schedule->final = curve_projection(
         curve, gpu, "final_layer.adaln_proj.linear", coordinate_tensor,
-        schedule->time_rows, FINAL_OUTPUT, error, error_size);
+        schedule->time_rows, FINAL_OUTPUT, NULL, error, error_size);
     if (!schedule->final) goto failed;
     free(times);
     free(coordinates);

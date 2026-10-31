@@ -33,7 +33,11 @@ h3_dit_schedule *h3_dit_schedule_precompute(
  * matches the dense values to well below their own BF16 rounding (not bit
  * for bit). */
 typedef struct h3_adaln_curve h3_adaln_curve;
+/* loras: an adapter set whose AdaLN curve-branch deltas (if any) are added
+ * to the curve projections first; NULL for none. */
+typedef struct h3_lora_set h3_lora_set;
 h3_dit_schedule *h3_dit_schedule_precompute_curve(
+    const h3_lora_set *loras,
     const h3_adaln_curve *curve, h3_gpu *gpu,
     const h3_sigma_schedule *sigmas, int visual_condition,
     int audio_condition,

@@ -2547,7 +2547,13 @@ static h3_dit *load_dit(const char *weight_directory,
         h3_adaln_curve_fingerprint(curve, curve_id);
         memcpy(model + 16, curve_id, 16);
     }
-    if (prep && prep->keep_adaln && prep->adaln &&
+    /* LoRA AdaLN curve branches change the schedule, so it is neither
+     * taken from nor stored in the prepared cache then. */
+    int adaln_patched = h3_lora_set_has_adaln(dit->loras);
+    if (adaln_patched && !curve)
+        fprintf(stderr, "h3: warning: a LoRA's AdaLN curve branches need a "
+                        "curve-form checkpoint; ignored\n");
+    if (!adaln_patched && prep && prep->keep_adaln && prep->adaln &&
         same_text(prep->adaln_directory, weight_directory) &&
         !memcmp(prep->adaln_model, model, sizeof(model)) &&
         !memcmp(&prep->adaln_sigmas, sigmas, sizeof(*sigmas)) &&
@@ -2565,7 +2571,8 @@ static h3_dit *load_dit(const char *weight_directory,
                     curve_path, h3_adaln_curve_rank(curve),
                     h3_adaln_curve_grid(curve));
             dit->schedule = h3_dit_schedule_precompute_curve(
-                curve, dit->gpu, sigmas, visual_condition, audio_condition,
+                dit->loras, curve, dit->gpu, sigmas, visual_condition,
+                audio_condition,
                 schedule_report, &schedule_state, error, error_size);
         } else {
             dit->schedule = h3_dit_schedule_precompute(
@@ -2573,7 +2580,7 @@ static h3_dit *load_dit(const char *weight_directory,
                 audio_condition, schedule_report, &schedule_state,
                 error, error_size);
         }
-        if (dit->schedule && prep && prep->keep_adaln) {
+        if (dit->schedule && prep && prep->keep_adaln && !adaln_patched) {
             prep->adaln = h3_dit_schedule_export(dit->schedule);
             prep->adaln_directory = strdup(weight_directory);
             if (!prep->adaln || !prep->adaln_directory) {

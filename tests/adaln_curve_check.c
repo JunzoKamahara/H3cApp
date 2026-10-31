@@ -164,6 +164,7 @@ int main(int argc, char **argv) {
         double dense_seconds = now() - started;
         started = now();
         h3_dit_schedule *fast = dense ? h3_dit_schedule_precompute_curve(
+            NULL,
             curve, gpu, &sigmas, cases[c].visual, cases[c].audio, NULL, NULL,
             error, sizeof(error)) : NULL;
         double curve_seconds = now() - started;

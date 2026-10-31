@@ -343,6 +343,64 @@ static int h3_continuation_rows(const h3_params *params,
     return ok;
 }
 
+/* The latent a regeneration starts from: its header must describe exactly
+ * this generation's latent grid, so the file's video latent can be blended
+ * with the noise and its audio latent pinned as-is. */
+static int h3_initial_latent_check(const h3_params *params, int latent_h,
+                                   int latent_w, h3_temporal_shape temporal,
+                                   char *error, size_t error_size) {
+    if (!params->initial_latent_path) return 1;
+    int32_t header[9];
+    FILE *file = fopen(params->initial_latent_path, "rb");
+    int read = file && fread(header, sizeof(header), 1, file) == 1;
+    if (file) fclose(file);
+    if (!read || header[0] != (int32_t)H3_LATENT_FILE_MAGIC ||
+        header[1] != 1 || header[2] != 24 || header[6] != 32) {
+        snprintf(error, error_size, "%s is not an H3 clip latent file",
+                 params->initial_latent_path);
+        return 0;
+    }
+    if (header[3] != temporal.video_t || header[4] != latent_h ||
+        header[5] != latent_w || header[7] != temporal.audio_t ||
+        header[8] != temporal.frame_count) {
+        snprintf(error, error_size,
+                 "the initial latent is %dx%d x %d steps (%d frames, %d audio "
+                 "steps) but this generation needs %dx%d x %d steps (%d "
+                 "frames, %d audio steps)", header[5], header[4], header[3],
+                 header[8], header[7], latent_w, latent_h, temporal.video_t,
+                 temporal.frame_count, temporal.audio_t);
+        return 0;
+    }
+    return 1;
+}
+
+/* Moves the seeded noise in `video` onto the initial latent's trajectory
+ * at sigma0 ((1 - sigma0) * latent + sigma0 * noise) and returns the
+ * file's audio latent (malloc'd, audio_count values) through *audio_out. */
+static int h3_initial_latent_apply(const char *path, float *video,
+                                   size_t video_count, float sigma0,
+                                   size_t audio_count, float **audio_out,
+                                   char *error, size_t error_size) {
+    float *latent = malloc(video_count * sizeof(*latent));
+    float *audio = malloc(audio_count * sizeof(*audio));
+    FILE *file = fopen(path, "rb");
+    int ok = latent && audio && file &&
+        fseek(file, 9 * sizeof(int32_t), SEEK_SET) == 0 &&
+        fread(latent, sizeof(*latent), video_count, file) == video_count &&
+        fread(audio, sizeof(*audio), audio_count, file) == audio_count;
+    if (file) fclose(file);
+    if (!ok) {
+        snprintf(error, error_size, "cannot read the initial latent %s", path);
+        free(latent); free(audio);
+        return 0;
+    }
+    for (size_t index = 0; index < video_count; index++)
+        video[index] = sigma0 * video[index] + (1.0f - sigma0) * latent[index];
+    free(latent);
+    *audio_out = audio;
+    return 1;
+}
+
 /* Adds `count` values of `more` before (`first`) or after the `*elements`
  * values of `*rows`. */
 static int h3_join_rows(float **rows, size_t *elements,
@@ -405,7 +463,9 @@ static float h3_audio_sigma_shift(const h3_params *params) {
  * is part of the prepared key. */
 static int h3_forced_audio_clean(const h3_params *params) {
     const char *mode = getenv("H3_FORCED_AUDIO_MODE");
-    return params->forced_audio_path && !(mode && !strcmp(mode, "noised"));
+    if (params->forced_audio_path) return !(mode && !strcmp(mode, "noised"));
+    /* An initial latent's own audio is held clean the same way. */
+    return params->initial_latent_path != NULL;
 }
 
 static char *h3_prepared_key(const char *conditioning,
@@ -442,6 +502,14 @@ static char *h3_prepared_key(const char *conditioning,
     for (size_t index = 0; index < params->lora_count; index++)
         if (!h3_key_append(&key, "|lora=%s@%.6g", params->loras[index].path,
                            (double)params->loras[index].strength)) {
+            free(key.text);
+            return NULL;
+        }
+    /* A custom video schedule changes the baked AdaLN values too. */
+    for (int index = 0; params->video_sigmas &&
+                        index < params->video_sigma_count; index++)
+        if (!h3_key_append(&key, "%s%.7g", index ? "," : "|sigmas=",
+                           (double)params->video_sigmas[index])) {
             free(key.text);
             return NULL;
         }
@@ -937,6 +1005,29 @@ static int h3_valid_params(h3_ctx *ctx, const h3_params *params) {
          params->forced_audio_offset < 0.0)) {
         h3_set_error(ctx, "forced audio needs a file and an offset >= 0");
         return 0;
+    }
+    if (params->initial_latent_path &&
+        (!*params->initial_latent_path || params->continue_latent_path)) {
+        h3_set_error(ctx, "an initial latent needs a file and cannot be "
+                          "combined with a continuation");
+        return 0;
+    }
+    if (params->video_sigmas || params->video_sigma_count) {
+        int count = params->video_sigma_count;
+        int ok = params->video_sigmas && count >= 3 &&
+                 count - 1 <= H3_MAX_STEPS && params->steps == count - 1 &&
+                 isfinite(params->video_sigmas[0]) &&
+                 params->video_sigmas[0] > 0.0f &&
+                 params->video_sigmas[0] <= 1.0f &&
+                 params->video_sigmas[count - 1] == 0.0f;
+        for (int index = 1; ok && index < count; index++)
+            ok = isfinite(params->video_sigmas[index]) &&
+                 params->video_sigmas[index] < params->video_sigmas[index - 1];
+        if (!ok) {
+            h3_set_error(ctx, "video sigmas must be steps + 1 finite values, "
+                              "strictly decreasing from (0, 1] to exactly 0");
+            return 0;
+        }
     }
     if (!(params->audio_sigma_shift == 0.0f ||
           (params->audio_sigma_shift > 0.0f &&
@@ -1615,7 +1706,9 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     }
     char plan_error[512];
     if (!h3_continuation_plan(params, latent_h, latent_w, temporal,
-                              &continuation, plan_error, sizeof(plan_error))) {
+                              &continuation, plan_error, sizeof(plan_error)) ||
+        !h3_initial_latent_check(params, latent_h, latent_w, temporal,
+                                 plan_error, sizeof(plan_error))) {
         h3_set_error(ctx, "%s", plan_error);
         goto cleanup;
     }
@@ -2241,9 +2334,17 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         h3_set_error(ctx, "cannot construct the requested sigma schedule");
         goto cleanup;
     }
+    if (params->video_sigmas) {
+        for (int step = 0; step <= sigmas.steps; step++)
+            sigmas.video[step] = params->video_sigmas[step];
+        fprintf(stderr, "h3: custom video sigmas, starting at %.6g\n",
+                (double)sigmas.video[0]);
+    }
     if (h3_forced_audio_clean(params)) {
         for (int step = 0; step <= sigmas.steps; step++) sigmas.audio[step] = 0.0f;
-        fprintf(stderr, "h3: forced audio is held clean (audio sigma 0)\n");
+        fprintf(stderr, "h3: %s is held clean (audio sigma 0)\n",
+                params->forced_audio_path ? "forced audio"
+                                          : "the initial latent's audio");
     }
     float spatial_rope_scale = !params->use_reference_rope &&
         render_width == 256 && render_height == 256 ? 0.5f : 1.0f;
@@ -2365,6 +2466,29 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     h3_rng_fill_normal(&audio_rng, audio, audio_count);
     h3_debug_hash("noise video", video, video_count * sizeof(*video));
     h3_debug_hash("noise audio", audio, audio_count * sizeof(*audio));
+    if (params->initial_latent_path) {
+        float *initial_audio = NULL;
+        if (video_count != (size_t)24 * temporal.video_t * latent_h * latent_w ||
+            audio_count != (size_t)32 * 2 * temporal.audio_t) {
+            h3_set_error(ctx, "the DiT's latent layout does not match the "
+                              "initial latent file");
+            goto cleanup;
+        }
+        if (!h3_initial_latent_apply(params->initial_latent_path, video,
+                                     video_count, sigmas.video[0],
+                                     audio_count, &initial_audio,
+                                     detail, sizeof(detail))) {
+            h3_set_error(ctx, "%s", detail);
+            goto cleanup;
+        }
+        if (forced_latent) {
+            free(initial_audio);
+        } else {
+            forced_latent = initial_audio;
+            memcpy(audio, forced_latent, audio_count * sizeof(*audio));
+        }
+        h3_debug_hash("initial video", video, video_count * sizeof(*video));
+    }
     h3_dit_set_attention_mode(dit, h3_resolve_attention_mode(params));
     h3_dit_set_sampler(dit, params->sampler, params->seed);
     /* Set on every run, so a retained DiT never carries it over. */
