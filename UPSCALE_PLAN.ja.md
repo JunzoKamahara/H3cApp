@@ -408,7 +408,7 @@ Swift（`VideoUpscale.upscale` を 3 段に。既存方式は `PerFrameChunkAdap
 | P6 アプリ | `ChunkedFrameScaler` と 3 段パイプライン、**品質優先／速度モードの切替（全注意・精度・overlap）**、`.swiftVR`、DL/同意/変換 UI、API、記録、文書、ローカライズ、`isGenerating` ガード | 既存 4 方式の出力がバイト一致で不変、新方式で project/file 両入口＋継続が動く。実重み: 新ビルドのアプリで `POST /api/upscale-file`（swiftVR, 2x）により 512x512・39 フレームが 1024x1024 HEVC（音声保持）に約 30 秒で拡大された（2026-10-29）。「SwiftVR のモデルを準備」画面の操作は未確認 |
 | P7 最適化 | 進行中（付録 A.2: ReAE の畳み込みを TensorOps に移し、1080p の中間チャンク 17.6 s → 9.6 s） | `h3_vsr_tapconv_bf16_nax`, `h3_vsr_reae.c`, `tests/bench_vsr.c` | `tests/test_vsr_tapconv.c`、`tests/test_vsr_reae.c` の TensorOps 節、実重み 56〜60 dB |
 | P8 FlashVSR Tiny | 共通エンジンに第二バックエンド（LQ_proj_in、KV キャッシュ、ブロック選択注意、TCDecoder、色補正） | 同様の parity と速度表 |
-| PX 実験 | H3 hires-fix（§11） | 比較表と判断 |
+| PX 判定実験 | H3 自身による再生成（Open-H3-Regenerate-2K、§11。開始潜在 API → 潜在アップスケーラ → 既存 LoRA 重ね掛け → 1344×768 で SwiftVR と A/B） | §11.3 の A/B 表と判定の記録 |
 
 各フェーズは独立ブランチ可（P2/P3/P4 は P1 のダンプに依存）。
 
@@ -449,13 +449,55 @@ Swift（`VideoUpscale.upscale` を 3 段に。既存方式は `PerFrameChunkAdap
 **M5 BF16 ≈10 s／≈14.3 GB**、**M4 Pro BF16 ≈23 s**（5 s クリップ ≈2 分、60 s ≈23 分）、M4 無印 ≈39 s/チャンク。
 前提（int8 = BF16 の 2 倍、M4 の MPSGraph 実効 TFLOP/s）は未測で、`tests/bench_vsr.c` の実測で置き換える。§1 の目標（M5 2 分以内／M4 6 分以内、5 s クリップ）はこの見積の範囲内。
 
-## §11 実験フェーズ: H3 自身による再ノイズ高解像度化（hires-fix）
+## §11 判定実験: H3 自身による再生成（hires-fix → Open-H3-Regenerate-2K）
 
-- 考え方: 生成済み潜在/動画 → 2x 拡大（Lanczos or Real-ESRGAN）→ `h3_video_vae_encode_fast` で潜在化 → `x = σ₀·ε + (1−σ₀)·z`（`h3_forced_trajectory_start` の式、σ₀∈{0.3,0.4,0.5}）→ σ₀ 以下に切った schedule で Turbo LoRA 2–4 ステップ → デコード。
-  音声は既存の forced-audio（リップシンク）経路で **クリーン固定**。
-- 制約 [確認]: `h3_generate` に開始潜在/開始 σ の API は無い（`h3_params` 追加が必要: `init_video_latent_path`, `start_sigma`）。DiT キャンバス上限 768×1344 → 出力は最大 1344×768（1920×1088 は不可）。
-- コスト [推定]: 1344x768/124 fr は約 37k 動画トークン。768²/124fr 4 ステップ 505 s の実測から線形 ×1.7、注意 ×2.9 → 4 ステップ 15–20 分、2 ステップ 8–10 分。
-- 判定: SwiftVR と同じ入力で PSNR/目視比較。時間が 5 倍以上かつ画質優位が無ければ不採用として記録。
+2026-10-31 改訂。以前の案（生成済み潜在を即席に再ノイズする hires-fix）を、同じ考え方を専用に学習した公開重み **Open-H3-Regenerate-2K**（NVlabs、2026-10-27 公開）で置き換える。目的は機能の移植ではなく **判定** であり、判定点はひとつだけ:
+
+> **1344×768 ですら SwiftVR 2x に対して顔・肌・毛髪・文字で明確に良くならなければ、1080p / 2K 対応には進まない。**
+
+### §11.1 対象の事実 [確認: 2026-10-31、HF モデルカード・NVlabs README／プロジェクトページ・ComfyUI 移植 2 件]
+
+- 構成: 凍結した H3 DiT と VAE に、(a) 統合 LoRA（FP32、rank 576 = 精細化 384 + LightX2V FL2VA Turbo v1.2 128 + LMS Sharp v1.0 64 を rank 軸で連結、12.5 GB、**312 線形層** = 50 ブロック × 6 + トークン精製 2 ブロック × 6）、(b) LMS Sharp の AdaLN 曲線分岐（50 本、FP32 1.24 GB。`B·A·curve8(t)` を各ブロックの AdaLN 射影に加える。8 次元の curve は Comfy-Org の pruned チェックポイントにある 1025×8 の `adaln_t_table` から読む）、(c) コミュニティ製 3D 畳み込み潜在アップスケーラ（LBH-123-AI、BF16 691 MB、**345.3M パラメータ・322 テンソル**）、(d) 高速 VAE デコーダ（StreamRender-H3、36 層を 24 層に刈り込んで蒸留、非因果、1.62B、FP32 6.47 GB、FlashAttention-4 を要する）。
+- 手順: 潜在を目標格子へ直接拡大（デコードも再エンコードもしない）→ `x = (1−σ₀)·z_up + σ₀·ε`、σ₀ = 0.909375 → Euler 3 ステップ（σ = 0.909375, 0.857143, 0.666667, 0、CFG 1、model time = 1−σ）→ デコード。2 ステップ版は σ = 0.7, 0.494118, 0（README: 「約 30% 速いが、毛皮や苔の細部が目に見えて柔らかい」）。`--start-sigma` で開始 σ を変えられる。音声は「符号化した無音で固定」。**各ステップは出力解像度の全トークンに対する DiT 1 回**で、タイルや窓は無い（sol_engine では Sol-Attn の疎注意）。
+- 出力: 768p（精細化のみ、拡大なし）／1080p／2K（既定）／4K（2K 経由で 2x を 2 回）。README が扱う入力は 1344×768 と 1024×576 の 2 つ（384P/512P はブログの記述のみ）。5 秒（121 フレーム、潜在 37 フレーム）が標準、15 秒まで 1 パス。
+- 性能（B200 1 基、5 秒、768P → 2K、ウォーム、中央値）: 密 BF16 + 公式 VAE 87.26 s（精細化 71.27 s、デコード 14.99 s、拡大 1.01 s）、sol_engine_fast + 高速 VAE 22.45 s（3.9x。**自社の密実装に対する比**であり、見出しの「公式 API の 5 倍」の根拠はページに無い）。CUDA グラフ版は「1 GPU で約 150 GB」。72 GB カードへの移植例（int8 ベース）: 精細化 122 s（疎）／474 s（密）、高速デコーダ単体で 2K 5 秒 21 GB・15 秒 45 GB。
+- 品質主張: ブラインド 200 判定（50 事例）で **公式 H3-Regenerate-2K API に対して** 87%。VBench 平均 0.814 対 0.802、UniPercept 60.0 対 53.4。他のアップスケーラー（SwiftVR、SeedVR2）との比較は無い。README 自身が「同 seed の PSNR は指標として使えない」と書く。高速デコーダは公式デコーダに対し 30.0 dB（移植者の測定では 37.8 dB）。
+- 既知の弱点: σ₀ 0.909 は描き直しが強く、移植者は「狐の顔が狼に寄った」と報告（曲線分岐の有無やデコード経由でも同じ → 方式由来）。開始 σ 0.8 で緩和。
+- ライセンス: 統合 LoRA・高速 VAE・base_model は MiniMax H3 Community License。潜在アップスケーラは NVIDIA 配布物の `latent_upsampler/LICENSE` が Apache-2.0、**元の LBH リポジトリは MIT**（NVIDIA のラッパも「MIT」と記す）。LightX2V と LMS の分は未記載。モデルカード自身が「一括のライセンスは無い」と明記。Ref2VA への言及は無い。
+- H3cApp との対応: アプリの LoRA ローダは diffusers 配置を読み、FC1 の [value; gate] → [gate; value] の入れ替え（いわゆる SwiGLU 変換）と 2 つのトークン精製ブロックをすでに扱う（`h3_lora.c`）。F32/F16/BF16 を読め、rank は形状から取る。生成動画は潜在を `.h3lt` に保存しているので、アプリ製ドラフトの再エンコードは不要。
+
+### §11.2 24 GB Mac での見通し [推定: 実測からの外挿]
+
+根拠にした実測: 768²/124 フレーム（21,728 トークン）で DiT 1 ブロックの **65.7% が注意**（`SPEEDUP_ROADMAP.md` のマイクロベンチ、int8 線形）。768²/362 フレーム（約 6.3 万トークン）で 1 ステップ 657 s（スワップ発生、Stage ⑦）。1344×768/15 秒（約 11 万トークン）では **1 ステップが 2.5 時間で終わらなかった**（`GenerationViewModel.swift` の注記）。5 秒 = 潜在 37 フレームとして動画トークンだけを数えると:
+
+| 出力 | 動画トークン | 見通し（M5 24 GB、int8） |
+|---|---:|---|
+| 768p 精細化のみ（1344×768） | 37,296 | 3 ステップ + VAE で **10〜15 分**。メモリは収まる見込み。実測前の仮説 |
+| 1080p（1920×1088） | 75,480 | スワップした 6.3 万の先。1 ステップ 15〜20 分以上、3 ステップで 1 時間超。FFN と注意のトークン分割が前提 |
+| 2K（2560×1440） | 133,200 | 2.5 時間で 1 ステップが終わらなかった構成より大きい。Sol-Attn 級の削減なしでは対象外 |
+
+FLOPs でも整合する: 2K 5 秒 3 ステップ ≈ 7×10¹⁶ FLOP（線形 29 GFLOP/トークン、注意 4·N²·5376/ブロック）。B200 の密実装 71 s は実効約 1 PFLOP/s、M5 の実効 10〜25 TFLOP/s では 1.5 時間級。**24 GB で 2K が無理なのは「メモリに入らない」からではなく、分割して入れても計算時間が実用にならないから**である。したがって本丸は注意機構であり VAE ではない。VAE デコードはアプリではすでに int8 かつタイル化済みで全体の 15〜20%、24 層化で縮むのはその 3 分の 1 程度（全体の 5〜7%）に留まり、しかも損失がある。**24 層 VAE は最後**（Regenerate が採用になり、DiT 側を疎注意で速くした後）。
+
+### §11.3 実装順（判定実験に必要な最小限）
+
+1. **汎用の開始潜在 API**（Open-H3 専用にしない）: `h3_params` に `initial_video_latent`（`.h3lt` または配列）、`video_sigmas[]`（任意の σ 列）、`audio_sigmas[]` または「音声はクリーン固定」、を足す。`h3_forced_trajectory_start` の式をそのまま使う。プロンプトはプロジェクトのものを使う（README の推論はテキストエンコーダを読み込むので、条件付けは生きている）。1344×768 はエンジンの上限（`h3.c` の「released 768*1344」）の内側。同じ API が hires-fix・2/3 ステップ精細化・途中潜在からの再生成に使える。
+2. **潜在アップスケーラの Metal 移植**（判定実験の部品として。単独機能にはしない）: 構造は作者ノード `upscaler_node.py`（MIT）の `LatentResizer3D(in_channels=24, in_blocks=12, out_blocks=12, channels=512, temporal_every=2, temporal_kernel=5, attn=False)`。`conv_in` Conv3d(24→512, 3³) → in_blocks 12 → **trilinear 補間（align_corners=False）で目標格子へ** → out_blocks 12 → GroupNorm(32)+SiLU → `conv_out` Conv3d(512→24, 3³)。ブロックは ResBlockEmb3D（GroupNorm(32) → SiLU → Conv3d 3³ → 埋め込みからの FiLM（scale, shift）→ SiLU → Conv3d 3³、残差）で、偶数番目のあとに TemporalConv（depthwise Conv3d (5,1,1) → 1×1×1、残差）。埋め込みは `Linear(1→64) → SiLU → Linear(64→64)` に `scale − 1` を入れる。入力は **正規化潜在**（24 ch の mean/std で割る。アプリの VAE が持つ `latents_mean/std` と同じ役割、値は作者ノードの定数を使う）、出力を逆正規化。目標は 32 px 整列。作者ノードは潜在 32 フレーム超で時間分割（重なり 5）するが NVIDIA のラッパは無効化しているので、同じく一括で動かす。GPU 側は `h3_gpu` の conv3d（F32 MPSGraph）と既存の GroupNorm+SiLU 核で足りる。倍精度参照との照合は `h3_vsr_reae.c` と同じ流儀。
+3. **LoRA は新規実装なしで**: Kijai 版の精細化のみ LoRA（rank 384、NVIDIA の統合 LoRA の rank 0〜383）＋手元の LightX2V FL2VA Turbo v1.2 ＋ LMS Sharp v1.0 r64 を既存の重ね掛け（最大 8 本）で適用する。NVIDIA の統合 FP32 12.5 GB を直接読む場合は、ローダのメモリ（rank 576 の B·A を F32 で保持）を確認する。**Sharp の曲線分岐は最初は無し**（判定後に実装。3 タイムステップ × 50 ブロック × 96768 の F32 差分を読み込み時に事前計算すれば 58 MB。8 次元 curve のために Comfy-Org の `adaln_t_table` 32 KB をバイト範囲で取る）。
+4. **正規化した A/B 比較**: 入力はアプリで生成した **1024×576・5 秒**（と 672×384）の潜在に固定。A: 再生成 → 1344×768（3 ステップ標準／2 ステップ保守 σ 0.7, 0.494118, 0／開始 σ 0.8）。B: SwiftVR 2x → 2048×1152 → **1344×768 へ高品質縮小**。C: 通常のリサイズ → 1344×768。D（任意）: 即席 hires-fix（旧 §11 の σ₀ 0.3〜0.5）。指標は `ltx-refine-eval` の道具（`tools/quality_metrics.py`: LPIPS／顔 LPIPS／フリッカ／MUSIQ／MANIQA と顔の切り出し、`frames-sheet.png` を等倍で見る）。**「元への忠実度」と「見た目の品質」を分けて記録**する（再生成なので LPIPS が悪化しても見た目が上がりうる）。構図・同一性の変化、所要時間、ピークフットプリント（`/usr/bin/time -l`）も表に入れる。
+5. **判定**: A が B に対して顔・肌・毛髪・文字で明確に良い（ブラインドの目視で過半、顔 LPIPS と無参照指標の両方で優位）場合のみ、次へ進む: Sharp 曲線分岐 → 厳密な Q 分割注意（メモリ）→ Sol-Attn 型ブロック疎注意（時間。NVIDIA 自身もステップ 0 は密、1〜2 を疎で 5〜12% の相対誤差を許容）→ 1080p。それでも 2K は対象外。良くなければ、旧 §11 と同じく「不採用」と記録し、通常生成の高速化（VDN-H3 など）に戻る。
+
+### §11.4 ライセンス表示
+
+部品ごとに、**取得した重み／ソースに付属するライセンスをそのまま表示**する（一律「Apache-2.0」とはしない）: 精細化 LoRA は MiniMax H3 Community License（基盤モデルと同じ既存の表示）、潜在アップスケーラは取得元に従い MIT（LBH GitHub）または Apache-2.0（NVIDIA 配布物）、LightX2V / LMS は利用者が自分で入れた LoRA としてライブラリの表示に従う。同梱はせず、SwiftVR と同じダウンロード・同意の流れ。
+
+### §11.5 リスク・未確認
+
+- σ₀ 0.909 の同一性ドリフト（顔）。開始 σ 0.8 と 2 ステップ版を同時に測る。
+- 音声: README は符号化無音で固定。アプリはクリーン音声の強制経路で代替し、元の音声はパススルー。
+- モデルカードは Ref2VA に触れない。LoRA は base（= FL2VA の DiT）に対して学習。Ref2VA への適用は未検証。
+- 768p でも 3.7 万トークンの DiT を 3 回回す。M1〜M4（BF16 経路）では 2〜3 倍遅く、まず M5 で判定する。
+- 作者ノードの `precision` 既定は README の fp32 ではなく fp16（コードが正）。BF16 重みを F32 で評価し、参照は作者ノードの fp32 で取る。
+- VDN-H3 との関係: VDN-H3 はフレーム毎の線形注意分岐を足したハイブリッド構造を学習したチェックポイント（+ 2 本の LoRA、8 ステップ蒸留、約 82 GB）。精細化 LoRA を機械的に当てることは構造上は可能だが学習分布が違い、意味は薄い。別の開発分岐として扱う。
 
 ## §12 範囲外・別タスク（LightX2V 精査メモの他項目）
 
@@ -485,6 +527,10 @@ Swift（`VideoUpscale.upscale` を 3 段に。既存方式は `PerFrameChunkAdap
 - TAEHV: https://github.com/madebyollin/taehv （MIT）
 - diffusers `transformer_wan.py`（WanTransformer3DModel）
 - h3c-app: `SPEEDUP_ROADMAP.md`（NAX/ccv/メモリ実測）、`TECHNICAL.md`、`VideoUpscale.swift`、`TinyPreviewDecoder.swift`、`h3_gpu.h`
+- Open-H3-Regenerate-2K: https://huggingface.co/Efficient-Large-Model/Open-H3-Regenerate-2K , https://github.com/NVlabs/Sana/tree/sol-engine/models/Open-H3-Regenerate-2K , https://nvlabs.github.io/Sana/Open-H3-Regenerate-2K/ （2026-10-31 確認）
+- 潜在アップスケーラ: https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler （MIT）, https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler
+- ComfyUI 移植: https://github.com/rdh9616/ComfyUI-Open-H3-Regenerate （Apache-2.0）, https://github.com/1038lab/ComfyUI-Open-H3-Regenerate-2K （GPL-3.0）
+- VDN-H3: https://huggingface.co/OpenVDN/vdn-minimax-h3
 
 ## 付録 A: 実装状況（2026-10-28, ブランチ vsr-engine）
 

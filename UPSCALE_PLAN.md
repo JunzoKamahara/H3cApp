@@ -410,7 +410,7 @@ Cancellation: `cancel_requested` is checked between DiT blocks and phases (the `
 | P6 App | `ChunkedFrameScaler` and the 3-stage pipeline, **quality / speed mode switch (full attention, precision, overlap)**, `.swiftVR`, download/acceptance/conversion UI, API, records, documents, localization, `isGenerating` guard | the existing four methods are byte-identical and unchanged; the new method works from both the project and file entry points and with continuation. Real weights: the rebuilt app enlarged a 512x512, 39-frame clip to 1024x1024 HEVC (sound kept) in about 30 s through `POST /api/upscale-file` (swiftVR, 2x) on 2026-10-29; the SwiftVR setup sheet itself was not clicked through |
 | P7 Optimization | in progress (Appendix A.2: the ReAE convolutions moved to TensorOps, a 1080p middle chunk 17.6 s -> 9.6 s) | `h3_vsr_tapconv_bf16_nax`, `h3_vsr_reae.c`, `tests/bench_vsr.c` | `tests/test_vsr_tapconv.c`, the TensorOps part of `tests/test_vsr_reae.c`, real weights 56 to 60 dB |
 | P8 FlashVSR Tiny | Second back-end on the shared engine (LQ_proj_in, KV cache, block-selection attention, TCDecoder, color correction) | same parity and speed tables |
-| PX Experiment | H3 hires-fix (§11) | comparison table and decision |
+| PX Gating experiment | Regeneration with H3 itself (Open-H3-Regenerate-2K, §11: starting-latent API → latent upscaler → existing LoRA stacking → A/B against SwiftVR at 1344×768) | the A/B table of §11.3 and the recorded decision |
 
 Phases can be separate branches (P2/P3/P4 depend on P1's dumps).
 
@@ -448,13 +448,55 @@ Details in §6.4. In short: 960x544→1920x1088 with 24-frame chunks is **≈6.5
 **M5 BF16 ≈10 s / ≈14.3 GB**, **M4 Pro BF16 ≈23 s** (5 s clip ≈2 min, 60 s ≈23 min), M4 base ≈39 s per chunk.
 The assumptions (int8 = 2× BF16, M4's effective MPSGraph TFLOP/s) are unmeasured and are replaced by `tests/bench_vsr.c`. The §1 targets (M5 under 2 minutes / M4 under 6 minutes for a 5 s clip) are within this estimate.
 
-## §11 Experiment phase: re-noise upscaling with H3 itself (hires-fix)
+## §11 Gating experiment: regeneration with H3 itself (hires-fix → Open-H3-Regenerate-2K)
 
-- Idea: finished latent/video → 2x enlargement (Lanczos or Real-ESRGAN) → `h3_video_vae_encode_fast` to a latent → `x = σ₀·ε + (1−σ₀)·z` (the `h3_forced_trajectory_start` formula, σ₀∈{0.3,0.4,0.5}) → Turbo LoRA 2–4 steps on a schedule truncated below σ₀ → decode.
-  Audio stays **clean and pinned** through the existing forced-audio (lip-sync) path.
-- Constraints [verified]: `h3_generate` has no API for a starting latent / starting σ (needs `h3_params` additions: `init_video_latent_path`, `start_sigma`). The DiT canvas cap of 768×1344 → output at most 1344×768 (1920×1088 impossible).
-- Cost [estimate]: 1344x768 / 124 frames is about 37k video tokens. From the measured 505 s for 4 steps at 768²/124 fr: linears ×1.7, attention ×2.9 → 15–20 min for 4 steps, 8–10 min for 2.
-- Decision: PSNR and visual comparison against SwiftVR on the same input. If it is 5x slower or more with no quality advantage, record it as not adopted.
+Revised 2026-10-31. The earlier idea (re-noising a finished latent ad hoc, "hires-fix") is replaced by **Open-H3-Regenerate-2K** (NVlabs, released 2026-10-27), public weights trained for exactly that idea. The goal is a **decision**, not a feature port, and there is one decision point:
+
+> **If even 1344×768 is not clearly better than SwiftVR 2x on faces, skin, hair and text, do not proceed to 1080p / 2K.**
+
+### §11.1 Facts about the target [verified 2026-10-31: HF model card, NVlabs README / project page, two ComfyUI ports]
+
+- Components: on the frozen H3 DiT and VAE, (a) a merged LoRA (FP32, rank 576 = refiner 384 + LightX2V FL2VA Turbo v1.2 128 + LMS Sharp v1.0 64 concatenated along the rank axis, 12.5 GB, **312 linears** = 50 blocks × 6 + 2 token-refiner blocks × 6), (b) the LMS Sharp AdaLN curve branches (50 of them, FP32 1.24 GB; `B·A·curve8(t)` added to each block's AdaLN projection, where the 8-dimensional curve is read from the 1025×8 `adaln_t_table` in Comfy-Org's pruned checkpoint), (c) a community 3D-conv latent upscaler (LBH-123-AI, BF16 691 MB, **345.3M parameters, 322 tensors**), (d) a fast VAE decoder (StreamRender-H3, the 36-layer decoder pruned to 24 layers and distilled, non-causal, 1.62B, FP32 6.47 GB, needs FlashAttention-4).
+- Procedure: upscale the latent straight onto the target grid (no decode, no re-encode) → `x = (1−σ₀)·z_up + σ₀·ε`, σ₀ = 0.909375 → 3 Euler steps (σ = 0.909375, 0.857143, 0.666667, 0; CFG 1; model time = 1−σ) → decode. The 2-step variant uses σ = 0.7, 0.494118, 0 (README: "about 30% faster but visibly softer on fine texture (fur, moss)"). `--start-sigma` changes the start noise. Audio is "fixed encoded silence". **Every step is one DiT call over all tokens at the output resolution**; there is no tiling or windowing (sol_engine uses Sol-Attn sparse attention).
+- Outputs: 768p (refine only, no upscale) / 1080p / 2K (default) / 4K (two 2x passes via 2K). The README documents two inputs, 1344×768 and 1024×576 (384P/512P appear only in the blog). 5 s (121 frames, 37 latent frames) is the standard, up to 15 s in one pass.
+- Performance (one B200, 5 s, 768P → 2K, warm, median): dense BF16 + released VAE 87.26 s (refine 71.27 s, decode 14.99 s, upscale 1.01 s); sol_engine_fast + fast VAE 22.45 s (3.9x — **relative to their own dense implementation**; the headline "5x over the official API" has no timing behind it on the page). The CUDA-graph engine needs "about 150 GB on one GPU". A port on a 72 GB card (int8 base): refine 122 s (sparse) / 474 s (dense); the fast decoder alone peaks at 21 GB for 2K 5 s and 45 GB for 15 s.
+- Quality claims: a blind study of 200 judgements (50 cases) prefers it 87% **over the official H3-Regenerate-2K API**. VBench average 0.814 vs 0.802, UniPercept 60.0 vs 53.4. No comparison against other upscalers (SwiftVR, SeedVR2). The README itself says "same-seed PSNR is not a usable metric". The fast decoder is 30.0 dB from the released decoder (37.8 dB per the porter).
+- Known weakness: σ₀ 0.909 redraws a lot; the porter reports a fox face drifting toward a wolf (same with the curve branches off and via decode, so it is the method). start σ 0.8 mitigates.
+- Licenses: merged LoRA, fast VAE and base_model under the MiniMax H3 Community License. The latent upscaler ships with an Apache-2.0 `latent_upsampler/LICENSE` in NVIDIA's bundle, while **the original LBH repository is MIT** (NVIDIA's wrapper also says "MIT"). The LightX2V and LMS parts are not stated. The model card itself says the bundle has no blanket license. Ref2VA is not mentioned.
+- Mapping to H3cApp: the app's LoRA loader reads the diffusers layout, already swaps FC1 [value; gate] → [gate; value] (the so-called SwiGLU conversion) and handles the two token-refiner blocks (`h3_lora.c`). It reads F32/F16/BF16 and takes the rank from the shapes. Generated videos keep their latents in `.h3lt`, so app-made drafts need no re-encode.
+
+### §11.2 Outlook on a 24 GB Mac [estimate: extrapolated from measurements]
+
+Measurements used: at 768²/124 frames (21,728 tokens) **65.7% of one DiT block is attention** (micro-benchmark in `SPEEDUP_ROADMAP.md`, int8 linears). At 768²/362 frames (about 63k tokens) one step took 657 s with swapping (Stage ⑦). At 1344×768/15 s (about 110k tokens) **one step did not finish in 2.5 hours** (note in `GenerationViewModel.swift`). Counting video tokens only, with 5 s = 37 latent frames:
+
+| Output | Video tokens | Outlook (M5 24 GB, int8) |
+|---|---:|---|
+| 768p refine only (1344×768) | 37,296 | **10–15 min** for 3 steps + VAE. Memory expected to fit. A hypothesis until measured |
+| 1080p (1920×1088) | 75,480 | Beyond the 63k that already swapped. 15–20 min or more per step, over an hour for 3 steps. Requires token-chunked FFN and attention |
+| 2K (2560×1440) | 133,200 | Larger than the configuration whose single step did not finish in 2.5 h. Out of scope without Sol-Attn-class reductions |
+
+FLOPs agree: 2K, 5 s, 3 steps ≈ 7×10¹⁶ FLOP (linears 29 GFLOP/token, attention 4·N²·5376 per block). B200's dense 71 s is about 1 PFLOP/s effective; at the M5's effective 10–25 TFLOP/s that is 1.5 hours. **2K is impossible on 24 GB not because it does not fit in memory but because, even chunked to fit, the compute time is impractical.** So the core problem is attention, not the VAE. VAE decode in the app is already int8 and tiled, 15–20% of the total; a 24-layer decoder shrinks only about a third of that (5–7% overall) and is lossy. **The 24-layer VAE comes last** (after Regenerate is adopted and the DiT is sped up with sparse attention).
+
+### §11.3 Implementation order (the minimum the gating experiment needs)
+
+1. **A general starting-latent API** (not Open-H3-specific): add to `h3_params` an `initial_video_latent` (`.h3lt` or array), `video_sigmas[]` (arbitrary σ list), `audio_sigmas[]` or "audio pinned clean". Use the `h3_forced_trajectory_start` formula as is. Use the project's prompt (the README's inference loads the text encoder, so conditioning is live). 1344×768 is inside the engine cap (`h3.c`, "released 768*1344"). The same API serves hires-fix, 2/3-step refiners and regeneration from an intermediate latent.
+2. **Port the latent upscaler to Metal** (as a part of the experiment, not a standalone feature): the structure is the author node `upscaler_node.py` (MIT), `LatentResizer3D(in_channels=24, in_blocks=12, out_blocks=12, channels=512, temporal_every=2, temporal_kernel=5, attn=False)`. `conv_in` Conv3d(24→512, 3³) → 12 in_blocks → **trilinear interpolation (align_corners=False) to the target grid** → 12 out_blocks → GroupNorm(32)+SiLU → `conv_out` Conv3d(512→24, 3³). A block is ResBlockEmb3D (GroupNorm(32) → SiLU → Conv3d 3³ → FiLM (scale, shift) from the embedding → SiLU → Conv3d 3³, residual), followed after every even-numbered block by TemporalConv (depthwise Conv3d (5,1,1) → 1×1×1, residual). The embedding is `Linear(1→64) → SiLU → Linear(64→64)` fed `scale − 1`. Input is the **normalized latent** (divided by the 24-channel mean/std; the same role as the app VAE's `latents_mean/std`, values from the author node's constants), output de-normalized. Target aligned to 32 px. The author node chunks in time above 32 latent frames (overlap 5) but NVIDIA's wrapper disables that, so run it whole too. On the GPU side `h3_gpu`'s conv3d (F32 MPSGraph) and the existing GroupNorm+SiLU kernels suffice. Check against a double-precision reference in the `h3_vsr_reae.c` style.
+3. **LoRA without new code**: apply Kijai's refiner-only LoRA (rank 384, ranks 0–383 of NVIDIA's merge) + the user's LightX2V FL2VA Turbo v1.2 + LMS Sharp v1.0 r64 through the existing stacking (up to 8). If NVIDIA's merged FP32 12.5 GB file is read directly, check the loader's memory (rank-576 B·A held in F32). **No Sharp curve branches at first** (implement after the decision; precomputing the 3 timesteps × 50 blocks × 96768 F32 deltas at load is 58 MB; fetch Comfy-Org's 32 KB `adaln_t_table` by byte range for the 8-dimensional curve).
+4. **A normalized A/B comparison**: fix the input to app-generated **1024×576, 5 s** latents (and 672×384). A: regenerate → 1344×768 (3-step standard / conservative 2-step σ 0.7, 0.494118, 0 / start σ 0.8). B: SwiftVR 2x → 2048×1152 → **high-quality downscale to 1344×768**. C: plain resize → 1344×768. D (optional): the ad-hoc hires-fix (old §11, σ₀ 0.3–0.5). Metrics are the `ltx-refine-eval` tools (`tools/quality_metrics.py`: LPIPS / face LPIPS / flicker / MUSIQ / MANIQA with face crops; view `frames-sheet.png` at 1:1). **Record "fidelity to the source" and "perceived quality" separately** (it regenerates, so LPIPS can worsen while the look improves). Also tabulate composition / identity changes, wall time and peak footprint (`/usr/bin/time -l`).
+5. **Decision**: only if A is clearly better than B on faces, skin, hair and text (a blind visual majority, and better on both face LPIPS and the no-reference metrics) continue: Sharp curve branches → exact query-chunked attention (memory) → Sol-Attn-style block-sparse attention (time; NVIDIA itself runs step 0 dense and steps 1–2 sparse, accepting 5–12% relative error) → 1080p. 2K stays out of scope even then. Otherwise record "not adopted", as the old §11 would, and return to speeding up ordinary generation (VDN-H3 and the like).
+
+### §11.4 License display
+
+Per component, **show the license that ships with the weight / source actually fetched** (never a blanket "Apache-2.0"): the refiner LoRA under the MiniMax H3 Community License (the existing notice for the base model), the latent upscaler MIT (LBH GitHub) or Apache-2.0 (NVIDIA bundle) depending on the source, and LightX2V / LMS as LoRAs the user added themselves, with the library's own display. Nothing is bundled; the same download-and-consent flow as SwiftVR.
+
+### §11.5 Risks and open points
+
+- Identity drift at σ₀ 0.909 (faces). Measure start σ 0.8 and the 2-step variant at the same time.
+- Audio: the README pins encoded silence. The app substitutes its forced clean-audio path and passes the original audio through.
+- The model card does not mention Ref2VA. The LoRA was trained against base (= the FL2VA DiT). Applying it to Ref2VA is unverified.
+- Even 768p runs the DiT three times over 37k tokens. M1–M4 (BF16 path) are 2–3x slower; decide on the M5 first.
+- The author node's `precision` default is fp16 in code, not the fp32 the README states (the code is authoritative). Evaluate the BF16 weights in F32 and take the reference from the author node in fp32.
+- Relation to VDN-H3: VDN-H3 is a checkpoint trained with a hybrid architecture that adds a frame-wise linear-attention branch (+ two LoRAs, 8-step distillation, about 82 GB). Applying the refiner LoRA to it mechanically is structurally possible but the training distributions differ, so it means little. Treat it as a separate development branch.
 
 ## §12 Out of scope, separate tasks (other items of the LightX2V review memo)
 
@@ -484,6 +526,10 @@ The assumptions (int8 = 2× BF16, M4's effective MPSGraph TFLOP/s) are unmeasure
 - TAEHV: https://github.com/madebyollin/taehv (MIT)
 - diffusers `transformer_wan.py` (WanTransformer3DModel)
 - h3c-app: `SPEEDUP_ROADMAP.md` (NAX/ccv/memory measurements), `TECHNICAL.md`, `VideoUpscale.swift`, `TinyPreviewDecoder.swift`, `h3_gpu.h`
+- Open-H3-Regenerate-2K: https://huggingface.co/Efficient-Large-Model/Open-H3-Regenerate-2K , https://github.com/NVlabs/Sana/tree/sol-engine/models/Open-H3-Regenerate-2K , https://nvlabs.github.io/Sana/Open-H3-Regenerate-2K/ (checked 2026-10-31)
+- Latent upscaler: https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler (MIT), https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler
+- ComfyUI ports: https://github.com/rdh9616/ComfyUI-Open-H3-Regenerate (Apache-2.0), https://github.com/1038lab/ComfyUI-Open-H3-Regenerate-2K (GPL-3.0)
+- VDN-H3: https://huggingface.co/OpenVDN/vdn-minimax-h3
 
 ## Appendix A: Implementation status (2026-10-28, branch vsr-engine)
 
