@@ -136,7 +136,11 @@ int h3_lora_parse_key(const char *name, h3_lora_key *key) {
         result.role = H3_LORA_ROLE_ALPHA;
     } else {
         for (int index = suffix_at; index + 1 < count; index++) {
-            if (strcmp(tokens[index], "lora")) continue;
+            /* NVIDIA's sharp_curve_branches file names the AdaLN curve
+             * branch factors curve_A / curve_B. */
+            if (strcmp(tokens[index], "lora") &&
+                !(result.projection == H3_LORA_ADALN &&
+                  !strcmp(tokens[index], "curve"))) continue;
             const char *which = tokens[index + 1];
             if (!strcmp(which, "a") || !strcmp(which, "down"))
                 result.role = H3_LORA_ROLE_A;

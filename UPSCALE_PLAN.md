@@ -747,3 +747,37 @@ Conclusion: the texture closest to the sample's SeedVR2 column comes from SwiftV
 Quality (gt-large, 272x480 -> 1088x1920 -> 1/2 against the ground truth): one tile PSNR 33.98 / face LPIPS 0.110 / face MUSIQ 71.7; forced 2 x 2 33.88 / 0.108 / 71.2. Tiled and one-tile outputs are 40.9 dB (2 x 2) to 44.7 dB (2 x 1) apart, the difference spread evenly at 1-2/255 per band rather than at the overlaps. The 544x960 4x frame (the automatic grid above) was checked at full size: no line or step along the overlap bands (cheek, the corner at the mouth). The app's path (4x in tiles then Lanczos 1/2) against a direct 2x, without ground truth, on the same face crop: face MUSIQ 55.4 -> 57.3, MANIQA 0.389 -> 0.448, face flicker 6.09 -> 5.69; the brow redrawing of the direct 2x (extra dark hairs) stays closer to the source through 4x.
 
 Through the app's API (the method "SwiftVR 4倍で生成してから縮小" = `swiftVRFourX`, which replaced the earlier toggle; `HalvingChunkScaler`: 4x in tiles, then the standard resize) this 544x960, 121-frame clip took 243 s (a direct 2x 42 s: about 5.5 times). A first run sharing the machine with a heavy analysis script took 15 minutes, so the GPU and RAM should be left to it. Synthetic tests: `tests/test_vsr_session.c` (a forced 2 x 2 run returns every frame deterministically, 26 dB from the one-tile run, and a grid that does not fit is refused) and `tests/test_vsr.c` (the layout and the weight sums).
+
+### Appendix A.4: The Open-H3 regeneration gating experiment (2026-10-31, M5 24 GB, branch regen-api)
+
+The gating experiment of §11.3 was run. Implementation (branch `regen-api` off main): (1) `h3_params.initial_latent_path` and `video_sigmas[]` (a starting latent and an arbitrary σ list; the latent file's audio is held clean and carried through), (2) `h3_latent_upscale.c` (the LBH 3D-conv latent upscaler, agreeing with the author node in fp32 to 122–126 dB, rel-L2 2e-6; 960×544 × 37 latent frames → 1344×768 in 19 s, peak 5.8 GB), (3) AdaLN curve-branch support in the LoRA loader (`adaln_proj.linear` `lora_A/B` and NVIDIA's `curve_A/B` added as `B·A` to a curve-form checkpoint's [96768, 8] projection; `H3_LORA_NO_ADALN=1` disables it), (4) the CLI's `H3SPIKE_INITIAL_LATENT` / `H3SPIKE_SIGMAS` / `H3SPIKE_LORAS`, `h3_latent_upscale`, and `tools/dump_latent_upscaler_fixture.py`.
+
+**Verified facts**
+
+- Latent normalization: the author node's 24 `LATENTS_MEAN/STD` values are **identical** to the VAE config's `latents_mean/std` (difference 0). ComfyUI's H3 latent (`samples`) is the DiT-space latent normalized by the VAE wrapper; the node applies the same constants once more before the network and de-normalizes the output. NVIDIA's pipeline hands the node the normalized latent too, so it does the same. This port does the same with the `.h3lt` latent.
+- **The Sharp AdaLN curve branches are empty.** In both the LMS Sharp v1.0 LoRA file and NVIDIA's `sharp_curve_branches.safetensors`, `B` is exactly zero in all 50 blocks (`A` is non-zero, max 0.354). The output is therefore the same with or without them (confirmed bit-identical here), and they are an identity in the published pipeline as well. The §11.3-5 condition ("never reject on the variant without the branches") is satisfied by the branches having no effect.
+- Kijai's refiner LoRA (rank 384, BF16, ComfyUI layout, QKV fused, FC1 halves swapped), LightX2V Turbo v1.2 and LMS Sharp r64 land on the 312 linears through the existing loader.
+- H3 at 1344×768 × 124 frames (37 latent frames, about 37k tokens) in the int8-cache mode: **282 s per DiT step**, 181 s VAE decode. A 3-step regeneration takes 1027–1087 s, peak footprint 14.3–15.4 GB with the three LoRAs, 8.9 GB without.
+
+**Conditions**: the app's active model (MiniMax-H3 GGUF, Q4_K pruned, curve-form AdaLN), int8-cache mode, seed 1. Two drafts: "osaka" (960×544 × 124 frames, abstract digital motion graphics, the latent of an existing generation) and "face" (1024×576 × 124 frames, the skin-eval wet-hair close-up of a woman, Turbo 4 steps, 503 s). Target 1344×768. A = latent upscale → 3 steps at σ 0.909375/0.857143/0.666667/0, LoRAs = refiner r384 + Turbo v1.2 + LMS Sharp r64. B = SwiftVR 2x (int8, windowed attention) → Lanczos to 1344×768 (69 s). C = the draft resized to 1344×768 with Lanczos. Metrics from `tools/quality_metrics.py` (fidelity is "closeness to the resized draft" with C as reference, MUSIQ/MANIQA are no-reference, flicker is the mean absolute difference between neighbouring frames, the face is the crop 380,220,560,320).
+
+| osaka | PSNR vs C | LPIPS | flicker | MUSIQ | MANIQA | time |
+|---|---:|---:|---:|---:|---:|---:|
+| C plain resize | — | — | 7.04 | 44.6 | 0.282 | — |
+| B SwiftVR | 29.9 dB | 0.22 | 5.58 | 51.3 | 0.359 | 163 s (run alongside A2) |
+| A0 no LoRA, 3 steps | 22.6 dB | 0.42 | 8.9 | 44.2 | 0.248 | 1036 s |
+| A1 refiner+Turbo+Sharp | 20.0 dB | 0.51 | 14.1 | 51.2 | 0.281 | 1032 s |
+
+| face | PSNR vs C | LPIPS | flicker | MUSIQ | MANIQA | face LPIPS | face MUSIQ | face MANIQA | time |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| C plain resize | — | — | 6.26 | 68.5 | 0.262 | — | 65.3 | 0.394 | — |
+| B SwiftVR | 30.8 dB | 0.126 | 6.52 | 76.6 | 0.361 | 0.162 | 70.8 | 0.489 | 69 s |
+| A1 refiner+Turbo+Sharp (3 steps) | 21.5 dB | 0.275 | 7.05 | 74.0 | 0.328 | 0.291 | 69.1 | 0.501 | 1027 s |
+| A1 without the branches | bit-identical to A1 | | | | | | | | 1087 s |
+| A2 same LoRAs, 2 steps from σ 0.7 | 24.9 dB | 0.167 | 6.83 | 71.7 | 0.299 | 0.201 | 65.8 | 0.462 | 894 s (run alongside B) |
+
+**By eye**: A redraws detail while keeping composition and motion (wiring diagrams and strings of text in osaka; lashes, pores and skin grain in face). Detail that was there gets replaced in the process (the droplet under the left eye disappears). B sharpens while keeping the original detail, with ample skin grain. In osaka A's flicker doubles: the σ 0.909 redraw shows as shimmer.
+
+**Decision (criterion of §11.3-5)**: at 1344×768, A is not clearly better than B (SwiftVR) on faces and skin. B leads the no-reference metrics (MUSIQ 76.6 vs 74.0, MANIQA 0.361 vs 0.328, face MUSIQ 70.8 vs 69.1), A leads only face MANIQA slightly (0.501 vs 0.489), B is clearly better on fidelity and flicker, and the time differs 15x. A2 (2 steps from σ 0.7) stays closer to the draft (LPIPS 0.167) but its no-reference metrics drop further (MUSIQ 71.7, face 65.8), still below B. On osaka B equals A1 on MUSIQ (51.3 vs 51.2) and leads on MANIQA, fidelity and flicker. The Sharp branches are an identity, so condition 2 holds. **So the 1080p / 2K work (query-chunked and sparse attention) is not pursued.** Regeneration may still have value as a separate "redraw the detail of the same composition" feature (finishing a draft at 768p) rather than as an upscaler; whether to productize that is a separate decision.
+
+**Not verified / open**: start σ 0.8, a 4x-equivalent comparison, other subjects (fur, text), the difference to NVIDIA's merged FP32 LoRA (rank 576), the user's blind viewing, M1–M4 times. A synthetic-weight `make test` case for the latent upscaler is not added (only the real-weight reference comparison).
