@@ -343,7 +343,7 @@ int main(void) {
     CHECK(h3_vsr_inspect_dir(model_dir, &info, error, sizeof(error)));
     CHECK(info.kind == H3_VSR_SWIFTVR && info.output_multiple == 32);
     CHECK(info.first_chunk_frames == 28 && info.chunk_frames == 24);
-    CHECK(!info.commercial_use_allowed);
+    CHECK(info.license_id[0] != 0);
     CHECK(info.weight_bytes_bf16 > info.weight_bytes_int8);
     h3_vsr_wan_config config;
     CHECK(h3_vsr_read_wan_config(model_dir, &config, error, sizeof(error)));

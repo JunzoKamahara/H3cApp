@@ -488,10 +488,17 @@ restoration model built on Wan2.2-TI2V-5B with a small causal autoencoder
 (the Restoration-aware Autoencoder, ReAE). The design and every measurement
 are in `UPSCALE_PLAN.md`; the short version:
 
-- **Weights.** Not bundled (SwiftVR Research License, non-commercial). The
-  app downloads the 20 GB float32 safetensors from Hugging Face into
-  `~/Library/Application Support/H3cApp/Upscalers/SwiftVR` after the license
-  notice, and converts them once into an `.h3vc` cache: int8 (per-row scales,
+- **Weights.** Not bundled. The app downloads the 20 GB float32 safetensors
+  from Hugging Face, pinned to the last revision of H-oliday/SwiftVR whose
+  model card declared them under the Apache License 2.0 (`5e89ae51d1`,
+  2026-09-24; the repository's later Research License keeps earlier
+  Apache-2.0 releases under Apache-2.0 by its section 14, and the files are
+  the same objects), into `~/Library/Application Support/H3cApp/Upscalers/SwiftVR`
+  after the license notice. It refuses a listing whose object ids differ
+  from the pinned ones, checks each downloaded file's SHA-256 against them
+  (a file that differs is deleted), writes `H3VSR_PROVENANCE.json` and the
+  Apache License 2.0 text beside the weights (`SwiftVRModel` in
+  `SwiftVRModelSetup.swift`; UPSCALE_PLAN appendix A.5), and converts them once into an `.h3vc` cache: int8 (per-row scales,
   4.6 GB) on a GPU with tensor hardware (M5), BF16 (8.9 GB) elsewhere. The
   constant conditioning (timestep 1000, the fixed prompt's cross-attention
   keys and values) is precomputed into the cache, so none of the text or

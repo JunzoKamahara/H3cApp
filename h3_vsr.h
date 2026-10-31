@@ -196,8 +196,10 @@ typedef struct {
     int first_chunk_frames, chunk_frames;   /* 28, 24 */
     uint64_t weight_bytes_bf16, weight_bytes_int8;
     int int8_supported;         /* tensor hardware (M5) on this machine */
-    char license_id[64];        /* "SwiftVR-Research-License" / "Apache-2.0" */
-    int commercial_use_allowed;
+    /* The engine reads weights, not licenses: which revision the files came
+     * from and what that revision declared is recorded by whoever fetched
+     * them (the app's H3VSR_PROVENANCE.json beside the weights). */
+    char license_id[64];        /* "see H3VSR_PROVENANCE.json" */
     /* 1: transformer/diffusion_pytorch_model.safetensors is here; 0: it was
      * removed after conversion (h3_vsr_remove_original_weights) and only a
      * cache that matches its recorded fingerprint can run. */

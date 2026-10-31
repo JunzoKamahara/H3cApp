@@ -19,6 +19,9 @@ struct HFFileEntry: Equatable {
     /// The git object id Hugging Face lists for it: two files with the same
     /// id hold the same bytes.
     var oid: String? = nil
+    /// The SHA-256 of its contents, for files stored in LFS (the listing's
+    /// `lfs.oid`); nil for small files kept in git itself.
+    var sha256: String? = nil
 
     /// The same file placed under a subfolder of the destination.
     func placed(under folder: String) -> HFFileEntry {
@@ -142,12 +145,14 @@ final class ModelDownloader: ObservableObject {
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             throw ModelDownloadError.listingFailed("HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
         }
-        struct RawEntry: Decodable { let type: String; let path: String; let size: Int64; let oid: String? }
+        struct RawLFS: Decodable { let oid: String? }
+        struct RawEntry: Decodable { let type: String; let path: String; let size: Int64; let oid: String?; let lfs: RawLFS? }
         let raw = try JSONDecoder().decode([RawEntry].self, from: data)
         return raw.filter { $0.type == "file" }.map {
             var entry = HFFileEntry(path: $0.path, size: $0.size, repo: repo)
             entry.revision = revision
             entry.oid = $0.oid
+            entry.sha256 = $0.lfs?.oid
             return entry
         }
     }

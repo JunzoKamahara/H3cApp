@@ -231,9 +231,30 @@ extension GenerationViewModel {
                     item["cache"] = SwiftVRModel.cachePath as Any
                     item["license_accepted"] = SwiftVRModel.licenseAcceptedAt != nil
                     item["setup"] = SwiftVRSetup.shared.phase.apiText
+                    // The pinned revision, what it declared, and whether the
+                    // files here were checked against it (appendix A.5).
+                    item["revision"] = SwiftVRModel.revision
+                    item["declared_license"] = SwiftVRModel.declaredLicense
+                    item["verified"] = SwiftVRModel.verified
+                    item["verified_at"] = SwiftVRModel.verified
+                        ? SwiftVRModel.provenance.map { ISO8601DateFormatter().string(from: $0.verifiedAt) } as Any
+                        : NSNull()
                 }
                 return item
             })
+        case ("POST", "/api/upscalers/swiftVR/setup"):
+            // The same chain as the sheet's button: list the pinned
+            // revision, download what is missing, check the files' SHA-256
+            // against it, convert for this Mac. The caller confirms the
+            // license notice (what the sheet's checkbox records).
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard (json["confirm_license"] as? Bool) == true else {
+                return .error(400, "confirm_license must be true: the SwiftVR license notice (GET /api/upscalers) was read")
+            }
+            guard !SwiftVRSetup.shared.isBusy else { return .error(409, "the SwiftVR model is being set up") }
+            if let reason = upscaleBlockedReason(.swiftVR), SwiftVRModel.cachePath == nil { return .error(409, reason) }
+            SwiftVRSetup.shared.start()
+            return .json(200, ["ok": true, "setup": SwiftVRSetup.shared.phase.apiText])
         case ("POST", "/api/upscalers/swiftVR/remove-original"):
             // Deletes the downloaded F32 weights once converted; the cache
             // keeps running (converting again needs a new download).
@@ -253,7 +274,12 @@ extension GenerationViewModel {
                 ["id": $0.id.uuidString, "name": $0.name, "path": $0.path,
                  "strength": $0.strength, "recommended_steps": $0.recommendedSteps.map { $0 as Any } ?? NSNull(),
                  "enabled": $0.enabled, "recommended_sampling": recommendedSampling($0),
-                 "sampler": $0.sampler.rawValue, "audio_shift": $0.audioShift.map { $0 as Any } ?? NSNull()]
+                 "sampler": $0.sampler.rawValue, "audio_shift": $0.audioShift.map { $0 as Any } ?? NSNull(),
+                 "sha256": $0.sha256.map { $0 as Any } ?? NSNull(),
+                 "provenance": library.provenance(for: $0).map {
+                     ["repo": $0.repo, "revision": $0.revision, "revision_date": $0.revisionDate,
+                      "declared_license": $0.declaredLicense] as Any
+                 } ?? NSNull()]
             })
         default:
             return .error(404, "no such endpoint: \(request.method) \(request.path)")

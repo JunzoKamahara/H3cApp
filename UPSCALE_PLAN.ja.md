@@ -62,7 +62,7 @@
 | 注意 | MFSWA: 16x16 窓（潜在トークン格子）、時間方向は全結合、偶数層非シフト／奇数層半窓シフト、窓はクランプしてマスク無し dense SDPA **[確認: 公式 transformer.py / LightX2V attention.py]** | 3D 窓 (2,8,8)、因果ブロックマスク、**LCSA = Q/K 窓平均の top-k ブロック選択**（局所範囲 9/11）、ブロックスパース核が必要 **[確認]** | 全注意 |
 | AE | **ReAE** 40.95M params、16x 空間・4x 時間、48ch、TAEHV 系（MemBlock 状態で因果ストリーム）**[確認: 公式 reae.py]** | TCDecoder（TAEHV 系 [512,256,128,128]、潜在 16+768 で LQ 画素を条件連結）+ LQ_proj_in（Causal_LQ4x_Proj 576 MB） | 3D VAE |
 | 重み | F32 20.0 GB + reae 164 MB + prompt_emb 4.2 MB | 5.68 GB + 0.58 GB + 0.19 GB（Wan2.1_VAE 0.5 GB は Tiny では不要）| — |
-| ライセンス | **SwiftVR Research License（非商用・研究／個人のみ。商用は要書面許諾）**。コードは Apache-2.0。HF の古い版は Apache-2.0 表記だったが現行 README は Research License **[確認]** | **Apache-2.0**（コード・HF タグ） | Apache-2.0 |
+| ライセンス | **SwiftVR Research License（非商用・研究／個人のみ。商用は要書面許諾）**。コードは Apache-2.0。HF の古い版は Apache-2.0 表記だったが現行 README は Research License **[確認]**。2026-11-01: 付録 A.5 のとおり、アプリは Apache-2.0 宣言時の revision に固定して取得し、SHA-256 を照合する | **Apache-2.0**（コード・HF タグ） | Apache-2.0 |
 | 公称性能 | H100 bf16 1920x1080: Enc 26 ms / DiT 328 ms / Dec 85 ms、24 fr、ピーク 29 GB（ReAE 非バッチ）**[確認: 論文 Table 5]** | A100 768x1408 ≈17 fps **[確認]** | H100 1440p 24fr 17.3 s |
 | 4x 以外 | 論文は 4x 例のみ。入力は目標サイズへ bilinear 拡大してから復元するので **任意倍率（2x 含む）は機構的に可能、画質は要測定 [未確認]** | 「4x 専用」、入力は 128 の倍数へ中央クロップ | — |
 | Apple 実装 | なし（MPS 未検証） | WaifuFinder の Swift/MLX 変換（BF16 3.5 GB、16 GB Mac で ROI 検証） | mlx-gen（要 ffmpeg） |
@@ -237,8 +237,7 @@ typedef struct {
     int first_chunk_frames, chunk_frames;   /* 28, 24 */
     uint64_t weight_bytes_bf16, weight_bytes_int8;
     int int8_supported;               /* h3_gpu_is_m5() */
-    char license_id[64];              /* "SwiftVR-Research-License" / "Apache-2.0" */
-    int commercial_use_allowed;
+    char license_id[64];              /* "see H3VSR_PROVENANCE.json": the app records the fetched revision and its declared license */
 } h3_vsr_info;
 int  h3_vsr_inspect_dir(const char *model_dir, h3_vsr_info *info, char *error, size_t error_size);
 
@@ -806,3 +805,5 @@ Open-H3 を「商用でも選べる選択肢」として検討するにあたり
 2. Turbo v1.2 も同様に revision `3ec17a324c` と SHA-256 を根拠として記録する。アプリは利用者が入れた LoRA をそのまま使うので、ライブラリの表示にこの根拠を添える。
 3. Open-H3 を選択肢にする場合、精細化成分は NVIDIA の統合 FP32 から **rank 0〜383 を端末内で抜き出す**（Kijai 版の metadata もこの範囲）。抽出は許諾を生まないので、元ファイルの revision・SHA-256・抽出範囲・倍率・ライセンス文書をマニフェストに残し、表示は MiniMax H3 Community License（条件付き）とする。容量は BF16 で約 4.15 GB（FP32 8.30 GB の半分。3.4 GB という先の見積は誤り）。
 4. 「商用可」とは表示しない。表示するのは各資産のライセンス名と条件（地域・売上・表示義務）であり、元動画を生成したモデル・LoRA の記録も併せて残す。
+
+**実装（2026-11-01、ブランチ `swiftvr-apache-pin`）**: 方針 1 と 2 をアプリに入れた。`SwiftVRModel`（`SwiftVRModelSetup.swift`）が取得先を revision `5e89ae51d17b564b40cb14029002b48a83c2ff50` に固定し、Hugging Face の一覧の `lfs.oid` が固定値と違えば取得せず、取得後に各ファイルの SHA-256 を固定値と照合し（違うファイルは削除。サイズ一致で再開する仕組みのため、そうしないと直らない）、`H3VSR_PROVENANCE.json`（repo・revision・宣言・ファイルごとの SHA-256 とサイズ・照合日時）と Apache License 2.0 の本文（その版の README が指す GitHub の LICENSE、commit `6f54009b`、SHA-256 `3c4b0667…`。HF 側の当該 revision に LICENSE ファイルは無い）を重みの隣に保存する。準備の画面は宣言のある README・Apache-2.0 本文・現行 Research License（第 14 条）へのリンクと、取得元・照合の行を表示し、変換済みで未照合の既存導入には「取得元と照合する」ボタンを出す。`GET /api/upscalers` が `revision`・`declared_license`・`verified`・`verified_at` を返し、`POST /api/upscalers/swiftVR/setup` で同じ流れを始められる。エンジンの `h3_vsr_info` から `commercial_use_allowed` を外した（エンジンはライセンスを判断しない）。Turbo v1.2 は LoRA ライブラリが SHA-256 `c3d4a2cf…` で認識し（サイズが一致するファイルだけをハッシュ）、「取得元の記録: lightx2v/Minimax-h3-Turbo revision 3ec17a32（2026-09-10）…その版の README はライセンスを Apache-2.0 と宣言…現在の版は宣言なし」を表示する（`ModelLibrary.knownLoRAProvenance`、`GET /api/loras` の `sha256`・`provenance`）。UI の方式名から「研究用」を外した。

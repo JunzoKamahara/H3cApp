@@ -83,6 +83,11 @@ struct LoRAEntry: Identifiable, Codable, Equatable {
     /// Where the file was before being moved into the LoRA folder, so
     /// projects, videos and presets that name the old path still find it.
     var formerPaths: [String] = []
+    /// The file's SHA-256 and the size it had when hashed, computed only
+    /// for files whose size matches a recorded origin
+    /// (ModelLibrary.knownLoRAProvenance); nil otherwise.
+    var sha256: String? = nil
+    var sha256Bytes: Int64? = nil
 
     init(id: UUID = UUID(), name: String, path: String, scaleText: String = "",
          recommendedSteps: Int? = nil, enabled: Bool = false,
@@ -108,6 +113,8 @@ struct LoRAEntry: Identifiable, Codable, Equatable {
         sampler = try container.decodeIfPresent(LoRASampler.self, forKey: .sampler) ?? .auto
         audioShiftText = try container.decodeIfPresent(String.self, forKey: .audioShiftText) ?? ""
         formerPaths = try container.decodeIfPresent([String].self, forKey: .formerPaths) ?? []
+        sha256 = try container.decodeIfPresent(String.self, forKey: .sha256)
+        sha256Bytes = try container.decodeIfPresent(Int64.self, forKey: .sha256Bytes)
     }
 
     var strength: Float {
@@ -133,6 +140,23 @@ struct LoRAEntry: Identifiable, Codable, Equatable {
 /// H3_MAX_LORAS in h3_lora.h - the engine rejects longer stacks.
 let maxStackedLoRAs = 8
 
+/// A LoRA file the app recognises by SHA-256: the repository revision it
+/// is the object of and the license that revision's model card declared
+/// (checked against the primary sources on the date in UPSCALE_PLAN
+/// appendix A.5). Shown under the entry; never a judgement of a use.
+struct LoRAProvenance: Equatable {
+    let repo: String
+    let revision: String
+    let revisionDate: String
+    let declaredLicense: String
+    /// The file's size, so only files that could match are hashed.
+    let bytes: Int64
+    /// What changed since (localized, shown after the declaration).
+    let note: String
+
+    var revisionShort: String { String(revision.prefix(8)) }
+}
+
 /// Registered H3 checkpoint directories and LoRA files, operated on through
 /// ModelManagerView. Persisted in UserDefaults - this only stores small
 /// JSON (names/paths/ids), never the multi-GB model or cache files
@@ -149,6 +173,19 @@ final class ModelLibrary: ObservableObject {
     /// don't re-read a bad file on every redraw.
     @Published private var loraInfoCache: [String: Result<H3LoRAInfo, Error>] = [:]
     private var loraInfoTasks: [String: Task<Result<H3LoRAInfo, Error>, Never>] = [:]
+
+    /// Files whose origin is recorded, by SHA-256 (UPSCALE_PLAN appendix A.5).
+    static let knownLoRAProvenance: [String: LoRAProvenance] = [
+        // lightx2v Turbo v1.2 (minimax_h3_fl2v_turbo_4step_v1.2_768p_bf16.safetensors),
+        // uploaded 2026-09-04; the README declared apache-2.0 from this
+        // revision (the one Open-H3-Regenerate-2K pins) up to a29e57d195
+        // (2026-10-16), and declares nothing from 9bc1f3c040 (2026-10-19).
+        "c3d4a2cf618efea71b9e21a4baaa12d412f1eb6c2b6f86efacaf0ebb6814b689": LoRAProvenance(
+            repo: "lightx2v/Minimax-h3-Turbo", revision: "3ec17a324ced54151364f24f8b5fb6bf7e26414f",
+            revisionDate: "2026-09-10", declaredLicense: "Apache-2.0", bytes: 1_383_677_808,
+            note: String(localized: "配布元の現在の版（2026年10月19日以降）はライセンスを宣言していません。")),
+    ]
+    private var loraHashTasks: Set<String> = []
 
     private let defaults = UserDefaults.standard
     private var listsObserver: NSObjectProtocol?
@@ -177,6 +214,7 @@ final class ModelLibrary: ObservableObject {
         // Read the registered LoRAs' headers in the background right away,
         // so their info is usually ready before anything asks for it.
         for entry in loras { requestLoRAInfo(path: entry.path) }
+        for entry in loras { requestLoRAHash(entry) }
 
         // Upgrading from before this feature existed: seed the one path the
         // app used to hardcode, so an existing setup (and any already-built
@@ -276,6 +314,39 @@ final class ModelLibrary: ObservableObject {
         loras.append(entry)
         persistLoRAs()
         requestLoRAInfo(path: path)
+        requestLoRAHash(entry)
+    }
+
+    /// The recorded origin of an entry's file, when its SHA-256 is known
+    /// and the file is still the size it was hashed at.
+    func provenance(for entry: LoRAEntry) -> LoRAProvenance? {
+        guard let sha = entry.sha256, let provenance = Self.knownLoRAProvenance[sha] else { return nil }
+        let size = (try? FileManager.default.attributesOfItem(atPath: entry.path)[.size] as? Int64) ?? -1
+        return size == entry.sha256Bytes ? provenance : nil
+    }
+
+    /// Hashes the file in the background when its size matches a recorded
+    /// origin and it was not hashed at that size yet (a 1.4 GB file takes
+    /// a second or two, once). Other files are never read whole.
+    private func requestLoRAHash(_ entry: LoRAEntry) {
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: entry.path)[.size] as? Int64),
+              Self.knownLoRAProvenance.values.contains(where: { $0.bytes == size }),
+              entry.sha256Bytes != size || entry.sha256 == nil,
+              !loraHashTasks.contains(entry.path) else { return }
+        loraHashTasks.insert(entry.path)
+        let path = entry.path
+        Task.detached(priority: .utility) { [weak self] in
+            let sha = try? FileHash.sha256(ofFile: path)
+            await self?.recordLoRAHash(path: path, size: size, sha: sha)
+        }
+    }
+
+    private func recordLoRAHash(path: String, size: Int64, sha: String?) {
+        loraHashTasks.remove(path)
+        guard let sha, let index = loras.firstIndex(where: { $0.path == path }) else { return }
+        loras[index].sha256 = sha
+        loras[index].sha256Bytes = size
+        persistLoRAs()
     }
 
     /// Empty text clears it (an ordinary, non-distilled LoRA).

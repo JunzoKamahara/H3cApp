@@ -8,8 +8,10 @@ import Foundation
 
 public struct H3VSRInfo: Sendable {
     public let name: String
+    /// What the engine says about licensing: nothing it judged (the app
+    /// records the fetched revision and its declared license beside the
+    /// weights, SwiftVRModel.provenance).
     public let licenseId: String
-    public let commercialUseAllowed: Bool
     public let firstChunkFrames: Int
     public let chunkFrames: Int
     public let int8Supported: Bool
@@ -133,7 +135,6 @@ public final class H3VideoSuperResolver: @unchecked Sendable {
         }
         guard ok != 0 else { throw H3VSRError.failed(String(cString: error)) }
         return H3VSRInfo(name: cString(info.name), licenseId: cString(info.license_id),
-                         commercialUseAllowed: info.commercial_use_allowed != 0,
                          firstChunkFrames: Int(info.first_chunk_frames), chunkFrames: Int(info.chunk_frames),
                          int8Supported: info.int8_supported != 0,
                          weightBytesBF16: info.weight_bytes_bf16, weightBytesInt8: info.weight_bytes_int8,
