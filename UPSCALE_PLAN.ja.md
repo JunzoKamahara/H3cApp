@@ -782,3 +782,23 @@ int8 線形は 128 行以上を要求するためトークン行を 128 単位�
 **判定（§11.3-5 の基準）**: 1344×768 で、顔・肌について A は B（SwiftVR）に明確には勝っていない。無参照指標は B が上（MUSIQ 76.6 対 74.0、MANIQA 0.361 対 0.328、顔 MUSIQ 70.8 対 69.1）、顔 MANIQA のみ A がわずかに上（0.501 対 0.489）、忠実度と揺れは B が明確に良く、時間は 15 倍の差。2 ステップ σ 0.7 の A2 は元に近づく（LPIPS 0.167）が無参照指標はさらに下がり（MUSIQ 71.7、顔 65.8）、B には届かない。osaka でも B は A1 と同じ MUSIQ（51.3 対 51.2）で、MANIQA・忠実度・揺れは B が上。Sharp 分岐は恒等なので条件 2 は充足。**よって 1080p / 2K 対応（Q 分割注意・疎注意）には進まない。** 再生成は「アップスケーラ」ではなく「同じ構図で細部を描き直す」機能として別に価値があり得る（ドラフトを 768p に仕上げる用途）。これを製品化するかは別途判断する。
 
 **未検証・残課題**: 開始 σ 0.8、4x 相当の比較、他の題材（毛皮・文字）、NVIDIA の統合 FP32 LoRA（rank 576）との差、ユーザーのブラインド目視、M1〜M4 の 1344×768 での時間（M1〜M4 相当の経路 `H3_NAX=0` + SSD ストリーミングでは、潜在アップスケーラが M5 経路とビット一致、LoRA 3 本・曲線分岐込みの再生成 API も 256² で動作することは確認済み）。潜在アップスケーラの `make test` 向け合成重み試験は未追加（実重みの参照比較のみ）。
+
+### 付録 A.5: 利用する版とライセンスの対応（2026-11-01 確認）
+
+Open-H3 を「商用でも選べる選択肢」として検討するにあたり、§11.4 の方針（取得した版に付属するライセンスを表示する）を一次情報で確定した。判断は利用者と法律専門家のものであり、ここに書くのは確認できた事実と、それに基づく実装方針である。
+
+| 資産 | 版 | 宣言されているライセンス | 手元のファイルとの対応 |
+|---|---|---|---|
+| SwiftVR 重み（transformer 20.0 GB、reae、prompt_embedding） | HF `H-oliday/SwiftVR`。重みは 2026-06-02/06-08 にアップロード。README は 2026-09-24 の revision `5e89ae51d1` まで `license: apache-2.0`、2026-10-10 の `a0b09461bd` で Research License に変更 | 現行: SwiftVR Research License 1.0（発効 2026-10-10、商用は事前の書面許諾）。**第 14 節「Historical Releases」**: 「以前に Apache License 2.0 で公開されたモデル版は引き続き Apache License 2.0 に従う。本ライセンスは以前に有効に付与された権利を遡って撤回しない」。README にも同文 | 3 ファイルの SHA-256 は、`5e89ae51d1`（Apache-2.0 宣言時）と現行 main で**同一の LFS オブジェクト**（transformer `f7ade5b8…`、reae `c915205d…`、prompt `cc4cf7b9…`）。手元の 2026-10-29 取得分も同じハッシュ。つまり手元の重みは Apache-2.0 で公開されていた版とバイト単位で同一 |
+| LightX2V Turbo v1.2（`minimax_h3_fl2v_turbo_4step_v1.2_768p_bf16.safetensors`） | HF `lightx2v/Minimax-h3-Turbo`。ファイルは 2026-09-04 アップロード。README は `3ec17a324c`（2026-09-10、Open-H3 が固定している revision）から `a29e57d195`（2026-10-16）まで `license: apache-2.0`、`9bc1f3c040`（2026-10-19）以降は宣言なし、LICENSE ファイルなし | Apache-2.0（当該 revision の宣言）。現行 main は未宣言 | 手元のファイルの SHA-256 `c3d4a2cf…` は当該 revision の LFS オブジェクトおよび Open-H3 の `lora_config.json` の記録と一致 |
+| Open-H3 精細化 LoRA（統合 FP32 12.5 GB、元の精細化 8.30 GB） | HF `Efficient-Large-Model/Open-H3-Regenerate-2K` | MiniMax H3 Community License（基盤モデルと同じ）。統合された Turbo・LMS の分は「それぞれのライセンス」 | 未取得（統合版）。Kijai の rank 384 抜き出し（宣言なし）で実験 |
+| 潜在アップスケーラ | HF `LBH-123-AI/Minimax_h3_latent_Upscaler` / GitHub | Apache-2.0（HF、NVIDIA 同梱分も）／MIT（GitHub） | 取得済み（NVIDIA 同梱分、691 MB） |
+| LMS Sharp r64 | HF `Alissonerdx/Minimax-H3-ComfyUI` | `LICENSES.md` は Character Swap / Motion Transfer の範囲を定めるのみで Sharp には触れない → 未確認 | 既定構成から外す |
+| MiniMax H3 本体 | HF `MiniMaxAI/MiniMax-H3` | MiniMax H3 Community License: 適用地域は EU・英国・韓国・米国を除く全世界、年間売上 2,000 万米ドル超は別途許諾、商用 UI に「MiniMax H3」表示、「Powered by MiniMax H3」表示、適用地域外では Output を含め利用・表示不可（V.4）、Output を生成させるサービスには保護措置義務（V.5） | アプリの既存の表示が対象 |
+
+**実装方針**
+
+1. SwiftVR のダウンロードは現行 main ではなく **Apache-2.0 宣言時の revision（`5e89ae51d1`）を固定**して取得し、取得時に 3 ファイルの SHA-256 を照合・記録し、表示するライセンスをその版の Apache-2.0 と NOTICE にする（Apache-2.0 の表示・変更通知の条件は残る）。Research License 版に切り替える理由はない（オブジェクトは同一）。
+2. Turbo v1.2 も同様に revision `3ec17a324c` と SHA-256 を根拠として記録する。アプリは利用者が入れた LoRA をそのまま使うので、ライブラリの表示にこの根拠を添える。
+3. Open-H3 を選択肢にする場合、精細化成分は NVIDIA の統合 FP32 から **rank 0〜383 を端末内で抜き出す**（Kijai 版の metadata もこの範囲）。抽出は許諾を生まないので、元ファイルの revision・SHA-256・抽出範囲・倍率・ライセンス文書をマニフェストに残し、表示は MiniMax H3 Community License（条件付き）とする。容量は BF16 で約 4.15 GB（FP32 8.30 GB の半分。3.4 GB という先の見積は誤り）。
+4. 「商用可」とは表示しない。表示するのは各資産のライセンス名と条件（地域・売上・表示義務）であり、元動画を生成したモデル・LoRA の記録も併せて残す。
