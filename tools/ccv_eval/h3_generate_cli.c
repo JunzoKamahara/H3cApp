@@ -23,6 +23,7 @@
 //   since this drives the exact same public h3.h API H3Spike does.
 #include "h3.h"
 #include "h3_gpu.h"
+#include "h3_host.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -154,7 +155,41 @@ int main(int argc, char **argv) {
         params.loras = &lora;
         params.lora_count = 1;
     }
+    /* Several: H3SPIKE_LORAS=<file>[@strength];<file>[@strength];... */
+    static h3_lora loras[8];   /* H3_MAX_LORAS */
+    if (getenv("H3SPIKE_LORAS") && *getenv("H3SPIKE_LORAS")) {
+        char *list = strdup(getenv("H3SPIKE_LORAS"));
+        size_t count = 0;
+        for (char *item = strtok(list, ";"); item && count < 8;
+             item = strtok(NULL, ";")) {
+            char *at = strrchr(item, '@');
+            loras[count].strength = 1.0f;
+            if (at && at[1] && strspn(at + 1, "0123456789.-") == strlen(at + 1)) {
+                loras[count].strength = (float)atof(at + 1);
+                *at = '\0';
+            }
+            loras[count++].path = item;   /* list is kept alive for the run */
+        }
+        params.loras = loras;
+        params.lora_count = count;
+    }
     params.sampler = env_int("H3SPIKE_SAMPLER", params.sampler);
+    /* Regeneration: H3SPIKE_INITIAL_LATENT=<.h3lt at this exact size/frames>
+     * and H3SPIKE_SIGMAS=0.909375,0.857143,0.666667,0 (steps + 1 values;
+     * H3SPIKE_STEPS is set from the list). */
+    params.initial_latent_path = getenv("H3SPIKE_INITIAL_LATENT");
+    static float sigmas[H3_MAX_STEPS + 1];
+    if (getenv("H3SPIKE_SIGMAS") && *getenv("H3SPIKE_SIGMAS")) {
+        char *list = strdup(getenv("H3SPIKE_SIGMAS"));
+        int count = 0;
+        for (char *item = strtok(list, ", "); item && count <= H3_MAX_STEPS;
+             item = strtok(NULL, ", "))
+            sigmas[count++] = (float)atof(item);
+        free(list);
+        params.video_sigmas = sigmas;
+        params.video_sigma_count = count;
+        params.steps = count - 1;
+    }
     if (getenv("H3SPIKE_AUDIO_SHIFT"))
         params.audio_sigma_shift = (float)atof(getenv("H3SPIKE_AUDIO_SHIFT"));
     params.reference_image_size = H3_REFERENCE_IMAGE_MATCH;

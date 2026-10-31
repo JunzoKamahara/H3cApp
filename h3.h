@@ -241,6 +241,22 @@ typedef struct {
      * it, a stop is only seen at progress reports - the denoising loop
      * does not see on_progress's return value, so it ran to the end. */
     const volatile int *cancel_requested;
+    /* Regeneration from a latent (refiners, hires-fix). initial_latent_path
+     * is a file written by save_latent_path (or by h3_latent_upscale) at
+     * exactly this generation's latent grid and frame count. Denoising then
+     * starts from (1 - sigma0) * its video latent + sigma0 * the seeded
+     * noise, sigma0 being the first video sigma, and its audio latent is
+     * held clean (audio sigma 0) and carried into the output unchanged -
+     * unless forced_audio_path replaces it. Cannot be combined with
+     * continue_latent_path. */
+    const char *initial_latent_path;
+    /* Custom video sigma schedule: video_sigma_count values, finite and
+     * strictly decreasing, the first in (0, 1], the last exactly 0, so
+     * steps must equal video_sigma_count - 1. NULL keeps the released
+     * shift-12 grid. The audio grid keeps its own shift at that step
+     * count. */
+    const float *video_sigmas;
+    int video_sigma_count;
 } h3_params;
 
 enum {

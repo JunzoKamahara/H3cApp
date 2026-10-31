@@ -15,6 +15,7 @@ h3_*test
 h3_*tests
 h3_*bench
 h3_repro_check
+h3_latent_upscale
 h3_dit_bench_864
 h3_tests
 h3_metal_tests
