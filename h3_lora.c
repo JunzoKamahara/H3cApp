@@ -95,6 +95,7 @@ int h3_lora_parse_key(const char *name, h3_lora_key *key) {
     static const char *const fc2[] = {"mlp", "fc2"};
     static const char *const ff0[] = {"ff", "net", "0", "proj"};
     static const char *const ff2[] = {"ff", "net", "2"};
+    static const char *const adaln[] = {"adaln", "proj", "linear"};
     static const struct {
         const char *const *tokens;
         int count;
@@ -112,6 +113,7 @@ int h3_lora_parse_key(const char *name, h3_lora_key *key) {
         {fc2, 2, H3_LORA_FC2, H3_LORA_PART_ALL, 0},
         {ff0, 4, H3_LORA_FC1, H3_LORA_PART_FC1_VALUE_GATE, 1},
         {ff2, 3, H3_LORA_FC2, H3_LORA_PART_ALL, 1},
+        {adaln, 3, H3_LORA_ADALN, H3_LORA_PART_ALL, 0},
     };
     int module_at = blocks_at + 2;
     int consumed = 0;
@@ -125,6 +127,8 @@ int h3_lora_parse_key(const char *name, h3_lora_key *key) {
         break;
     }
     if (!consumed) return 0;
+    /* The token refiner has no AdaLN curve. */
+    if (result.projection == H3_LORA_ADALN && result.refiner) return 0;
 
     int suffix_at = module_at + consumed;
     if (suffix_at < count && !strcmp(tokens[count - 1], "alpha") &&
@@ -191,11 +195,13 @@ typedef struct {
     float metadata_alpha;   /* <= 0 when the file records none */
     module_slot main[H3_LORA_DIT_BLOCKS][H3_LORA_PROJECTIONS][PARTS];
     module_slot refiner[H3_LORA_REFINER_BLOCKS][H3_LORA_PROJECTIONS][PARTS];
+    module_slot adaln[H3_LORA_DIT_BLOCKS];   /* curve-branch factors */
     int unsupported;
     int style_counts[4];
 } adapter_index;
 
 static module_slot *slot_for(adapter_index *adapter, const h3_lora_key *key) {
+    if (key->projection == H3_LORA_ADALN) return &adapter->adaln[key->block];
     return key->refiner ?
         &adapter->refiner[key->block][key->projection][key->part] :
         &adapter->main[key->block][key->projection][key->part];
@@ -218,6 +224,7 @@ static int index_adapter(const char *path, adapter_index *adapter,
     memset(adapter, 0, sizeof(*adapter));
     memset(adapter->main, 0xff, sizeof(adapter->main));
     memset(adapter->refiner, 0xff, sizeof(adapter->refiner));
+    memset(adapter->adaln, 0xff, sizeof(adapter->adaln));
     if (!h3_st_read_header(path, &adapter->header, error, error_size))
         return 0;
     adapter->has_header = 1;
@@ -391,6 +398,9 @@ int h3_lora_inspect(const char *path, h3_lora_info *info, char *error,
             }
         }
     }
+    for (int block = 0; block < H3_LORA_DIT_BLOCKS; block++)
+        if (adapter->adaln[block].a >= 0 && adapter->adaln[block].b >= 0)
+            info->adaln_blocks++;
     free_adapter(adapter);
     free(adapter);
     if (!info->projections) {
@@ -419,7 +429,12 @@ struct h3_lora_set {
     target_factors refiner[H3_LORA_REFINER_BLOCKS][H3_LORA_PROJECTIONS];
     h3_gpu_tensor *delta;
     size_t delta_elements;
+    /* AdaLN curve-branch deltas, [ADALN_ROWS, adaln_rank] F32 per block. */
+    float *adaln[H3_LORA_DIT_BLOCKS];
+    uint32_t adaln_rank;
 };
+#define ADALN_ROWS 96768u   /* 3 modalities x 6 slots x 5376 (h3_dit_schedule.h) */
+#define ADALN_MAX_RANK 64u
 
 static target_factors *target_for(h3_lora_set *set, int refiner,
                                   unsigned block, int projection) {
@@ -590,7 +605,87 @@ void h3_lora_set_free(h3_lora_set *set) {
         for (int projection = 0; projection < H3_LORA_PROJECTIONS; projection++)
             free_target(&set->refiner[block][projection]);
     h3_gpu_tensor_free(set->delta);
+    for (int block = 0; block < H3_LORA_DIT_BLOCKS; block++) free(set->adaln[block]);
     free(set);
+}
+
+const float *h3_lora_set_adaln_delta(const h3_lora_set *set, unsigned block,
+                                     uint32_t *rank) {
+    if (rank) *rank = set ? set->adaln_rank : 0;
+    if (!set || block >= H3_LORA_DIT_BLOCKS) return NULL;
+    return set->adaln[block];
+}
+
+int h3_lora_set_has_adaln(const h3_lora_set *set) {
+    if (!set) return 0;
+    for (int block = 0; block < H3_LORA_DIT_BLOCKS; block++)
+        if (set->adaln[block]) return 1;
+    return 0;
+}
+
+/* Sums strength * B @ A of every adapter's curve-branch factors for one
+ * block into set->adaln[block] ([ADALN_ROWS, k] F32). */
+static int load_adaln(h3_lora_set *set, adapter_index *adapters,
+                      const h3_lora *loras, size_t count, int block,
+                      char *error, size_t error_size) {
+    const char *off = getenv("H3_LORA_NO_ADALN");
+    if (off && *off && strcmp(off, "0")) return 1;
+    for (size_t index = 0; index < count; index++) {
+        adapter_index *adapter = &adapters[index];
+        module_slot slot = adapter->adaln[block];
+        if (slot.a < 0 || slot.b < 0) continue;
+        const h3_st_tensor *a = &adapter->header.tensors[slot.a];
+        const h3_st_tensor *b = &adapter->header.tensors[slot.b];
+        if (a->ndim != 2 || b->ndim != 2 || b->shape[0] != ADALN_ROWS ||
+            b->shape[1] != a->shape[0] || a->shape[0] == 0 ||
+            a->shape[0] > 4096 || a->shape[1] == 0 ||
+            a->shape[1] > ADALN_MAX_RANK) {
+            fail(error, error_size, "%s: %s / %s are not AdaLN curve-branch "
+                 "factors ([%u, rank] / [rank, curve dim <= %u] expected)",
+                 loras[index].path, b->name, a->name, ADALN_ROWS,
+                 ADALN_MAX_RANK);
+            return 0;
+        }
+        uint32_t r = (uint32_t)a->shape[0], k = (uint32_t)a->shape[1];
+        if (set->adaln_rank && set->adaln_rank != k) {
+            fail(error, error_size, "%s: its AdaLN curve branch has a %u-dim "
+                 "input, another adapter's has %u", loras[index].path, k,
+                 set->adaln_rank);
+            return 0;
+        }
+        set->adaln_rank = k;
+        float alpha = adapter->metadata_alpha;
+        if (slot.alpha >= 0) {
+            float *value = read_f32(adapter, slot.alpha, error, error_size);
+            if (!value) return 0;
+            alpha = value[0];
+            free(value);
+        }
+        float scale = loras[index].strength * (alpha > 0.0f ? alpha / (float)r : 1.0f);
+        float *fa = read_f32(adapter, slot.a, error, error_size);
+        float *fb = fa ? read_f32(adapter, slot.b, error, error_size) : NULL;
+        if (!set->adaln[block])
+            set->adaln[block] = calloc((size_t)ADALN_ROWS * k, sizeof(float));
+        if (!fa || !fb || !set->adaln[block]) {
+            free(fa); free(fb);
+            if (!error || !*error)
+                fail(error, error_size, "out of memory for an AdaLN curve branch");
+            return 0;
+        }
+        float *delta = set->adaln[block];
+        for (uint32_t row = 0; row < ADALN_ROWS; row++) {
+            const float *brow = fb + (size_t)row * r;
+            float *drow = delta + (size_t)row * k;
+            for (uint32_t j = 0; j < r; j++) {
+                float bj = brow[j] * scale;
+                if (bj == 0.0f) continue;
+                const float *arow = fa + (size_t)j * k;
+                for (uint32_t c = 0; c < k; c++) drow[c] += bj * arow[c];
+            }
+        }
+        free(fa); free(fb);
+    }
+    return 1;
 }
 
 h3_lora_set *h3_lora_set_load(h3_gpu *gpu, const h3_lora *loras,
@@ -662,6 +757,14 @@ h3_lora_set *h3_lora_set_load(h3_gpu *gpu, const h3_lora *loras,
                         set->delta_elements = elements;
                 }
             }
+    }
+    for (int block = 0; block < H3_LORA_DIT_BLOCKS && ok; block++)
+        ok = load_adaln(set, adapters, loras, count, block, error, error_size);
+    if (ok && h3_lora_set_has_adaln(set)) {
+        int blocks = 0;
+        for (int block = 0; block < H3_LORA_DIT_BLOCKS; block++) blocks += set->adaln[block] != NULL;
+        fprintf(stderr, "h3: LoRA AdaLN curve branches on %d blocks (%u-dim curve)\n",
+                blocks, set->adaln_rank);
     }
     for (size_t index = 0; index < count; index++) free_adapter(&adapters[index]);
     free(adapters);

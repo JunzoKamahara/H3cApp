@@ -36,7 +36,12 @@ enum {
 };
 
 enum { H3_LORA_QKV = 0, H3_LORA_OUT = 1, H3_LORA_FC1 = 2, H3_LORA_FC2 = 3,
-       H3_LORA_PROJECTIONS = 4 };
+       H3_LORA_PROJECTIONS = 4,
+       /* Not a block projection: the curve-form AdaLN projection
+        * (blocks.N.adaln_proj.linear, [96768, k] on the k-dim curve), which
+        * LMS Sharp's "curve branches" patch. Kept outside the projection
+        * arrays; see h3_lora_set_adaln_delta. */
+       H3_LORA_ADALN = 4 };
 
 /* Which rows of the projection a tensor's lora_B covers, in its own file's
  * layout: the whole projection, one of the diffusers to_q/to_k/to_v parts,
@@ -112,5 +117,13 @@ int h3_lora_set_apply_bf16(h3_lora_set *set, h3_gpu *gpu, int refiner,
 int h3_lora_set_apply_int8(h3_lora_set *set, h3_gpu *gpu, int refiner,
                            unsigned block, int projection,
                            h3_gpu_tensor *weight, h3_gpu_tensor *scales);
+/* The stacked AdaLN curve-branch delta of one block, [96768, rank] F32 on
+ * the host (sum of strength * B @ A over the adapters), or NULL when no
+ * adapter has one; *rank receives the curve dimension the factors expect.
+ * The AdaLN schedule adds it to the checkpoint's curve projection weight
+ * (h3_dit_schedule_precompute_curve). H3_LORA_NO_ADALN=1 ignores them. */
+const float *h3_lora_set_adaln_delta(const h3_lora_set *set, unsigned block,
+                                     uint32_t *rank);
+int h3_lora_set_has_adaln(const h3_lora_set *set);
 
 #endif

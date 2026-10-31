@@ -77,6 +77,10 @@ typedef struct {
      * re-noise rule, audio_sigma_shift is 0 when not given. */
     int sampler;
     float audio_sigma_shift;
+    /* DiT blocks whose AdaLN projection the adapter also patches (LMS
+     * Sharp's "curve branches": factors on the 8-dim curve input of a
+     * curve-form checkpoint). Applied only with such a checkpoint. */
+    int adaln_blocks;
 } h3_lora_info;
 
 typedef struct {
