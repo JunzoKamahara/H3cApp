@@ -593,7 +593,16 @@ static void test_lora_keys_and_rows(void) {
                    H3_LORA_STYLE_KOHYA);
 
     h3_lora_key key;
-    CHECK(!h3_lora_parse_key("diffusion_model.blocks.0.adaln_proj.linear.lora_A.weight", &key));
+    /* AdaLN curve-branch factors (LMS Sharp, Open-H3's sharp_curve_branches)
+     * parse as H3_LORA_ADALN on DiT blocks, in both spellings; the token
+     * refiner has no AdaLN curve. */
+    CHECK(h3_lora_parse_key("diffusion_model.blocks.0.adaln_proj.linear.lora_A.weight", &key) &&
+          key.projection == H3_LORA_ADALN && key.role == H3_LORA_ROLE_A &&
+          key.block == 0 && !key.refiner);
+    CHECK(h3_lora_parse_key("transformer.transformer_blocks.49.adaln_proj.linear.curve_B.weight", &key) &&
+          key.projection == H3_LORA_ADALN && key.role == H3_LORA_ROLE_B &&
+          key.block == 49 && !key.refiner);
+    CHECK(!h3_lora_parse_key("token_refiner.blocks.0.adaln_proj.linear.lora_A.weight", &key));
     CHECK(!h3_lora_parse_key("final_layer.adaln_proj.linear.lora_B.weight", &key));
     CHECK(!h3_lora_parse_key("proj_out.weight", &key));
     CHECK(!h3_lora_parse_key("diffusion_model.blocks.50.attn.qkv_proj.lora_A.weight", &key));
