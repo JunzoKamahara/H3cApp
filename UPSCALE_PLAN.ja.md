@@ -807,3 +807,44 @@ Open-H3 を「商用でも選べる選択肢」として検討するにあたり
 4. 「商用可」とは表示しない。表示するのは各資産のライセンス名と条件（地域・売上・表示義務）であり、元動画を生成したモデル・LoRA の記録も併せて残す。
 
 **実装（2026-11-01、ブランチ `swiftvr-apache-pin`）**: 方針 1 と 2 をアプリに入れた。`SwiftVRModel`（`SwiftVRModelSetup.swift`）が取得先を revision `5e89ae51d17b564b40cb14029002b48a83c2ff50` に固定し、Hugging Face の一覧の `lfs.oid` が固定値と違えば取得せず、取得後に各ファイルの SHA-256 を固定値と照合し（違うファイルは削除。サイズ一致で再開する仕組みのため、そうしないと直らない）、`H3VSR_PROVENANCE.json`（repo・revision・宣言・ファイルごとの SHA-256 とサイズ・照合日時）と Apache License 2.0 の本文（その版の README が指す GitHub の LICENSE、commit `6f54009b`、SHA-256 `3c4b0667…`。HF 側の当該 revision に LICENSE ファイルは無い）を重みの隣に保存する。準備の画面は宣言のある README・Apache-2.0 本文・現行 Research License（第 14 条）へのリンクと、取得元・照合の行を表示し、変換済みで未照合の既存導入には「取得元と照合する」ボタンを出す。`GET /api/upscalers` が `revision`・`declared_license`・`verified`・`verified_at` を返し、`POST /api/upscalers/swiftVR/setup` で同じ流れを始められる。エンジンの `h3_vsr_info` から `commercial_use_allowed` を外した（エンジンはライセンスを判断しない）。Turbo v1.2 は LoRA ライブラリが SHA-256 `c3d4a2cf…` で認識し（サイズが一致するファイルだけをハッシュ）、「取得元の記録: lightx2v/Minimax-h3-Turbo revision 3ec17a32（2026-09-10）…その版の README はライセンスを Apache-2.0 と宣言…現在の版は宣言なし」を表示する（`ModelLibrary.knownLoRAProvenance`、`GET /api/loras` の `sha256`・`provenance`）。UI の方式名から「研究用」を外した。
+
+### 付録 A.6: SeedVR2-3B（MLX-Swift 移植、INT8）の判定実験（2026-11-01、M5 24 GB）
+
+**きっかけ。** 「SwiftVR = 標準・高速、SeedVR2-3B INT8 = 高品質・低速の二本立てにし、`xocialize/seedvr2-mlx-swift`（MLX-Swift、Python 不要、INT8 約 4 GB、Apache-2.0）経由なら全面移植なしに取り込めるのではないか」という提案を受け、付録 A.4 と同じ顔クリップで判定した。先に一次情報を確かめ、次にこの Mac で実測した。
+
+**一次情報の確認。**
+
+| 項目 | 確認した事実 |
+|---|---|
+| SeedVR2 本体 | `ByteDance-Seed/SeedVR2-3B`: HF タグ `license:apache-2.0`、GitHub README「SeedVR and SeedVR2 are licensed under the Apache 2.0」。README の Limitations: 劣化の軽い入力（720p の AIGC 動画など）では細部を過剰に生成し、特に小さな解像度（480p）で過鋭化することがある。公式推論は 1 H100-80G で 100×720×1280 |
+| INT8 重み | `mlx-community/SeedVR2-3B-mlx-int8`（2026-06-06、タグ apache-2.0、`pipeline_tag: image-to-image`）: transformer 4.22 GB + VAE 0.50 GB + pos_emb、int8 group 64。取得した 3 ファイルの SHA-256 は HF の LFS id と一致（`4f0d2b37…`、`a2efbfb3…`、`d2e06cad…`）。`~/models/seedvr2/` に置いた |
+| MLX-Swift 移植 | `xocialize/seedvr2-mlx-swift`: star 1、最終 push 2026-06-15、**LICENSE ファイルなし**（README と SPDX ヘッダは MIT と記載）、mlx-swift 0.31.x 固定。手本（oracle）は mflux の SeedVR2 で、これは**静止画**のアップスケーラ。API は `upscale(processedImage: [B,3,H,W])`（1 フレーム）、条件マスクも 1 フレーム固定、VAE デコードはタイルなし、前処理・タイル・色補正はホスト任せ。パリティ検証は CPU で T=1 のみ。付属 CLI は重みの読み込み確認だけ。ビルドには Xcode の Metal Toolchain（この Mac には未導入だった 839 MB の追加コンポーネント）が必要 |
+| 提案の根拠になった実測 | `lpalbou/mlx-gen`（Python、MLX、MIT、ffmpeg 必須）の報告。M4 Max 128 GB、384×288・121 フレーム・1x: SwiftVR 11.5 s、3B 471 s（peak MLX 57.9 GB）、7B 459 s。M5 Max 128 GB、320×240・149 フレーム: 3B 1x 71 s / peak MLX 14.6 GB、**3B 2x（出力 640×480）539 s / peak MLX 34.4 GB / max RSS 27.4 GB**。提案にあった「2x で 34.4 GB」は 640×480 出力の値で、本計画の 1344×768 はその 3.4 倍の画素。mlx-gen は 29 フレーム未満のチャンクを拒否し、480×360 の 1x でもチャンクあたり約 70 GB を要すると自ら報告している |
+
+つまり「Swift ネイティブの動画 SeedVR2」は存在しない。存在するのは、静止画パスだけが検証済みの Swift 移植と、Python の動画実装（メモリは 128 GB 機前提）である。
+
+**この Mac での実測（M5 24 GB、INT8、評価用ドライバ `seedvr2-frames` を移植に追加して計測）。**
+
+| 実験 | 結果 |
+|---|---|
+| 1 フレームずつ（T=1、移植の検証済み経路）、1344×768、124 フレーム、seed 42 | **19.6 s/フレーム**（encode 4.7 + DiT 4.1 + decode 10.8）、124 フレームで **40.7 分**。GPU ピーク 13.7 GB、プロセスの peak footprint 16.8 GB（MLX キャッシュ上限 2 GB。上限なしの試走では 18.8 GB）。同じ入力で SwiftVR は 69 s、Open-H3（A1）は 1027 s |
+| 5 フレームのチャンク（T=5）、672×384 | 機械的には通るが、潜在 2 フレームのデコードが **8 フレーム**を返す（正しくは 4(T'−1)+1 = 5）。移植の VAE の時間方向（先頭フレームの因果処理）は検証されておらず、どの出力がどの入力に対応するかも定まらない。GPU ピーク 18.0 GB、25 s/5 フレーム（decode 17.5 s）。1344×768 はこの 4 倍の画素なので、**24 GB では 5 フレームのチャンクも載らない** |
+| 色補正 | 出力は入力より暗く赤い（平均輝度 85 対 92）。移植に含まれる LAB ウェーブレット色転写（mflux の既定の後処理）を入力を手本に適用した版も測った |
+
+指標（付録 A.4 と同じ顔セット。忠実度は単純リサイズ C に対して、顔は 380,220,560×320 の切り出し）:
+
+| 変種 | PSNR | LPIPS↓ | MUSIQ | MANIQA | フレーム間差 | 顔 PSNR | 顔 LPIPS↓ | 顔 MUSIQ | 顔 MANIQA | 時間 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| C 単純リサイズ | — | — | 68.5 | 0.262 | 6.26 | — | — | 65.3 | 0.394 | — |
+| B SwiftVR | 30.8 | 0.126 | **76.6** | 0.361 | 6.52 | 29.3 | **0.162** | 70.8 | 0.489 | 69 s |
+| A1 Open-H3（3 LoRA） | 21.5 | 0.275 | 74.0 | 0.328 | 7.05 | 22.4 | 0.291 | 69.1 | 0.501 | 1027 s |
+| D SeedVR2-3B int8、1 フレームずつ | 22.5 | 0.171 | 75.4 | **0.377** | 6.92 | 21.6 | 0.217 | 70.7 | **0.571** | 2443 s |
+| D + LAB 色転写 | 25.8 | 0.157 | 75.3 | 0.373 | 6.69 | 25.4 | 0.203 | 71.5 | 0.565 | +24 s |
+
+目視（フレーム 60、`seedvr2-eval/cmp4_*.png`、左から C・SwiftVR・SeedVR2・SeedVR2+色転写）: SeedVR2 は**目を大きく描き直し**（虹彩が大きく、まつ毛が太く長い「化粧」のような描写）、**目の下に元にない皺の質感を生成**し、頬のそばかすを消して油っぽい皮膚に置き換え、肌色を橙〜赤に寄せる（色転写で色味は戻るが質感は戻らない）。水滴は保たれ、むしろ強調される。これは公式 README が「劣化の軽い入力では細部を過剰に生成する」と注意している挙動そのもので、本計画の入力（きれいな AI 生成映像の拡大）はまさにその条件にあたる。SwiftVR は同じ場所で元の形（目の大きさ、そばかす）を保ったまま鮮鋭化している。
+
+**判断。** **今回は採用しない。** 理由は三つ。(1) 提案の前提だった「Swift ネイティブの SeedVR2」は静止画専用で、動画の経路（時間方向の VAE、チャンク、タイル）は存在せず検証もされていない。それを自分で書いて公式実装と突き合わせる作業は、SwiftVR 移植（§6）と同規模になる。(2) 24 GB では、検証済みの 1 フレームずつの経路でさえ 1344×768 で 16.8〜18.8 GB の footprint と 40 分（SwiftVR の 35 倍）を要し、複数フレームのチャンクは載らない。(3) 画質は「SwiftVR より自然な質感を残す高品質モード」にならなかった。無参照指標は同等（MUSIQ 75.4 対 76.6、MANIQA は上）だが、顔の同一性（目の大きさ、そばかす、皺）を変えてしまい、忠実度指標でも SwiftVR に大きく劣る。提案が期待した「元の素材感を保つ」性格は、劣化した実写の復元で発揮されるもので、本計画の入力には当てはまらなかった。
+
+再検討の条件: Apple Silicon で**動画として**検証された実装（5 フレーム以上のチャンクが 1344×768 で 24 GB に収まり、時間方向の VAE が公式と一致する）が現れること、または対象が「劣化した実写」の復元に変わること。その場合も、`seedvr2-mlx-swift` を採るなら LICENSE ファイルの不在と mlx-swift への依存（ビルドに Metal Toolchain が必要、アプリの C/Metal 方針と異なる）を解決する必要がある。重みの Apache-2.0 自体は確認できており、ライセンスは障害ではない。
+
+残したもの: INT8 重み `~/models/seedvr2/SeedVR2-3B-mlx-int8`（4.7 GB、SHA-256 記録済み）、移植の clone と評価ドライバ（scratch）、出力と比較画像 `~/Documents/work/h3c/seedvr2-eval/`（顔クリップはローカルのみ）。この Mac に Xcode の Metal Toolchain（839 MB）を導入した。
