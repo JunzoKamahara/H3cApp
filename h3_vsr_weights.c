@@ -273,8 +273,7 @@ int h3_vsr_inspect_dir(const char *model_dir, h3_vsr_info *info,
     /* Tensor hardware (Metal 4 TensorOps, MTLGPUFamilyApple10) without
      * creating a GPU context. */
     info->int8_supported = h3_vsr_int8_supported();
-    snprintf(info->license_id, sizeof(info->license_id), "SwiftVR-Research-License");
-    info->commercial_use_allowed = 0;
+    snprintf(info->license_id, sizeof(info->license_id), "see H3VSR_PROVENANCE.json");
     return 1;
 }
 

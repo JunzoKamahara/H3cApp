@@ -111,7 +111,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## SwiftVR, LightX2V and TAEHV (the "SwiftVR" upscaler; no weights bundled)
 
-The "SwiftVR（AI動画超解像・研究用）" upscaler is the engine's own C/Metal
+The "SwiftVR（AI動画超解像）" upscaler is the engine's own C/Metal
 implementation (`h3_vsr*.c`, `h3_shaders.metal`) of the SwiftVR one-step
 video restoration model: the Wan2.2-based transformer with mask-free
 shifted-window attention and the Restoration-aware Autoencoder, transcribed
@@ -122,10 +122,20 @@ whose autoencoder follows [madebyollin/taehv](https://github.com/madebyollin/tae
 (MIT). No code from those projects ships in the app.
 
 The model weights are **not bundled**. They are published separately by the
-SwiftVR authors at https://huggingface.co/H-oliday/SwiftVR under the
-"SwiftVR Research License", which permits research and other non-commercial
-use only; commercial use needs the authors' written permission. The app only
-reads weights the user has downloaded and converted for this Mac (the
-"SwiftVRのモデルを準備" sheet, or the `build_vsr_cache` tool), and shows this
-notice, with the license, before the download.
+SwiftVR authors at https://huggingface.co/H-oliday/SwiftVR. The app fetches
+them from the last revision of that repository whose model card declared
+them under the Apache License 2.0 (revision
+`5e89ae51d17b564b40cb14029002b48a83c2ff50`, 2026-09-24), checks the SHA-256
+of every file against that revision's object ids, saves the Apache License
+2.0 text (the project's LICENSE on GitHub) beside the weights and writes the
+record (`H3VSR_PROVENANCE.json`). On 2026-10-10 the repository moved new
+versions to the "SwiftVR Research License" (research and other
+non-commercial use); its section 14, "Historical Releases", keeps versions
+previously released under the Apache License 2.0 under that license, and the
+weight files are the same objects at both revisions. The app only reads
+weights the user has downloaded and converted for this Mac (the
+"SwiftVRのモデルを準備" sheet, `POST /api/upscalers/swiftVR/setup`, or the
+`build_vsr_cache` tool), and shows this notice, the declaring model card and
+both license texts before the download. Which conditions apply to a use is
+the user's judgement; the app records facts and labels nothing "commercial".
 

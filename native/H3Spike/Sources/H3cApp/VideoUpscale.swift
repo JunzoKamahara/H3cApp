@@ -44,8 +44,8 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         case .metalFX: return String(localized: "MetalFX（輪郭を保つ拡大）")
         case .realESRGANGeneral: return String(localized: "Real-ESRGAN 汎用（AI超解像）")
         case .realESRGANAnime: return String(localized: "Real-ESRGAN アニメ（AI超解像）")
-        case .swiftVR: return String(localized: "SwiftVR（AI動画超解像・研究用）")
-        case .swiftVRFourX: return String(localized: "SwiftVR 4倍で生成してから縮小（質感が穏やか・研究用）")
+        case .swiftVR: return String(localized: "SwiftVR（AI動画超解像）")
+        case .swiftVRFourX: return String(localized: "SwiftVR 4倍で生成してから縮小（質感が穏やか）")
         }
     }
 
@@ -88,7 +88,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         case .realESRGANAnime:
             return String(localized: "AIで線や色の面をくっきりさせながら拡大します（Real-ESRGAN realesr-animevideov3）。アニメやイラスト調の映像向けで、汎用より速く処理します。")
         case .swiftVR:
-            return String(localized: "動画全体を一度に見るAIモデル（SwiftVR、Wan2.2ベース）で、質感や細部を描き起こしながら拡大します。24フレームずつ処理し、Real-ESRGANより大幅に時間がかかります（M5で5秒の動画に1分前後）。重みはSwiftVR Research License（研究・非商用）のため同梱せず、ダウンロードした重みをアプリで変換して使います。")
+            return String(localized: "動画全体を一度に見るAIモデル（SwiftVR、Wan2.2ベース）で、質感や細部を描き起こしながら拡大します。24フレームずつ処理し、Real-ESRGANより大幅に時間がかかります（M5で5秒の動画に1分前後）。重みは同梱せず、配布元でApache License 2.0と宣言されていた版をダウンロードし（SHA-256で照合）、アプリで変換して使います。")
         case .swiftVRFourX:
             return String(localized: "SwiftVRに4倍で復元させてから、標準の拡大と同じ方法で選んだ大きさに縮めます。目や眉を描き直しにくく、質感が穏やかで元の動画に忠実になります。4倍の途中の画面がGPUのメモリに入らない大きさでは、重なりを持たせたタイルに分けて復元します。時間はSwiftVRの約5倍です（M5で5秒の544×960を2倍にするのに約4分）。")
         }

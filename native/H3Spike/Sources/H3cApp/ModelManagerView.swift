@@ -347,8 +347,22 @@ struct ModelManagerView: View {
             // widened the row past the sheet and pushed the menu to the edge.
             loraSamplingControls(entry)
                 .padding(.leading, loraCheckboxIndent)
+            if let provenance = library.provenance(for: entry) {
+                loraProvenanceText(provenance)
+                    .padding(.leading, loraCheckboxIndent)
+            }
         }
         .padding(.vertical, 4)
+    }
+
+    /// Where a file whose SHA-256 the app knows came from, and what that
+    /// revision declared (ModelLibrary.knownLoRAProvenance). A record, not
+    /// a judgement: which conditions apply to a use is the user's call.
+    private func loraProvenanceText(_ provenance: LoRAProvenance) -> some View {
+        Text("取得元の記録: \(provenance.repo) revision \(provenance.revisionShort)（\(provenance.revisionDate)）のファイルとSHA-256が一致。その版のREADMEはライセンスを\(provenance.declaredLicense)と宣言しています。\(provenance.note)")
+            .font(.caption2)
+            .foregroundStyle(palette.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Checkbox width plus the row spacing, so the line below lines up
@@ -551,7 +565,7 @@ struct ModelManagerView: View {
                 .padding(.vertical, 4)
             }
             .listStyle(.inset)
-            Text("「動画を拡大」のAI超解像が使うモデルです。SwiftVRの重みは研究・非商用のライセンスのため同梱せず、ここでダウンロードして変換します。")
+            Text("「動画を拡大」のAI超解像が使うモデルです。SwiftVRの重みは同梱せず、ここで配布元のApache License 2.0と宣言されていた版をダウンロードし（SHA-256で照合）、変換します。")
                 .font(.caption).foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(H3Spacing.md)
@@ -567,10 +581,11 @@ struct ModelManagerView: View {
         }
         if VideoUpscaler.swiftVR.isAvailable {
             let size = ByteCountFormatter.string(fromByteCount: SwiftVRModel.bytesOnDisk(), countStyle: .file)
+            let check = SwiftVRModel.verified ? "" : String(localized: "。取得元との照合はまだです（「管理…」から）")
             if SwiftVRModel.originalRemoved {
-                return String(localized: "使えます（\(SwiftVRModel.usesInt8 ? "int8" : "BF16")で変換済み、元の重みは削除済み、\(size)）")
+                return String(localized: "使えます（\(SwiftVRModel.usesInt8 ? "int8" : "BF16")で変換済み、元の重みは削除済み、\(size)）") + check
             }
-            return String(localized: "使えます（\(SwiftVRModel.usesInt8 ? "int8" : "BF16")で変換済み、\(size)）")
+            return String(localized: "使えます（\(SwiftVRModel.usesInt8 ? "int8" : "BF16")で変換済み、\(size)）") + check
         }
         if SwiftVRModel.originalRemoved {
             return String(localized: "元の重みを削除したあとで、キャッシュが使えなくなりました。もう一度ダウンロードと変換が必要です。")

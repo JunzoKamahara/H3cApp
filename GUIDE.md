@@ -87,14 +87,17 @@ Good to know:
     high-quality resize (other scales).
   - Real-ESRGAN Anime (AI upscaling): crisps up lines and flat colours, for
     anime and illustration-style video, in about half General's time.
-  - SwiftVR (AI video super-resolution, research): an AI model that looks at
+  - SwiftVR (AI video super-resolution): an AI model that looks at
     the whole video at once (a one-step restoration model based on Wan2.2)
     enlarges it while drawing texture and detail back in. It works 24 frames
-    at a time and takes far longer than Real-ESRGAN. Its weights are under
-    the SwiftVR Research License (research, non-commercial), so they are not
+    at a time and takes far longer than Real-ESRGAN. Its weights are not
     bundled: the first time, choose SwiftVR in the sheet and press
-    "モデルを準備…" (also in モデル管理 → 拡大モデル), read the license, and
-    the app downloads the weights (about 20 GB, resumable) and converts them
+    "モデルを準備…" (also in モデル管理 → 拡大モデル), read the license notice,
+    and the app downloads the weights (about 20 GB, resumable) from the
+    version whose model card declared them under the Apache License 2.0,
+    checks each file's SHA-256 against that version's record (the result is
+    shown in the sheet and kept in the model folder; see
+    THIRD_PARTY_NOTICES.md) and converts them
     for this Mac (about 4.6 GB on an M5, 8.9 GB otherwise). Once converted,
     "元の重みを削除…" in the setup sheet deletes the 20 GB original weights
     (tick "変換が終わったら、元の重みを削除する" to have it done

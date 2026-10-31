@@ -469,10 +469,18 @@ Ref2VAの参照は一度エンコードされてキャッシュされるので�
 土台にした一段の動画復元モデルで、小さな因果オートエンコーダ（ReAE）を組み合わせ
 ます。設計と計測の全文は `UPSCALE_PLAN.ja.md` にあります。要点は次のとおりです。
 
-- **重み。** 同梱しません（SwiftVR Research License、非商用）。ライセンスの表示の
-  あと、アプリが Hugging Face から float32 の safetensors 約 20 GB を
-  `~/Library/Application Support/H3cApp/Upscalers/SwiftVR` にダウンロードし、
-  一度だけ `.h3vc` キャッシュに変換します。テンソル演算ユニットのある GPU（M5）では
+- **重み。** 同梱しません。ライセンスの説明のあと、アプリが Hugging Face から
+  float32 の safetensors 約 20 GB を
+  `~/Library/Application Support/H3cApp/Upscalers/SwiftVR` にダウンロードします。
+  取得先は H-oliday/SwiftVR のうち、モデルカードが重みを Apache License 2.0 と
+  宣言していた最後の revision（`5e89ae51d1`、2026-09-24）に固定してあります
+  （配布元がその後に採用した Research License は第 14 条で、以前に Apache-2.0 で
+  公開した版を引き続き Apache-2.0 のままとしており、ファイルは同じオブジェクト
+  です）。一覧のオブジェクト id が固定値と違えば取得せず、取得した各ファイルの
+  SHA-256 を固定値と照合し（違うファイルは削除）、`H3VSR_PROVENANCE.json` と
+  Apache License 2.0 の本文を重みの隣に書きます（`SwiftVRModelSetup.swift` の
+  `SwiftVRModel`、UPSCALE_PLAN 付録 A.5）。そのうえで一度だけ `.h3vc` キャッシュに
+  変換します。テンソル演算ユニットのある GPU（M5）では
   int8（行ごとのスケール、4.6 GB）、それ以外では BF16（8.9 GB）です。定数の条件
   （timestep 1000、固定プロンプトの交差注意の K/V）はキャッシュに事前計算してあり、
   テキストや時刻の埋め込み器は一度も走りません。変換したあとは、20 GB の元の重み
