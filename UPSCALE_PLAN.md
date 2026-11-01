@@ -806,3 +806,44 @@ To consider Open-H3 as "an option that can also be chosen commercially", the §1
 4. Never display "commercial use OK". Display each asset's license name and conditions (territory, revenue, notices), and keep the record of the model and LoRAs that generated the source clip alongside.
 
 **Implementation (2026-11-01, branch `swiftvr-apache-pin`)**: policies 1 and 2 are in the app. `SwiftVRModel` (`SwiftVRModelSetup.swift`) pins the download to revision `5e89ae51d17b564b40cb14029002b48a83c2ff50`, refuses a Hugging Face listing whose `lfs.oid`s differ from the pinned ones, hashes every downloaded file afterwards and compares it with the pinned SHA-256 (a file that differs is deleted: the size-based resume could never mend it otherwise), and writes `H3VSR_PROVENANCE.json` (repo, revision, declaration, each file's SHA-256 and size, time of the check) and the Apache License 2.0 text (the GitHub LICENSE that revision's README points to, commit `6f54009b`, SHA-256 `3c4b0667…`; the Hugging Face revision has no LICENSE file) beside the weights. The setup sheet links the declaring README, the Apache-2.0 text and the current Research License (section 14), shows source and check rows, and offers "取得元と照合する" to an existing converted install that was never checked. `GET /api/upscalers` returns `revision`, `declared_license`, `verified` and `verified_at`; `POST /api/upscalers/swiftVR/setup` starts the same chain. `commercial_use_allowed` was removed from the engine's `h3_vsr_info` (the engine judges no license). Turbo v1.2 is recognised by the LoRA library by SHA-256 `c3d4a2cf…` (only files whose size matches are hashed) and shown with "Recorded origin: lightx2v/Minimax-h3-Turbo revision 3ec17a32 (2026-09-10) … that revision's README declares Apache-2.0 … the current version declares none" (`ModelLibrary.knownLoRAProvenance`; `sha256` and `provenance` in `GET /api/loras`). "research" was dropped from the method names in the UI.
+
+### Appendix A.6: The SeedVR2-3B (MLX-Swift port, INT8) gating experiment (2026-11-01, M5 24 GB)
+
+**Why.** A proposal: offer two tiers, SwiftVR (standard, fast) and SeedVR2-3B INT8 (high quality, slow), and bring the latter in through `xocialize/seedvr2-mlx-swift` (MLX-Swift, no Python, INT8 about 4 GB, Apache-2.0) without a full port. It was judged on the face clip of appendix A.4: the primary sources first, then measurements on this Mac.
+
+**Primary sources.**
+
+| Item | What was confirmed |
+|---|---|
+| SeedVR2 itself | `ByteDance-Seed/SeedVR2-3B`: HF tag `license:apache-2.0`; the GitHub README says "SeedVR and SeedVR2 are licensed under the Apache 2.0". Its Limitations: on lightly degraded inputs (e.g. 720p AIGC video) it tends to over-generate detail and oversharpen, especially at small resolutions (480p). Official inference: 100×720×1280 on one H100-80G |
+| INT8 weights | `mlx-community/SeedVR2-3B-mlx-int8` (2026-06-06, tag apache-2.0, `pipeline_tag: image-to-image`): transformer 4.22 GB + VAE 0.50 GB + pos_emb, int8 group 64. The three files' SHA-256 match the HF LFS ids (`4f0d2b37…`, `a2efbfb3…`, `d2e06cad…`). Kept in `~/models/seedvr2/` |
+| The MLX-Swift port | `xocialize/seedvr2-mlx-swift`: 1 star, last push 2026-06-15, **no LICENSE file** (README and SPDX headers say MIT), pinned to mlx-swift 0.31.x. Its oracle is mflux's SeedVR2, a **still-image** upscaler. The API is `upscale(processedImage: [B,3,H,W])` (one frame), the condition mask is one frame too, the VAE decode is untiled, and preprocessing, tiling and colour correction are left to the host. Parity was verified on the CPU for T=1 only. The bundled CLI only checks that the weights load. Building needs Xcode's Metal Toolchain (an 839 MB component this Mac did not have) |
+| The measurements the proposal cited | Reports of `lpalbou/mlx-gen` (Python, MLX, MIT, needs ffmpeg). M4 Max 128 GB, 384×288, 121 frames, 1x: SwiftVR 11.5 s, 3B 471 s (peak MLX 57.9 GB), 7B 459 s. M5 Max 128 GB, 320×240, 149 frames: 3B 1x 71 s / peak MLX 14.6 GB; **3B 2x (640×480 output) 539 s / peak MLX 34.4 GB / max RSS 27.4 GB**. The proposal's "34.4 GB at 2x" is for a 640×480 output; this plan's 1344×768 has 3.4 times the pixels. mlx-gen refuses chunks under 29 frames and reports itself that 1x at 480×360 needs about 70 GB per chunk |
+
+So there is no "native Swift video SeedVR2". There is a Swift port whose still-image path alone is verified, and a Python video implementation whose memory figures assume a 128 GB machine.
+
+**Measurements on this Mac (M5 24 GB, INT8, an evaluation driver `seedvr2-frames` added to the port).**
+
+| Experiment | Result |
+|---|---|
+| One frame at a time (T=1, the port's verified path), 1344×768, 124 frames, seed 42 | **19.6 s per frame** (encode 4.7 + DiT 4.1 + decode 10.8), **40.7 minutes** for 124 frames. GPU peak 13.7 GB, process peak footprint 16.8 GB (MLX cache limited to 2 GB; 18.8 GB in a trial without the limit). On the same input SwiftVR takes 69 s and Open-H3 (A1) 1027 s |
+| 5-frame chunks (T=5), 672×384 | Runs mechanically, but decoding 2 latent frames returns **8 frames** (4(T'−1)+1 = 5 would be right): the port's VAE time axis (the causal first frame) is unverified and which output frame belongs to which input is undefined. GPU peak 18.0 GB, 25 s per 5 frames (decode 17.5 s). 1344×768 has 4 times the pixels, so **even a 5-frame chunk does not fit 24 GB** |
+| Colour correction | The output is darker and redder than the input (mean luma 85 vs 92). A version with the port's LAB wavelet colour transfer (mflux's default post-process), the input as the style, was measured as well |
+
+Metrics (the face set of appendix A.4; fidelity against the plain resize C, the face a 380,220,560×320 crop):
+
+| Variant | PSNR | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA | time |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| C plain resize | — | — | 68.5 | 0.262 | 6.26 | — | — | 65.3 | 0.394 | — |
+| B SwiftVR | 30.8 | 0.126 | **76.6** | 0.361 | 6.52 | 29.3 | **0.162** | 70.8 | 0.489 | 69 s |
+| A1 Open-H3 (3 LoRAs) | 21.5 | 0.275 | 74.0 | 0.328 | 7.05 | 22.4 | 0.291 | 69.1 | 0.501 | 1027 s |
+| D SeedVR2-3B int8, frame by frame | 22.5 | 0.171 | 75.4 | **0.377** | 6.92 | 21.6 | 0.217 | 70.7 | **0.571** | 2443 s |
+| D + LAB colour transfer | 25.8 | 0.157 | 75.3 | 0.373 | 6.69 | 25.4 | 0.203 | 71.5 | 0.565 | +24 s |
+
+Visually (frame 60, `seedvr2-eval/cmp4_*.png`; left to right C, SwiftVR, SeedVR2, SeedVR2 + colour transfer): SeedVR2 **redraws the eye larger** (a bigger iris, thick long lashes like make-up), **invents a wrinkle texture under the eye** that the source does not have, erases the freckles on the cheek in favour of oily skin, and pushes the skin tone towards orange and red (the colour transfer brings the tone back, not the texture). The droplets are kept, even emphasised. This is exactly the behaviour the official README warns about, over-generating detail on lightly degraded inputs, and this plan's input (a clean AI render, enlarged) is that case. SwiftVR sharpens the same places while keeping the source's shapes (eye size, freckles).
+
+**Decision.** **Not adopted now**, for three reasons. (1) The "native Swift SeedVR2" the proposal rested on is still-image only: there is no video path (temporal VAE, chunking, tiling), verified or not. Writing one and checking it against the official implementation is work on the scale of the SwiftVR port (§6). (2) On 24 GB, even the verified frame-by-frame path needs a 16.8 to 18.8 GB footprint and 40 minutes at 1344×768 (35 times SwiftVR), and multi-frame chunks do not fit. (3) The quality did not become a "higher-quality mode that keeps the material more natural than SwiftVR". The no-reference scores are on a par (MUSIQ 75.4 vs 76.6, MANIQA higher), but it changes the face's identity (eye size, freckles, wrinkles) and falls far behind SwiftVR on fidelity. The character the proposal hoped for, keeping the source's texture, shows on degraded real footage, not on this plan's inputs.
+
+Conditions to revisit: an implementation verified **as video** on Apple Silicon (chunks of 5 frames or more fitting 24 GB at 1344×768, the temporal VAE matching the official one), or the target changing to restoring degraded real footage. Even then, taking `seedvr2-mlx-swift` means resolving its missing LICENSE file and the dependency on mlx-swift (the Metal Toolchain to build; a departure from the app's C/Metal design). The weights' Apache-2.0 was confirmed; licensing is not the obstacle.
+
+Left behind: the INT8 weights in `~/models/seedvr2/SeedVR2-3B-mlx-int8` (4.7 GB, SHA-256 recorded), the port's clone and the evaluation driver (scratch), outputs and comparison images in `~/Documents/work/h3c/seedvr2-eval/` (the face clip stays local). Xcode's Metal Toolchain (839 MB) was installed on this Mac.
