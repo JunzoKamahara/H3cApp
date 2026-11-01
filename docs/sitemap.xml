@@ -14,7 +14,7 @@
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/guide.html</loc>
-    <lastmod>2026-10-26</lastmod>
+    <lastmod>2026-11-02</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/guide.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/guide.html"/>
   </url>
@@ -38,7 +38,7 @@
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/en/guide.html</loc>
-    <lastmod>2026-10-26</lastmod>
+    <lastmod>2026-11-02</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/guide.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/guide.html"/>
   </url>
@@ -71,6 +71,18 @@
     <lastmod>2026-10-20</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/gguf.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/gguf.html"/>
+  </url>
+  <url>
+    <loc>https://junzokamahara.github.io/H3cApp/upscale.html</loc>
+    <lastmod>2026-11-02</lastmod>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/upscale.html"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/upscale.html"/>
+  </url>
+  <url>
+    <loc>https://junzokamahara.github.io/H3cApp/en/upscale.html</loc>
+    <lastmod>2026-11-02</lastmod>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/upscale.html"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/upscale.html"/>
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/joined-example.html</loc>

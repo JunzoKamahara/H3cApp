@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en" data-alt-href="../upscale.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="../assets/js/lang.js"></script>
+  <title>Enlarging videos — H3cApp</title>
+  <meta name="description" content="How to enlarge videos afterwards in H3cApp: choosing among the eight methods, choosing the scale, setting up the AI models, Open-H3 strength, time, and what to check when something goes wrong.">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/upscale.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/upscale.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/upscale.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/upscale.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="Enlarging videos — H3cApp">
+  <meta property="og:description" content="Choosing and using the eight enlarging methods, model setup, and time.">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/upscale.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image-en.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="../assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="../assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="../assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="Site">
+        <ul>
+          <li><a href="./#examples">Examples</a></li>
+          <li><a href="./#requirements">Requirements</a></li>
+          <li><a href="getting-started.html">Getting started</a></li>
+          <li><a href="guide.html" aria-current="page">Guide</a></li>
+          <li><a href="gguf.html">GGUF</a></li>
+          <li><a href="faq.html">Troubleshooting</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="../upscale.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>Enlarging videos</h1>
+      <p class="lead">How to make a finished video larger afterwards, or redraw its fine detail at the same size. There are eight methods, and they differ most in speed and in how much they add. If you are unsure, start with <a href="#choose">Choosing a method</a>. This page uses the labels of H3cApp with macOS set to English.</p>
+      <nav class="toc" aria-label="On this page">
+        <p>On this page</p>
+        <ol>
+          <li><a href="#steps">Enlarging a video, step by step</a></li>
+          <li><a href="#choose">Choosing a method</a></li>
+          <li><a href="#scale">Choosing the scale</a></li>
+          <li><a href="#methods">Using each method</a></li>
+          <li><a href="#setup">Setting up the AI models</a></li>
+          <li><a href="#strength">Choosing Open-H3's strength</a></li>
+          <li><a href="#time">Time and memory</a></li>
+          <li><a href="#after">After enlarging</a></li>
+          <li><a href="#trouble">If something goes wrong</a></li>
+          <li><a href="#license">Weights and licenses</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="steps" aria-labelledby="steps-title">
+      <h2 id="steps-title">Enlarging a video, step by step</h2>
+      <p>This works on other video files too, not only on videos made in H3cApp. Every method runs inside the app, with no other program.</p>
+      <ol class="steps">
+        <li><strong>Choose the video.</strong> There are three ways in.
+          <ul>
+            <li>The video on screen: <span class="ui">Video</span> → <span class="ui">Enlarge the Video Shown…</span> in the menu bar</li>
+            <li>A project video: in <span class="ui">Project Videos…</span>, the video's <span class="ui">More</span> → <span class="ui">Make an Enlarged Copy…</span></li>
+            <li>Any other video file: <span class="ui">Video</span> → <span class="ui">Enlarge a Video File…</span></li>
+          </ul>
+        </li>
+        <li><strong>Choose a method from the <span class="ui">Upscaler</span> menu.</strong> A description appears below it. A method that needs its model set up is prepared here with <span class="ui">Set up model…</span> (<a href="#setup">steps</a>).</li>
+        <li><strong>Choose the <span class="ui">Scale</span>.</strong> Only the scales this method can use are listed, each with the size it makes.</li>
+        <li><strong>Press <span class="ui">Enlarge</span>.</strong> A project video gets a new copy in the project, its name ending in the scale (<code>_x2</code> for 2x). For a video outside a project, you choose where to save next.</li>
+        <li><strong>Wait for it to finish.</strong> Progress appears at the top of the window, and <span class="ui">Cancel</span> stops it at any time. For a video outside a project, <span class="ui">Show in Finder</span> in the final message opens the saved file's location.</li>
+      </ol>
+      <figure class="shot">
+        <img src="../assets/images/app-upscale-en.jpg" width="1000" height="680" loading="lazy" alt="The Enlarge a Video sheet. At the top are the file name and 672×384 → 1344×768, then the Upscaler menu with Standard selected and its description, then the Scale radio buttons (1.5x, 2x, 3x, 4x, Custom), and Cancel and Enlarge buttons at the bottom right.">
+        <figcaption>The Enlarge a Video sheet. When you change the method, the list of scales changes with it.</figcaption>
+      </figure>
+      <div class="note"><p><strong>Try a new method on a short video first.</strong> SeedVR2 and Open-H3 take minutes even for 5 seconds of video. Which result you prefer depends on the footage, so compare on a short clip before using a method on a long video.</p></div>
+    </section>
+
+    <section class="section section-narrow" id="choose" aria-labelledby="choose-title">
+      <h2 id="choose-title">Choosing a method</h2>
+      <p>Choose by what you want to do. Methods higher in the table finish sooner.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">What you want</th><th scope="col">Method</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Make it larger right away, looking just the same</th><td>Standard</td></tr>
+            <tr><th scope="row">A little sharper than Standard</th><td>MetalFX</td></tr>
+            <tr><th scope="row">Add detail to live action or general footage in a short time</th><td>Real-ESRGAN General</td></tr>
+            <tr><th scope="row">Crisper lines and colors in anime or illustration</th><td>Real-ESRGAN Anime</td></tr>
+            <tr><th scope="row">Bring back the texture of skin, hair and fabric</th><td>SwiftVR</td></tr>
+            <tr><th scope="row">Clean up a close-up without changing eyes or brows</th><td>SwiftVR, restore at 4x then shrink</td></tr>
+            <tr><th scope="row">Clean up detail without changing the size (Same size)</th><td>SwiftVR, restore at 4x then shrink (try it first)</td></tr>
+            <tr><th scope="row">Put per-frame detail such as eyelashes and skin texture first</th><td>SeedVR2</td></tr>
+            <tr><th scope="row">Redraw pattern and texture at the quality of H3's own generation</th><td>Open-H3 regeneration</td></tr>
+          </tbody>
+          <caption>What you want and the method to choose.</caption>
+        </table>
+      </div>
+      <p>The more a method adds, the likelier something appears that was not in the source. If a face must not change, choose Standard or "SwiftVR, restore at 4x then shrink".</p>
+    </section>
+
+    <section class="section section-narrow" id="scale" aria-labelledby="scale-title">
+      <h2 id="scale-title">Choosing the scale</h2>
+      <p>The sheet lists only the scales this method can use on this video, each with the size it makes. If 3x or 4x is missing, the video has reached one of the limits below.</p>
+      <ul>
+        <li><strong>1.5x, 2x, 3x, 4x</strong>: those that fit are listed.</li>
+        <li><strong>Custom</strong>: type a scale with up to two decimal places. The buttons beside it change it by 0.1, and the size it makes is shown as you go. The range is shown on the <span class="ui">Custom</span> line.</li>
+        <li><strong>Same size</strong>: keeps the size and redraws only the fine detail. The AI methods offer it; Standard and MetalFX do not, because they would change almost nothing.</li>
+      </ul>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Method</th><th scope="col">Scale range</th><th scope="col">Size limit</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Standard, MetalFX</th><td class="num">1.1x to 8x</td><td>4096 pixels a side</td></tr>
+            <tr><th scope="row">Real-ESRGAN (General, Anime)</th><td class="num">1x to 4x</td><td>4096 pixels a side</td></tr>
+            <tr><th scope="row">SwiftVR (both methods), SeedVR2</th><td class="num">1x to 4x</td><td>4096 pixels a side, and what fits this Mac's GPU memory</td></tr>
+            <tr><th scope="row">Open-H3 regeneration</th><td class="num">1x to 4x</td><td>1344×768 pixels (H3's limit)</td></tr>
+          </tbody>
+          <caption>Scales and limits by method.</caption>
+        </table>
+      </div>
+      <p>Open-H3 rounds the size to multiples of 32 and shrinks it along the aspect ratio until it fits the limit. For example, 672×384 at 2x is exactly 1344×768, and 960×544 becomes 1344×768 at any scale. A video already at the limit offers only Same size.</p>
+    </section>
+
+    <section class="section section-narrow" id="methods" aria-labelledby="methods-title">
+      <h2 id="methods-title">Using each method</h2>
+
+      <h3>Standard (high-quality resize)</h3>
+      <p>The same high-quality resampling as the size menu's 2x upscaling. It enlarges the look as it is, so it stays closest to the source and flickers little. Use it as your reference when unsure. No setup is needed.</p>
+
+      <h3>MetalFX (edge-preserving)</h3>
+      <p>Apple's MetalFX enlarges while following the edges, a little crisper than Standard. No setup is needed.</p>
+
+      <h3>Real-ESRGAN General (AI upscaling)</h3>
+      <p>An AI fills in detail as it enlarges. It suits live action and general footage. Because it adds detail, patterns that were not in the source can appear. The weights are in the app, so it works right away.</p>
+
+      <h3>Real-ESRGAN Anime (AI upscaling)</h3>
+      <p>Makes lines and areas of color crisp. It suits anime and illustration, and takes about half the time of General. It works right away.</p>
+
+      <h3>SwiftVR (AI video super-resolution)</h3>
+      <p>An AI that looks at the whole video draws texture and detail back in as it enlarges. Use it to bring back the texture of skin, hair and fabric. It adds a lot, and lines can appear along edges. It needs <a href="#setup">model setup</a> the first time.</p>
+
+      <h3>SwiftVR, restore at 4x then shrink (gentler texture)</h3>
+      <p>The same model restores at 4x, and the result is brought down to the size you chose. It is less likely to redraw eyes and brows, and the texture is gentler and truer to the source. Try this one first at Same size too. It takes about five times as long as SwiftVR and shares SwiftVR's model.</p>
+      <p>When the 4x stage does not fit the GPU's memory, it is restored in tiles automatically. When 4x would exceed 4096 pixels a side, it steps down to 3x, then 2x. Choosing 4x gives the same result as SwiftVR.</p>
+
+      <h3>SeedVR2 (AI super-resolution, detail first; very slow, experimental)</h3>
+      <p>Redraws one frame at a time. Eyelashes, skin texture and fabric come out stronger than with SwiftVR, but the result can drift from the source, and a face's look may change. Moiré can appear in fur, and flicker can increase. Each frame takes seconds. It needs <a href="#setup">model setup</a> the first time.</p>
+
+      <h3>Open-H3 regeneration (redrawn by H3, up to 1344×768; very slow, experimental)</h3>
+      <p>Less an enlargement than H3 itself redrawing the video on a larger canvas. Where SeedVR2 draws one frame at a time, this redraws all frames together. How natural the motion looks varies by video, so compare before you choose. It reuses the prompt and seed of the generation, so there is nothing to type. You can choose the <a href="#strength">redraw strength</a>.</p>
+      <p>Only some videos qualify:</p>
+      <ul>
+        <li>Project videos generated in this app (a latent file, <code>.h3lt</code>, must sit beside the video; videos from before v0.5.0 and imported videos do not qualify).</li>
+        <li>For a joined video, use it on each clip before joining.</li>
+        <li>For an enlarged video, regenerate from the video it was made from.</li>
+      </ul>
+      <p>It needs <a href="#setup">model setup</a> the first time.</p>
+    </section>
+
+    <section class="section section-narrow" id="setup" aria-labelledby="setup-title">
+      <h2 id="setup-title">Setting up the AI models</h2>
+      <p>The weights of SwiftVR, SeedVR2 and Open-H3 are not in the app, so each is set up once. Standard, MetalFX and Real-ESRGAN need no setup.</p>
+      <ol class="steps">
+        <li><strong>Choose the method in the <span class="ui">Upscaler</span> menu.</strong> If it is not set up, an orange note and a <span class="ui">Set up model…</span> button appear below the description. <span class="ui">Enlarge</span> stays off until it is.</li>
+        <li><strong>Press <span class="ui">Set up model…</span>.</strong> You can also open it from <span class="ui">Model Manager</span> → <span class="ui">Upscaling models</span>.</li>
+        <li><strong>Read the license notice and confirm.</strong> The download starts once you confirm.</li>
+        <li><strong>Wait for it to finish.</strong> The files are checked by SHA-256 against the source's record, and any conversion or extraction follows on its own. When it ends, you can enlarge with that method.</li>
+      </ol>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Method</th><th scope="col">Download</th><th scope="col">After setup</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">SwiftVR (shared by both methods)</th><td>About 20 GB; resumes if interrupted</td><td>Converted for this Mac (about 4.6 GB on an M5, about 8.9 GB on others). After conversion, <span class="ui">Delete Original Weights…</span> removes the original 20 GB. Converting again later, for example after an app update, then needs a new download</td></tr>
+            <tr><th scope="row">SeedVR2</th><td>About 4.7 GB; resumes if interrupted</td><td>No conversion</td></tr>
+            <tr><th scope="row">Open-H3 regeneration</th><td>Merged LoRA about 12.5 GB, and latent upscaler about 0.7 GB</td><td>Only the refiner part (about 4.2 GB) is extracted on this Mac, and the merged LoRA is deleted. LightX2V Turbo v1.2 is reused from the LoRA folder if the same version is there</td></tr>
+          </tbody>
+          <caption>Space needed for setup.</caption>
+        </table>
+      </div>
+      <div class="warn"><p><strong>Check your free disk space first.</strong> Until conversion or extraction ends, both the downloaded files and the new ones need room.</p></div>
+    </section>
+
+    <section class="section section-narrow" id="strength" aria-labelledby="strength-title">
+      <h2 id="strength-title">Choosing Open-H3's strength</h2>
+      <p>With Open-H3 regeneration chosen, <span class="ui">Redraw strength</span> appears below the scale. It sets how far the video is noised back before it is redrawn: the stronger, the more is added and the further the result moves from the source. The sheet returns to <span class="ui">Light</span> each time it opens.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Strength</th><th scope="col">Result</th><th scope="col">Use it when</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Light (σ 0.4), the default</th><td>Keeps the people and the composition and redraws the fine texture. Adds the least detail</td><td>You want the same video at higher quality</td></tr>
+            <tr><th scope="row">Medium (σ 0.7)</th><td>Keeps the composition, but expressions and faces can change</td><td>A face may change a little and you want more added</td></tr>
+            <tr><th scope="row">Strong (σ 0.909)</th><td>Adds the most. It can become a different person or picture, and anime can turn into live action</td><td>You do not mind leaving the source behind. It takes about 1.3 times as long</td></tr>
+          </tbody>
+          <caption>Redraw strength. σ is the amount of noise.</caption>
+        </table>
+      </div>
+      <figure class="shot">
+        <img src="../assets/images/app-upscale-openh3-en.jpg" width="1000" height="998" loading="lazy" alt="The Enlarge a Video sheet with Open-H3 regeneration chosen. The scales are Same size, 1.5x, 2x and Custom, with a Redraw strength switch below them (Light σ 0.4, Medium σ 0.7, Strong σ 0.909) and an estimated time further down.">
+        <figcaption>The sheet with Open-H3 regeneration chosen. Changing the strength changes the description and the estimated time.</figcaption>
+      </figure>
+      <p>Results vary by video even at the same strength, so it is safest to try a short clip, starting from <span class="ui">Light</span>. The strength you chose is kept in the video's record.</p>
+    </section>
+
+    <section class="section section-narrow" id="time" aria-labelledby="time-title">
+      <h2 id="time-title">Time and memory</h2>
+      <p>Measured on an M5 Mac with 24 GB. On a Mac without the M5's tensor units, SeedVR2 takes several times as long.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Method</th><th scope="col">Time</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Standard, MetalFX</th><td>A few seconds</td></tr>
+            <tr><th scope="row">Real-ESRGAN General</th><td>About 0.08 s per frame at 800×544, about 0.32 s at 1620×1080</td></tr>
+            <tr><th scope="row">Real-ESRGAN Anime</th><td>About 0.05 s per frame at 800×544, about 0.18 s at 1620×1080</td></tr>
+            <tr><th scope="row">SwiftVR</th><td>5 s of 960×544 at 2x: about 40 seconds</td></tr>
+            <tr><th scope="row">SwiftVR, restore at 4x then shrink</th><td>5 s of 544×960 at 2x: about 4 minutes</td></tr>
+            <tr><th scope="row">SeedVR2</th><td>5 s of 672×384 at 2x: about 8 minutes (about 10 GB of GPU memory). 5 s of 960×544 at 2x: about 21 minutes (about 13 GB)</td></tr>
+            <tr><th scope="row">Open-H3 regeneration</th><td>56 frames of 672×384 at 2x: about 4 min 20 s at Light, about 5 min 30 s at Strong. 5 s at 1344×768 takes about 12 minutes at Strong (memory as in generation, about 15 GB)</td></tr>
+          </tbody>
+          <caption>Approximate times on an M5 with 24 GB.</caption>
+        </table>
+      </div>
+      <p>For Open-H3, the sheet shows an estimate for this video and strength. SwiftVR, SeedVR2 and Open-H3 take the whole GPU, so they cannot run during generation, cache building or a video import. Enlarge once those finish.</p>
+    </section>
+
+    <section class="section section-narrow" id="after" aria-labelledby="after-title">
+      <h2 id="after-title">After enlarging</h2>
+      <ul>
+        <li><strong>Sound and records</strong>: the sound and the file's AI-generated information stay as they were.</li>
+        <li><strong>The original</strong>: the original video stays as it is. You cannot save over the original itself.</li>
+        <li><strong>Saving</strong>: the file is replaced only after writing ends, so a failure or a cancel never removes a file already at the destination.</li>
+        <li><strong>Continuing</strong>: an enlarged video can be <a href="guide.html#continue">continued</a> like any other. The continuation is made at the original video's size, then enlarged the same way at the same scale (and, for Open-H3, the same strength). <span class="ui">Join and Export</span> joins the enlarged videos. An enlarged copy of an enlarged video cannot be continued.</li>
+        <li><strong>Joined videos</strong>: joined videos can be enlarged too (except with Open-H3).</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="trouble" aria-labelledby="trouble-title">
+      <h2 id="trouble-title">If something goes wrong</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">What happens</th><th scope="col">What to check</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><span class="ui">Enlarge</span> can't be pressed</th><td>The model is not set up, a generation or import is running, or the custom scale is out of range. The reason appears below the description or the scale</td></tr>
+            <tr><th scope="row">3x or 4x is not listed</th><td>A limit was reached: 4096 pixels a side, GPU memory, or Open-H3's 1344×768. The limit is shown below the scale. Choose a smaller scale, or enlarge with Standard</td></tr>
+            <tr><th scope="row">"This upscaler can't enlarge this video."</th><td>No scale fits this Mac's memory or the other limits. Choose another method</td></tr>
+            <tr><th scope="row">Open-H3 says the video's latent file (.h3lt) is missing</th><td>The video is from before v0.5.0, or its latent file is gone. Open-H3 can't be used; choose another method</td></tr>
+            <tr><th scope="row">"Open-H3 regeneration works only on project videos (with a latent file)."</th><td>You opened a file outside a project. Open it again from the project video's <span class="ui">More</span> menu</td></tr>
+            <tr><th scope="row">Open-H3 says the frame counts differ</th><td>This is a joined video. Regenerate each clip before joining</td></tr>
+            <tr><th scope="row">A face or eyes changed</th><td>With Open-H3, go down to <span class="ui">Light</span>. With SeedVR2 or SwiftVR, try "SwiftVR, restore at 4x then shrink"</td></tr>
+            <tr><th scope="row">A pattern appeared that was not in the source</th><td>Real-ESRGAN or SwiftVR added it. Change to "SwiftVR, restore at 4x then shrink" or Standard</td></tr>
+            <tr><th scope="row">Flicker increased</th><td>This can happen with SeedVR2 or SwiftVR. Try "SwiftVR, restore at 4x then shrink": in a same-size comparison it had less flicker than the source in five videos of six</td></tr>
+            <tr><th scope="row">It takes too long</th><td>Press <span class="ui">Cancel</span>, then lower the scale or choose a faster method. A file already at the destination is not removed</td></tr>
+          </tbody>
+          <caption>Common problems and what to check.</caption>
+        </table>
+      </div>
+      <p>If that does not solve it, see <a href="faq.html">Troubleshooting</a> or <a href="https://github.com/JunzoKamahara/H3cApp/issues">Issues</a>.</p>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="license-title">
+      <h2 id="license-title">Weights and licenses</h2>
+      <p>The weights and licenses differ by method. The setup screen shows the license notice and text. Which terms apply to your use is for you to judge.</p>
+      <ul>
+        <li><strong>Real-ESRGAN</strong>: the trained weights (BSD-3-Clause) are in the app.</li>
+        <li><strong>SwiftVR</strong>: the weights are not in the app. They are downloaded from the revision whose model card declared Apache License 2.0, and checked by SHA-256.</li>
+        <li><strong>SeedVR2</strong>: the weights are not in the app. The 8-bit MLX export of SeedVR2-3B, which ByteDance Seed released under Apache License 2.0, is downloaded from a pinned revision and checked by SHA-256.</li>
+        <li><strong>Open-H3 regeneration</strong>: the weights are not in the app. The MiniMax H3 Community License applies to the refiner LoRA.</li>
+      </ul>
+      <p>See also <a href="guide.html#upscale">Enlarging afterwards in the guide</a> and <a href="faq.html#license">Licenses</a>.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">Report a problem (Issues)</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md">README</a></li>
+        <li><a href="faq.html#license">License</a></li>
+        <li><a href="../upscale.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+      </ul>
+      <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). Videos are generated with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>, a video generation model by MiniMax, which comes under its own license, the MiniMax H3 Community License.</p>
+    </div>
+  </footer>
+  <script src="../assets/js/main.js" defer></script>
+</body>
+</html>

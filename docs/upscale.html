@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="ja" data-alt-href="en/upscale.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="assets/js/lang.js"></script>
+  <title>動画の拡大 — H3cApp</title>
+  <meta name="description" content="H3cAppで動画をあとから拡大する使い方。8つの方法の選び方、倍率の決め方、AIモデルの準備、Open-H3の強さ、時間の目安、うまくいかないときの確かめ方。">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/upscale.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/upscale.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/upscale.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/upscale.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="動画の拡大 — H3cApp">
+  <meta property="og:description" content="8つの拡大の方法の選び方と使い方、モデルの準備、時間の目安。">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/upscale.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へ移動</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="サイト内">
+        <ul>
+          <li><a href="./#examples">生成例</a></li>
+          <li><a href="./#requirements">動作条件</a></li>
+          <li><a href="getting-started.html">はじめ方</a></li>
+          <li><a href="guide.html" aria-current="page">使い方</a></li>
+          <li><a href="gguf.html">GGUF</a></li>
+          <li><a href="faq.html">困ったとき</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="en/upscale.html?lang=en" hreflang="en" lang="en">English</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>動画の拡大</h1>
+      <p class="lead">できあがった動画を、あとから大きくしたり、同じ大きさのまま細部を描き直したりする手順です。方法は8つあり、「早さ」と「描き足しの強さ」が大きく違います。迷ったら、次の<a href="#choose">方法の選び方</a>から入ってください。</p>
+      <nav class="toc" aria-label="このページの目次">
+        <p>このページの内容</p>
+        <ol>
+          <li><a href="#steps">拡大の手順</a></li>
+          <li><a href="#choose">方法の選び方</a></li>
+          <li><a href="#scale">倍率の決め方</a></li>
+          <li><a href="#methods">方法ごとの使い方</a></li>
+          <li><a href="#setup">AIモデルを準備する</a></li>
+          <li><a href="#strength">Open-H3の強さを選ぶ</a></li>
+          <li><a href="#time">時間とメモリの目安</a></li>
+          <li><a href="#after">拡大したあとの動画</a></li>
+          <li><a href="#trouble">うまくいかないとき</a></li>
+          <li><a href="#license">重みとライセンス</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="steps" aria-labelledby="steps-title">
+      <h2 id="steps-title">拡大の手順</h2>
+      <p>H3cAppで作った動画だけでなく、ほかの動画ファイルも拡大できます。どの方法もアプリの中で処理し、ほかのプログラムは使いません。</p>
+      <ol class="steps">
+        <li><strong>拡大する動画を選びます。</strong>次の3つの入口があります。
+          <ul>
+            <li>画面に表示している動画：メニューバーの「<span class="ui">動画</span>」→「<span class="ui">表示中の動画を拡大…</span>」</li>
+            <li>プロジェクトの動画：「<span class="ui">プロジェクトの動画…</span>」で動画の「<span class="ui">その他</span>」→「<span class="ui">拡大した動画をつくる…</span>」</li>
+            <li>ほかの動画ファイル：「<span class="ui">動画</span>」→「<span class="ui">動画ファイルを拡大…</span>」</li>
+          </ul>
+        </li>
+        <li><strong>「<span class="ui">拡大の方法</span>」のメニューから方法を選びます。</strong>下に方法の説明が出ます。モデルの準備が必要な方法は、ここで「<span class="ui">モデルを準備…</span>」を押します（<a href="#setup">手順</a>）。</li>
+        <li><strong>「<span class="ui">倍率</span>」を選びます。</strong>その方法で使える倍率だけが、できあがる大きさと一緒に表示されます。</li>
+        <li><strong>「<span class="ui">拡大する</span>」を押します。</strong>プロジェクトの動画は、名前の最後に倍率（2倍なら<code>_x2</code>）を付けた動画としてプロジェクトに増えます。プロジェクトの外の動画は、次に保存先を選びます。</li>
+        <li><strong>終わるのを待ちます。</strong>画面の上に進み具合が出ます。「<span class="ui">中止</span>」でいつでも止められます。プロジェクトの外の動画は、終わったときのメッセージの「<span class="ui">Finderで表示</span>」で保存した場所を開けます。</li>
+      </ol>
+      <figure class="shot">
+        <img src="assets/images/app-upscale.jpg" width="1000" height="654" loading="lazy" alt="「動画を拡大」の画面。上にファイル名と「672×384 → 1344×768」、その下に「拡大の方法」のメニュー（標準（高品質な拡大）を選択中）と説明文、「倍率」のラジオボタン（1.5倍、2倍、3倍、4倍、カスタム）があり、右下に「キャンセル」と「拡大する」のボタンがある。">
+        <figcaption>「動画を拡大」の画面。方法を変えると、倍率の一覧もその方法のものに変わります。</figcaption>
+      </figure>
+      <div class="note"><p><strong>初めての方法は、短い動画で試すのがおすすめです。</strong>SeedVR2とOpen-H3は5秒の動画でも何分もかかります。結果の好みは映像によって変わるので、短いクリップで見比べてから長い動画に使うと無駄がありません。</p></div>
+    </section>
+
+    <section class="section section-narrow" id="choose" aria-labelledby="choose-title">
+      <h2 id="choose-title">方法の選び方</h2>
+      <p>やりたいことから選びます。上の行ほど早く終わります。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">やりたいこと</th><th scope="col">選ぶ方法</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">見た目を変えずに、すぐ大きくしたい</th><td>標準</td></tr>
+            <tr><th scope="row">標準より少しくっきりさせたい</th><td>MetalFX</td></tr>
+            <tr><th scope="row">実写や一般の映像に、短い時間で細部を足したい</th><td>Real-ESRGAN 汎用</td></tr>
+            <tr><th scope="row">アニメやイラストの線と色をくっきりさせたい</th><td>Real-ESRGAN アニメ</td></tr>
+            <tr><th scope="row">肌・髪・布の質感を取り戻したい</th><td>SwiftVR</td></tr>
+            <tr><th scope="row">顔のアップなどを、目や眉を変えずに整えたい</th><td>SwiftVR 4倍で生成してから縮小</td></tr>
+            <tr><th scope="row">大きさを変えずに細部だけ整えたい（等倍）</th><td>SwiftVR 4倍で生成してから縮小（最初に試す）</td></tr>
+            <tr><th scope="row">まつ毛や肌のきめなど、1フレームごとの細部を最優先したい</th><td>SeedVR2</td></tr>
+            <tr><th scope="row">模様や質感を、H3の生成そのものの質で描き直したい</th><td>Open-H3 再生成</td></tr>
+          </tbody>
+          <caption>やりたいことと方法の対応。</caption>
+        </table>
+      </div>
+      <p>描き足しが強い方法ほど、元の映像にないものが現れやすくなります。人物の顔が変わると困る動画は、標準か「SwiftVR 4倍で生成してから縮小」を選びます。</p>
+    </section>
+
+    <section class="section section-narrow" id="scale" aria-labelledby="scale-title">
+      <h2 id="scale-title">倍率の決め方</h2>
+      <p>画面には、その方法とその動画で使える倍率だけが、拡大後の大きさと一緒に出ます。3倍や4倍が出ないときは、下の上限に当たっています。</p>
+      <ul>
+        <li><strong>1.5倍・2倍・3倍・4倍</strong>：使えるものが一覧に出ます。</li>
+        <li><strong>カスタム</strong>：欄に小数第2位までの倍率を入力します。横のボタンで0.1ずつ増減でき、拡大後の解像度がその場で表示されます。使える範囲は「<span class="ui">カスタム</span>」の行に出ます。</li>
+        <li><strong>等倍</strong>：大きさを変えず、細部だけを描き直します。AIの方法で選べます。標準とMetalFXでは、ほとんど変化しないので選べません。</li>
+      </ul>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">方法</th><th scope="col">倍率の範囲</th><th scope="col">大きさの上限</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">標準、MetalFX</th><td class="num">1.1〜8倍</td><td>一辺4096ピクセル</td></tr>
+            <tr><th scope="row">Real-ESRGAN（汎用、アニメ）</th><td class="num">1〜4倍</td><td>一辺4096ピクセル</td></tr>
+            <tr><th scope="row">SwiftVR（2つの方法）、SeedVR2</th><td class="num">1〜4倍</td><td>一辺4096ピクセル、かつこのMacのGPUメモリに入る大きさ</td></tr>
+            <tr><th scope="row">Open-H3 再生成</th><td class="num">1〜4倍</td><td>1344×768ピクセル（H3の上限）</td></tr>
+          </tbody>
+          <caption>方法ごとの倍率と上限。</caption>
+        </table>
+      </div>
+      <p>Open-H3では、倍率どおりの大きさを32の倍数に丸め、上限に収まるまで縦横比に沿って下げます。たとえば672×384の2倍はちょうど1344×768で、960×544はどの倍率でも1344×768になります。すでに上限の大きさの動画は、等倍だけ選べます。</p>
+    </section>
+
+    <section class="section section-narrow" id="methods" aria-labelledby="methods-title">
+      <h2 id="methods-title">方法ごとの使い方</h2>
+
+      <h3>標準（高品質な拡大）</h3>
+      <p>大きさメニューの「<span class="ui">2倍に拡大</span>」と同じ、高品質なリサンプリングです。元の見た目をそのまま大きくするので、いちばん元の映像に近く、ちらつきも少ない方法です。迷ったときの基準になります。準備は要りません。</p>
+
+      <h3>MetalFX（輪郭を保つ拡大）</h3>
+      <p>AppleのMetalFXで、輪郭を見ながら拡大します。標準より少しくっきりします。準備は要りません。</p>
+
+      <h3>Real-ESRGAN 汎用（AI超解像）</h3>
+      <p>AIが細部を補いながら拡大します。実写や一般の映像に向きます。細部を描き足すので、元にない模様が出ることがあります。重みはアプリに入っているので、そのまま使えます。</p>
+
+      <h3>Real-ESRGAN アニメ（AI超解像）</h3>
+      <p>線や色の面をくっきりさせます。アニメやイラスト調の映像に向きます。時間は汎用の約半分です。そのまま使えます。</p>
+
+      <h3>SwiftVR（AI動画超解像）</h3>
+      <p>動画全体を見るAIが、質感や細部を描き起こしながら拡大します。肌・髪・布の質感を取り戻したいときに使います。描き足しは強めで、輪郭に線が出ることがあります。初回に<a href="#setup">モデルの準備</a>が必要です。</p>
+
+      <h3>SwiftVR 4倍で生成してから縮小（質感が穏やか）</h3>
+      <p>同じモデルで4倍に復元してから、選んだ大きさに縮めます。目や眉を描き直しにくく、質感が穏やかで元の動画に忠実です。等倍で整えるときも、まずこの方法を試してください。時間はSwiftVRの約5倍です。モデルはSwiftVRと共通です。</p>
+      <p>途中の4倍がGPUのメモリに入らないときは、自動でタイルに分けて復元します。4倍で一辺4096ピクセルを超えるときは、3倍、2倍の順に下げて処理します。4倍を選ぶと、結果はSwiftVRと同じです。</p>
+
+      <h3>SeedVR2（AI超解像・細部重視、非常に遅い・試験的）</h3>
+      <p>1フレームずつ描き起こします。まつ毛・肌のきめ・布地の細部はSwiftVRより強く出ますが、元の映像から離れることがあり、顔の印象が変わることもあります。毛並みにモアレが出たり、ちらつきが増えたりすることもあります。1フレームに数秒かかります。初回に<a href="#setup">モデルの準備</a>が必要です。</p>
+
+      <h3>Open-H3 再生成（H3で描き直し・最大1344×768、非常に遅い・試験的）</h3>
+      <p>拡大というより、H3自身に大きな画面で描き直させる方法です。SeedVR2が1フレームずつ描くのに対して、全フレームをまとめて描き直します。動きの自然さは動画によって違うので、見比べて選んでください。生成したときの文章とseedを引き継ぐので、入力は要りません。<a href="#strength">描き直しの強さ</a>を選べます。</p>
+      <p>使える動画に条件があります。</p>
+      <ul>
+        <li>このアプリで生成した、プロジェクトの動画だけです（隣に潜在ファイル<code>.h3lt</code>が必要です。v0.5.0より前の動画と、取り込んだ動画には使えません）。</li>
+        <li>つなげて生成した動画は、つなぐ前の各クリップに使います。</li>
+        <li>拡大した動画は、その元の動画から再生成します。</li>
+      </ul>
+      <p>初回に<a href="#setup">モデルの準備</a>が必要です。</p>
+    </section>
+
+    <section class="section section-narrow" id="setup" aria-labelledby="setup-title">
+      <h2 id="setup-title">AIモデルを準備する</h2>
+      <p>SwiftVR、SeedVR2、Open-H3の重みはアプリに入っていないので、初回だけ準備します。標準、MetalFX、Real-ESRGANは準備なしで使えます。</p>
+      <ol class="steps">
+        <li><strong>「<span class="ui">拡大の方法</span>」のメニューで方法を選びます。</strong>準備がまだなら、説明の下にオレンジ色の案内と「<span class="ui">モデルを準備…</span>」のボタンが出ます。このあいだ「<span class="ui">拡大する</span>」は押せません。</li>
+        <li><strong>「<span class="ui">モデルを準備…</span>」を押します。</strong>「<span class="ui">モデル管理</span>」の「<span class="ui">拡大モデル</span>」からも開けます。</li>
+        <li><strong>ライセンスの説明を読んで確認します。</strong>確認すると、ダウンロードが始まります。</li>
+        <li><strong>終わるまで待ちます。</strong>配布元の記録とSHA-256で照合したあと、必要な変換や取り出しまで自動で進みます。終わると、その方法で拡大できます。</li>
+      </ol>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">方法</th><th scope="col">ダウンロード</th><th scope="col">準備のあと</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">SwiftVR（2つの方法で共通）</th><td>約20GB。中断しても続きから</td><td>このMac用に変換（M5で約4.6GB、ほかは約8.9GB）。変換したあとは「<span class="ui">元の重みを削除…</span>」で元の約20GBを消せます。ただし、アプリの更新などで変換し直すときは、もう一度ダウンロードが必要です</td></tr>
+            <tr><th scope="row">SeedVR2</th><td>約4.7GB。中断しても続きから</td><td>変換はありません</td></tr>
+            <tr><th scope="row">Open-H3 再生成</th><td>結合LoRA 約12.5GBと潜在アップスケーラ 約0.7GB</td><td>精緻化LoRAの部分（約4.2GB）だけをこのMacで取り出し、結合LoRAは削除します。LightX2V Turbo v1.2は、LoRAフォルダに同じ版があればそれを使います</td></tr>
+          </tbody>
+          <caption>準備に必要な容量。</caption>
+        </table>
+      </div>
+      <div class="warn"><p><strong>空き容量を確かめてから始めてください。</strong>変換や取り出しが終わるまでは、ダウンロードしたファイルと新しいファイルの両方を置く場所が要ります。</p></div>
+    </section>
+
+    <section class="section section-narrow" id="strength" aria-labelledby="strength-title">
+      <h2 id="strength-title">Open-H3の強さを選ぶ</h2>
+      <p>Open-H3 再生成を選ぶと、倍率の下に「<span class="ui">描き直しの強さ</span>」が出ます。動画にノイズをどこまで戻してから描き直すかを決める設定で、強いほど描き足しが増え、元の絵から離れます。シートを開くたびに「<span class="ui">弱い</span>」に戻ります。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">強さ</th><th scope="col">結果</th><th scope="col">向いている使い方</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">弱い（σ 0.4）既定</th><td>人物と構図を保ち、細かな質感を描き直す。描き足しは控えめ</td><td>同じ動画のまま質を上げたいとき</td></tr>
+            <tr><th scope="row">中（σ 0.7）</th><td>構図は保つが、表情や顔つきが変わることがある</td><td>人物の顔が多少変わってもよく、描き足しを増やしたいとき</td></tr>
+            <tr><th scope="row">強い（σ 0.909）</th><td>描き足しは最も多い。別の人物や別の絵になることがあり、アニメが実写になることも</td><td>元の絵にこだわらず、新しく描き起こしてほしいとき。時間は約1.3倍</td></tr>
+          </tbody>
+          <caption>描き直しの強さ。σはノイズの量です。</caption>
+        </table>
+      </div>
+      <figure class="shot">
+        <img src="assets/images/app-upscale-openh3.jpg" width="1000" height="920" loading="lazy" alt="「動画を拡大」の画面でOpen-H3 再生成を選んだ状態。倍率の一覧は等倍、1.5倍、2倍、カスタムで、その下に「描き直しの強さ」の切り替え（弱い（σ 0.4）、中（σ 0.7）、強い（σ 0.909））があり、さらに下に見込み時間が表示されている。">
+        <figcaption>Open-H3 再生成を選んだ画面。強さを切り替えると、説明と見込み時間も変わります。</figcaption>
+      </figure>
+      <p>同じ強さでも結果は動画によって変わるので、短いクリップを「<span class="ui">弱い</span>」から順に試すと安心です。選んだ強さは動画の記録に残ります。</p>
+    </section>
+
+    <section class="section section-narrow" id="time" aria-labelledby="time-title">
+      <h2 id="time-title">時間とメモリの目安</h2>
+      <p>M5・24GBのMacでの実測です。M5のテンソル演算ユニットが無いMacでは、SeedVR2は数倍かかります。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">方法</th><th scope="col">かかる時間</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">標準、MetalFX</th><td>数秒</td></tr>
+            <tr><th scope="row">Real-ESRGAN 汎用</th><td>800×544の1フレームに約0.08秒、1620×1080で約0.32秒</td></tr>
+            <tr><th scope="row">Real-ESRGAN アニメ</th><td>800×544の1フレームに約0.05秒、1620×1080で約0.18秒</td></tr>
+            <tr><th scope="row">SwiftVR</th><td>960×544の5秒を2倍に：約40秒</td></tr>
+            <tr><th scope="row">SwiftVR 4倍で生成してから縮小</th><td>544×960の5秒を2倍に：約4分</td></tr>
+            <tr><th scope="row">SeedVR2</th><td>672×384の5秒を2倍に：約8分（GPUに約10GB）。960×544の5秒を2倍に：約21分（約13GB）</td></tr>
+            <tr><th scope="row">Open-H3 再生成</th><td>672×384の56フレームを2倍に：弱いで約4分20秒、強いで約5分30秒。1344×768の5秒は強いで約12分（メモリは生成と同じ約15GB）</td></tr>
+          </tbody>
+          <caption>M5・24GBでの時間の目安。</caption>
+        </table>
+      </div>
+      <p>Open-H3では、シートに今の動画と強さでの見込み時間が表示されます。SwiftVR、SeedVR2、Open-H3はGPUをまるごと使うので、生成・キャッシュ作成・動画の取り込みの最中は使えません。終わってから拡大してください。</p>
+    </section>
+
+    <section class="section section-narrow" id="after" aria-labelledby="after-title">
+      <h2 id="after-title">拡大したあとの動画</h2>
+      <ul>
+        <li><strong>音声と記録</strong>：音声と、AIで生成したというファイルの情報は、そのまま残ります。</li>
+        <li><strong>元の動画</strong>：元の動画はそのまま残ります。元の動画そのものには保存できません。</li>
+        <li><strong>保存先</strong>：書き終えてから置き換えるので、途中で失敗したり中止したりしても、保存先に元からあったファイルは消えません。</li>
+        <li><strong>続きをつくる</strong>：拡大した動画も、ほかの動画と同じく<a href="guide.html#continue">続きをつくれます</a>。続きは元の動画の大きさでつくり、できたら同じ方法・同じ倍率（Open-H3では同じ強さ）で拡大した動画もつくります。「<span class="ui">つないで書き出す</span>」で、拡大した動画どうしをつなげます。拡大した動画をさらに拡大したものは、続きをつくれません。</li>
+        <li><strong>つないだ動画</strong>：つなげて生成した動画も拡大できます（Open-H3を除く）。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="trouble" aria-labelledby="trouble-title">
+      <h2 id="trouble-title">うまくいかないとき</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">起きていること</th><th scope="col">確かめること</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">「<span class="ui">拡大する</span>」が押せない</th><td>モデルの準備が済んでいない、生成や取り込みの最中、カスタムの倍率が範囲の外、のどれかです。方法の説明の下と倍率の下に理由が出ます</td></tr>
+            <tr><th scope="row">3倍や4倍が一覧にない</th><td>一辺4096ピクセル、GPUメモリ、Open-H3の1344×768のどれかの上限です。上限は倍率の下に表示されます。小さい倍率を選ぶか、標準で拡大します</td></tr>
+            <tr><th scope="row">「この動画は、この方法では拡大できません。」と出る</th><td>どの倍率でもこのMacのメモリなどに収まりません。別の方法を選びます</td></tr>
+            <tr><th scope="row">Open-H3で「潜在ファイル（.h3lt）がありません」と出る</th><td>v0.5.0より前の動画か、潜在が消えた動画です。Open-H3は使えないので、ほかの方法を選びます</td></tr>
+            <tr><th scope="row">Open-H3で「プロジェクトの動画（潜在ファイルのあるもの）にだけ使えます」と出る</th><td>プロジェクトの外のファイルを選んでいます。プロジェクトの動画の「<span class="ui">その他</span>」から開き直します</td></tr>
+            <tr><th scope="row">Open-H3でフレーム数が違うと出る</th><td>つないだ動画です。つなぐ前の各クリップを再生成します</td></tr>
+            <tr><th scope="row">顔や目が変わった</th><td>Open-H3なら「<span class="ui">弱い</span>」に下げます。SeedVR2やSwiftVRなら「SwiftVR 4倍で生成してから縮小」を試します</td></tr>
+            <tr><th scope="row">元にない模様が出た</th><td>Real-ESRGANやSwiftVRの描き足しです。「SwiftVR 4倍で生成してから縮小」か標準に変えます</td></tr>
+            <tr><th scope="row">ちらつきが増えた</th><td>SeedVR2やSwiftVRで増えることがあります。「SwiftVR 4倍で生成してから縮小」を試します。等倍の比較では、6本中5本でちらつきが元より減りました</td></tr>
+            <tr><th scope="row">時間がかかりすぎる</th><td>「<span class="ui">中止</span>」で止めて、倍率を下げるか、より早い方法に変えます。保存先に元からあったファイルは消えません</td></tr>
+          </tbody>
+          <caption>よくある症状と確かめること。</caption>
+        </table>
+      </div>
+      <p>解決しないときは、<a href="faq.html">困ったとき</a>や<a href="https://github.com/JunzoKamahara/H3cApp/issues">Issues</a>をご覧ください。</p>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="license-title">
+      <h2 id="license-title">重みとライセンス</h2>
+      <p>方法によって、使う重みとライセンスが違います。準備の画面にライセンスの説明と本文が出ます。どの条件が自分の利用に当てはまるかは、利用者が判断してください。</p>
+      <ul>
+        <li><strong>Real-ESRGAN</strong>：学習済みの重み（BSD-3-Clause）をアプリに含めています。</li>
+        <li><strong>SwiftVR</strong>：重みは含めていません。配布元でモデルカードがApache License 2.0と宣言していた版に固定してダウンロードし、SHA-256を照合します。</li>
+        <li><strong>SeedVR2</strong>：重みは含めていません。ByteDance SeedがApache License 2.0で公開したSeedVR2-3BのMLX用8ビット版を、固定した版からダウンロードし、SHA-256を照合します。</li>
+        <li><strong>Open-H3 再生成</strong>：重みは含めていません。精緻化LoRAにはMiniMax H3 Community Licenseが適用されます。</li>
+      </ul>
+      <p>詳しくは<a href="guide.html#upscale">使い方の「あとから拡大する」</a>と<a href="faq.html#license">ライセンス</a>をご覧ください。</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">不具合の報告（Issues）</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.ja.md">README</a></li>
+        <li><a href="faq.html#license">ライセンス</a></li>
+        <li><a href="en/upscale.html?lang=en" hreflang="en" lang="en">English</a></li>
+      </ul>
+      <p>H3cApp：大阪成蹊大学データサイエンス学部 鎌原淳三／Junzo Kamahara</p>
+      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画の生成にはMiniMaxの動画生成モデル<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>を使っています。モデルにはMiniMax H3独自のライセンス（MiniMax H3 Community License）が適用されます。</p>
+    </div>
+  </footer>
+  <script src="assets/js/main.js" defer></script>
+</body>
+</html>
