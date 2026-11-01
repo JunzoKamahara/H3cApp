@@ -210,7 +210,9 @@ struct UpscaleSheet: View {
         }
         VStack(alignment: .leading, spacing: 4) {
             if choices.range == nil {
-                Text("この動画は、この方法では拡大できません。").foregroundStyle(.orange)
+                if openH3Reason == nil {
+                    Text("この動画は、この方法では拡大できません。").foregroundStyle(.orange)
+                }
             } else {
                 Text(choices.limitText)
                 if selection == .custom, factor == nil, let range = choices.range {
@@ -221,11 +223,13 @@ struct UpscaleSheet: View {
             if upscaler.regeneratesFromLatent, openH3Reason == nil, let factor,
                let plan = OpenH3Plan.plan(width: pending.width, height: pending.height, factor: factor),
                let frames = pending.projectVideo?.record?.actualFrameCount {
-                Text("見込み：\(plan.width)×\(plan.height)・\(frames)フレームで、M5で約\(formatElapsed(plan.estimatedSeconds(frames: frames)))（生成の設定による）。")
+                Text("見込み：\("\(plan.width)×\(plan.height)")・\(frames)フレームで、M5で約\(formatElapsed(plan.estimatedSeconds(frames: frames)))（生成の設定による）。")
             }
-            Text(pending.projectVideo != nil
-                 ? String(localized: "拡大した動画は、プロジェクトに新しく加わります（名前の最後に「_\((factor ?? .two).suffix)」）。音声とAIで生成したという記録は、そのままです。")
-                 : String(localized: "拡大した動画の保存先は、次に選びます。音声とファイルの情報は、そのままです。"))
+            if pending.projectVideo == nil {
+                Text("拡大した動画の保存先は、次に選びます。音声とファイルの情報は、そのままです。")
+            } else if let factor {
+                Text("拡大した動画は、プロジェクトに新しく加わります（名前の最後に「_\(factor.suffix)」）。音声とAIで生成したという記録は、そのままです。")
+            }
         }
         .font(.caption)
         .foregroundStyle(palette.textSecondary)

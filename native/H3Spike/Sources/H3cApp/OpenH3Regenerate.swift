@@ -71,7 +71,7 @@ extension GenerationViewModel {
         // makes.
         let size = size ?? recordedSize(of: record) ?? (info.pixelWidth, info.pixelHeight)
         guard OpenH3Plan.plan(width: size.width, height: size.height, factor: factor) != nil else {
-            return String(localized: "この動画（\(size.width)×\(size.height)）は、Open-H3の上限（1344×768ピクセル）までもう大きくできません。")
+            return String(localized: "この動画（\("\(size.width)×\(size.height)")）は、Open-H3の上限（1344×768ピクセル）までもう大きくできません。")
         }
         guard engine != nil, case .ready = engineState else {
             return String(localized: "H3のモデルが読み込まれていません。Open-H3 再生成はH3本体で描き直します。")
