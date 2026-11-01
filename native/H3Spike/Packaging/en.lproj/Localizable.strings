@@ -1113,3 +1113,6 @@
 "Open-H3はH3の上限の1344×768までです。" = "Open-H3 stops at H3's limit of 1344×768.";
 "一辺が4096ピクセルを超えない倍率までです。" = "Up to the scale that stays within 4096 pixels a side.";
 "このMacのGPUメモリに入る大きさまでです。" = "Up to the size that fits this Mac's GPU memory.";
+"等倍" = "Same size";
+"等倍では大きさを変えず、ノイズを弱めた2ステップ（σ 0.4）で描き直します。" = "At the same size it redraws the video in two steps with little noise (σ 0.4).";
+"等倍では大きさを変えず、細部を描き直します。" = "At the same size only the fine detail is redrawn.";

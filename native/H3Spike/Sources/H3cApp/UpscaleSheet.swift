@@ -88,7 +88,7 @@ struct UpscaleSheet: View {
         guard let video = pending.projectVideo else {
             return String(localized: "Open-H3 再生成は、プロジェクトの動画（潜在ファイルのあるもの）にだけ使えます。")
         }
-        return viewModel.openH3Reason(for: video, size: (pending.width, pending.height), factor: factor ?? .smallest)
+        return viewModel.openH3Reason(for: video, size: (pending.width, pending.height), factor: factor ?? .same)
     }
 
     var body: some View {
@@ -188,7 +188,9 @@ struct UpscaleSheet: View {
                 ForEach(choices.usual) { option in
                     Text("\(option.label)（\(sizeText(option))）").tag(Selection.usual(option))
                 }
-                Text("カスタム（\(low)〜\(high)倍）").tag(Selection.custom)
+                if range.lowerBound < range.upperBound {
+                    Text("カスタム（\(low)〜\(high)倍）").tag(Selection.custom)
+                }
             }
             .pickerStyle(.radioGroup)
             if selection == .custom {
@@ -215,6 +217,11 @@ struct UpscaleSheet: View {
                 }
             } else {
                 Text(choices.limitText)
+                if factor == .same {
+                    Text(upscaler.regeneratesFromLatent
+                         ? "等倍では大きさを変えず、ノイズを弱めた2ステップ（σ 0.4）で描き直します。"
+                         : "等倍では大きさを変えず、細部を描き直します。")
+                }
                 if selection == .custom, factor == nil, let range = choices.range {
                     Text("\(UpscaleFactor.text(range.lowerBound))〜\(UpscaleFactor.text(range.upperBound))倍の範囲で、小数第2位まで指定できます。")
                         .foregroundStyle(.red)
@@ -223,7 +230,7 @@ struct UpscaleSheet: View {
             if upscaler.regeneratesFromLatent, openH3Reason == nil, let factor,
                let plan = OpenH3Plan.plan(width: pending.width, height: pending.height, factor: factor),
                let frames = pending.projectVideo?.record?.actualFrameCount {
-                Text("見込み：\("\(plan.width)×\(plan.height)")・\(frames)フレームで、M5で約\(formatElapsed(plan.estimatedSeconds(frames: frames)))（生成の設定による）。")
+                Text("見込み：\("\(plan.width)×\(plan.height)")・\(frames)フレームで、M5で約\(formatElapsed(plan.estimatedSeconds(frames: frames, factor: factor)))（生成の設定による）。")
             }
             if pending.projectVideo == nil {
                 Text("拡大した動画の保存先は、次に選びます。音声とファイルの情報は、そのままです。")

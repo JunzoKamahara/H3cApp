@@ -944,3 +944,27 @@ Frame 16 crops side by side (`seedvr2-eval/set-v1/cmp_*.png`: top left source, t
 - Flicker is higher than SwiftVR's on every clip (per-frame restoration with one noise; +0.2 to +0.6 on the mean frame difference), visible as a faint shimmer on fine texture in motion.
 
 So the method's character is consistent: strongest on detailed, well-lit faces and fur, risky on close-up faces whose make-up or brows it tends to intensify, conservative on soft real footage. "試験的・細部重視" stays the right label; SwiftVR remains the default.
+
+### Appendix A.8: Same-size enhancement (2026-11-01, M5 24 GB, branch seedvr2-tier)
+
+At the user's request the six AI upscalers gained a same-size option (`UpscaleFactor.same`; Standard and MetalFX would change almost nothing, so they are left out). All of them ran at the same size on six generated clips. LPIPS against the source (six frames, lower is closer) and flicker (mean absolute difference of adjacent frames) were measured, and the middle frames were viewed at full size. There is no ground truth, so these figures are distance from the source, not quality as such.
+
+| Clip | Source flicker | SwiftVR 4x→1/4 | SwiftVR direct | SeedVR2 | Open-H3 σ0.4 | Real-ESRGAN general |
+|---|---|---|---|---|---|---|
+| face256 256×448 | 2.90 | 0.040 / 2.85 | 0.159 / 3.89 | 0.104 / 3.31 | 0.057 / 3.33 | 0.042 / 2.86 |
+| anime 448×256 | 3.87 | 0.044 / 3.52 | 0.150 / 5.33 | 0.156 / 4.93 | 0.087 / 4.10 | 0.055 / 4.54 |
+| portrait 672×384 | 2.50 | 0.027 / 2.54 | 0.084 / 2.94 | 0.077 / 3.31 | 0.047 / 2.46 | 0.042 / 2.71 |
+| cat 672×384 | 2.35 | 0.121 / 1.51 | 0.272 / 2.86 | 0.248 / 1.98 | 0.214 / 2.85 | 0.137 / 1.76 |
+| dog768 768×768 | 14.37 | 0.162 / 13.06 | 0.246 / 13.91 | 0.240 / 15.02 | 0.229 / 16.58 | 0.095 / 14.06 |
+| campus 1344×768 | 3.14 | 0.299 / 2.90 | 0.351 / 4.39 | 0.364 / 4.47 | 0.340 / 4.63 | 0.147 / 3.48 |
+
+Times (672×384, 56 frames / 1344×768, 56 frames): Real-ESRGAN 4 s / 16 s, SwiftVR 6 s / 14 s, 4x→1/4 56 s / 135 s (through 3x), SeedVR2 54 s / 227 s, Open-H3 78 s / 318 s.
+
+- **Open-H3's standard σ 0.909 does not work at the same size.** It makes a new generation: the woman's hair changed, the anime girl became another, live-action person and the background changed too (LPIPS 0.53). At σ 0.7 faces and poses still change. σ 0.4, 0.2, 0 keeps composition and characters and redraws the yarn, the cat's fur and leaves well. σ 0.3 changes less and also adds less. The same-size default is σ 0.4. An anime face's expression still changes a little, and real foliage stays the same tree with different leaves, with more flicker than the source (4.63 against 3.14).
+- **The same problem remains at small scales.** At the standard σ 0.909 and 1.25x the anime clip became a different, live-action person. How this varies with content and scale has not been measured.
+- **SwiftVR 4x→1/4 is the truest to the source.** Its LPIPS is the lowest or well below direct SwiftVR on every clip, its flicker is below the source on five of six clips (2.54 against 2.50 on the other), and the no-reference scores rise noticeably. It is the first choice at the same size.
+- **Direct SwiftVR** adds the most and draws lines along contours (the cat's whiskers, around the yarn). **SeedVR2** is the sharpest on faces but erased the yarn's texture and left moiré in the fur; its flicker is above the source on five of six clips.
+- **An existing bug was found and fixed.** When a video's length divides exactly into chunks (28 + 24n, including the default 124 frames of 5 seconds), SwiftVR's output lost its last three frames: reading ended without the scaler being told it had the last chunk, so the engine never flushed what it held. One frame of lookahead fixes it, and 124 frames now come out as 124.
+- `swiftVRFourX` quietly fell back to direct restoration when 4x passes 4096 pixels a side (videos wider than 1024). It now drops to 3x, then 2x. At 1344×768 it goes through 3x: LPIPS 0.351 to 0.299, flicker 4.39 to 2.90.
+
+Natural motion can't be judged from this table and single frames. That comparison is left to the user's eye on the videos.

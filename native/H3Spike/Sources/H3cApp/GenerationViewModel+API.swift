@@ -234,7 +234,7 @@ extension GenerationViewModel {
                 if let reason = upscaleBlockedReason(upscaler) { item["busy_reason"] = reason }
                 // "scale" takes any number in hundredths up to this; a given
                 // video may stop earlier (a side, the GPU's memory, the canvas).
-                item["min_scale"] = UpscaleFactor.minimum
+                item["min_scale"] = upscaler.factorFloor
                 item["max_scale"] = upscaler.factorCeiling
                 if upscaler.isSwiftVR {
                     item["model_directory"] = SwiftVRModel.directory

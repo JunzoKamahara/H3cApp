@@ -19,10 +19,20 @@ struct OpenH3Plan: Equatable {
     /// The released DiT canvas limit (h3.c H3_MAX_PIXELS).
     static let maxPixels = 768 * 1344
     static let sigmas: [Float] = [0.909375, 0.857143, 0.666667, 0]
+    /// 等倍: at σ 0.909 the clip comes back as a new generation (another
+    /// face, an anime clip turned live action); from 0.4 it keeps its
+    /// composition and characters and the fine texture is redrawn
+    /// (UPSCALE_PLAN appendix A.8).
+    static let sameSizeSigmas: [Float] = [0.4, 0.2, 0]
+
+    static func sigmas(for factor: UpscaleFactor) -> [Float] {
+        factor == .same ? sameSizeSigmas : sigmas
+    }
 
     /// `width` x `height` enlarged by `factor`: multiples of 32 at the
     /// nearest size, brought down along the aspect to the canvas limit.
-    /// Nil when that is no enlargement (the source fills the canvas).
+    /// Nil when that is no enlargement (the source fills the canvas),
+    /// except for 等倍, which redraws at the video's own size.
     static func plan(width: Int, height: Int, factor: UpscaleFactor) -> OpenH3Plan? {
         guard width > 0, height > 0 else { return nil }
         func round32(_ value: Double) -> Int { max(32, Int((value / 32).rounded()) * 32) }
@@ -33,14 +43,15 @@ struct OpenH3Plan: Equatable {
             plan = OpenH3Plan(width: round32(Double(width) * scale), height: round32(Double(height) * scale))
         }
         guard plan.width * plan.height <= maxPixels, plan.width >= width, plan.height >= height,
-              plan.width > width || plan.height > height else { return nil }
+              factor == .same || plan.width > width || plan.height > height else { return nil }
         return plan
     }
 
     /// About how long on an M5 (appendix A.4: 1000 s for 121 frames at
     /// 1344x768 in int8-cache mode), scaled by frames and pixels.
-    func estimatedSeconds(frames: Int) -> Double {
+    func estimatedSeconds(frames: Int, factor: UpscaleFactor) -> Double {
         1000 * Double(max(frames, 1)) / 121 * Double(width * height) / Double(Self.maxPixels)
+            * Double(Self.sigmas(for: factor).count - 1) / Double(Self.sigmas.count - 1)
     }
 }
 
@@ -93,7 +104,7 @@ extension GenerationViewModel {
                                factor: UpscaleFactor) async throws -> (width: Int, height: Int) {
         let size = try await VideoUpscale.frameSize(of: video.url)
         guard let engine, let record = video.record, let latentURL = continuationLatent(of: video),
-              (try? H3LatentFileInfo.read(path: latentURL.path)) != nil,
+              let latentInfo = try? H3LatentFileInfo.read(path: latentURL.path),
               let plan = OpenH3Plan.plan(width: size.width, height: size.height, factor: factor) else {
             throw VideoUpscale.UpscaleError.unavailable(openH3Reason(for: video, size: size, factor: factor) ?? "Open-H3")
         }
@@ -108,20 +119,24 @@ extension GenerationViewModel {
         defer { isUpscalingVideo = false }
         let cancel = upscaleCancel
 
-        // 1. The latent onto the larger grid (a few seconds to half a minute).
+        // 1. The latent onto the larger grid (a few seconds to half a minute);
+        // at its own size (等倍) it goes straight to the steps below.
         let upscaledLatent = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("H3cApp_openh3_\(Int(Date().timeIntervalSince1970)).h3lt")
         defer { try? FileManager.default.removeItem(at: upscaledLatent) }
         let upsamplerDirectory = OpenH3Model.upsamplerDirectory
         let latentPath = latentURL.path, outPath = upscaledLatent.path
-        try await Task.detached(priority: .userInitiated) {
-            let upscaler = try H3LatentUpscaler(weightsDirectory: upsamplerDirectory)
-            try upscaler.upscaleFile(latentPath, to: outPath, latentHeight: plan.latentHeight,
-                                     latentWidth: plan.latentWidth) { done, total in
-                Task { @MainActor in self.upscaleProgress = 0.05 * Double(done) / Double(max(total, 1)) }
-                return !cancel.isRequested
-            }
-        }.value
+        let sameGrid = latentInfo.latentHeight == plan.latentHeight && latentInfo.latentWidth == plan.latentWidth
+        if !sameGrid {
+            try await Task.detached(priority: .userInitiated) {
+                let upscaler = try H3LatentUpscaler(weightsDirectory: upsamplerDirectory)
+                try upscaler.upscaleFile(latentPath, to: outPath, latentHeight: plan.latentHeight,
+                                         latentWidth: plan.latentWidth) { done, total in
+                    Task { @MainActor in self.upscaleProgress = 0.05 * Double(done) / Double(max(total, 1)) }
+                    return !cancel.isRequested
+                }
+            }.value
+        }
         if cancel.isRequested { throw VideoUpscale.UpscaleError.cancelled }
 
         // 2. Three denoising steps from it, with the refiner and Turbo.
@@ -129,10 +144,10 @@ extension GenerationViewModel {
         params.width = Int32(plan.width)
         params.height = Int32(plan.height)
         params.frames = Int32(record.actualFrameCount)
-        params.steps = Int32(OpenH3Plan.sigmas.count - 1)
+        params.steps = Int32(OpenH3Plan.sigmas(for: factor).count - 1)
         params.denoiseReuse = 1
-        params.initialLatentPath = upscaledLatent.path
-        params.videoSigmas = OpenH3Plan.sigmas
+        params.initialLatentPath = sameGrid ? latentURL.path : upscaledLatent.path
+        params.videoSigmas = OpenH3Plan.sigmas(for: factor)
         params.loras = [H3LoRAInput(path: OpenH3Model.refinerPath, strength: 1),
                         H3LoRAInput(path: turboPath, strength: 1)]
         params.seed = UInt64(record.seed) ?? 1

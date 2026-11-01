@@ -74,8 +74,10 @@ Good to know:
   “Enlarge a Video File…”, saved where you choose. Choose the upscaler first: the sheet then
   shows the scales it can make of this video, each with the size it makes.
   Besides those of 1.5x, 2x, 3x and 4x it can do, “Custom” takes a scale
-  with up to two decimals and shows the resulting size as you type. Scales
-  start at 1.1x and stop at 8x for Standard and MetalFX and at 4x for the AI
+  with up to two decimals and shows the resulting size as you type. The AI
+  upscalers also offer “Same size”, which keeps the size and redraws only
+  the fine detail. Scales start there for the AI upscalers and at 1.1x for
+  Standard and MetalFX, and stop at 8x for those two and at 4x for the AI
   upscalers. Every upscaler stops at 4096 pixels a side, SwiftVR and SeedVR2
   at what fits this Mac's GPU memory, and Open-H3 at 1344×768. The upscalers:
   - Standard: the same high-quality resize as the ×2 sizes, smooth, keeping
@@ -115,8 +117,10 @@ Good to know:
     source, at about five times SwiftVR's time. When the 4x intermediate
     does not fit the GPU's memory in one piece (on a 24 GB Mac, inputs beyond
     about 448x256), it is restored as overlapping tiles blended smoothly at
-    the seams; when even tiles would not fit, it quietly stays at the chosen
-    scale. At 4x it is the same as SwiftVR.
+    the seams; when 4x passes 4096 pixels a side or even tiles would not fit,
+    it drops to 3x, then 2x, and else stays at the chosen scale. At 4x it is
+    the same as SwiftVR. At the same size this is the upscaler truest to the
+    source (UPSCALE_PLAN.md appendix A.8).
   - **SeedVR2 (AI super-resolution, detail first; very slow, experimental)**:
     SeedVR2-3B (ByteDance Seed, Apache License 2.0), a one-step diffusion
     restorer, redraws each frame on its own. Fine detail such as eyelashes,
@@ -144,7 +148,9 @@ Good to know:
     Open-H3's latent upscaler, noised back a little (σ 0.909) and generated
     again in just three steps with NVIDIA's Open-H3 refiner LoRA and
     LightX2V Turbo v1.2. Texture and pattern come out at the quality of
-    H3's own generation, with the clip's prompt and seed carried over. The
+    H3's own generation, with the clip's prompt and seed carried over. At
+    the same size the latents go in as they are and two steps from a lower
+    noise level (σ 0.4) redraw them. The
     size stays within H3's limit (1344×768 pixels) and the factor is
     rounded into it (a 960×544 video becomes 1344×768 at every factor).
     Only videos this app generated, with their latent file, qualify (not

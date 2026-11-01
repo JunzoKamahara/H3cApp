@@ -177,6 +177,15 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
     /// Whether it wants the GPU to itself (so it waits for a generation).
     var needsIdleGPU: Bool { isSwiftVR || self == .seedVR2 || self == .openH3 }
 
+    /// The smallest factor it takes: 等倍 for the ones that redraw the
+    /// frames, while a resizer at that size would change nothing.
+    var factorFloor: Double {
+        switch self {
+        case .standard, .metalFX: return 1.1
+        default: return UpscaleFactor.minimum
+        }
+    }
+
     /// The largest factor it takes, whatever the video: the resizers go on
     /// as far as a side allows, the AI models stop at the 4x they were
     /// made for.
@@ -212,7 +221,8 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
 struct UpscaleFactor: Hashable, Identifiable {
     let rawValue: Double
 
-    static let minimum = 1.1
+    /// 等倍: no larger, only redrawn, for the upscalers that add detail.
+    static let minimum = 1.0
     static let maximum = 8.0
 
     /// Rounded to hundredths; nil outside minimum...maximum.
@@ -228,9 +238,9 @@ struct UpscaleFactor: Hashable, Identifiable {
     static let two = UpscaleFactor(usual: 2)
     static let three = UpscaleFactor(usual: 3)
     static let four = UpscaleFactor(usual: 4)
-    static let smallest = UpscaleFactor(usual: minimum)
+    static let same = UpscaleFactor(usual: minimum)
     /// The factors offered without typing one.
-    static let usual = [oneAndHalf, two, three, four]
+    static let usual = [same, oneAndHalf, two, three, four]
 
     var id: Double { rawValue }
 
@@ -244,9 +254,10 @@ struct UpscaleFactor: Hashable, Identifiable {
         return digits
     }
 
-    /// "1.5倍", "2倍".
+    /// "等倍", "1.5倍", "2倍".
     var label: String {
-        rawValue == rawValue.rounded()
+        if self == .same { return String(localized: "等倍") }
+        return rawValue == rawValue.rounded()
             ? String(localized: "\(Int(rawValue))倍")
             : String(localized: "\(text)倍")
     }
@@ -294,7 +305,7 @@ struct UpscaleChoices {
         self.height = height
         sizeCheck = upscaler.sizeCheck
         let ceiling = Int((upscaler.factorCeiling * 100).rounded())
-        let floor = Int((UpscaleFactor.minimum * 100).rounded())
+        let floor = Int((upscaler.factorFloor * 100).rounded())
         func made(_ hundredths: Int) -> (width: Int, height: Int)? {
             UpscaleFactor(rawValue: Double(hundredths) / 100).flatMap { size($0) }
         }
@@ -313,11 +324,14 @@ struct UpscaleChoices {
         guard let found = stride(from: floor, through: ceiling, by: 10).first(where: { made($0) != nil }) else { return }
         let lowest = first(in: max(floor, found - 9)...found) { made($0) != nil }
         let highest: Int
-        if upscaler.regeneratesFromLatent, let top = made(ceiling) {
-            // Past the canvas every factor makes the same size: the first of those.
-            highest = first(in: found...ceiling) { hundredths in
-                made(hundredths).map { $0 == top } ?? false
-            }
+        if upscaler.regeneratesFromLatent {
+            // Past the canvas every factor makes the same size: the first
+            // of those. A video that fills the canvas only has 等倍.
+            highest = made(ceiling).map { top in
+                first(in: found...ceiling) { hundredths in
+                    made(hundredths).map { $0 == top } ?? false
+                }
+            } ?? found
             limit = .canvas
         } else {
             highest = first(in: found...(ceiling + 1)) { $0 > ceiling || made($0) == nil } - 1
@@ -335,12 +349,13 @@ struct UpscaleChoices {
 
     /// The size `factor` makes; nil when it can't.
     func size(_ factor: UpscaleFactor) -> (width: Int, height: Int)? {
-        guard factor.rawValue <= upscaler.factorCeiling else { return nil }
+        guard factor.rawValue >= upscaler.factorFloor, factor.rawValue <= upscaler.factorCeiling else { return nil }
         if upscaler.regeneratesFromLatent {
             return OpenH3Plan.plan(width: width, height: height, factor: factor).map { ($0.width, $0.height) }
         }
         let made = factor.size(width: width, height: height)
-        guard factor.fits(width: width, height: height), made.width > width || made.height > height else { return nil }
+        guard factor.fits(width: width, height: height),
+              factor == .same || made.width > width || made.height > height else { return nil }
         if let sizeCheck, !sizeCheck(width, height, made.width, made.height) { return nil }
         return made
     }
@@ -620,15 +635,18 @@ enum VideoUpscale {
                 throw UpscaleError.cannotWrite(error.localizedDescription)
             }
             // 4倍で生成してから縮小: restore at 4x (in tiles when the frame
-            // is large) when the engine takes it and the writer's limit allows
-            // it; otherwise the size asked for.
+            // is large), or at 3x or 2x where the engine or the writer's limit
+            // stops that; the size asked for when none of them is larger.
             var engineWidth = width, engineHeight = height
-            if upscaler == .swiftVRFourX && factor != .four {
-                let (w4, h4) = UpscaleFactor.four.size(width: inputWidth, height: inputHeight)
-                if w4 <= maximumSide && h4 <= maximumSide &&
-                    resolver.requirements(inputWidth: inputWidth, inputHeight: inputHeight,
-                                          outputWidth: w4, outputHeight: h4).supported {
-                    engineWidth = w4; engineHeight = h4
+            if upscaler == .swiftVRFourX {
+                for large in [UpscaleFactor.four, .three, .two] where large.rawValue > factor.rawValue {
+                    let (w, h) = large.size(width: inputWidth, height: inputHeight)
+                    if w <= maximumSide && h <= maximumSide &&
+                        resolver.requirements(inputWidth: inputWidth, inputHeight: inputHeight,
+                                              outputWidth: w, outputHeight: h).supported {
+                        engineWidth = w; engineHeight = h
+                        break
+                    }
                 }
             }
             let requirements = resolver.requirements(inputWidth: inputWidth, inputHeight: inputHeight,
@@ -726,6 +744,11 @@ enum VideoUpscale {
                 var done = 0
                 var pending: [CVPixelBuffer] = []
                 var pendingTimes: [CMTime] = []
+                // The frame after a full chunk, read to know whether that
+                // chunk is the last: a scaler that holds frames back only
+                // flushes them on `isLast`, and a video can end exactly on
+                // a chunk (124 frames are 28 + 4 x 24).
+                var lookahead: (frame: CVPixelBuffer, time: CMTime)?
                 var ready: [CVPixelBuffer] = []
                 var readyTimes: [CMTime] = []
                 var finished = false
@@ -747,11 +770,23 @@ enum VideoUpscale {
                         if finished { return false }
                         guard let pool = adaptor.pixelBufferPool else { return false }
                         var isLast = false
+                        func nextFrame() -> (frame: CVPixelBuffer, time: CMTime)? {
+                            while let sample = videoOutput.copyNextSampleBuffer() {
+                                if let frame = CMSampleBufferGetImageBuffer(sample) {
+                                    return (frame, CMSampleBufferGetPresentationTimeStamp(sample))
+                                }
+                            }
+                            return nil
+                        }
                         while pending.count < scaler.chunkFrames {
-                            guard let sample = videoOutput.copyNextSampleBuffer() else { isLast = true; break }
-                            guard let frame = CMSampleBufferGetImageBuffer(sample) else { continue }
-                            pending.append(frame)
-                            pendingTimes.append(CMSampleBufferGetPresentationTimeStamp(sample))
+                            guard let next = lookahead ?? nextFrame() else { isLast = true; break }
+                            lookahead = nil
+                            pending.append(next.frame)
+                            pendingTimes.append(next.time)
+                        }
+                        if !isLast {
+                            lookahead = nextFrame()
+                            isLast = lookahead == nil
                         }
                         if pending.isEmpty { finished = true; return false }
                         do {
@@ -1030,7 +1065,7 @@ extension GenerationViewModel {
     /// Whether `video` can be enlarged by `factor` (within the 4096-pixel
     /// limit): its size is an enlarged copy's own, or else the size it was
     /// made at.
-    func canUpscale(_ video: ProjectVideo, by factor: UpscaleFactor = .smallest) -> Bool {
+    func canUpscale(_ video: ProjectVideo, by factor: UpscaleFactor = .same) -> Bool {
         guard !isUpscalingVideo, let record = video.record else { return false }
         var size = record.upscaledSize
         if size == nil, let dimensions = SizeProfile(rawValue: record.draft.sizeProfile)?.dimensions {

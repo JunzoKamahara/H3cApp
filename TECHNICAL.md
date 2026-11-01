@@ -700,7 +700,10 @@ version and license facts). `OpenH3Regenerate.swift` drives it:
   used: it requires the render canvas to have exactly the output's aspect
   in multiples of 32, which for 1920×1088 only 960×544 satisfies. A video
   of a ×2 size (its latent at half the frames' size) is planned from the
-  frames' size and its latent widened by the larger ratio.
+  frames' size and its latent widened by the larger ratio. At the same size the
+  latent skips the upscaler when its grid already matches, and two steps
+  from σ 0.4 redraw it (from 0.909 the clip comes back as another picture,
+  `UPSCALE_PLAN.md` appendix A.8).
 - **Eligibility.** Project videos with their own latent at the clip's
   frame count: `H3LatentFileInfo` reads the `.h3lt` header
   (`h3_latent_file_info`) and the frame count must equal the record's. A
