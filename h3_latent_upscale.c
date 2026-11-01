@@ -597,6 +597,25 @@ int h3_latent_upscale(h3_latent_upscaler *u, const float *latent, int T,
     return report(on_progress, opaque, ++done, total, error, error_size);
 }
 
+int h3_latent_file_info(const char *path, int *t, int *h, int *w, int *frames,
+                        char *error, size_t error_size) {
+    int32_t header[9];
+    FILE *file = path ? fopen(path, "rb") : NULL;
+    if (!file || fread(header, sizeof(header), 1, file) != 1 ||
+        header[0] != (int32_t)H3_LATENT_FILE_MAGIC || header[1] != 1 ||
+        header[2] != LC || header[6] != 32) {
+        if (file) fclose(file);
+        fail(error, error_size, "%s is not an H3 clip latent file", path ? path : "(null)");
+        return 0;
+    }
+    fclose(file);
+    if (t) *t = header[3];
+    if (h) *h = header[4];
+    if (w) *w = header[5];
+    if (frames) *frames = header[8];
+    return 1;
+}
+
 int h3_latent_upscale_file(h3_latent_upscaler *u, const char *in_path,
                            const char *out_path, int oh, int ow,
                            h3_progress_callback on_progress, void *opaque,

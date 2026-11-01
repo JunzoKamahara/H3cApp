@@ -668,6 +668,73 @@ appendix A.7; the short version:
   `make h3_seedvr2_tests` compares every stage with a reference dump
   (`H3_SEEDVR2_FIXTURE`); `h3_seedvr2_cli` restores PNG frames.
 
+## Regeneration on H3's own canvas (Open-H3 再生成)
+
+The "Open-H3 再生成" method of 動画を拡大 is not a frame scaler: it is the
+generation pipeline run again from the clip's own latents on a larger
+canvas, NVIDIA's Open-H3-Regenerate-2K recipe without its LMS Sharp parts
+(`UPSCALE_PLAN.md` appendix A.4 has the gating experiment and A.5 the
+version and license facts). `OpenH3Regenerate.swift` drives it:
+
+- **Steps.** The clip's `.h3lt` (written by every generation,
+  `h3_params.save_latent_path`) is widened onto the target grid by LBH's
+  3D-convolution latent upscaler (`h3_latent_upscale_file`, F32 MPSGraph
+  conv3d, 19 s for 960×544 → 1344×768 × 37 latent frames), then
+  `h3_generate` runs with `initial_latent_path` set to that file and
+  `video_sigmas` = 0.909375, 0.857143, 0.666667, 0: the start state is
+  `(1 − 0.909375)·z_up + 0.909375·ε` with the clip's seed, three Euler
+  steps follow (CFG 1), the audio latent is held clean and carried into
+  the output, and the frames are decoded and written as usual. The LoRAs
+  are the Open-H3 refiner (rank 384, strength 1) and LightX2V Turbo v1.2
+  (strength 1; the loader applies its alpha/rank), stacked by the ordinary
+  loader on the user's active checkpoint, in the user's compute mode (the
+  FL2VA int8 cache or SSD streaming; always the FL2VA transformer, since the
+  latent carries the picture and no reference goes in). The prompt is the
+  clip's.
+- **Sizes.** The DiT canvas is the released limit (`H3_MAX_PIXELS`,
+  768×1344), so the output is the canvas itself: the chosen factor times
+  the video's size, rounded to multiples of 32, brought down along the
+  aspect until it fits (`OpenH3Plan`); 672×384 × 2 is 1344×768 exactly,
+  960×544 is 1344×768 at every factor (a 0.8 % aspect change), 1024×576
+  the same. The engine's internal-render-plus-host-upscale path is not
+  used: it requires the render canvas to have exactly the output's aspect
+  in multiples of 32, which for 1920×1088 only 960×544 satisfies. A video
+  of a ×2 size (its latent at half the frames' size) is planned from the
+  frames' size and its latent widened by the larger ratio.
+- **Eligibility.** Project videos with their own latent at the clip's
+  frame count: `H3LatentFileInfo` reads the `.h3lt` header
+  (`h3_latent_file_info`) and the frame count must equal the record's. A
+  joined video keeps only its last clip's latent, so it is regenerated
+  through its clips; imported videos have none. Enlarged copies point at
+  their original's latent as continuation does.
+- **Weights (appendix A.5, step 3).** The setup sheet downloads the pinned
+  revision's `lora/open_h3_regenerate_2k_lora.safetensors` (FP32, rank 576 =
+  refiner 0–383 | Turbo 384–511 | Sharp 512–575, alpha = rank with the
+  strengths folded into B), checks its SHA-256, and `h3_lora_extract_ranks`
+  (`h3_lora_extract.c`) streams it tensor by tensor keeping lora_A rows and
+  lora_B columns 0–383 as BF16 (4.15 GB, the merge's `__metadata__`
+  extended with the source and range); the merged file is deleted after.
+  The loader reads the result as an ordinary diffusers-layout adapter
+  (`make test` runs `h3_lora_extract_tests` on a synthetic merge and
+  checks `h3_lora_inspect` sees it). The latent upscaler's BF16 file (the
+  same object as LBH's repository) and the repository's LICENSE, NOTICE,
+  README and merge records are kept beside it; Turbo v1.2 is the LoRA
+  folder's copy when its name and size match (its hash is checked when the
+  record is written), else downloaded from its pinned revision. The record
+  (`H3VSR_PROVENANCE.json`) holds every hash, the extracted range and the
+  license statement; the sheet shows the MiniMax H3 Community License
+  notice and links.
+- **Cost (appendix A.4, M5 24 GB).** 1344×768 × 121 frames in int8-cache
+  mode: about 1000 s per clip, peak 14–15 GB; the sheet estimates by
+  frames × pixels from that (in the app: 672×384 × 56 frames → 1344×768
+  in 5:36, 256×256 × 39 frames → 512×512 in 1:25). Quality against SwiftVR at the same size is in
+  A.4: the license-clean configuration (refiner + Turbo) redraws texture
+  at generation quality but scores below SwiftVR on the no-reference
+  metrics there, hence "experimental".
+- **Switches.** `H3_OPENH3_MODEL_DIR` points the app at another model
+  folder (`latent_upsampler/…`, `open_h3_refiner_r384_bf16.safetensors`,
+  optional `turbo/…`).
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Third-party notices (a Metal kernel design

@@ -2,5 +2,7 @@ module CH3 {
     header "h3.h"
     header "h3_vsr.h"
     header "h3_seedvr2.h"
+    header "h3_latent_upscale.h"
+    header "h3_lora_extract.h"
     export *
 }

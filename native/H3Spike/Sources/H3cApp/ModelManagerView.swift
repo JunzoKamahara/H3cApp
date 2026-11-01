@@ -47,6 +47,7 @@ struct ModelManagerView: View {
 
     @State private var showingSwiftVRSetup = false
     @State private var showingSeedVR2Setup = false
+    @State private var showingOpenH3Setup = false
 
     private enum Section: String, CaseIterable, Identifiable {
         case models, loras, upscalers
@@ -569,6 +570,18 @@ struct ModelManagerView: View {
                 .padding(.vertical, 4)
                 HStack(alignment: .top, spacing: H3Spacing.md) {
                     VStack(alignment: .leading, spacing: 4) {
+                        Text(VideoUpscaler.openH3.label).font(.system(size: 13, weight: .medium))
+                        Text(openH3StatusText).font(.caption).foregroundStyle(palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(verbatim: OpenH3Model.directory).font(.caption2).foregroundStyle(palette.textSecondary)
+                            .textSelection(.enabled)
+                    }
+                    Spacer()
+                    Button(VideoUpscaler.openH3.isAvailable ? "管理…" : "準備…") { showingOpenH3Setup = true }
+                }
+                .padding(.vertical, 4)
+                HStack(alignment: .top, spacing: H3Spacing.md) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text("Real-ESRGAN 汎用・アニメ").font(.system(size: 13, weight: .medium))
                         Text("アプリに含まれています（BSD-3-Clause）。準備は要りません。")
                             .font(.caption).foregroundStyle(palette.textSecondary)
@@ -578,7 +591,7 @@ struct ModelManagerView: View {
                 .padding(.vertical, 4)
             }
             .listStyle(.inset)
-            Text("「動画を拡大」のAI超解像が使うモデルです。SwiftVRとSeedVR2の重みは同梱せず、ここで配布元のApache License 2.0と宣言されていた版をダウンロードします（SHA-256で照合。SwiftVRはこのMac用に変換もします）。")
+            Text("「動画を拡大」のAI超解像が使うモデルです。SwiftVRとSeedVR2の重みは同梱せず、ここで配布元のApache License 2.0と宣言されていた版をダウンロードします（SHA-256で照合。SwiftVRはこのMac用に変換もします）。Open-H3 再生成は、NVIDIAの結合LoRA（MiniMax H3 Community License）から精緻化の部分をこのMacで取り出して使います。")
                 .font(.caption).foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(H3Spacing.md)
@@ -589,6 +602,24 @@ struct ModelManagerView: View {
         .sheet(isPresented: $showingSeedVR2Setup) {
             SeedVR2SetupView(busy: isGenerating) { showingSeedVR2Setup = false }
         }
+        .sheet(isPresented: $showingOpenH3Setup) {
+            OpenH3SetupView(busy: isGenerating) { showingOpenH3Setup = false }
+        }
+    }
+
+    private var openH3StatusText: String {
+        if OpenH3Setup.shared.isBusy {
+            return String(localized: "準備中です（\(OpenH3Setup.shared.phase.apiText)）")
+        }
+        if VideoUpscaler.openH3.isAvailable {
+            let size = ByteCountFormatter.string(fromByteCount: OpenH3Model.bytesOnDisk(), countStyle: .file)
+            let check = OpenH3Model.verified ? "" : String(localized: "。取得元との照合はまだです（「管理…」から）")
+            return String(localized: "使えます（精緻化LoRAは取り出し済み、\(size)）") + check
+        }
+        if OpenH3Model.upsamplerPresent && OpenH3Model.refinerPresent {
+            return String(localized: "LightX2V Turbo v1.2のファイルがありません（「準備…」でダウンロードします）。")
+        }
+        return String(localized: "まだありません。約13GBのダウンロードと、精緻化LoRAの取り出しが必要です（終わると約5GB）。")
     }
 
     private var seedVR2StatusText: String {

@@ -31,6 +31,12 @@ int h3_latent_upscale(h3_latent_upscaler *upscaler, const float *latent,
                       h3_progress_callback on_progress, void *opaque,
                       char *error, size_t error_size);
 
+/* What a clip latent file (.h3lt) holds: the video latent's grid (t, h, w
+ * latent cells; the picture is 16 h x 16 w pixels) and its frame count.
+ * Returns 0 for anything else. */
+int h3_latent_file_info(const char *path, int *t, int *h, int *w, int *frames,
+                        char *error, size_t error_size);
+
 /* The same on a clip latent file (.h3lt, see h3_params.save_latent_path):
  * the video latent is upscaled, the audio latent and frame count copied. */
 int h3_latent_upscale_file(h3_latent_upscaler *upscaler, const char *in_path,

@@ -40,6 +40,12 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
     /// most detailed enlargement and by far the slowest (UPSCALE_PLAN
     /// appendix A.7). Experimental.
     case seedVR2
+    /// H3 itself regenerating the clip on a larger canvas from its latent:
+    /// LBH's latent upscaler, then three denoising steps with NVIDIA's
+    /// Open-H3 refiner LoRA and LightX2V Turbo v1.2 (OpenH3Regenerate.swift,
+    /// UPSCALE_PLAN appendix A.4). Only for the app's own clips, up to the
+    /// released 1344x768 canvas. Experimental.
+    case openH3
 
     var id: String { rawValue }
 
@@ -52,7 +58,15 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         case .swiftVR: return String(localized: "SwiftVR（AI動画超解像）")
         case .swiftVRFourX: return String(localized: "SwiftVR 4倍で生成してから縮小（質感が穏やか）")
         case .seedVR2: return String(localized: "SeedVR2（AI超解像・細部重視、非常に遅い・試験的）")
+        case .openH3: return String(localized: "Open-H3 再生成（H3で描き直し・最大1344×768、非常に遅い・試験的）")
         }
+    }
+
+    /// Where the Open-H3 files live (the latent upscaler, the extracted
+    /// refiner, Turbo when downloaded here); H3_OPENH3_MODEL_DIR points
+    /// elsewhere while developing.
+    static var openH3ModelDirectory: String {
+        ProcessInfo.processInfo.environment["H3_OPENH3_MODEL_DIR"] ?? (h3AppSupportDirectory + "/Upscalers/OpenH3")
     }
 
     /// Where the SeedVR2 model lives (config.json and the three safetensors
@@ -82,7 +96,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return Bundle.main.url(forResource: "realesr-general-x4v3", withExtension: "safetensors", subdirectory: "Upscalers")
         case .realESRGANAnime:
             return Bundle.main.url(forResource: "realesr-animevideov3", withExtension: "safetensors", subdirectory: "Upscalers")
-        case .swiftVR, .swiftVRFourX, .seedVR2: return nil
+        case .swiftVR, .swiftVRFourX, .seedVR2, .openH3: return nil
         }
     }
 
@@ -90,7 +104,11 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
     var isSwiftVR: Bool { self == .swiftVR || self == .swiftVRFourX }
 
     /// Whether it needs a model the user downloads (a モデルを準備 button).
-    var needsDownloadedModel: Bool { isSwiftVR || self == .seedVR2 }
+    var needsDownloadedModel: Bool { isSwiftVR || self == .seedVR2 || self == .openH3 }
+
+    /// Whether it regenerates with H3 itself (a project clip's latent, not
+    /// the frames): only project videos, and sizes of its own.
+    var regeneratesFromLatent: Bool { self == .openH3 }
 
     /// What it is and what it suits, for the sheet.
     var detail: String {
@@ -107,6 +125,8 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return String(localized: "動画全体を一度に見るAIモデル（SwiftVR、Wan2.2ベース）で、質感や細部を描き起こしながら拡大します。24フレームずつ処理し、Real-ESRGANより大幅に時間がかかります（M5で5秒の動画に1分前後）。重みは同梱せず、配布元でApache License 2.0と宣言されていた版をダウンロードし（SHA-256で照合）、アプリで変換して使います。")
         case .seedVR2:
             return String(localized: "SeedVR2-3B（ByteDance Seed、Apache License 2.0）で1フレームずつ描き起こします。まつ毛や肌のきめなど細部の表現はSwiftVRより強く、そのぶん元の映像から離れることがあります（顔の印象が変わることも）。1フレームに数秒かかり、5秒の動画をM5で672×384から2倍にすると約8分（960×544からは約21分）、GPUに約10GBを使います。重みは同梱せず、配布元の記録と照合してダウンロードします。試験的な方式です。")
+        case .openH3:
+            return String(localized: "H3自身に描き直させます。生成したときの潜在をOpen-H3の潜在アップスケーラで大きな格子に広げ、ノイズを少し戻して、NVIDIAのOpen-H3精緻化LoRAとLightX2V Turbo v1.2で3ステップだけ生成し直します。模様や質感がH3の生成そのものの質で描かれ、生成時の設定（文章・seed）を引き継ぎます。大きさはH3の上限（1344×768ピクセル）まで、このアプリで生成した動画（潜在ファイルのあるもの）だけに使えます。1344×768・5秒でM5で約17分、生成と同じメモリ（約15GB）を使います。重みは同梱せず、配布元の記録と照合してダウンロードし、精緻化LoRAはこのMacで取り出します。試験的な方式です。")
         case .swiftVRFourX:
             return String(localized: "SwiftVRに4倍で復元させてから、標準の拡大と同じ方法で選んだ大きさに縮めます。目や眉を描き直しにくく、質感が穏やかで元の動画に忠実になります。4倍の途中の画面がGPUのメモリに入らない大きさでは、重なりを持たせたタイルに分けて復元します。時間はSwiftVRの約5倍です（M5で5秒の544×960を2倍にするのに約4分）。")
         }
@@ -125,6 +145,8 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return Self.swiftVRCachePath != nil && MTLCreateSystemDefaultDevice() != nil
         case .seedVR2:
             return SeedVR2Model.weightsPresent && MTLCreateSystemDefaultDevice() != nil
+        case .openH3:
+            return OpenH3Model.ready && MTLCreateSystemDefaultDevice() != nil
         }
     }
 
@@ -142,13 +164,18 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return String(localized: "SwiftVRのモデルが入っていません。「モデルを準備…」で重み（約20GB）をダウンロードして変換すると選べます。")
         case .seedVR2:
             return String(localized: "SeedVR2のモデルが入っていません。「モデルを準備…」で重み（約4.7GB）をダウンロードすると選べます。")
+        case .openH3:
+            if OpenH3Model.upsamplerPresent && OpenH3Model.refinerPresent {
+                return String(localized: "LightX2V Turbo v1.2のファイルがありません。「モデルを準備…」でダウンロードすると選べます。")
+            }
+            return String(localized: "Open-H3のモデルが入っていません。「モデルを準備…」で結合LoRA（約12.5GB）と潜在アップスケーラをダウンロードし、精緻化LoRAを取り出すと選べます。")
         default:
             return String(localized: "このMacでは使えません。")
         }
     }
 
     /// Whether it wants the GPU to itself (so it waits for a generation).
-    var needsIdleGPU: Bool { isSwiftVR || self == .seedVR2 }
+    var needsIdleGPU: Bool { isSwiftVR || self == .seedVR2 || self == .openH3 }
 }
 
 /// How much bigger (the sheet's 倍率). Every upscaler takes each of them.
@@ -430,6 +457,9 @@ enum VideoUpscale {
                                                                                           height: inputHeight,
                                                                                           scale: factor == .two ? 2 : 4),
                                                                outputWidth: width, outputHeight: height))
+        case .openH3:
+            // Not a frame scaler: GenerationViewModel.runOpenH3Regeneration.
+            throw UpscaleError.unavailable(upscaler.label)
         case .swiftVR, .swiftVRFourX:
             guard let cachePath = VideoUpscaler.swiftVRCachePath else { throw UpscaleError.unavailable(upscaler.label) }
             let resolver: H3VideoSuperResolver
@@ -999,10 +1029,18 @@ extension GenerationViewModel {
             projectMessage = reason
             return false
         }
+        if upscaler.regeneratesFromLatent, let reason = openH3Reason(for: video, factor: factor) {
+            projectMessage = reason
+            return false
+        }
         let destination = project.url.appendingPathComponent(name)
         let started = Date()
         do {
-            try await runUpscale(video.url, to: destination, upscaler: upscaler, factor: factor)
+            if upscaler.regeneratesFromLatent {
+                _ = try await runOpenH3Regeneration(video, to: destination, factor: factor)
+            } else {
+                try await runUpscale(video.url, to: destination, upscaler: upscaler, factor: factor)
+            }
             if var record = video.record {
                 record.upscaleFactor = factor.rawValue
                 record.video = name
@@ -1025,11 +1063,17 @@ extension GenerationViewModel {
             }
         } catch {
             try? FileManager.default.removeItem(at: destination)
+            // Nothing of a failed copy stays (its latent copy is made after
+            // the video, so this is for a failure in between).
+            try? FileManager.default.removeItem(at: ProjectFiles.latentURL(for: destination))
             reportUpscaleFailure(error, source: video.url)
             return false
         }
         reloadProjectVideos()
-        projectMessage = String(localized: "\(video.url.lastPathComponent)を\(factor.label)に拡大して、\(name)をつくりました（\(upscaler.label)、\(formatElapsed(Date().timeIntervalSince(started)))）")
+        let made = (try? await VideoUpscale.frameSize(of: destination)).map { "\($0.width)×\($0.height)" } ?? factor.label
+        projectMessage = upscaler.regeneratesFromLatent
+            ? String(localized: "\(video.url.lastPathComponent)を\(made)に再生成して、\(name)をつくりました（\(upscaler.label)、\(formatElapsed(Date().timeIntervalSince(started)))）")
+            : String(localized: "\(video.url.lastPathComponent)を\(factor.label)に拡大して、\(name)をつくりました（\(upscaler.label)、\(formatElapsed(Date().timeIntervalSince(started)))）")
         projectMessageFile = destination
         return true
     }
@@ -1068,6 +1112,10 @@ extension GenerationViewModel {
     func upscaleVideoFile(_ source: URL, to destination: URL, upscaler: VideoUpscaler = .standard,
                           factor: UpscaleFactor = .two) async -> Bool {
         guard !isUpscalingVideo else { return false }
+        if upscaler.regeneratesFromLatent {
+            projectMessage = String(localized: "Open-H3 再生成は、プロジェクトの動画（潜在ファイルのあるもの）にだけ使えます。")
+            return false
+        }
         if let reason = upscaleBlockedReason(upscaler) {
             projectMessage = reason
             return false

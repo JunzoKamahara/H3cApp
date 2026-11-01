@@ -208,6 +208,15 @@ public struct H3GenerationParams: Sendable {
     public var saveLatentPath: String?
     public var continueLatentPath: String?
     public var continueFrames: Int32 = 22
+    // h3_params.initial_latent_path / video_sigmas: regeneration from a
+    // latent (Open-H3 refinement, hires-fix). The .h3lt must be at exactly
+    // this generation's latent grid and frame count; denoising starts from
+    // (1 - sigma0) * its video latent + sigma0 * noise with the custom
+    // sigma list (strictly decreasing, first in (0, 1], last 0, steps =
+    // count - 1), and its audio latent is carried through clean. Cannot be
+    // combined with continueLatentPath.
+    public var initialLatentPath: String?
+    public var videoSigmas: [Float] = []
     /// Deliver .latentPreview on every this-many-th model evaluation
     /// (reused steps are not counted; never the last step); 0 is off. Each
     /// costs one wait for the GPU.
@@ -571,6 +580,11 @@ public final class H3Engine: @unchecked Sendable {
                       params.forcedAudioPath == nil ? 0 : 1, params.forcedAudioOffset,
                       params.continueLatentPath == nil ? 0 : 1, params.continueFrames,
                       params.latentPreviewEvery, cParams.seed)
+                if params.initialLatentPath != nil || !params.videoSigmas.isEmpty {
+                    NSLog("h3: regeneration - initial latent %@, sigmas %@",
+                          params.initialLatentPath ?? "(none)",
+                          params.videoSigmas.map { String(format: "%.6g", $0) }.joined(separator: ","))
+                }
                 cParams.on_progress = h3ProgressTrampoline
                 cParams.on_frame = h3FrameTrampoline
                 if params.latentPreviewEvery > 0 {
@@ -588,6 +602,11 @@ public final class H3Engine: @unchecked Sendable {
                                     withOptionalCString(params.forcedAudioPath) { forcedAudioC in
                                     withOptionalCString(params.saveLatentPath) { saveLatentC in
                                     withOptionalCString(params.continueLatentPath) { continueLatentC in
+                                    withOptionalCString(params.initialLatentPath) { initialLatentC in
+                                    params.videoSigmas.withUnsafeBufferPointer { sigmas in
+                                        cParams.initial_latent_path = initialLatentC
+                                        cParams.video_sigmas = sigmas.isEmpty ? nil : sigmas.baseAddress
+                                        cParams.video_sigma_count = Int32(sigmas.count)
                                         cParams.output_path = outputPathC
                                         cParams.forced_audio_path = forcedAudioC
                                         cParams.save_latent_path = saveLatentC
@@ -599,6 +618,8 @@ public final class H3Engine: @unchecked Sendable {
                                         cParams.loras = loraBuffer.baseAddress
                                         cParams.lora_count = loraBuffer.count
                                         return h3_generate(ctx, promptC, &cParams)
+                                    }
+                                    }
                                     }
                                     }
                                     }

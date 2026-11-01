@@ -240,6 +240,20 @@ extension GenerationViewModel {
                         ? SwiftVRModel.provenance.map { ISO8601DateFormatter().string(from: $0.verifiedAt) } as Any
                         : NSNull()
                 }
+                if upscaler == .openH3 {
+                    item["model_directory"] = OpenH3Model.directory
+                    item["model_installed"] = OpenH3Model.ready
+                    item["license_accepted"] = OpenH3Model.licenseAcceptedAt != nil
+                    item["setup"] = OpenH3Setup.shared.phase.apiText
+                    item["revision"] = OpenH3Model.revision
+                    item["declared_license"] = OpenH3Model.declaredLicense
+                    item["verified"] = OpenH3Model.verified
+                    item["verified_at"] = OpenH3Model.verified
+                        ? OpenH3Model.provenance.map { ISO8601DateFormatter().string(from: $0.verifiedAt) } as Any
+                        : NSNull()
+                    item["turbo"] = OpenH3Model.turboPath as Any
+                    item["max_pixels"] = OpenH3Plan.maxPixels
+                }
                 if upscaler == .seedVR2 {
                     item["model_directory"] = SeedVR2Model.directory
                     item["model_installed"] = SeedVR2Model.weightsPresent
@@ -254,6 +268,18 @@ extension GenerationViewModel {
                 }
                 return item
             })
+        case ("POST", "/api/upscalers/openH3/setup"):
+            // Lists the pinned revision, downloads what is missing, checks
+            // the files' SHA-256 against it, extracts the refiner (ranks
+            // 0-383, BF16) and deletes the merged file. The caller confirms
+            // the license notice.
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard (json["confirm_license"] as? Bool) == true else {
+                return .error(400, "confirm_license must be true: the Open-H3 license notice (GET /api/upscalers) was read")
+            }
+            guard !OpenH3Setup.shared.isBusy else { return .error(409, "the Open-H3 model is being set up") }
+            OpenH3Setup.shared.start()
+            return .json(200, ["ok": true, "setup": OpenH3Setup.shared.phase.apiText])
         case ("POST", "/api/upscalers/seedVR2/setup"):
             // Lists the pinned revision, downloads what is missing and checks
             // the files' SHA-256 against it (no conversion). The caller
@@ -584,6 +610,9 @@ extension GenerationViewModel {
                 upscaler = chosen
             }
             if let reason = upscaleBlockedReason(upscaler) { return .error(409, reason) }
+            if upscaler.regeneratesFromLatent, let reason = openH3Reason(for: video, factor: factor) {
+                return .error(400, reason)
+            }
             Task { await upscaleProjectVideo(video, as: name, upscaler: upscaler, factor: factor) }
             return .json(202, ["ok": true, "video": name])
         case "/api/project/import-video":

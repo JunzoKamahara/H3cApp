@@ -134,6 +134,27 @@ Good to know:
     are matched to its input with the reference's wavelet and L*a*b*
     transfer. It waits for a running generation to finish (UPSCALE_PLAN.md
     appendix A.7).
+  - **Open-H3 再生成 (regeneration by H3, up to 1344×768; very slow,
+    experimental)**: not an enlargement of the frames but H3 itself
+    redrawing the clip on a larger canvas. The latents it was generated
+    from (the `.h3lt` beside the video) are widened onto the larger grid by
+    Open-H3's latent upscaler, noised back a little (σ 0.909) and generated
+    again in just three steps with NVIDIA's Open-H3 refiner LoRA and
+    LightX2V Turbo v1.2. Texture and pattern come out at the quality of
+    H3's own generation, with the clip's prompt and seed carried over. The
+    size stays within H3's limit (1344×768 pixels) and the factor is
+    rounded into it (a 960×544 video becomes 1344×768 at every factor).
+    Only videos this app generated, with their latent file, qualify (not
+    imported videos; a joined video through the clips it was joined from).
+    The time is a generation's: about 17 minutes for 5 seconds at 1344×768
+    on an M5, with a generation's memory (about 15 GB). The weights are not
+    bundled: "モデルを準備…" shows the license notice and then downloads
+    NVIDIA's merged LoRA (FP32, about 12.5 GB) and the latent upscaler,
+    checks their SHA-256, extracts the refiner part alone (ranks 0–383) as
+    BF16 on this Mac (about 4.2 GB) and deletes the merged file. Turbo v1.2
+    is taken from the LoRA folder when the same revision is there. The
+    refiner LoRA is under the MiniMax H3 Community License
+    (UPSCALE_PLAN.md appendix A.4).
 
   All of them run inside the app, with no other program. Real-ESRGAN's
   pretrained weights (BSD-3-Clause) are included in the app.

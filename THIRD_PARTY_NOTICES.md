@@ -168,3 +168,49 @@ sheet or `POST /api/upscalers/seedVR2/setup`). Which conditions apply to a
 use is the user's judgement; the app records facts and labels nothing
 "commercial".
 
+## Open-H3-Regenerate-2K and the LBH latent upscaler (the "Open-H3 再生成" upscaler; no weights bundled)
+
+The "Open-H3 再生成" upscaler is H3's own generation run again from a clip's
+latents on a larger canvas (`OpenH3Regenerate.swift`, the engine's
+`initial_latent_path` / `video_sigmas` parameters), following the recipe of
+NVIDIA's [Open-H3-Regenerate-2K](https://huggingface.co/Efficient-Large-Model/Open-H3-Regenerate-2K)
+(code: [NVlabs/Sana, sol-engine branch](https://github.com/NVlabs/Sana/tree/sol-engine/models/Open-H3-Regenerate-2K))
+without its LMS Sharp parts. The latent upscaler is the engine's own C/Metal
+port (`h3_latent_upscale.c`) of LatentResizer3D from
+[LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler)
+(MIT), checked against the author's node. No code from those projects
+ships in the app.
+
+The weights are **not bundled**. The app fetches, from revision
+`5809c33730c18b6b1c827b40974855a4288641b3` (2026-10-28) of that repository,
+the merged FP32 LoRA `lora/open_h3_regenerate_2k_lora.safetensors` (rank
+576: the Open-H3 refiner, ranks 0–383, with LightX2V FL2VA Turbo v1.2 and
+LMS Sharp v1.0 concatenated after it), the latent upscaler
+`latent_upsampler/minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors`
+(the same object as LBH's repository; its `LICENSE` there is the Apache
+License 2.0 text), `base_model/LICENSE`, `NOTICE`, `README.md` and the
+merge records. Each file's SHA-256 is checked against that revision before
+and after the download. The refiner is then **extracted on the user's Mac**
+(`h3_lora_extract.c`: lora_A rows and lora_B columns 0–383 kept, BF16) and
+the merged file deleted; nothing is redistributed, and the extraction
+creates no permission. LightX2V Turbo v1.2 is applied from its own file
+(`lightx2v/Minimax-h3-Turbo` at `3ec17a324ced54151364f24f8b5fb6bf7e26414f`,
+the revision whose README declared `apache-2.0`), taken from the app's
+LoRA folder when a copy is there and downloaded otherwise.
+
+The repository's model card declares `license: other` /
+`license_name: minimax-h3-community`, and its README states that the
+refiner LoRA, the fast VAE decoder and `base_model/` follow the
+[MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/6818f6c32d12b210915e44ad56a4228c2608f160/LICENSE)
+(territory, use and redistribution terms included), while the components
+NVIDIA did not train (the latent upscaler, the merged Turbo and LMS Sharp
+LoRAs) follow their own licenses. The app shows this notice and the links
+before the download (the "Open-H3 再生成のモデルを準備" sheet or
+`POST /api/upscalers/openH3/setup`) and writes the record
+(`H3VSR_PROVENANCE.json`: every hash, the extracted range, the license
+statement). Which conditions apply to a use is the user's judgement; the
+app records facts and labels nothing "commercial".
+
+Base model notice, as the repository's `NOTICE` states it: "MiniMax H3 is
+licensed under the MiniMax H3 Community License Agreement, Copyright © 2026
+MiniMax. All Rights Reserved."
