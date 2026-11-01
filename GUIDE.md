@@ -114,6 +114,24 @@ Good to know:
     about 448x256), it is restored as overlapping tiles blended smoothly at
     the seams; when even tiles would not fit, it quietly stays at the chosen
     scale. At 4x it is the same as SwiftVR.
+  - **SeedVR2 (AI super-resolution, detail first; very slow, experimental)**:
+    SeedVR2-3B (ByteDance Seed, Apache License 2.0), a one-step diffusion
+    restorer, redraws each frame on its own. Fine detail such as eyelashes,
+    skin texture and fabric comes out stronger than with SwiftVR, and the
+    result can drift further from the source (a face's look may change; it
+    is the model's known behaviour on clean inputs). Each frame takes
+    seconds: on a 24 GB M5 a 672×384 video enlarged 2x takes about 6 s per
+    frame, about 12 minutes for 5 seconds, with about 10 GB of GPU memory
+    (1920×1088 output about twice that). Its weights are not bundled: press
+    "モデルを準備…" (also in モデル管理 → 拡大モデル), read the license notice,
+    and the app downloads the MLX 8-bit export of the weights (about 4.7 GB,
+    resumable) from the pinned revision whose model card declares them under
+    the Apache License 2.0, checks each file's SHA-256 against that
+    revision's record, and keeps the record and the license text in the
+    model folder. There is no conversion step. Each output frame's colours
+    are matched to its input with the reference's wavelet and L*a*b*
+    transfer. It waits for a running generation to finish (UPSCALE_PLAN.md
+    appendix A.7).
 
   All of them run inside the app, with no other program. Real-ESRGAN's
   pretrained weights (BSD-3-Clause) are included in the app.

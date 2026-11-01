@@ -240,8 +240,31 @@ extension GenerationViewModel {
                         ? SwiftVRModel.provenance.map { ISO8601DateFormatter().string(from: $0.verifiedAt) } as Any
                         : NSNull()
                 }
+                if upscaler == .seedVR2 {
+                    item["model_directory"] = SeedVR2Model.directory
+                    item["model_installed"] = SeedVR2Model.weightsPresent
+                    item["license_accepted"] = SeedVR2Model.licenseAcceptedAt != nil
+                    item["setup"] = SeedVR2Setup.shared.phase.apiText
+                    item["revision"] = SeedVR2Model.revision
+                    item["declared_license"] = SeedVR2Model.declaredLicense
+                    item["verified"] = SeedVR2Model.verified
+                    item["verified_at"] = SeedVR2Model.verified
+                        ? SeedVR2Model.provenance.map { ISO8601DateFormatter().string(from: $0.verifiedAt) } as Any
+                        : NSNull()
+                }
                 return item
             })
+        case ("POST", "/api/upscalers/seedVR2/setup"):
+            // Lists the pinned revision, downloads what is missing and checks
+            // the files' SHA-256 against it (no conversion). The caller
+            // confirms the license notice.
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard (json["confirm_license"] as? Bool) == true else {
+                return .error(400, "confirm_license must be true: the SeedVR2 license notice (GET /api/upscalers) was read")
+            }
+            guard !SeedVR2Setup.shared.isBusy else { return .error(409, "the SeedVR2 model is being set up") }
+            SeedVR2Setup.shared.start()
+            return .json(200, ["ok": true, "setup": SeedVR2Setup.shared.phase.apiText])
         case ("POST", "/api/upscalers/swiftVR/setup"):
             // The same chain as the sheet's button: list the pinned
             // revision, download what is missing, check the files' SHA-256

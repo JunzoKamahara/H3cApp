@@ -8,6 +8,7 @@ struct UpscaleSheet: View {
     @State private var upscaler: VideoUpscaler = .standard
     @State private var factor: UpscaleFactor
     @State private var showingSwiftVRSetup = false
+    @State private var showingSeedVR2Setup = false
     @Environment(\.colorScheme) private var colorScheme
     private var palette: H3Palette { H3Palette(colorScheme) }
 
@@ -67,6 +68,15 @@ struct UpscaleSheet: View {
                         }
                     }
                 }
+                if upscaler == .seedVR2 {
+                    HStack {
+                        Button(upscaler.isAvailable ? "モデルを管理…" : "モデルを準備…") { showingSeedVR2Setup = true }
+                            .controlSize(.small)
+                        if SeedVR2Setup.shared.isBusy {
+                            Text("準備中です（\(SeedVR2Setup.shared.phase.apiText)）").foregroundStyle(.orange)
+                        }
+                    }
+                }
                 Text(pending.projectVideo != nil
                      ? String(localized: "拡大した動画は、プロジェクトに新しく加わります（名前の最後に「_\(factor.suffix)」）。音声とAIで生成したという記録は、そのままです。")
                      : String(localized: "拡大した動画の保存先は、次に選びます。音声とファイルの情報は、そのままです。"))
@@ -97,6 +107,9 @@ struct UpscaleSheet: View {
         .frame(width: 500)
         .sheet(isPresented: $showingSwiftVRSetup) {
             SwiftVRSetupView(busy: viewModel.isGenerating || viewModel.isBuildingCache) { showingSwiftVRSetup = false }
+        }
+        .sheet(isPresented: $showingSeedVR2Setup) {
+            SeedVR2SetupView(busy: viewModel.isGenerating || viewModel.isBuildingCache) { showingSeedVR2Setup = false }
         }
     }
 }

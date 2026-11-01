@@ -612,6 +612,47 @@ are in `UPSCALE_PLAN.md`; the short version:
   implementation (`tools/dump_swiftvr_fixture.py`); `h3_vsr_bench` times the
   stages of a chunk.
 
+## Frame-by-frame AI restoration (SeedVR2)
+
+The "SeedVR2" method of 動画を拡大 is the engine's own implementation
+(`h3_seedvr2.c`) of SeedVR2-3B, ByteDance Seed's one-step diffusion
+restorer, written against mflux's MLX implementation and checked stage by
+stage against it. Design notes and measurements are in `UPSCALE_PLAN.md`
+appendix A.7; the short version:
+
+- **Weights.** The MLX affine 8-bit export (`mlx-community/SeedVR2-3B-mlx-int8`,
+  pinned revision, SHA-256 checked, Apache License 2.0 upstream and declared)
+  is read directly: the engine dequantises every linear to BF16 on the GPU
+  at load time (about 1.5 s, 6.5 GB resident), and the VAE's F16 weights
+  become F32. There is no cache file and no conversion step.
+- **One frame at a time.** The video model is run as the reference runs it
+  on images (T = 1): the input frame is resized to the output size with
+  PIL's bicubic, padded to multiples of 16, encoded by the causal 3D VAE
+  (every temporal tap of a causal convolution sees the same frame, so each
+  folds into one 2D convolution), the 32-block transformer predicts the
+  velocity once at t = 1000 from [noise, latent, mask] with the fixed text
+  embedding, `z = noise - v` is decoded, cropped, and colour-matched to the
+  input with the reference's wavelet + L*a*b* histogram transfer. The noise
+  is the same for every frame of a video (one seed), which keeps the
+  redrawn detail stable from frame to frame.
+- **Attention.** The transformer's windowed attention (3×3 windows over the
+  token grid resized to 45×80, shifted by half a window in odd blocks, the
+  58 text tokens appended to every window) is laid out once per video:
+  windows of equal length are batched, q/k are RMS-normalised per head and
+  rotated (window-relative 3D RoPE) by one kernel, and the text tokens'
+  outputs are averaged over the windows.
+- **Numbers (M5 24 GB).** Against the MLX reference on a 512×288 frame:
+  encoder latent 45.7 dB, decoder 67.6 dB, the whole frame 52 dB (bf16
+  rounding; the reference itself runs fp16). 672×384 → 1344×768: about
+  6 s per frame (encode 1.4 s, transformer 1.9 s, decode 2.8 s), peak live
+  GPU memory 10.9 GiB. The MLX-Swift port measured in appendix A.6 takes
+  19.6 s per frame on the same input.
+- **Switches.** `H3_SV2_TRACE=1` prints stage times, `H3_SV2_SYNC=1` makes
+  them GPU-synchronous, `H3_SV2_NO_NAX=1` keeps the BF16 linears on
+  MPSGraph, `H3_SEEDVR2_MODEL_DIR` points the app at another model folder.
+  `make h3_seedvr2_tests` compares every stage with a reference dump
+  (`H3_SEEDVR2_FIXTURE`); `h3_seedvr2_cli` restores PNG frames.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Third-party notices (a Metal kernel design

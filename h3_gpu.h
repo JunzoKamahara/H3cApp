@@ -528,6 +528,15 @@ int h3_gpu_conv3d_as_2d_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                             uint32_t kernel_depth, uint32_t kernel_height,
                             uint32_t kernel_width, uint32_t stride_depth,
                             uint32_t stride_height, uint32_t stride_width);
+/* One 2D convolution with explicit zero padding in the graph: F32 NHWC
+ * [height, width, C_in] -> [(height + pads - kh) / stride + 1, ..., C_out],
+ * weight OIHW [C_out, C_in, kh, kw]. */
+int h3_gpu_conv2d_padded_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                             const h3_gpu_tensor *weight, const h3_gpu_tensor *bias,
+                             uint32_t height, uint32_t width, uint32_t input_channels,
+                             uint32_t output_channels, uint32_t kernel_height, uint32_t kernel_width,
+                             uint32_t stride_height, uint32_t stride_width,
+                             uint32_t pad_top, uint32_t pad_bottom, uint32_t pad_left, uint32_t pad_right);
 /* The same GroupNorm + SiLU in three passes that each read the frame in
  * order, much faster on large frames; equal up to the order of the F32
  * sums. Shapes it doesn't cover fall back to the one-pass kernel. */
@@ -1040,6 +1049,70 @@ void h3_gpu_register_ccv_attention_supported(
  * without CCV_DIR. */
 uint64_t h3_gpu_ccv_attention_dispatch_count(void);
 uint64_t h3_gpu_ccv_attention_direct_count(void);
+
+/* --- SeedVR2 (h3_seedvr2.c): see the kernels' comments in h3_shaders.metal --- */
+/* Lets h3_gpu_linear_bf16 take the TensorOps (NAX) BF16 kernel for any
+ * shape that satisfies its constraints (in % 32, out % 64, rows >= 128, no
+ * bias), not only the H3 projections. Per context; no effect without
+ * tensor hardware. */
+void h3_gpu_set_nax_linear_generic(h3_gpu *gpu, int on);
+/* MLX affine 8-bit (group of `group` columns, F16 scales/biases as raw
+ * bytes in I8 tensors, packed U32 [rows, columns / 4]) -> BF16 [rows, columns]. */
+int h3_gpu_sv2_dequant_q8_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                               const h3_gpu_tensor *packed, const h3_gpu_tensor *scales,
+                               const h3_gpu_tensor *biases, uint32_t rows,
+                               uint32_t columns, uint32_t group);
+/* out = x / rms(x) * scale + shift (F32 vectors, NULL = 1 / 0). */
+int h3_gpu_sv2_rms_mod_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                            const h3_gpu_tensor *scale, const h3_gpu_tensor *shift,
+                            uint32_t rows, uint32_t width, float epsilon);
+/* The window gather with per-head RMSNorm of q/k and RoPE; index I32
+ * [rows] (>= 0 video token, < 0 text token -1 - index), cos/sin F32
+ * [rows, pairs], norms F32 [head_dim], outputs BF16 [rows, heads*head_dim]. */
+int h3_gpu_sv2_qkv_window_bf16(h3_gpu *gpu, h3_gpu_tensor *q_out, h3_gpu_tensor *k_out,
+                               h3_gpu_tensor *v_out, const h3_gpu_tensor *qkv_vid,
+                               const h3_gpu_tensor *qkv_txt, const h3_gpu_tensor *index,
+                               const h3_gpu_tensor *rope_cos, const h3_gpu_tensor *rope_sin,
+                               const h3_gpu_tensor *norm_q_vid, const h3_gpu_tensor *norm_k_vid,
+                               const h3_gpu_tensor *norm_q_txt, const h3_gpu_tensor *norm_k_txt,
+                               uint32_t rows, uint32_t heads, uint32_t head_dim,
+                               uint32_t pairs, float epsilon);
+/* out[j] = mean_w in[base[w] + j] (base I32 [windows]). */
+int h3_gpu_sv2_txt_mean_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                             const h3_gpu_tensor *base, uint32_t windows,
+                             uint32_t txt_rows, uint32_t width);
+/* Zero padding of F32 [H, W, C]. */
+int h3_gpu_sv2_pad_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                       uint32_t height, uint32_t width, uint32_t channels,
+                       uint32_t top, uint32_t bottom, uint32_t left, uint32_t right);
+/* in [H, W, C*4*temporal] -> out [2H, 2W, C] (the first temporal slice). */
+int h3_gpu_sv2_shuffle_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                           uint32_t height, uint32_t width, uint32_t channels,
+                           uint32_t temporal);
+/* GroupNorm (no SiLU) on F32 [frames, H, W, C]. */
+int h3_gpu_sv2_group_norm_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                              const h3_gpu_tensor *weight, const h3_gpu_tensor *bias,
+                              uint32_t frames, uint32_t height, uint32_t width,
+                              uint32_t channels, uint32_t groups, float epsilon);
+/* 8-bit pixels (I8 tensor, in_stride bytes per row) resized with PIL's
+ * bicubic to out_w x out_h inside an F32 [full_h, full_w, 3] frame in
+ * [-1, 1]; outside out_w x out_h the value is pad_value. */
+int h3_gpu_sv2_bicubic_pixels_f32(h3_gpu *gpu, h3_gpu_tensor *output,
+                                  const h3_gpu_tensor *pixels, uint32_t in_w, uint32_t in_h,
+                                  uint32_t in_stride, int bgra, uint32_t out_w, uint32_t out_h,
+                                  uint32_t full_w, uint32_t full_h, float pad_value);
+/* F32 [full_h, full_w, 3] in [-1, 1] -> 8-bit, cropped, rounded. */
+int h3_gpu_sv2_f32_to_pixels(h3_gpu *gpu, h3_gpu_tensor *pixels, const h3_gpu_tensor *input,
+                             uint32_t full_w, uint32_t full_h, uint32_t crop_w,
+                             uint32_t crop_h, uint32_t out_stride, int bgra);
+int h3_gpu_sv2_wavelet_blur_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                                uint32_t height, uint32_t width, int radius);
+int h3_gpu_sv2_rgb_to_lab_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                              uint32_t pixels);
+/* luts F32 [3, bins]; channel c's bin b covers minimum[c] + b * step[c]. */
+int h3_gpu_sv2_lab_match_to_rgb_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *lab,
+                                    const h3_gpu_tensor *luts, uint32_t pixels, uint32_t bins,
+                                    float l_weight, const float minimum[3], const float step[3]);
 
 #ifdef __cplusplus
 } // extern "C"

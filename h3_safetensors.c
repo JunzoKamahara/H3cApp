@@ -370,6 +370,12 @@ static int h3_append_tensor(h3_st_header *header, h3_st_tensor tensor,
  * (freeing the already-parsed key in that case, since nothing stores it). */
 static int h3_parse_metadata_object(h3_json_cursor *cursor, h3_st_header *header,
                                     size_t *capacity) {
+    /* MLX's writer emits "__metadata__": null when there is none. */
+    h3_json_ws(cursor);
+    if (cursor->end - cursor->at >= 4 && !strncmp(cursor->at, "null", 4)) {
+        cursor->at += 4;
+        return 1;
+    }
     if (!h3_json_take(cursor, '{')) return 0;
     h3_json_ws(cursor);
     if (cursor->at < cursor->end && *cursor->at == '}') {

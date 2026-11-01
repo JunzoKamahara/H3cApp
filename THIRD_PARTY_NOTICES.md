@@ -139,3 +139,32 @@ weights the user has downloaded and converted for this Mac (the
 both license texts before the download. Which conditions apply to a use is
 the user's judgement; the app records facts and labels nothing "commercial".
 
+
+## SeedVR2 and mflux (the "SeedVR2" upscaler; no weights bundled)
+
+The "SeedVR2（AI超解像・細部重視）" upscaler is the engine's own C/Metal
+implementation (`h3_seedvr2.c`, `h3_shaders.metal`) of SeedVR2-3B, the
+one-step diffusion restoration model by ByteDance Seed
+([ByteDance-Seed/SeedVR](https://github.com/ByteDance-Seed/SeedVR), Apache
+License 2.0; the NaDiT transformer with windowed attention and the causal
+3D autoencoder, run one frame at a time), written against the MLX
+implementation in [filipstrand/mflux](https://github.com/filipstrand/mflux)
+(MIT) and checked stage by stage against it. No code from those projects
+ships in the app.
+
+The model weights are **not bundled**. The app fetches
+[mlx-community/SeedVR2-3B-mlx-int8](https://huggingface.co/mlx-community/SeedVR2-3B-mlx-int8)
+at revision `9dbcb304916d94b4a9769b588ea28439054ce3bb` (2026-06-06): ByteDance
+Seed's SeedVR2-3B weights converted to MLX's affine 8-bit format (group 64),
+whose model card declares `apache-2.0` and records the chain (ByteDance Seed
+→ fp16 safetensors → MLX). The engine reads that export directly and
+dequantises it on the GPU at load time; there is no converted cache. Each
+file's SHA-256 is checked against that revision's object ids before and
+after the download, the upstream repository's Apache License 2.0 text is
+saved beside the weights (`LICENSE`, hash-checked) and the record written
+(`H3VSR_PROVENANCE.json`). The app shows this notice, the declaring model
+card and the license text before the download (the "SeedVR2のモデルを準備"
+sheet or `POST /api/upscalers/seedVR2/setup`). Which conditions apply to a
+use is the user's judgement; the app records facts and labels nothing
+"commercial".
+

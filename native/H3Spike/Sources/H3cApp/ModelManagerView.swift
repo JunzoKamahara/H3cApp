@@ -46,6 +46,7 @@ struct ModelManagerView: View {
     private var palette: H3Palette { H3Palette(colorScheme) }
 
     @State private var showingSwiftVRSetup = false
+    @State private var showingSeedVR2Setup = false
 
     private enum Section: String, CaseIterable, Identifiable {
         case models, loras, upscalers
@@ -556,6 +557,18 @@ struct ModelManagerView: View {
                 .padding(.vertical, 4)
                 HStack(alignment: .top, spacing: H3Spacing.md) {
                     VStack(alignment: .leading, spacing: 4) {
+                        Text(VideoUpscaler.seedVR2.label).font(.system(size: 13, weight: .medium))
+                        Text(seedVR2StatusText).font(.caption).foregroundStyle(palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(verbatim: SeedVR2Model.directory).font(.caption2).foregroundStyle(palette.textSecondary)
+                            .textSelection(.enabled)
+                    }
+                    Spacer()
+                    Button(VideoUpscaler.seedVR2.isAvailable ? "管理…" : "準備…") { showingSeedVR2Setup = true }
+                }
+                .padding(.vertical, 4)
+                HStack(alignment: .top, spacing: H3Spacing.md) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text("Real-ESRGAN 汎用・アニメ").font(.system(size: 13, weight: .medium))
                         Text("アプリに含まれています（BSD-3-Clause）。準備は要りません。")
                             .font(.caption).foregroundStyle(palette.textSecondary)
@@ -565,7 +578,7 @@ struct ModelManagerView: View {
                 .padding(.vertical, 4)
             }
             .listStyle(.inset)
-            Text("「動画を拡大」のAI超解像が使うモデルです。SwiftVRの重みは同梱せず、ここで配布元のApache License 2.0と宣言されていた版をダウンロードし（SHA-256で照合）、変換します。")
+            Text("「動画を拡大」のAI超解像が使うモデルです。SwiftVRとSeedVR2の重みは同梱せず、ここで配布元のApache License 2.0と宣言されていた版をダウンロードします（SHA-256で照合。SwiftVRはこのMac用に変換もします）。")
                 .font(.caption).foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(H3Spacing.md)
@@ -573,6 +586,21 @@ struct ModelManagerView: View {
         .sheet(isPresented: $showingSwiftVRSetup) {
             SwiftVRSetupView(busy: isGenerating) { showingSwiftVRSetup = false }
         }
+        .sheet(isPresented: $showingSeedVR2Setup) {
+            SeedVR2SetupView(busy: isGenerating) { showingSeedVR2Setup = false }
+        }
+    }
+
+    private var seedVR2StatusText: String {
+        if SeedVR2Setup.shared.isBusy {
+            return String(localized: "準備中です（\(SeedVR2Setup.shared.phase.apiText)）")
+        }
+        if VideoUpscaler.seedVR2.isAvailable {
+            let size = ByteCountFormatter.string(fromByteCount: SeedVR2Model.bytesOnDisk(), countStyle: .file)
+            let check = SeedVR2Model.verified ? "" : String(localized: "。取得元との照合はまだです（「管理…」から）")
+            return String(localized: "使えます（\(size)）") + check
+        }
+        return String(localized: "まだありません。約4.7GBのダウンロードが必要です（変換は不要）。")
     }
 
     private var swiftVRStatusText: String {

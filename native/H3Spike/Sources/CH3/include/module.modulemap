@@ -1,5 +1,6 @@
 module CH3 {
     header "h3.h"
     header "h3_vsr.h"
+    header "h3_seedvr2.h"
     export *
 }

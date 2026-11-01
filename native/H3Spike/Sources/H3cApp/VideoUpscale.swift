@@ -35,6 +35,11 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
     /// resize: gentler texture, truer to the source, about five times the
     /// time of a direct 2x (UPSCALE_PLAN appendix A.3).
     case swiftVRFourX
+    /// SeedVR2-3B (ByteDance Seed, Apache-2.0), run frame by frame by the
+    /// engine (h3_seedvr2.h) from the downloaded MLX 8-bit weights: the
+    /// most detailed enlargement and by far the slowest (UPSCALE_PLAN
+    /// appendix A.7). Experimental.
+    case seedVR2
 
     var id: String { rawValue }
 
@@ -46,7 +51,15 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         case .realESRGANAnime: return String(localized: "Real-ESRGAN アニメ（AI超解像）")
         case .swiftVR: return String(localized: "SwiftVR（AI動画超解像）")
         case .swiftVRFourX: return String(localized: "SwiftVR 4倍で生成してから縮小（質感が穏やか）")
+        case .seedVR2: return String(localized: "SeedVR2（AI超解像・細部重視、非常に遅い・試験的）")
         }
+    }
+
+    /// Where the SeedVR2 model lives (config.json and the three safetensors
+    /// of the MLX 8-bit export); H3_SEEDVR2_MODEL_DIR points elsewhere while
+    /// developing.
+    static var seedVR2ModelDirectory: String {
+        ProcessInfo.processInfo.environment["H3_SEEDVR2_MODEL_DIR"] ?? (h3AppSupportDirectory + "/Upscalers/SeedVR2")
     }
 
     /// Where the SwiftVR model lives (reae.safetensors, prompt_embedding.
@@ -69,12 +82,15 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return Bundle.main.url(forResource: "realesr-general-x4v3", withExtension: "safetensors", subdirectory: "Upscalers")
         case .realESRGANAnime:
             return Bundle.main.url(forResource: "realesr-animevideov3", withExtension: "safetensors", subdirectory: "Upscalers")
-        case .swiftVR, .swiftVRFourX: return nil
+        case .swiftVR, .swiftVRFourX, .seedVR2: return nil
         }
     }
 
     /// Whether it is SwiftVR in either form (the same model and setup).
     var isSwiftVR: Bool { self == .swiftVR || self == .swiftVRFourX }
+
+    /// Whether it needs a model the user downloads (a モデルを準備 button).
+    var needsDownloadedModel: Bool { isSwiftVR || self == .seedVR2 }
 
     /// What it is and what it suits, for the sheet.
     var detail: String {
@@ -89,6 +105,8 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return String(localized: "AIで線や色の面をくっきりさせながら拡大します（Real-ESRGAN realesr-animevideov3）。アニメやイラスト調の映像向けで、汎用より速く処理します。")
         case .swiftVR:
             return String(localized: "動画全体を一度に見るAIモデル（SwiftVR、Wan2.2ベース）で、質感や細部を描き起こしながら拡大します。24フレームずつ処理し、Real-ESRGANより大幅に時間がかかります（M5で5秒の動画に1分前後）。重みは同梱せず、配布元でApache License 2.0と宣言されていた版をダウンロードし（SHA-256で照合）、アプリで変換して使います。")
+        case .seedVR2:
+            return String(localized: "SeedVR2-3B（ByteDance Seed、Apache License 2.0）で1フレームずつ描き起こします。まつ毛や肌のきめなど細部の表現はSwiftVRより強く、そのぶん元の映像から離れることがあります（顔の印象が変わることも）。1フレームに数秒かかり、5秒の動画の2倍拡大でM5でも10分前後、GPUに約10GBを使います。重みは同梱せず、配布元の記録と照合してダウンロードします。試験的な方式です。")
         case .swiftVRFourX:
             return String(localized: "SwiftVRに4倍で復元させてから、標準の拡大と同じ方法で選んだ大きさに縮めます。目や眉を描き直しにくく、質感が穏やかで元の動画に忠実になります。4倍の途中の画面がGPUのメモリに入らない大きさでは、重なりを持たせたタイルに分けて復元します。時間はSwiftVRの約5倍です（M5で5秒の544×960を2倍にするのに約4分）。")
         }
@@ -105,6 +123,8 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return weightsURL != nil && MTLCreateSystemDefaultDevice() != nil
         case .swiftVR, .swiftVRFourX:
             return Self.swiftVRCachePath != nil && MTLCreateSystemDefaultDevice() != nil
+        case .seedVR2:
+            return SeedVR2Model.weightsPresent && MTLCreateSystemDefaultDevice() != nil
         }
     }
 
@@ -120,13 +140,15 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
                 return String(localized: "SwiftVRの重みはありますが、このMac用に変換されていません。「モデルを準備…」で変換すると選べます。")
             }
             return String(localized: "SwiftVRのモデルが入っていません。「モデルを準備…」で重み（約20GB）をダウンロードして変換すると選べます。")
+        case .seedVR2:
+            return String(localized: "SeedVR2のモデルが入っていません。「モデルを準備…」で重み（約4.7GB）をダウンロードすると選べます。")
         default:
             return String(localized: "このMacでは使えません。")
         }
     }
 
     /// Whether it wants the GPU to itself (so it waits for a generation).
-    var needsIdleGPU: Bool { isSwiftVR }
+    var needsIdleGPU: Bool { isSwiftVR || self == .seedVR2 }
 }
 
 /// How much bigger (the sheet's 倍率). Every upscaler takes each of them.
@@ -225,6 +247,34 @@ private final class VSRChunkScaler: ChunkedFrameScaler {
         } catch H3VSRError.cancelled {
             throw VideoUpscale.UpscaleError.cancelled
         }
+    }
+    func cancel() { session.cancel() }
+}
+
+/// SeedVR2 through the engine: one frame at a time, each taking seconds, so
+/// 中止 is read at every DiT block.
+private final class SeedVR2FrameScaler: ChunkedFrameScaler {
+    let session: H3SeedVR2Restorer.Session
+    let isCancelled: () -> Bool
+    init(session: H3SeedVR2Restorer.Session, isCancelled: @escaping () -> Bool) {
+        self.session = session
+        self.isCancelled = isCancelled
+    }
+    var chunkFrames: Int { 1 }
+    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
+                 progress: @escaping (Double) -> Void) throws -> [CVPixelBuffer] {
+        var outputs: [CVPixelBuffer] = []
+        for (index, frame) in frames.enumerated() {
+            do {
+                outputs.append(try session.process(frame, pool: pool) { [session, isCancelled] share in
+                    if isCancelled() { session.cancel() }
+                    progress((Double(index) + share) / Double(frames.count))
+                })
+            } catch H3VSRError.cancelled {
+                throw VideoUpscale.UpscaleError.cancelled
+            }
+        }
+        return outputs
     }
     func cancel() { session.cancel() }
 }
@@ -409,6 +459,24 @@ enum VideoUpscale {
                                             isCancelled: isCancelled)
                 scaler = engineWidth == width ? direct
                     : HalvingChunkScaler(inner: direct, largeWidth: engineWidth, largeHeight: engineHeight)
+            } catch {
+                throw UpscaleError.cannotWrite(error.localizedDescription)
+            }
+        case .seedVR2:
+            guard SeedVR2Model.weightsPresent else { throw UpscaleError.unavailable(upscaler.label) }
+            let restorer: H3SeedVR2Restorer
+            do {
+                restorer = try H3SeedVR2Restorer(modelDirectory: VideoUpscaler.seedVR2ModelDirectory)
+            } catch {
+                throw UpscaleError.cannotWrite(error.localizedDescription)
+            }
+            let requirements = restorer.requirements(inputWidth: inputWidth, inputHeight: inputHeight,
+                                                     outputWidth: width, outputHeight: height)
+            guard requirements.supported else { throw UpscaleError.cannotWrite(requirements.reason) }
+            do {
+                scaler = SeedVR2FrameScaler(session: try restorer.openSession(inputWidth: inputWidth, inputHeight: inputHeight,
+                                                                              outputWidth: width, outputHeight: height),
+                                            isCancelled: isCancelled)
             } catch {
                 throw UpscaleError.cannotWrite(error.localizedDescription)
             }
