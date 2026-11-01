@@ -90,6 +90,26 @@ public final class H3SeedVR2Restorer: @unchecked Sendable {
                              fileBytes: info.file_bytes, residentBytes: info.resident_bytes, tensorOps: info.tensor_ops != 0)
     }
 
+    /// Whether sizes (input width, height, output width, height) fit this
+    /// Mac, by the engine's own estimate and without loading the model. Nil
+    /// when the directory can't be read: the engine then answers at the start.
+    public static func sizeCheck(modelDirectory: String) -> (@Sendable (Int, Int, Int, Int) -> Bool)? {
+        var info = h3_seedvr2_info()
+        var error = [CChar](repeating: 0, count: 512)
+        let ok = modelDirectory.withCString { dir in
+            error.withUnsafeMutableBufferPointer { buffer in
+                h3_seedvr2_inspect_dir(dir, &info, buffer.baseAddress, buffer.count)
+            }
+        }
+        guard ok != 0 else { return nil }
+        let inspected = info
+        return { inputWidth, inputHeight, outputWidth, outputHeight in
+            var info = inspected
+            return h3_seedvr2_output_fits(&info, Int32(inputWidth), Int32(inputHeight),
+                                          Int32(outputWidth), Int32(outputHeight)) != 0
+        }
+    }
+
     /// Loads the model onto the GPU (about 7 GB resident; a few seconds).
     /// `colorTransfer` matches each frame's colours to its input with the
     /// reference's wavelet + L*a*b* transfer; `seed` fixes the noise (the

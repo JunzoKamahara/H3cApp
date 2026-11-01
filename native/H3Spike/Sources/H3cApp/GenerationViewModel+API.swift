@@ -22,6 +22,13 @@ let h3APIPort: UInt16 = 8420
 let h3APITokenPath = h3AppSupportDirectory + "/api-token"
 
 extension GenerationViewModel {
+    /// The 400 for a "scale" this video can't take with this upscaler.
+    private func upscaleScaleError(_ name: String, _ factor: UpscaleFactor, _ choices: UpscaleChoices) -> String {
+        guard let range = choices.range else { return "\(name) can't be enlarged by \(choices.upscaler.rawValue)" }
+        return "\(name) can't be enlarged \(factor.suffix) by \(choices.upscaler.rawValue): "
+            + "it takes \(UpscaleFactor.text(range.lowerBound)) to \(UpscaleFactor.text(range.upperBound))"
+    }
+
     func handleAPIRequest(_ request: HTTPRequest) async -> HTTPResponse {
         switch (request.method, request.path) {
         case ("GET", "/api/status"):
@@ -72,15 +79,16 @@ extension GenerationViewModel {
             var factor = UpscaleFactor.two
             if let raw = json["scale"] {
                 guard let number = raw as? NSNumber, let chosen = UpscaleFactor(rawValue: number.doubleValue) else {
-                    return .error(400, "\"scale\" must be one of 1.5, 2, 3, 4")
+                    return .error(400, "\"scale\" must be a number from \(UpscaleFactor.text(UpscaleFactor.minimum)) to \(UpscaleFactor.text(UpscaleFactor.maximum))")
                 }
                 factor = chosen
             }
             let source = URL(fileURLWithPath: path)
             do {
                 let size = try await VideoUpscale.frameSize(of: source)
-                guard factor.fits(width: size.width, height: size.height) else {
-                    return .error(400, "\(source.lastPathComponent) can't be enlarged \(factor.suffix) (larger than \(VideoUpscale.maximumSide) pixels a side)")
+                let choices = UpscaleChoices(upscaler: upscaler, width: size.width, height: size.height)
+                guard choices.allows(factor) else {
+                    return .error(400, upscaleScaleError(source.lastPathComponent, factor, choices))
                 }
             } catch {
                 return .error(400, "cannot read \(source.lastPathComponent): \(error.localizedDescription)")
@@ -224,6 +232,10 @@ extension GenerationViewModel {
                                            "available": upscaler.isAvailable]
                 if let reason = upscaler.unavailableReason { item["reason"] = reason }
                 if let reason = upscaleBlockedReason(upscaler) { item["busy_reason"] = reason }
+                // "scale" takes any number in hundredths up to this; a given
+                // video may stop earlier (a side, the GPU's memory, the canvas).
+                item["min_scale"] = UpscaleFactor.minimum
+                item["max_scale"] = upscaler.factorCeiling
                 if upscaler.isSwiftVR {
                     item["model_directory"] = SwiftVRModel.directory
                     item["model_installed"] = SwiftVRModel.weightsPresent
@@ -595,7 +607,7 @@ extension GenerationViewModel {
             var factor = UpscaleFactor.two
             if let raw = json["scale"] {
                 guard let number = raw as? NSNumber, let chosen = UpscaleFactor(rawValue: number.doubleValue) else {
-                    return .error(400, "\"scale\" must be one of 1.5, 2, 3, 4")
+                    return .error(400, "\"scale\" must be a number from \(UpscaleFactor.text(UpscaleFactor.minimum)) to \(UpscaleFactor.text(UpscaleFactor.maximum))")
                 }
                 factor = chosen
             }
@@ -612,6 +624,12 @@ extension GenerationViewModel {
             if let reason = upscaleBlockedReason(upscaler) { return .error(409, reason) }
             if upscaler.regeneratesFromLatent, let reason = openH3Reason(for: video, factor: factor) {
                 return .error(400, reason)
+            }
+            if let record = video.record, let size = recordedSize(of: record) {
+                let choices = UpscaleChoices(upscaler: upscaler, width: size.width, height: size.height)
+                guard choices.allows(factor) else {
+                    return .error(400, upscaleScaleError(video.url.lastPathComponent, factor, choices))
+                }
             }
             Task { await upscaleProjectVideo(video, as: name, upscaler: upscaler, factor: factor) }
             return .json(202, ["ok": true, "video": name])

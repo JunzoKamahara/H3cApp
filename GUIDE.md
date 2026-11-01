@@ -71,10 +71,13 @@ Good to know:
   The video shown in the window can be enlarged with Video → “Enlarge the
   Video Shown…” (a project video goes into the project; any other is saved
   where you choose). Any other video file can be enlarged with Video →
-  “Enlarge a Video File…”, saved where you choose. The scale is 1.5x, 2x, 3x or 4x, each
-  shown with the size it makes (a scale past 4096 pixels a side can't be
-  chosen), and every upscaler takes each of them. There are four
-  upscalers:
+  “Enlarge a Video File…”, saved where you choose. Choose the upscaler first: the sheet then
+  shows the scales it can make of this video, each with the size it makes.
+  Besides those of 1.5x, 2x, 3x and 4x it can do, “Custom” takes a scale
+  with up to two decimals and shows the resulting size as you type. Scales
+  start at 1.1x and stop at 8x for Standard and MetalFX and at 4x for the AI
+  upscalers. Every upscaler stops at 4096 pixels a side, SwiftVR and SeedVR2
+  at what fits this Mac's GPU memory, and Open-H3 at 1344×768. The upscalers:
   - Standard: the same high-quality resize as the ×2 sizes, smooth, keeping
     the look as it is.
   - MetalFX: Apple's MetalFX, enlarging along the edges and sharpening a

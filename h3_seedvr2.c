@@ -2069,6 +2069,33 @@ h3_seedvr2_session *h3_seedvr2_session_open(h3_seedvr2 *m, int in_w, int in_h, i
     return s;
 }
 
+/* Peak live GPU memory, from the measurements of appendix A.7 (M5,
+ * 1344x768: 9.5 GiB on the TensorOps BF16 grid, 10.9 GiB on the F32 path;
+ * 1920x1088: 12.7 GiB): the resident weights plus about 3 GB (BF16) or
+ * 4.5 GB (F32) per megapixel of output. */
+static uint64_t peak_gpu_bytes(uint64_t resident_bytes, int nax_vae, int out_w, int out_h) {
+    int full_w = round_up(out_w, SV2_PIXEL_MULTIPLE), full_h = round_up(out_h, SV2_PIXEL_MULTIPLE);
+    return resident_bytes + (uint64_t)((nax_vae ? 3.0e9 : 4.5e9) * ((double)full_w * full_h / 1e6));
+}
+
+/* What the GPU can hold: 90 % of the working set (the device's memory when
+ * it names none); 0 when the device can't be read. */
+static uint64_t gpu_budget(void) {
+    h3_device_info device;
+    char probe[256];
+    uint64_t budget = 0;
+    if (h3_metal_probe(&device, probe, sizeof(probe)))
+        budget = device.recommended_working_set ? device.recommended_working_set : device.physical_memory;
+    return budget * 9 / 10;
+}
+
+int h3_seedvr2_output_fits(const h3_seedvr2_info *info, int in_w, int in_h, int out_w, int out_h) {
+    if (!info || in_w < 16 || in_h < 16 || out_w < 64 || out_h < 64 || out_w > 4096 || out_h > 4096) return 0;
+    uint64_t budget = gpu_budget();
+    int nax_vae = info->tensor_ops && !getenv("H3_SV2_VAE_F32");
+    return !budget || peak_gpu_bytes(info->resident_bytes, nax_vae, out_w, out_h) <= budget;
+}
+
 int h3_seedvr2_check_requirements(const h3_seedvr2 *m, int in_w, int in_h, int out_w, int out_h,
                                   h3_seedvr2_requirements *out) {
     if (!m || !out) return 0;
@@ -2082,18 +2109,9 @@ int h3_seedvr2_check_requirements(const h3_seedvr2 *m, int in_w, int in_h, int o
     sv2_window windows[1024];
     out->windows_even = make_windows(th, tw, 0, windows, 1024);
     out->windows_odd = make_windows(th, tw, 1, windows, 1024);
-    /* peak live GPU memory, from the measurements of appendix A.7 (M5,
-     * 1344x768: 9.5 GiB on the TensorOps BF16 grid, 10.9 GiB on the F32
-     * path; 1920x1088: 12.7 GiB): the resident weights plus about 3 GB
-     * (BF16) or 4.5 GB (F32) per megapixel of output */
     double megapixels = (double)full_w * full_h / 1e6;
-    out->gpu_bytes = m->info.resident_bytes + (uint64_t)((m->nax_vae ? 3.0e9 : 4.5e9) * megapixels);
-    h3_device_info device;
-    char probe[256];
-    uint64_t budget = 0;
-    if (h3_metal_probe(&device, probe, sizeof(probe)))
-        budget = device.recommended_working_set ? device.recommended_working_set : device.physical_memory;
-    budget = budget * 9 / 10;
+    out->gpu_bytes = peak_gpu_bytes(m->info.resident_bytes, m->nax_vae, out_w, out_h);
+    uint64_t budget = gpu_budget();
     if (budget && out->gpu_bytes > budget) {
         snprintf(out->reason, sizeof(out->reason),
                  "about %.1f GB of GPU memory is needed for %dx%d, this Mac has %.1f GB",

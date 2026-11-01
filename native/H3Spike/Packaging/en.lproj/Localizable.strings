@@ -900,14 +900,12 @@
 "%lld倍" = "%lldx";
 "あとから拡大: %@を%@に拡大（%@）。下の設定は元の動画のものです" = "Enlarged afterwards: %1$@ at %2$@ (%3$@). The settings below are the original's.";
 "この動画を拡大した動画（1.5〜4倍）を、プロジェクトに新しくつくります（音声はそのまま）" = "Makes a new project video: this one enlarged 1.5x to 4x (the sound stays as it is).";
-"一辺が4096ピクセルを超えるので、この倍率にはできません。" = "A side would pass 4096 pixels at this scale.";
 "倍率" = "Scale";
 "動画を%@に拡大しています（%@、%lld%%）…" = "Enlarging the video %1$@ (%2$@, %3$lld%%)…";
 "動画を拡大" = "Enlarge a Video";
 "動画ファイルを拡大…" = "Enlarge a Video File…";
 "拡大した動画は、プロジェクトに新しく加わります（名前の最後に「_%@」）。音声とAIで生成したという記録は、そのままです。" = "The enlarged video is added to the project (its name ends in “_%@”), with its sound and its AI-generated record as they are.";
 "拡大した動画をつくる…" = "Make an Enlarged Copy…";
-"%@（%@、4096ピクセルを超えるため選べません）" = "%1$@ (%2$@, too large: a side passes 4096 pixels)";
 "%@：%@ → %@" = "%1$@: %2$@ → %3$@";
 "拡大した動画を、元の動画と同じファイルには保存できません" = "The enlarged video can't be saved over the original video itself";
 "動画" = "Video";
@@ -1044,7 +1042,6 @@
 "元の重みを削除したあとで、キャッシュが使えなくなりました。もう一度ダウンロードと変換が必要です。" = "The cache can no longer be used and the original weights were deleted. Download and convert them again.";
 
 /* SeedVR2 (UPSCALE_PLAN appendix A.7): SeedVR2ModelSetup.swift, VideoUpscale.swift, ModelManagerView.swift */
-"「動画を拡大」のAI超解像が使うモデルです。SwiftVRとSeedVR2の重みは同梱せず、ここで配布元のApache License 2.0と宣言されていた版をダウンロードします（SHA-256で照合。SwiftVRはこのMac用に変換もします）。" = "The models the AI super-resolution methods of “Enlarge video” use. The SwiftVR and SeedVR2 weights are not bundled: this is where the revision whose model card declared them under the Apache License 2.0 is downloaded (checked by SHA-256; SwiftVR is also converted for this Mac).";
 "使えます（%@）" = "Ready (%@)";
 "まだありません。約4.7GBのダウンロードが必要です（変換は不要）。" = "Not installed yet. About 4.7 GB to download (no conversion).";
 "SeedVR2のモデルを削除" = "Delete the SeedVR2 model";
@@ -1101,12 +1098,18 @@
 "Open-H3 再生成は、このアプリで生成した動画（記録と潜在ファイルのあるもの）にだけ使えます。" = "Open-H3 regeneration works only on videos this app generated (with a record and a latent file).";
 "拡大できません" = "cannot enlarge";
 "Open-H3 再生成は、プロジェクトの動画（潜在ファイルのあるもの）にだけ使えます。" = "Open-H3 regeneration works only on project videos (with a latent file).";
-"%@（Open-H3の上限1344×768を超えるため選べません）" = "%@ (not available: beyond Open-H3’s 1344×768 limit)";
-"%@（%@、上限のため下の倍率と同じ大きさ）" = "%1$@ (%2$@, the same size as the smaller factor because of the limit)";
 "見込み：%lld×%lld・%lldフレームで、M5で約%@（生成の設定による）。" = "Estimate: %1$lld×%2$lld, %3$lld frames, about %4$@ on an M5 (depends on the generation settings).";
-"この倍率はOpen-H3では選べません。" = "This factor is not available with Open-H3.";
 "Open-H3 再生成（H3で描き直し・最大1344×768、非常に遅い・試験的）" = "Open-H3 regeneration (redrawn by H3, up to 1344×768; very slow, experimental)";
 "LightX2V Turbo v1.2のファイルがありません。「モデルを準備…」でダウンロードすると選べます。" = "The LightX2V Turbo v1.2 file is missing. Download it with “Set up model…” to choose this.";
 "Open-H3のモデルが入っていません。「モデルを準備…」で結合LoRA（約12.5GB）と潜在アップスケーラをダウンロードし、精緻化LoRAを取り出すと選べます。" = "The Open-H3 model is not installed. Download the merged LoRA (about 12.5 GB) and the latent upscaler with “Set up model…” and extract the refiner LoRA to choose this.";
 "%@を%@に再生成して、%@をつくりました（%@、%@）" = "Regenerated %1$@ at %2$@ into %3$@ (%4$@, %5$@)";
 "H3自身に描き直させます。生成したときの潜在をOpen-H3の潜在アップスケーラで大きな格子に広げ、ノイズを少し戻して、NVIDIAのOpen-H3精緻化LoRAとLightX2V Turbo v1.2で3ステップだけ生成し直します。模様や質感がH3の生成そのものの質で描かれ、生成時の設定（文章・seed）を引き継ぎます。大きさはH3の上限（1344×768ピクセル）まで、このアプリで生成した動画（潜在ファイルのあるもの）だけに使えます。1344×768・5秒でM5で約17分、生成と同じメモリ（約15GB）を使います。重みは同梱せず、配布元の記録と照合してダウンロードし、精緻化LoRAはこのMacで取り出します。試験的な方式です。" = "Lets H3 itself redraw the video. The latents of the generation are widened onto a larger grid by Open-H3’s latent upscaler, noised back a little, and generated again in just three steps with NVIDIA’s Open-H3 refiner LoRA and LightX2V Turbo v1.2. Pattern and texture come out at the quality of H3’s own generation, and the generation’s settings (prompt, seed) are carried over. The size stays within H3’s limit (1344×768 pixels), and only videos this app generated (with a latent file) qualify. About 17 minutes for 5 seconds at 1344×768 on an M5, with a generation’s memory (about 15 GB). The weights are not bundled: they are downloaded and checked against the source’s record, and the refiner LoRA is extracted on this Mac. Experimental.";
+"カスタム（%@〜%@倍）" = "Custom (%1$@x to %2$@x)";
+"倍" = "x";
+"拡大後：%@" = "Result: %@";
+"この動画は、この方法では拡大できません。" = "This upscaler can't enlarge this video.";
+"%@〜%@倍の範囲で、小数第2位まで指定できます。" = "Enter a scale from %1$@x to %2$@x, up to two decimals.";
+"この方法は%@倍までです。" = "This upscaler goes up to %@x.";
+"Open-H3はH3の上限の1344×768までです。" = "Open-H3 stops at H3's limit of 1344×768.";
+"一辺が4096ピクセルを超えない倍率までです。" = "Up to the scale that stays within 4096 pixels a side.";
+"このMacのGPUメモリに入る大きさまでです。" = "Up to the size that fits this Mac's GPU memory.";

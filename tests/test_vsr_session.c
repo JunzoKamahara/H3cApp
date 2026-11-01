@@ -266,6 +266,14 @@ int main(void) {
     CHECK(h3_vsr_check_requirements(vsr, 64, 48, 96, 64, &req) && !req.supported && req.reason[0]);
     CHECK(h3_vsr_check_requirements(vsr, 64, 48, 5000, 128, &req) && !req.supported);
     CHECK(h3_vsr_check_requirements(vsr, 64, 48, 150, 130, &req) && req.supported);   /* padded to 160x160 */
+    {   /* the answer without a loaded model agrees */
+        h3_vsr_info info;
+        char inspect_error[256];
+        CHECK(h3_vsr_inspect_dir(model_dir, &info, inspect_error, sizeof(inspect_error)));
+        CHECK(h3_vsr_output_fits(&info, 0, 64, 48, 160, 128));
+        CHECK(!h3_vsr_output_fits(&info, 0, 64, 48, 96, 64));
+        CHECK(!h3_vsr_output_fits(&info, 0, 64, 48, 5000, 128));
+    }
 
     const int in_w = 64, in_h = 48, out_w = 150, out_h = 130;   /* an odd target: pad + crop */
     int lengths[] = {7, 29, 52, 70};

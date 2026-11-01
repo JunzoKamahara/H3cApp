@@ -176,28 +176,83 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
 
     /// Whether it wants the GPU to itself (so it waits for a generation).
     var needsIdleGPU: Bool { isSwiftVR || self == .seedVR2 || self == .openH3 }
+
+    /// The largest factor it takes, whatever the video: the resizers go on
+    /// as far as a side allows, the AI models stop at the 4x they were
+    /// made for.
+    var factorCeiling: Double {
+        switch self {
+        case .standard, .metalFX: return UpscaleFactor.maximum
+        default: return 4
+        }
+    }
+
+    /// The engine's own answer on whether sizes (input width, height,
+    /// output width, height) fit this Mac, for the models that have one and
+    /// are installed. It reads no weights: the sheet asks it before loading
+    /// anything.
+    var sizeCheck: (@Sendable (Int, Int, Int, Int) -> Bool)? {
+        switch self {
+        case .swiftVR, .swiftVRFourX:
+            guard let cachePath = Self.swiftVRCachePath else { return nil }
+            return H3VideoSuperResolver.sizeCheck(modelDirectory: Self.swiftVRModelDirectory,
+                                                  int8: cachePath.hasSuffix("int8.h3vc"))
+        case .seedVR2:
+            guard SeedVR2Model.weightsPresent else { return nil }
+            return H3SeedVR2Restorer.sizeCheck(modelDirectory: Self.seedVR2ModelDirectory)
+        default:
+            return nil
+        }
+    }
 }
 
-/// How much bigger (the sheet's 倍率). Every upscaler takes each of them.
-enum UpscaleFactor: Double, CaseIterable, Identifiable {
-    case oneAndHalf = 1.5
-    case two = 2
-    case three = 3
-    case four = 4
+/// How much bigger (the sheet's 倍率): one of the usual factors or any
+/// other in hundredths. What each upscaler can make of a video is
+/// UpscaleChoices.
+struct UpscaleFactor: Hashable, Identifiable {
+    let rawValue: Double
+
+    static let minimum = 1.1
+    static let maximum = 8.0
+
+    /// Rounded to hundredths; nil outside minimum...maximum.
+    init?(rawValue: Double) {
+        let rounded = (rawValue * 100).rounded() / 100
+        guard rounded >= Self.minimum, rounded <= Self.maximum else { return nil }
+        self.rawValue = rounded
+    }
+
+    private init(usual rawValue: Double) { self.rawValue = rawValue }
+
+    static let oneAndHalf = UpscaleFactor(usual: 1.5)
+    static let two = UpscaleFactor(usual: 2)
+    static let three = UpscaleFactor(usual: 3)
+    static let four = UpscaleFactor(usual: 4)
+    static let smallest = UpscaleFactor(usual: minimum)
+    /// The factors offered without typing one.
+    static let usual = [oneAndHalf, two, three, four]
 
     var id: Double { rawValue }
+
+    /// "1.5", "2", "2.25".
+    var text: String { Self.text(rawValue) }
+
+    static func text(_ value: Double) -> String {
+        guard value != value.rounded() else { return String(Int(value)) }
+        var digits = String(format: "%.2f", value)
+        while digits.hasSuffix("0") { digits.removeLast() }
+        return digits
+    }
 
     /// "1.5倍", "2倍".
     var label: String {
         rawValue == rawValue.rounded()
             ? String(localized: "\(Int(rawValue))倍")
-            : String(localized: "\(String(format: "%.1f", rawValue))倍")
+            : String(localized: "\(text)倍")
     }
 
     /// "x1.5", "x2" (file names).
-    var suffix: String {
-        rawValue == rawValue.rounded() ? "x\(Int(rawValue))" : "x" + String(format: "%.1f", rawValue)
-    }
+    var suffix: String { "x" + text }
 
     /// The size `width` x `height` becomes, rounded to even numbers (H.264).
     func size(width: Int, height: Int) -> (width: Int, height: Int) {
@@ -208,6 +263,102 @@ enum UpscaleFactor: Double, CaseIterable, Identifiable {
     func fits(width: Int, height: Int) -> Bool {
         let result = size(width: width, height: height)
         return result.width <= VideoUpscale.maximumSide && result.height <= VideoUpscale.maximumSide
+    }
+}
+
+/// What one upscaler can make of a `width` x `height` video: the factors
+/// the sheet offers, the range a typed factor may take, and the size each
+/// makes. Every upscaler takes any factor in its range: the output size is
+/// free for the resizers and SwiftVR and SeedVR2, the AI networks of fixed
+/// scale resize their 4x, and Open-H3 rounds to its canvas.
+struct UpscaleChoices {
+    let upscaler: VideoUpscaler
+    let width: Int
+    let height: Int
+    /// The usual factors that make a size of their own.
+    private(set) var usual: [UpscaleFactor] = []
+    /// Lowest and highest factor in hundredths; nil when this video can't
+    /// be enlarged this way at all.
+    private(set) var range: ClosedRange<Double>?
+    private(set) var limit = Limit.method
+    private let sizeCheck: (@Sendable (Int, Int, Int, Int) -> Bool)?
+
+    /// What stops the factor at the top of `range`.
+    enum Limit: Equatable {
+        case method, canvas, side, memory
+    }
+
+    init(upscaler: VideoUpscaler, width: Int, height: Int) {
+        self.upscaler = upscaler
+        self.width = width
+        self.height = height
+        sizeCheck = upscaler.sizeCheck
+        let ceiling = Int((upscaler.factorCeiling * 100).rounded())
+        let floor = Int((UpscaleFactor.minimum * 100).rounded())
+        func made(_ hundredths: Int) -> (width: Int, height: Int)? {
+            UpscaleFactor(rawValue: Double(hundredths) / 100).flatMap { size($0) }
+        }
+        /// The first in `span` that is true, those before it being false.
+        func first(in span: ClosedRange<Int>, where test: (Int) -> Bool) -> Int {
+            var low = span.lowerBound, high = span.upperBound
+            while low < high {
+                let middle = (low + high) / 2
+                if test(middle) { high = middle } else { low = middle + 1 }
+            }
+            return low
+        }
+        // One size that works, by tenths, then the two ends around it. Too
+        // small and too large both fail, so neither end can be searched
+        // from the other.
+        guard let found = stride(from: floor, through: ceiling, by: 10).first(where: { made($0) != nil }) else { return }
+        let lowest = first(in: max(floor, found - 9)...found) { made($0) != nil }
+        let highest: Int
+        if upscaler.regeneratesFromLatent, let top = made(ceiling) {
+            // Past the canvas every factor makes the same size: the first of those.
+            highest = first(in: found...ceiling) { hundredths in
+                made(hundredths).map { $0 == top } ?? false
+            }
+            limit = .canvas
+        } else {
+            highest = first(in: found...(ceiling + 1)) { $0 > ceiling || made($0) == nil } - 1
+            if highest < ceiling {
+                limit = UpscaleFactor(rawValue: Double(highest + 1) / 100)?.fits(width: width, height: height) == false ? .side : .memory
+            }
+        }
+        range = Double(lowest) / 100...Double(highest) / 100
+        for factor in UpscaleFactor.usual {
+            guard let made = size(factor) else { continue }
+            let repeated = usual.contains { smaller in size(smaller).map { $0 == made } ?? false }
+            if !repeated { usual.append(factor) }
+        }
+    }
+
+    /// The size `factor` makes; nil when it can't.
+    func size(_ factor: UpscaleFactor) -> (width: Int, height: Int)? {
+        guard factor.rawValue <= upscaler.factorCeiling else { return nil }
+        if upscaler.regeneratesFromLatent {
+            return OpenH3Plan.plan(width: width, height: height, factor: factor).map { ($0.width, $0.height) }
+        }
+        let made = factor.size(width: width, height: height)
+        guard factor.fits(width: width, height: height), made.width > width || made.height > height else { return nil }
+        if let sizeCheck, !sizeCheck(width, height, made.width, made.height) { return nil }
+        return made
+    }
+
+    /// Whether a typed factor is in range (the usual ones need not be: on
+    /// Open-H3's canvas 2倍 can make what 1.4倍 already does).
+    func allows(_ factor: UpscaleFactor) -> Bool {
+        usual.contains(factor) || (range?.contains(factor.rawValue) ?? false)
+    }
+
+    /// Says why the range ends where it does.
+    var limitText: String {
+        switch limit {
+        case .method: return String(localized: "この方法は\(UpscaleFactor.text(upscaler.factorCeiling))倍までです。")
+        case .canvas: return String(localized: "Open-H3はH3の上限の1344×768までです。")
+        case .side: return String(localized: "一辺が4096ピクセルを超えない倍率までです。")
+        case .memory: return String(localized: "このMacのGPUメモリに入る大きさまでです。")
+        }
     }
 }
 
@@ -879,7 +1030,7 @@ extension GenerationViewModel {
     /// Whether `video` can be enlarged by `factor` (within the 4096-pixel
     /// limit): its size is an enlarged copy's own, or else the size it was
     /// made at.
-    func canUpscale(_ video: ProjectVideo, by factor: UpscaleFactor = .oneAndHalf) -> Bool {
+    func canUpscale(_ video: ProjectVideo, by factor: UpscaleFactor = .smallest) -> Bool {
         guard !isUpscalingVideo, let record = video.record else { return false }
         var size = record.upscaledSize
         if size == nil, let dimensions = SizeProfile(rawValue: record.draft.sizeProfile)?.dimensions {

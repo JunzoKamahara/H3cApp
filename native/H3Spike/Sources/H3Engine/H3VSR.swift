@@ -142,6 +142,26 @@ public final class H3VideoSuperResolver: @unchecked Sendable {
                          originalWeightsPresent: info.original_weights_present != 0)
     }
 
+    /// Whether sizes (input width, height, output width, height) fit this
+    /// Mac, by the engine's own estimate and without loading the model. Nil
+    /// when the directory can't be read: the engine then answers at the start.
+    public static func sizeCheck(modelDirectory: String, int8: Bool) -> (@Sendable (Int, Int, Int, Int) -> Bool)? {
+        var info = h3_vsr_info()
+        var error = [CChar](repeating: 0, count: 512)
+        let ok = modelDirectory.withCString { dir in
+            error.withUnsafeMutableBufferPointer { buffer in
+                h3_vsr_inspect_dir(dir, &info, buffer.baseAddress, buffer.count)
+            }
+        }
+        guard ok != 0 else { return nil }
+        let inspected = info
+        return { inputWidth, inputHeight, outputWidth, outputHeight in
+            var info = inspected
+            return h3_vsr_output_fits(&info, int8 ? 1 : 0, Int32(inputWidth), Int32(inputHeight),
+                                      Int32(outputWidth), Int32(outputHeight)) != 0
+        }
+    }
+
     /// Where the cache of `modelDirectory` goes for a precision.
     public static func cachePath(modelDirectory: String, int8: Bool) -> String {
         var path = [CChar](repeating: 0, count: 4096)

@@ -276,6 +276,11 @@ typedef struct {
 int h3_vsr_check_requirements(const h3_vsr *vsr, int in_w, int in_h,
                               int out_w, int out_h, h3_vsr_requirements *out);
 
+/* Whether h3_vsr_check_requirements would take this size, from what
+ * h3_vsr_inspect_dir reports: the app's sheet asks before any model is
+ * loaded. `int8` is the precision the model will run at. */
+int h3_vsr_output_fits(const h3_vsr_info *info, int int8, int in_w, int in_h, int out_w, int out_h);
+
 h3_vsr_session *h3_vsr_session_open(h3_vsr *vsr, int in_w, int in_h,
                                     int out_w, int out_h,
                                     int total_frames /* 0 = unknown */,

@@ -228,13 +228,12 @@ static uint64_t tile_bytes(int latents, int tile_w, int tile_h) {
  * per tile pixel of MemBlock history; one tile's is inside tile_bytes).
  * Measured peak live 17.6 GB against 16.4 GB for 2 x 2 tiles of 1152x1984
  * and 12.5 GB against 11.5 GB for one tile of 1088x1920 (appendix A.3). */
-static uint64_t plan_bytes(const h3_vsr *vsr, const h3_vsr_tile_plan *plan,
+static uint64_t plan_bytes(uint64_t weight_bytes, const h3_vsr_tile_plan *plan,
                            int in_w, int in_h, int out_w, int out_h) {
-    int int8 = h3_vsr_wan_is_int8(vsr->wan);
-    uint64_t bytes = int8 ? vsr->info.weight_bytes_int8 : vsr->info.weight_bytes_bf16;
+    uint64_t bytes = weight_bytes;
     uint64_t tile_pixels = (uint64_t)plan->tile_w * plan->tile_h;
     int tiles = plan->columns * plan->rows;
-    bytes += tile_bytes(vsr->clip_latents + 1, plan->tile_w, plan->tile_h);
+    bytes += tile_bytes(H3_VSR_CLIP_FRAMES / H3_VSR_TEMPORAL + 1, plan->tile_w, plan->tile_h);
     bytes += (uint64_t)(H3_VSR_CLIP_FRAMES + 4 + 3) * in_w * in_h * 4;
     if (tiles > 1)
         bytes += (uint64_t)(H3_VSR_CLIP_FRAMES + 4) * out_w * out_h * 3 * 4 +
@@ -245,7 +244,7 @@ static uint64_t plan_bytes(const h3_vsr *vsr, const h3_vsr_tile_plan *plan,
 /* The fewest tiles whose estimate fits `budget` (0: no limit, one tile);
  * among as many tiles, the smallest estimate. H3_VSR_TILES=CxR forces a
  * grid. Returns 0 when none fits. */
-static int choose_plan(const h3_vsr *vsr, int in_w, int in_h, int out_w, int out_h,
+static int choose_plan(uint64_t weight_bytes, int in_w, int in_h, int out_w, int out_h,
                        int full_w, int full_h, uint64_t budget,
                        h3_vsr_tile_plan *plan, uint64_t *bytes) {
     int overlap = tile_overlap();
@@ -253,7 +252,7 @@ static int choose_plan(const h3_vsr *vsr, int in_w, int in_h, int out_w, int out
     int fc = 0, fr = 0;
     if (forced && sscanf(forced, "%dx%d", &fc, &fr) == 2 && fc >= 1 && fr >= 1) {
         if (!h3_vsr_tile_plan_build(full_w, full_h, fc, fr, overlap, plan)) return 0;
-        *bytes = plan_bytes(vsr, plan, in_w, in_h, out_w, out_h);
+        *bytes = plan_bytes(weight_bytes, plan, in_w, in_h, out_w, out_h);
         return 1;
     }
     for (int total = 1; total <= H3_VSR_MAX_TILES_PER_AXIS; total++) {
@@ -265,7 +264,7 @@ static int choose_plan(const h3_vsr *vsr, int in_w, int in_h, int out_w, int out
             int columns = total / rows;
             h3_vsr_tile_plan candidate;
             if (!h3_vsr_tile_plan_build(full_w, full_h, columns, rows, overlap, &candidate)) continue;
-            uint64_t b = plan_bytes(vsr, &candidate, in_w, in_h, out_w, out_h);
+            uint64_t b = plan_bytes(weight_bytes, &candidate, in_w, in_h, out_w, out_h);
             if (!found || b < best_bytes) { best = candidate; best_bytes = b; found = 1; }
         }
         if (found && (!budget || best_bytes <= budget)) {
@@ -275,6 +274,30 @@ static int choose_plan(const h3_vsr *vsr, int in_w, int in_h, int out_w, int out
         }
     }
     return 0;
+}
+
+/* What the GPU can hold: 90 % of the working set (the device's memory when
+ * it names none); 0 when there is no limit to apply. */
+static uint64_t gpu_budget(void) {
+    h3_device_info device;
+    char probe_error[256];
+    uint64_t budget = 0;
+    if (h3_metal_probe(&device, probe_error, sizeof(probe_error)))
+        budget = device.recommended_working_set ? device.recommended_working_set : device.physical_memory;
+    budget = budget * 9 / 10;
+    if (getenv("H3_VSR_IGNORE_BUDGET")) budget = 0;   /* measuring: one tile, whatever it takes */
+    return budget;
+}
+
+int h3_vsr_output_fits(const h3_vsr_info *info, int int8, int in_w, int in_h, int out_w, int out_h) {
+    if (!info || in_w < 8 || in_h < 8) return 0;
+    if (out_w < info->min_output_side || out_h < info->min_output_side) return 0;
+    if (out_w > info->max_output_side || out_h > info->max_output_side) return 0;
+    h3_vsr_tile_plan plan;
+    uint64_t bytes = 0;
+    return choose_plan(int8 ? info->weight_bytes_int8 : info->weight_bytes_bf16, in_w, in_h, out_w, out_h,
+                       round_up(out_w, H3_VSR_TOKEN_PIXELS), round_up(out_h, H3_VSR_TOKEN_PIXELS),
+                       gpu_budget(), &plan, &bytes);
 }
 
 int h3_vsr_check_requirements(const h3_vsr *vsr, int in_w, int in_h,
@@ -300,19 +323,14 @@ int h3_vsr_check_requirements(const h3_vsr *vsr, int in_w, int in_h,
     int latents = vsr->clip_latents + 1;   /* the first chunk's 7 */
     uint64_t frames = (uint64_t)(H3_VSR_CLIP_FRAMES + 4 + 3);
     out->host_bytes = frames * (uint64_t)full_w * full_h * 4 * 2;
-    h3_device_info device;
-    char probe_error[256];
-    uint64_t budget = 0;
-    if (h3_metal_probe(&device, probe_error, sizeof(probe_error)))
-        budget = device.recommended_working_set ? device.recommended_working_set : device.physical_memory;
-    budget = budget * 9 / 10;
-    if (getenv("H3_VSR_IGNORE_BUDGET")) budget = 0;   /* measuring: one tile, whatever it takes */
+    uint64_t budget = gpu_budget();
+    uint64_t weight_bytes = h3_vsr_wan_is_int8(vsr->wan) ? info->weight_bytes_int8 : info->weight_bytes_bf16;
     h3_vsr_tile_plan plan;
     uint64_t bytes = 0;
-    if (!choose_plan(vsr, in_w, in_h, out_w, out_h, full_w, full_h, budget, &plan, &bytes)) {
+    if (!choose_plan(weight_bytes, in_w, in_h, out_w, out_h, full_w, full_h, budget, &plan, &bytes)) {
         h3_vsr_tile_plan whole;
         h3_vsr_tile_plan_build(full_w, full_h, 1, 1, H3_VSR_TILE_OVERLAP, &whole);
-        out->gpu_bytes = plan_bytes(vsr, &whole, in_w, in_h, out_w, out_h);
+        out->gpu_bytes = plan_bytes(weight_bytes, &whole, in_w, in_h, out_w, out_h);
         snprintf(out->reason, sizeof(out->reason),
                  "about %.1f GB of GPU memory is needed, more than %.1f GB even in tiles; this Mac offers %.1f GB",
                  (double)(out->gpu_bytes / 1000000) / 1e3, (double)(budget / 1000000) / 1e3,

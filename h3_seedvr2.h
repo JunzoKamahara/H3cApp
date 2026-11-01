@@ -68,6 +68,11 @@ typedef struct {
 int h3_seedvr2_check_requirements(const h3_seedvr2 *model, int in_w, int in_h,
                                   int out_w, int out_h, h3_seedvr2_requirements *out);
 
+/* Whether h3_seedvr2_check_requirements would take this size, from what
+ * h3_seedvr2_inspect_dir reports: the app's sheet asks before the model is
+ * loaded. */
+int h3_seedvr2_output_fits(const h3_seedvr2_info *info, int in_w, int in_h, int out_w, int out_h);
+
 h3_seedvr2_session *h3_seedvr2_session_open(h3_seedvr2 *model, int in_w, int in_h,
                                             int out_w, int out_h,
                                             char *error, size_t error_size);

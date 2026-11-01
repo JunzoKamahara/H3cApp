@@ -189,10 +189,10 @@
 
     <section class="section section-narrow" id="upscale" aria-labelledby="upscale-title">
       <h2 id="upscale-title">Enlarging afterwards</h2>
-      <p>A finished video can be enlarged afterwards to 1.5x, 2x, 3x or 4x (from v0.6.8). It works on other video files too, not only on videos made in H3cApp. Every method runs inside the app, with no other program.</p>
+      <p>A finished video can be enlarged afterwards (from v0.6.8). It works on other video files too, not only on videos made in H3cApp. Every method runs inside the app, with no other program.</p>
       <ol class="steps">
         <li><strong>Pick the video.</strong> For the video shown in the window, choose “<span class="ui">Video</span>” → “<span class="ui">Enlarge the Video Shown…</span>” in the menu bar. A project video can also be picked with “<span class="ui">More</span>” → “<span class="ui">Make an Enlarged Copy…</span>” in “<span class="ui">Project Videos…</span>”. For any other video file, choose “<span class="ui">Video</span>” → “<span class="ui">Enlarge a Video File…</span>”.</li>
-        <li><strong>Choose the scale and the upscaler.</strong> Each scale shows the size it makes; a scale past 4096 pixels a side can't be chosen.</li>
+        <li><strong>Choose the upscaler, then the scale.</strong> The sheet shows the scales that upscaler can make, each with the size it makes. Besides 1.5x, 2x, 3x and 4x, “<span class="ui">Custom</span>” takes a scale with up to two decimals and shows the resulting size. Scales stop at 8x for Standard and MetalFX and at 4x for the AI upscalers, and every upscaler stops at 4096 pixels a side.</li>
         <li><strong>Click “<span class="ui">Enlarge</span>”.</strong> A project video gets a new copy in the project, its name ending in the scale (for example <code>_x2</code>); for another video you choose where to save it, and “<span class="ui">Show in Finder</span>” in the message at the end opens where it went. While it runs, the top of the window shows how far it has got, with “<span class="ui">Cancel</span>”.</li>
       </ol>
       <div class="table-wrap">
@@ -208,7 +208,7 @@
             <tr><th scope="row">SeedVR2 (AI super-resolution, detail first; very slow, experimental)</th><td>ByteDance Seed's SeedVR2-3B (a one-step diffusion restorer, Apache License 2.0) redraws each frame on its own</td><td>When fine detail such as eyelashes and skin texture matters most. It can drift further from the source than SwiftVR (a face's look may change) and takes seconds per frame (about 8 minutes for 5 s of 672×384 at 2x on an M5, about 21 minutes from 960×544, with 10–13 GB of GPU memory). Its weights are not bundled: the first time, press "モデルを準備…" to download the 8-bit MLX export (about 4.7 GB; no conversion)</td></tr>
             <tr><th scope="row">Open-H3 再生成 (regeneration by H3, up to 1344×768; very slow, experimental)</th><td>The clip's own latents are widened by Open-H3's latent upscaler and H3 itself redraws them in just three steps with NVIDIA's Open-H3 refiner LoRA and LightX2V Turbo v1.2</td><td>When pattern and texture should be redrawn at the quality of H3's own generation. The size stays within H3's limit (1344×768), and only videos this app generated, with their latent file, qualify. Time and memory are a generation's (about 17 minutes for 5 s at 1344×768 on an M5, about 15 GB). The weights are not bundled: the first time, press "モデルを準備…" to download NVIDIA's merged LoRA (about 12.5 GB) and the latent upscaler, and the refiner part alone is extracted on this Mac (MiniMax H3 Community License)</td></tr>
           </tbody>
-          <caption>Upscalers (v0.7.2). Every upscaler takes every scale.</caption>
+          <caption>Upscalers (v0.7.2).</caption>
         </table>
       </div>
       <ul>
