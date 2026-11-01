@@ -12,6 +12,8 @@ struct UpscaleSheet: View {
     @State private var selection: Selection
     /// カスタム's field, as typed.
     @State private var customText: String
+    /// Open-H3 再生成's strength.
+    @State private var strength: OpenH3Strength = .standard
     @State private var showingSwiftVRSetup = false
     @State private var showingSeedVR2Setup = false
     @State private var showingOpenH3Setup = false
@@ -114,7 +116,7 @@ struct UpscaleSheet: View {
                     guard let scale = factor else { return }
                     let chosen = upscaler
                     close()
-                    viewModel.startUpscale(pending, upscaler: chosen, factor: scale)
+                    viewModel.startUpscale(pending, upscaler: chosen, factor: scale, strength: strength)
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(factor == nil || !upscaler.isAvailable || viewModel.isUpscalingVideo
@@ -209,6 +211,14 @@ struct UpscaleSheet: View {
                     }
                 }
             }
+            if upscaler.regeneratesFromLatent {
+                Picker("描き直しの強さ", selection: $strength) {
+                    ForEach(OpenH3Strength.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
         }
         VStack(alignment: .leading, spacing: 4) {
             if choices.range == nil {
@@ -228,7 +238,8 @@ struct UpscaleSheet: View {
             if upscaler.regeneratesFromLatent, openH3Reason == nil, let factor,
                let plan = OpenH3Plan.plan(width: pending.width, height: pending.height, factor: factor),
                let frames = pending.projectVideo?.record?.actualFrameCount {
-                Text("見込み：\("\(plan.width)×\(plan.height)")・\(frames)フレームで、M5で約\(formatElapsed(plan.estimatedSeconds(frames: frames)))（生成の設定による）。")
+                Text(strength.detail)
+                Text("見込み：\("\(plan.width)×\(plan.height)")・\(frames)フレームで、M5で約\(formatElapsed(plan.estimatedSeconds(frames: frames, strength: strength)))（生成の設定による）。")
             }
             if pending.projectVideo == nil {
                 Text("拡大した動画の保存先は、次に選びます。音声とファイルの情報は、そのままです。")

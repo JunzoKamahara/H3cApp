@@ -124,6 +124,8 @@ struct ProjectVideoRecord: Codable {
     /// one), and how many times the original's.
     var upscaledSize: [Int]? = nil
     var upscaleFactor: Double? = nil
+    /// Open-H3 再生成's strength (OpenH3Strength).
+    var upscaleStrength: String? = nil
 }
 
 struct OpenProject: Equatable {
@@ -992,6 +994,7 @@ extension ResolvedResult {
             upscaledFrom: record.upscaledFrom,
             upscaler: record.upscaler.flatMap(VideoUpscaler.init(rawValue:)),
             upscaleFactor: record.upscaleFactor.flatMap(UpscaleFactor.init(rawValue:)),
+            upscaleStrength: record.upscaleStrength.flatMap(OpenH3Strength.init(rawValue:)),
             plannedClipCount: record.chainPlannedClips,
             chainClipFrames: (draft.chained ?? false) ? (draft.chainClipFrames ?? defaultChainClipLength.frames) : nil,
             clipPrompts: (draft.chained ?? false) ? draft.clipPrompts : nil,

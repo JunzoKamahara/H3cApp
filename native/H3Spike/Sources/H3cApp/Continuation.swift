@@ -21,6 +21,7 @@ struct ContinuationSource: Equatable {
     struct Enlargement: Equatable {
         var upscaler: VideoUpscaler
         var factor: UpscaleFactor
+        var strength: OpenH3Strength = .standard
         /// What the enlarged copy was made from: the clip itself continues
         /// that, the latents it carries being the original's.
         var originalURL: URL
@@ -99,6 +100,7 @@ extension GenerationViewModel {
         guard let record = video.record, let original = record.upscaledFrom else { return nil }
         return .init(upscaler: record.upscaler.flatMap(VideoUpscaler.init(rawValue:)) ?? .standard,
                      factor: record.upscaleFactor.flatMap(UpscaleFactor.init(rawValue:)) ?? .two,
+                     strength: record.upscaleStrength.flatMap(OpenH3Strength.init(rawValue:)) ?? .standard,
                      originalURL: video.url.deletingLastPathComponent().appendingPathComponent(original))
     }
 

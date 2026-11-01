@@ -126,7 +126,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         case .seedVR2:
             return String(localized: "SeedVR2-3B（ByteDance Seed、Apache License 2.0）で1フレームずつ描き起こします。まつ毛や肌のきめなど細部の表現はSwiftVRより強く、そのぶん元の映像から離れることがあります（顔の印象が変わることも）。1フレームに数秒かかり、5秒の動画をM5で672×384から2倍にすると約8分（960×544からは約21分）、GPUに約10GBを使います。重みは同梱せず、配布元の記録と照合してダウンロードします。試験的な方式です。")
         case .openH3:
-            return String(localized: "H3自身に描き直させます。生成したときの潜在をOpen-H3の潜在アップスケーラで大きな格子に広げ、ノイズを少し戻して（σ 0.4）、NVIDIAのOpen-H3精緻化LoRAとLightX2V Turbo v1.2で2ステップだけ生成し直します。模様や質感がH3の生成そのものの質で描かれ、生成時の設定（文章・seed）を引き継ぎます。大きさはH3の上限（1344×768ピクセル）まで、このアプリで生成した動画（潜在ファイルのあるもの）だけに使えます。1344×768・5秒でM5で約12分、生成と同じメモリ（約15GB）を使います。重みは同梱せず、配布元の記録と照合してダウンロードし、精緻化LoRAはこのMacで取り出します。試験的な方式です。")
+            return String(localized: "H3自身に描き直させます。生成したときの潜在をOpen-H3の潜在アップスケーラで大きな格子に広げ、選んだ強さまでノイズを戻して、NVIDIAのOpen-H3精緻化LoRAとLightX2V Turbo v1.2で2〜3ステップだけ生成し直します。模様や質感がH3の生成そのものの質で描かれ、生成時の設定（文章・seed）を引き継ぎます。大きさはH3の上限（1344×768ピクセル）まで、このアプリで生成した動画（潜在ファイルのあるもの）だけに使えます。1344×768・5秒でM5で約12分、生成と同じメモリ（約15GB）を使います。重みは同梱せず、配布元の記録と照合してダウンロードし、精緻化LoRAはこのMacで取り出します。試験的な方式です。")
         case .swiftVRFourX:
             return String(localized: "SwiftVRに4倍で復元させてから、標準の拡大と同じ方法で選んだ大きさに縮めます。目や眉を描き直しにくく、質感が穏やかで元の動画に忠実になります。4倍の途中の画面がGPUのメモリに入らない大きさでは、重なりを持たせたタイルに分けて復元します。時間はSwiftVRの約5倍です（M5で5秒の544×960を2倍にするのに約4分）。")
         }
@@ -1089,9 +1089,10 @@ extension GenerationViewModel {
 
     /// The sheet's 拡大する: a project video into the project, a file into a
     /// file chosen now.
-    func startUpscale(_ pending: PendingUpscale, upscaler: VideoUpscaler, factor: UpscaleFactor) {
+    func startUpscale(_ pending: PendingUpscale, upscaler: VideoUpscaler, factor: UpscaleFactor,
+                      strength: OpenH3Strength = .standard) {
         if let video = pending.projectVideo {
-            Task { await upscaleProjectVideo(video, upscaler: upscaler, factor: factor) }
+            Task { await upscaleProjectVideo(video, upscaler: upscaler, factor: factor, strength: strength) }
             return
         }
         let panel = NSSavePanel()
@@ -1206,6 +1207,7 @@ extension GenerationViewModel {
     @discardableResult
     func upscaleProjectVideo(_ video: ProjectVideo, as name: String? = nil,
                              upscaler: VideoUpscaler = .standard, factor: UpscaleFactor = .two,
+                             strength: OpenH3Strength = .standard,
                              continuing previous: String? = nil) async -> Bool {
         guard let project, !isUpscalingVideo,
               let name = name ?? upscaledVideoName(for: video, factor: factor) else {
@@ -1223,7 +1225,7 @@ extension GenerationViewModel {
         let started = Date()
         do {
             if upscaler.regeneratesFromLatent {
-                _ = try await runOpenH3Regeneration(video, to: destination, factor: factor)
+                _ = try await runOpenH3Regeneration(video, to: destination, factor: factor, strength: strength)
             } else {
                 try await runUpscale(video.url, to: destination, upscaler: upscaler, factor: factor)
             }
@@ -1233,6 +1235,7 @@ extension GenerationViewModel {
                 record.completedAt = Date()
                 record.upscaledFrom = video.url.lastPathComponent
                 record.upscaler = upscaler.rawValue
+                record.upscaleStrength = upscaler.regeneratesFromLatent ? strength.rawValue : nil
                 let size = try await VideoUpscale.frameSize(of: destination)
                 record.upscaledSize = [size.width, size.height]
                 // Joins only other enlarged copies: the one it continues.
@@ -1281,7 +1284,8 @@ extension GenerationViewModel {
             guard let video = projectVideos.first(where: { $0.url == item.video }),
                   let name = upscaledVideoName(for: video, factor: item.enlargement.factor),
                   await upscaleProjectVideo(video, as: name, upscaler: item.enlargement.upscaler,
-                                            factor: item.enlargement.factor, continuing: item.previous) else {
+                                            factor: item.enlargement.factor, strength: item.enlargement.strength,
+                                            continuing: item.previous) else {
                 return
             }
             made.append(name)

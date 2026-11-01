@@ -265,6 +265,10 @@ extension GenerationViewModel {
                         : NSNull()
                     item["turbo"] = OpenH3Model.turboPath as Any
                     item["max_pixels"] = OpenH3Plan.maxPixels
+                    item["default_strength"] = OpenH3Strength.standard.rawValue
+                    item["strengths"] = OpenH3Strength.allCases.map { strength -> [String: Any] in
+                        ["id": strength.rawValue, "label": strength.label, "sigmas": strength.sigmas.map { (Double($0) * 1e6).rounded() / 1e6 }]
+                    }
                 }
                 if upscaler == .seedVR2 {
                     item["model_directory"] = SeedVR2Model.directory
@@ -625,13 +629,24 @@ extension GenerationViewModel {
             if upscaler.regeneratesFromLatent, let reason = openH3Reason(for: video, factor: factor) {
                 return .error(400, reason)
             }
+            var strength = OpenH3Strength.standard
+            if let raw = json["strength"] {
+                let names = OpenH3Strength.allCases.map(\.rawValue).joined(separator: ", ")
+                guard upscaler.regeneratesFromLatent else {
+                    return .error(400, "\"strength\" applies to upscaler \(VideoUpscaler.openH3.rawValue) only")
+                }
+                guard let name = raw as? String, let chosen = OpenH3Strength(rawValue: name) else {
+                    return .error(400, "\"strength\" must be one of: \(names)")
+                }
+                strength = chosen
+            }
             if let record = video.record, let size = recordedSize(of: record) {
                 let choices = UpscaleChoices(upscaler: upscaler, width: size.width, height: size.height)
                 guard choices.allows(factor) else {
                     return .error(400, upscaleScaleError(video.url.lastPathComponent, factor, choices))
                 }
             }
-            Task { await upscaleProjectVideo(video, as: name, upscaler: upscaler, factor: factor) }
+            Task { await upscaleProjectVideo(video, as: name, upscaler: upscaler, factor: factor, strength: strength) }
             return .json(202, ["ok": true, "video": name])
         case "/api/project/import-video":
             // 動画ファイルの続きを作る: {"path": "/…/video.mp4"} brings the

@@ -145,13 +145,17 @@ Good to know:
     experimental)**: not an enlargement of the frames but H3 itself
     redrawing the clip on a larger canvas. The latents it was generated
     from (the `.h3lt` beside the video) are widened onto the larger grid by
-    Open-H3's latent upscaler, noised back a little (σ 0.4) and generated
-    again in just two steps with NVIDIA's Open-H3 refiner LoRA and
-    LightX2V Turbo v1.2. Texture and pattern come out at the quality of
-    H3's own generation, with the clip's prompt and seed carried over. At
-    the same size the latents go in as they are. The noise is lower than the
-    σ 0.909 of the source's recipe, which comes back as a different picture
-    (UPSCALE_PLAN.md appendix A.8). The
+    Open-H3's latent upscaler, noised back to the strength chosen and
+    generated again in just two or three steps with NVIDIA's Open-H3 refiner
+    LoRA and LightX2V Turbo v1.2. Texture and pattern come out at the
+    quality of H3's own generation, with the clip's prompt and seed carried
+    over. At the same size the latents go in as they are. The redraw strength
+    has three levels. **Light (σ 0.4)** keeps the people and the composition
+    and adds the least detail (the default). **Medium (σ 0.7)** keeps the
+    composition, but expressions and faces can change. **Strong (σ 0.909)**
+    is the source's recipe: it adds the most detail, can come back as a
+    different person or picture at any factor, and takes about 1.3 times as
+    long (UPSCALE_PLAN.md appendix A.8). The
     size stays within H3's limit (1344×768 pixels) and the factor is
     rounded into it (a 960×544 video becomes 1344×768 at every factor).
     Only videos this app generated, with their latent file, qualify (not

@@ -681,9 +681,11 @@ version and license facts). `OpenH3Regenerate.swift` drives it:
   3D-convolution latent upscaler (`h3_latent_upscale_file`, F32 MPSGraph
   conv3d, 19 s for 960×544 → 1344×768 × 37 latent frames), then
   `h3_generate` runs with `initial_latent_path` set to that file and
-  `video_sigmas` = 0.4, 0.2, 0 (the recipe's three steps from 0.909375 come
-  back as a different picture at every factor, `UPSCALE_PLAN.md` appendix
-  A.8): the start state is `(1 − 0.4)·z_up + 0.4·ε` with the clip's seed, two Euler
+  `video_sigmas` set by the redraw strength: light (the default) is 0.4,
+  0.2, 0, medium the recipe's two steps 0.7, 0.494118, 0, and strong the
+  recipe's three steps 0.909375, 0.857143, 0.666667, 0 (which can come back
+  as a different picture at every factor, `UPSCALE_PLAN.md` appendix A.8).
+  The start state is `(1 − σ₀)·z_up + σ₀·ε` with the clip's seed, Euler
   steps follow (CFG 1), the audio latent is held clean and carried into
   the output, and the frames are decoded and written as usual. The LoRAs
   are the Open-H3 refiner (rank 384, strength 1) and LightX2V Turbo v1.2

@@ -3,11 +3,57 @@ import H3Engine
 
 // "Open-H3 再生成": enlarging a generated clip by regenerating it with H3
 // itself - its latent upscaled onto the larger grid (LBH's 3D-conv latent
-// upscaler), re-noised to sigma 0.4 and denoised in two steps with the
-// Open-H3 refiner LoRA and LightX2V Turbo v1.2, then decoded (NVIDIA's
-// Open-H3-Regenerate-2K recipe without the LMS Sharp parts and with less
-// noise; UPSCALE_PLAN appendices A.4 and A.8). The DiT draws the new detail
-// on its own canvas, so the result is at most the released 1344x768.
+// upscaler), re-noised by the strength chosen (OpenH3Strength) and denoised
+// in a few steps with the Open-H3 refiner LoRA and LightX2V Turbo v1.2, then
+// decoded (NVIDIA's Open-H3-Regenerate-2K recipe without the LMS Sharp parts;
+// UPSCALE_PLAN appendices A.4 and A.8). The DiT draws the new detail on its
+// own canvas, so the result is at most the released 1344x768.
+
+/// How much of the clip the regeneration redraws: the noise it goes back to
+/// and the steps down from there. The rawValue is the API's and the record's.
+enum OpenH3Strength: String, CaseIterable, Identifiable {
+    /// Keeps the composition and the characters (appendix A.8).
+    case light
+    /// The recipe's two-step schedule: keeps the composition, not always
+    /// the expressions.
+    case medium
+    /// The recipe's three steps: the most new detail, and at every factor
+    /// tried it came back as another picture (another face, an anime clip
+    /// turned live action).
+    case strong
+
+    static let standard = OpenH3Strength.light
+
+    var id: String { rawValue }
+
+    var sigmas: [Float] {
+        switch self {
+        case .light: return [0.4, 0.2, 0]
+        case .medium: return [0.7, 0.494118, 0]
+        case .strong: return [0.909375, 0.857143, 0.666667, 0]
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .light: return String(localized: "弱い（σ 0.4）")
+        case .medium: return String(localized: "中（σ 0.7）")
+        case .strong: return String(localized: "強い（σ 0.909）")
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .light: return String(localized: "人物と構図を保ち、細かな質感を描き直します。描き足しは控えめです。")
+        case .medium: return String(localized: "構図は保ちますが、表情や顔つきが変わることがあります。")
+        case .strong: return String(localized: "配布元の手順です。描き足しは最も多く、別の人物や別の絵になることがあります（アニメが実写になることも）。時間は弱い・中の約1.3倍です。")
+        }
+    }
+
+    /// Time against the two-step strengths (appendix A.8: 672x384 to
+    /// 1344x768, 56 frames, 5:29 for the three steps and 4:19 for two).
+    var timeScale: Double { sigmas.count > 3 ? 329.0 / 259.0 : 1 }
+}
 
 /// The size the regeneration makes and the latent grid it runs on.
 struct OpenH3Plan: Equatable {
@@ -18,11 +64,6 @@ struct OpenH3Plan: Equatable {
 
     /// The released DiT canvas limit (h3.c H3_MAX_PIXELS).
     static let maxPixels = 768 * 1344
-    /// Not the recipe's 0.909375, 0.857143, 0.666667, 0: at every factor
-    /// that comes back as a new generation (another face, an anime clip
-    /// turned live action). From 0.4 the clip keeps its composition and
-    /// characters and the fine texture is redrawn (UPSCALE_PLAN appendix A.8).
-    static let sigmas: [Float] = [0.4, 0.2, 0]
 
     /// `width` x `height` enlarged by `factor`: multiples of 32 at the
     /// nearest size, brought down along the aspect to the canvas limit.
@@ -43,9 +84,9 @@ struct OpenH3Plan: Equatable {
     }
 
     /// About how long on an M5 (appendix A.8: 318 s for 56 frames at
-    /// 1344x768 in int8-cache mode), scaled by frames and pixels.
-    func estimatedSeconds(frames: Int) -> Double {
-        318 * Double(max(frames, 1)) / 56 * Double(width * height) / Double(Self.maxPixels)
+    /// 1344x768 in int8-cache mode), scaled by frames, pixels and steps.
+    func estimatedSeconds(frames: Int, strength: OpenH3Strength) -> Double {
+        318 * Double(max(frames, 1)) / 56 * Double(width * height) / Double(Self.maxPixels) * strength.timeScale
     }
 }
 
@@ -93,9 +134,9 @@ extension GenerationViewModel {
     }
 
     /// The regeneration of `video` into `destination`: the latent upscaled,
-    /// then a two-step generation from it. Returns the size made.
-    func runOpenH3Regeneration(_ video: ProjectVideo, to destination: URL,
-                               factor: UpscaleFactor) async throws -> (width: Int, height: Int) {
+    /// then a short generation from it at `strength`. Returns the size made.
+    func runOpenH3Regeneration(_ video: ProjectVideo, to destination: URL, factor: UpscaleFactor,
+                               strength: OpenH3Strength) async throws -> (width: Int, height: Int) {
         let size = try await VideoUpscale.frameSize(of: video.url)
         guard let engine, let record = video.record, let latentURL = continuationLatent(of: video),
               let latentInfo = try? H3LatentFileInfo.read(path: latentURL.path),
@@ -133,15 +174,15 @@ extension GenerationViewModel {
         }
         if cancel.isRequested { throw VideoUpscale.UpscaleError.cancelled }
 
-        // 2. Two denoising steps from it, with the refiner and Turbo.
+        // 2. The denoising steps from it, with the refiner and Turbo.
         var params = H3GenerationParams()
         params.width = Int32(plan.width)
         params.height = Int32(plan.height)
         params.frames = Int32(record.actualFrameCount)
-        params.steps = Int32(OpenH3Plan.sigmas.count - 1)
+        params.steps = Int32(strength.sigmas.count - 1)
         params.denoiseReuse = 1
         params.initialLatentPath = sameGrid ? latentURL.path : upscaledLatent.path
-        params.videoSigmas = OpenH3Plan.sigmas
+        params.videoSigmas = strength.sigmas
         params.loras = [H3LoRAInput(path: OpenH3Model.refinerPath, strength: 1),
                         H3LoRAInput(path: turboPath, strength: 1)]
         params.seed = UInt64(record.seed) ?? 1
@@ -160,7 +201,7 @@ extension GenerationViewModel {
         for try await event in engine.generate(prompt: prompt, outputPath: outputPath, params: params) {
             if cancel.isRequested { engine.cancelCurrentGeneration() }
             guard case .progress(let phase, let completed, let total) = event else { continue }
-            // Setup 5-10%, the two steps 10-85%, decoding 85-95%, the file 95-100%.
+            // Setup 5-10%, the steps 10-85%, decoding 85-95%, the file 95-100%.
             let share: Double?
             switch phase {
             case "denoise", "denoise enqueue":
