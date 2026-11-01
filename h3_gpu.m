@@ -123,6 +123,19 @@
 @property(nonatomic) BOOL tensorOpsEnabled;
 @property(nonatomic) NSUInteger tensorOpsMode;
 @property(nonatomic) BOOL headMajorSDPAInputs;
+/* SDPA execution policy (h3_gpu_set_sdpa_mode; issue #2). */
+@property(nonatomic) NSUInteger sdpaMode;
+@property(nonatomic) uint64_t sdpaBudget;
+@property(nonatomic, strong) NSMutableSet<NSString *> *sdpaLogged;
+/* Head-major copies of row-major Q/K/V and of the output for the chunked
+ * path, grown to the largest shape seen; retired ones are kept until
+ * teardown rather than freed under a command buffer that may still read
+ * them. */
+@property(nonatomic) h3_gpu_tensor *sdpaScratchQ;
+@property(nonatomic) h3_gpu_tensor *sdpaScratchK;
+@property(nonatomic) h3_gpu_tensor *sdpaScratchV;
+@property(nonatomic) h3_gpu_tensor *sdpaScratchO;
+@property(nonatomic, strong) NSMutableArray<NSValue *> *sdpaRetired;
 @property(nonatomic) h3_gpu_stats profileStartStats;
 @property(nonatomic) h3_gpu_stats profileMarkStats;
 @property(nonatomic) double profileStartWall;
@@ -593,6 +606,13 @@ void h3_gpu_free(h3_gpu *gpu) {
         NSUInteger before = device.currentAllocatedSize;
         object.command = nil;
         object.inflightCommands = nil;
+        if (object.sdpaScratchQ) h3_gpu_tensor_free(object.sdpaScratchQ);
+        if (object.sdpaScratchK) h3_gpu_tensor_free(object.sdpaScratchK);
+        if (object.sdpaScratchV) h3_gpu_tensor_free(object.sdpaScratchV);
+        if (object.sdpaScratchO) h3_gpu_tensor_free(object.sdpaScratchO);
+        for (NSValue *retired in object.sdpaRetired)
+            h3_gpu_tensor_free((h3_gpu_tensor *)retired.pointerValue);
+        object.sdpaRetired = nil;
         object.sdpaCache = nil;
         object.linearCache = nil;
         object.pipelines = nil;
@@ -1736,6 +1756,441 @@ static H3SDPA *h3_gpu_sdpa_graph(H3GPU *gpu, uint32_t batch,
     }
 }
 
+/* --- SDPA execution policy (issue #2) ---------------------------------
+ *
+ * h3_gpu_sdpa_graph() hands MPSGraph the whole problem in one call: for the
+ * DiT that is bf16, 56 heads and the full token sequence (about 17k rows
+ * for 5 s at 960x544, 37k at 1344x768), i.e. a [1, 56, S, S] score matrix
+ * of tens of GB if it is ever materialised. On this project's development
+ * machine (Apple10 GPU, macOS 26) the call runs at 37k rows. An M2 Max on
+ * macOS 15.8.2 (issue #2) aborted with SIGABRT inside
+ * GPU::ScaledDotProductAttentionOpHandler::encodeNDArrayOp on the DiT's
+ * first full attention, after the text encoder's small bf16 SDPA calls
+ * (h3_gpu_gqa_graph, a few hundred to a few thousand rows) had completed -
+ * consistent with that MPSGraph build decomposing the op and tripping an
+ * MPSNDArray size assertion, though without the full crash report the
+ * assertion text is not known. So where the one-call path has not been
+ * shown to work, the attention runs in bounded pieces: a group of heads at
+ * a time, or one head and a block of query rows when a single head's score
+ * matrix is still above the budget. Every piece is a complete softmax over
+ * all keys (the pieces partition the output; nothing is renormalised), so
+ * the computation is the same and no piece's score matrix exceeds the
+ * budget. The pieces address contiguous head-major ranges of Q/K/V and of
+ * the output through MPSNDArray buffer offsets; row-major inputs are
+ * transposed into head-major scratch once per call (which the one-call
+ * graph does internally anyway), and the head-major result is transposed
+ * back when the caller wants rows. */
+
+static const char *h3_gpu_family_name(id<MTLDevice> device) {
+    if (!device) return "none";
+    if ([device supportsFamily:MTLGPUFamilyApple10]) return "Apple10";
+    if ([device supportsFamily:MTLGPUFamilyApple9]) return "Apple9";
+    if ([device supportsFamily:MTLGPUFamilyApple8]) return "Apple8";
+    if ([device supportsFamily:MTLGPUFamilyApple7]) return "Apple7";
+    return "older";
+}
+
+static h3_gpu_sdpa_mode h3_gpu_sdpa_resolve_mode(H3GPU *gpu) {
+    if (gpu.sdpaMode) return (h3_gpu_sdpa_mode)gpu.sdpaMode;
+    const char *env = getenv("H3_SDPA_MODE");
+    if (env && *env) {
+        if (!strcmp(env, "full")) return H3_GPU_SDPA_FULL;
+        if (!strcmp(env, "chunked")) return H3_GPU_SDPA_CHUNKED;
+        if (!strcmp(env, "explicit")) return H3_GPU_SDPA_EXPLICIT;
+        fprintf(stderr, "h3: warning: H3_SDPA_MODE=%s is not full, chunked "
+                "or explicit; ignoring\n", env);
+    }
+    /* The one-call path is validated on the GPU family this project is
+     * developed on, running the OS that ships with it. Everything else
+     * (M1 to M4 on any macOS; the issue #2 machine among them) takes the
+     * bounded path until shown otherwise. */
+    BOOL validated = h3_device_has_tensor_ops(gpu.device);
+    BOOL modernOS = NO;
+    if (@available(macOS 26.0, *)) modernOS = YES;
+    return validated && modernOS ? H3_GPU_SDPA_FULL : H3_GPU_SDPA_CHUNKED;
+}
+
+static uint64_t h3_gpu_sdpa_budget(H3GPU *gpu) {
+    if (gpu.sdpaBudget) return gpu.sdpaBudget;
+    const char *env = getenv("H3_SDPA_SCORE_BYTES");
+    if (env && *env) {
+        unsigned long long parsed = strtoull(env, NULL, 10);
+        if (parsed >= (1ull << 20)) return parsed;
+        fprintf(stderr, "h3: warning: H3_SDPA_SCORE_BYTES=%s is below 1 MiB; "
+                "ignoring\n", env);
+    }
+    return 1ull << 30;
+}
+
+/* Bytes a piece's score matrix costs per element: the op's own dtype for
+ * the fused SDPA, f32 scores plus the dtype-sized copies around the softmax
+ * when it is written out explicitly. */
+static uint64_t h3_gpu_sdpa_score_cost(h3_gpu_dtype dtype, int explicit) {
+    uint64_t elem = dtype == H3_GPU_F32 ? 4 : 2;
+    return explicit ? 4 + 2 * elem : elem;
+}
+
+static void h3_gpu_sdpa_plan(uint64_t budget, uint64_t cost, uint32_t sequence,
+                             uint32_t kv_sequence, uint32_t heads,
+                             uint32_t *chunk_heads, uint32_t *chunk_rows) {
+    uint64_t per_head = (uint64_t)sequence * kv_sequence * cost;
+    if (per_head <= budget) {
+        uint64_t fit = budget / per_head;
+        *chunk_heads = (uint32_t)(fit < heads ? fit : heads);
+        *chunk_rows = sequence;
+    } else {
+        uint64_t rows = budget / ((uint64_t)kv_sequence * cost);
+        *chunk_heads = 1;
+        *chunk_rows = (uint32_t)(rows < 1 ? 1 : rows < sequence ? rows : sequence);
+    }
+}
+
+void h3_gpu_set_sdpa_mode(h3_gpu *opaque, h3_gpu_sdpa_mode mode,
+                          uint64_t score_budget_bytes) {
+    H3GPU *gpu = GPU(opaque);
+    gpu.sdpaMode = (NSUInteger)mode;
+    gpu.sdpaBudget = score_budget_bytes;
+}
+
+h3_gpu_sdpa_mode h3_gpu_sdpa_effective_mode(h3_gpu *opaque) {
+    return h3_gpu_sdpa_resolve_mode(GPU(opaque));
+}
+
+const char *h3_gpu_sdpa_mode_name(h3_gpu_sdpa_mode mode) {
+    switch (mode) {
+    case H3_GPU_SDPA_FULL: return "full";
+    case H3_GPU_SDPA_CHUNKED: return "chunked";
+    case H3_GPU_SDPA_EXPLICIT: return "explicit";
+    default: return "auto";
+    }
+}
+
+void h3_gpu_sdpa_chunk_plan(h3_gpu *opaque, uint32_t sequence,
+                            uint32_t kv_sequence, uint32_t heads,
+                            h3_gpu_dtype dtype, uint32_t *chunk_heads,
+                            uint32_t *chunk_rows) {
+    H3GPU *gpu = GPU(opaque);
+    h3_gpu_sdpa_mode mode = h3_gpu_sdpa_resolve_mode(gpu);
+    if (mode == H3_GPU_SDPA_FULL) {
+        *chunk_heads = heads;
+        *chunk_rows = sequence;
+        return;
+    }
+    h3_gpu_sdpa_plan(h3_gpu_sdpa_budget(gpu),
+                     h3_gpu_sdpa_score_cost(dtype, mode == H3_GPU_SDPA_EXPLICIT),
+                     sequence, kv_sequence, heads, chunk_heads, chunk_rows);
+}
+
+/* A graph tensor over part of a buffer. MPSGraphTensorData itself has no
+ * offset; an MPSNDArray over the buffer does (available since macOS 12.3). */
+static MPSGraphTensorData *h3_gpu_graph_view(const h3_gpu_tensor *tensor,
+                                             NSArray<NSNumber *> *shape,
+                                             MPSDataType data_type,
+                                             size_t byte_offset) {
+    H3Tensor *object = TENSOR(tensor);
+    if (!byte_offset)
+        return [[MPSGraphTensorData alloc] initWithMTLBuffer:object.buffer
+            shape:shape dataType:data_type];
+    MPSNDArrayDescriptor *descriptor =
+        [MPSNDArrayDescriptor descriptorWithDataType:data_type shape:shape];
+    MPSNDArray *array = [[MPSNDArray alloc] initWithBuffer:object.buffer
+                                                     offset:byte_offset
+                                                 descriptor:descriptor];
+    return [[MPSGraphTensorData alloc] initWithMPSNDArray:array];
+}
+
+/* [1, rows, heads, head_dim] <-> [1, heads, rows, head_dim]. */
+static H3SDPA *h3_gpu_sdpa_transpose_graph(H3GPU *gpu, uint32_t rows,
+                                           uint32_t heads, uint32_t head_dim,
+                                           MPSDataType dataType,
+                                           int toHeadMajor) {
+    @autoreleasepool {
+        NSString *cacheKey = [NSString stringWithFormat:@"T:%u:%u:%u:%u:%d",
+                              (unsigned)dataType, rows, heads, head_dim,
+                              toHeadMajor];
+        H3SDPA *cached = gpu.sdpaCache[cacheKey];
+        if (cached) return cached;
+        MPSGraph *graph = [[MPSGraph alloc] init];
+        NSArray<NSNumber *> *rowMajor = @[@1, @(rows), @(heads), @(head_dim)];
+        NSArray<NSNumber *> *headMajor = @[@1, @(heads), @(rows), @(head_dim)];
+        MPSGraphTensor *input = [graph placeholderWithShape:
+            toHeadMajor ? rowMajor : headMajor dataType:dataType name:nil];
+        H3SDPA *result = [[H3SDPA alloc] init];
+        result.graph = graph;
+        result.query = input;
+        result.output = [graph transposeTensor:input dimension:1
+                                 withDimension:2 name:nil];
+        result.inputShape = toHeadMajor ? rowMajor : headMajor;
+        result.outputShape = toHeadMajor ? headMajor : rowMajor;
+        gpu.sdpaCache[cacheKey] = result;
+        return result;
+    }
+}
+
+static int h3_gpu_sdpa_run_transpose(H3GPU *gpu, const h3_gpu_tensor *source,
+                                     h3_gpu_tensor *destination, uint32_t rows,
+                                     uint32_t heads, uint32_t head_dim,
+                                     MPSDataType dataType, int toHeadMajor) {
+    H3SDPA *graph = h3_gpu_sdpa_transpose_graph(gpu, rows, heads, head_dim,
+                                                dataType, toHeadMajor);
+    if (!graph) return 0;
+    @autoreleasepool {
+        MPSCommandBuffer *command = h3_gpu_mps_command(gpu);
+        NSDictionary *feeds = @{
+            graph.query: h3_gpu_graph_data(source, graph.inputShape, dataType, 0)
+        };
+        NSDictionary *results = @{
+            graph.output: h3_gpu_graph_data(destination, graph.outputShape,
+                                            dataType, 0)
+        };
+        @try {
+            [graph.graph encodeToCommandBuffer:command feeds:feeds
+                              targetOperations:nil resultsDictionary:results
+                           executionDescriptor:nil];
+        } @catch (NSException *exception) {
+            h3_gpu_set_error(gpu, @"MPSGraph SDPA transpose failed: %@",
+                             exception.reason);
+            return 0;
+        }
+        gpu.command = command.rootCommandBuffer;
+    }
+    return 1;
+}
+
+/* One piece: head-major q [1, heads, rows, D], k/v [1, heads, kv_rows, D],
+ * head-major output. */
+static H3SDPA *h3_gpu_sdpa_chunk_graph(H3GPU *gpu, uint32_t heads,
+                                       uint32_t rows, uint32_t kv_rows,
+                                       uint32_t head_dim, float scale,
+                                       MPSDataType dataType, int explicit) {
+    @autoreleasepool {
+        NSString *cacheKey = [NSString stringWithFormat:
+                              @"C:%u:%u:%u:%u:%u:%.9g:%d", (unsigned)dataType,
+                              heads, rows, kv_rows, head_dim, scale, explicit];
+        H3SDPA *cached = gpu.sdpaCache[cacheKey];
+        if (cached) return cached;
+        if (!explicit &&
+            ![[MPSGraph class] instancesRespondToSelector:@selector(scaledDotProductAttentionWithQueryTensor:keyTensor:valueTensor:scale:name:)]) {
+            h3_gpu_set_error(gpu, @"native MPSGraph SDPA is unavailable");
+            return nil;
+        }
+        MPSGraph *graph = [[MPSGraph alloc] init];
+        NSArray<NSNumber *> *qShape = @[@1, @(heads), @(rows), @(head_dim)];
+        NSArray<NSNumber *> *kvShape = @[@1, @(heads), @(kv_rows), @(head_dim)];
+        MPSGraphTensor *q = [graph placeholderWithShape:qShape dataType:dataType
+                                                   name:nil];
+        MPSGraphTensor *k = [graph placeholderWithShape:kvShape dataType:dataType
+                                                   name:nil];
+        MPSGraphTensor *v = [graph placeholderWithShape:kvShape dataType:dataType
+                                                   name:nil];
+        MPSGraphTensor *attention;
+        if (explicit) {
+            /* scores = (q k^T) * scale in f32, softmax over keys, back to the
+             * op dtype for the value product. */
+            MPSGraphTensor *kT = [graph transposeTensor:k dimension:2
+                                          withDimension:3 name:nil];
+            MPSGraphTensor *scores = [graph
+                matrixMultiplicationWithPrimaryTensor:q secondaryTensor:kT
+                name:nil];
+            scores = [graph castTensor:scores toType:MPSDataTypeFloat32
+                                  name:nil];
+            MPSGraphTensor *factor = [graph constantWithScalar:scale
+                                                      dataType:MPSDataTypeFloat32];
+            scores = [graph multiplicationWithPrimaryTensor:scores
+                                            secondaryTensor:factor name:nil];
+            MPSGraphTensor *probabilities = [graph softMaxWithTensor:scores
+                                                                axis:3 name:nil];
+            probabilities = [graph castTensor:probabilities toType:dataType
+                                         name:nil];
+            attention = [graph matrixMultiplicationWithPrimaryTensor:probabilities
+                                                     secondaryTensor:v name:nil];
+        } else {
+            attention = [graph scaledDotProductAttentionWithQueryTensor:q
+                keyTensor:k valueTensor:v scale:scale name:nil];
+        }
+        H3SDPA *result = [[H3SDPA alloc] init];
+        result.graph = graph;
+        result.query = q;
+        result.key = k;
+        result.value = v;
+        result.output = attention;
+        result.inputShape = qShape;
+        result.kvShape = kvShape;
+        result.outputShape = qShape;
+        gpu.sdpaCache[cacheKey] = result;
+        return result;
+    }
+}
+
+static h3_gpu_tensor *h3_gpu_sdpa_scratch(H3GPU *gpu, int which,
+                                          size_t elements, h3_gpu_dtype dtype) {
+    h3_gpu_tensor *current = which == 0 ? gpu.sdpaScratchQ :
+                             which == 1 ? gpu.sdpaScratchK :
+                             which == 2 ? gpu.sdpaScratchV : gpu.sdpaScratchO;
+    if (current && TENSOR(current).dtype == dtype &&
+        TENSOR(current).elements >= elements) return current;
+    if (current) {
+        if (!gpu.sdpaRetired) gpu.sdpaRetired = [NSMutableArray array];
+        [gpu.sdpaRetired addObject:[NSValue valueWithPointer:current]];
+    }
+    h3_gpu *opaque = (__bridge h3_gpu *)gpu;
+    h3_gpu_tensor *fresh = dtype == H3_GPU_F32 ?
+        h3_gpu_tensor_new_f32(opaque, elements) :
+        h3_gpu_tensor_new_bf16(opaque, elements);
+    if (!fresh) {
+        h3_gpu_set_error(gpu, @"cannot allocate SDPA scratch (%zu elements)",
+                         elements);
+        return NULL;
+    }
+    switch (which) {
+    case 0: gpu.sdpaScratchQ = fresh; break;
+    case 1: gpu.sdpaScratchK = fresh; break;
+    case 2: gpu.sdpaScratchV = fresh; break;
+    default: gpu.sdpaScratchO = fresh; break;
+    }
+    return fresh;
+}
+
+static void h3_gpu_sdpa_log(H3GPU *gpu, h3_gpu_sdpa_mode mode,
+                            uint64_t budget, uint32_t chunk_heads,
+                            uint32_t chunk_rows, MPSDataType dtype,
+                            uint32_t batch, uint32_t sequence,
+                            uint32_t kv_sequence, uint32_t heads,
+                            uint32_t head_dim, int causal, int headMajor,
+                            int outputHeadMajor, const h3_gpu_tensor *query,
+                            const h3_gpu_tensor *key,
+                            const h3_gpu_tensor *value,
+                            const h3_gpu_tensor *output) {
+    if (!getenv("H3_SDPA_LOG")) return;
+    @autoreleasepool {
+        NSString *key_text = [NSString stringWithFormat:
+            @"%d:%u:%u:%u:%u:%u:%u:%d:%d:%d", (int)mode, (unsigned)dtype, batch,
+            sequence, kv_sequence, heads, head_dim, causal, headMajor,
+            outputHeadMajor];
+        if (!gpu.sdpaLogged) gpu.sdpaLogged = [NSMutableSet set];
+        if ([gpu.sdpaLogged containsObject:key_text]) return;
+        [gpu.sdpaLogged addObject:key_text];
+        size_t elem = dtype == MPSDataTypeFloat32 ? 4 : 2;
+        double scores = (double)heads * (double)sequence *
+                        (double)kv_sequence * (double)elem;
+        fprintf(stderr,
+                "h3: sdpa os=%s gpu=\"%s\" family=%s tensorops=%d mode=%s "
+                "dtype=%s batch=%u seq=%u kv=%u heads=%u head_dim=%u "
+                "causal=%d layout=%s->%s scores=%.2f GiB budget=%.2f GiB "
+                "pieces=%u heads x %u rows buffers q=%lu k=%lu v=%lu out=%lu\n",
+                [NSProcessInfo processInfo].operatingSystemVersionString.UTF8String,
+                gpu.device.name.UTF8String, h3_gpu_family_name(gpu.device),
+                gpu.tensorOpsEnabled ? 1 : 0, h3_gpu_sdpa_mode_name(mode),
+                dtype == MPSDataTypeFloat32 ? "f32" :
+                dtype == MPSDataTypeBFloat16 ? "bf16" : "other",
+                batch, sequence, kv_sequence, heads, head_dim, causal,
+                headMajor ? "head-major" : "row-major",
+                outputHeadMajor ? "head-major" : "row-major",
+                scores / (1024.0 * 1024.0 * 1024.0),
+                (double)budget / (1024.0 * 1024.0 * 1024.0),
+                chunk_heads, chunk_rows,
+                (unsigned long)TENSOR(query).buffer.length,
+                (unsigned long)TENSOR(key).buffer.length,
+                (unsigned long)TENSOR(value).buffer.length,
+                (unsigned long)TENSOR(output).buffer.length);
+    }
+}
+
+static int h3_gpu_sdpa_chunked(H3GPU *gpu, h3_gpu_tensor *output,
+                               const h3_gpu_tensor *query,
+                               const h3_gpu_tensor *key,
+                               const h3_gpu_tensor *value, uint32_t sequence,
+                               uint32_t kv_sequence, uint32_t heads,
+                               uint32_t head_dim, float scale,
+                               h3_gpu_dtype dtype, MPSDataType mps_dtype,
+                               int headMajorInputs, int outputHeadMajor,
+                               int explicit, uint32_t chunk_heads,
+                               uint32_t chunk_rows) {
+    size_t elem = dtype == H3_GPU_F32 ? 4 : 2;
+    if (((size_t)head_dim * elem) % 16) {
+        h3_gpu_set_error(gpu, @"chunked SDPA needs head_dim * bytes to be a "
+                         @"multiple of 16 (head_dim %u)", head_dim);
+        return 0;
+    }
+    const h3_gpu_tensor *q = query, *k = key, *v = value;
+    if (!headMajorInputs) {
+        size_t q_elements = (size_t)sequence * heads * head_dim;
+        size_t kv_elements = (size_t)kv_sequence * heads * head_dim;
+        h3_gpu_tensor *sq = h3_gpu_sdpa_scratch(gpu, 0, q_elements, dtype);
+        h3_gpu_tensor *sk = h3_gpu_sdpa_scratch(gpu, 1, kv_elements, dtype);
+        h3_gpu_tensor *sv = h3_gpu_sdpa_scratch(gpu, 2, kv_elements, dtype);
+        if (!sq || !sk || !sv) return 0;
+        if (!h3_gpu_sdpa_run_transpose(gpu, query, sq, sequence, heads,
+                                       head_dim, mps_dtype, 1) ||
+            !h3_gpu_sdpa_run_transpose(gpu, key, sk, kv_sequence, heads,
+                                       head_dim, mps_dtype, 1) ||
+            !h3_gpu_sdpa_run_transpose(gpu, value, sv, kv_sequence, heads,
+                                       head_dim, mps_dtype, 1)) return 0;
+        q = sq; k = sk; v = sv;
+    }
+    h3_gpu_tensor *out = output;
+    if (!outputHeadMajor) {
+        out = h3_gpu_sdpa_scratch(gpu, 3, (size_t)sequence * heads * head_dim,
+                                  dtype);
+        if (!out) return 0;
+    }
+    uint64_t pieces = 0;
+    for (uint32_t h0 = 0; h0 < heads; h0 += chunk_heads) {
+        uint32_t hn = heads - h0 < chunk_heads ? heads - h0 : chunk_heads;
+        for (uint32_t r0 = 0; r0 < sequence; r0 += chunk_rows) {
+            uint32_t rn = sequence - r0 < chunk_rows ? sequence - r0 : chunk_rows;
+            /* A piece of several heads must span all rows: only then is its
+             * range of a head-major tensor contiguous. */
+            if (hn > 1 && rn != sequence) {
+                h3_gpu_set_error(gpu, @"chunked SDPA plan is inconsistent");
+                return 0;
+            }
+            H3SDPA *piece = h3_gpu_sdpa_chunk_graph(gpu, hn, rn, kv_sequence,
+                                                    head_dim, scale, mps_dtype,
+                                                    explicit);
+            if (!piece) return 0;
+            size_t q_offset = ((size_t)h0 * sequence + r0) * head_dim * elem;
+            size_t kv_offset = (size_t)h0 * kv_sequence * head_dim * elem;
+            @autoreleasepool {
+                MPSCommandBuffer *command = h3_gpu_mps_command(gpu);
+                NSDictionary *feeds = @{
+                    piece.query: h3_gpu_graph_view(q, piece.inputShape,
+                                                   mps_dtype, q_offset),
+                    piece.key: h3_gpu_graph_view(k, piece.kvShape, mps_dtype,
+                                                 kv_offset),
+                    piece.value: h3_gpu_graph_view(v, piece.kvShape, mps_dtype,
+                                                   kv_offset)
+                };
+                NSDictionary *results = @{
+                    piece.output: h3_gpu_graph_view(out, piece.outputShape,
+                                                    mps_dtype, q_offset)
+                };
+                @try {
+                    [piece.graph encodeToCommandBuffer:command feeds:feeds
+                                      targetOperations:nil
+                                     resultsDictionary:results
+                                   executionDescriptor:nil];
+                } @catch (NSException *exception) {
+                    h3_gpu_set_error(gpu, @"MPSGraph chunked SDPA failed "
+                                     @"(heads %u..%u, rows %u..%u): %@", h0,
+                                     h0 + hn, r0, r0 + rn, exception.reason);
+                    return 0;
+                }
+                gpu.command = command.rootCommandBuffer;
+            }
+            pieces++;
+        }
+    }
+    if (!outputHeadMajor &&
+        !h3_gpu_sdpa_run_transpose(gpu, out, output, sequence, heads, head_dim,
+                                   mps_dtype, 0)) return 0;
+    h3_gpu_stats stats = gpu.stats;
+    stats.mps_sdpa_dispatches++;
+    stats.mps_sdpa_chunk_dispatches += pieces;
+    gpu.stats = stats;
+    return 1;
+}
+
 static int h3_gpu_sdpa_kv(h3_gpu *opaque, h3_gpu_tensor *output,
                        const h3_gpu_tensor *query, const h3_gpu_tensor *key,
                        const h3_gpu_tensor *value, uint32_t batch,
@@ -1762,6 +2217,29 @@ static int h3_gpu_sdpa_kv(h3_gpu *opaque, h3_gpu_tensor *output,
         h3_gpu_set_error(gpu, @"SDPA tensor dtype mismatch");
         return 0;
     }
+    h3_gpu_sdpa_mode mode = h3_gpu_sdpa_resolve_mode(gpu);
+    /* Only the dense single-batch calls (the DiT, the refiner, SwiftVR's
+     * cross attention) take the bounded path; the causal and batched ones
+     * are small and keep the one-call graph. */
+    int chunking = mode != H3_GPU_SDPA_FULL && batch == 1 && !causal;
+    uint32_t chunk_heads = heads, chunk_rows = sequence;
+    uint64_t budget = h3_gpu_sdpa_budget(gpu);
+    if (chunking)
+        h3_gpu_sdpa_plan(budget, h3_gpu_sdpa_score_cost(tensor_dtype,
+                             mode == H3_GPU_SDPA_EXPLICIT),
+                         sequence, kv_sequence, heads, &chunk_heads,
+                         &chunk_rows);
+    h3_gpu_sdpa_log(gpu, chunking ? mode : H3_GPU_SDPA_FULL, budget,
+                    chunk_heads, chunk_rows, mps_dtype, batch, sequence,
+                    kv_sequence, heads, head_dim, causal, headMajor,
+                    outputHeadMajor, query, key, value, output);
+    if (chunking)
+        return h3_gpu_sdpa_chunked(gpu, output, query, key, value, sequence,
+                                   kv_sequence, heads, head_dim, scale,
+                                   tensor_dtype, mps_dtype, headMajor,
+                                   outputHeadMajor,
+                                   mode == H3_GPU_SDPA_EXPLICIT, chunk_heads,
+                                   chunk_rows);
     H3SDPA *cache = h3_gpu_sdpa_graph(gpu, batch, sequence, kv_sequence, heads,
                                       head_dim, scale, mps_dtype, causal, headMajor,
                                       outputHeadMajor);
