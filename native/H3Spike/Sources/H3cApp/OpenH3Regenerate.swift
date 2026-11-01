@@ -3,11 +3,11 @@ import H3Engine
 
 // "Open-H3 再生成": enlarging a generated clip by regenerating it with H3
 // itself - its latent upscaled onto the larger grid (LBH's 3D-conv latent
-// upscaler), re-noised to sigma 0.909375 and denoised in three steps with
-// the Open-H3 refiner LoRA and LightX2V Turbo v1.2, then decoded (NVIDIA's
-// Open-H3-Regenerate-2K recipe without the LMS Sharp parts; UPSCALE_PLAN
-// appendix A.4). The DiT draws the new detail on its own canvas, so the
-// result is at most the released 1344x768.
+// upscaler), re-noised to sigma 0.4 and denoised in two steps with the
+// Open-H3 refiner LoRA and LightX2V Turbo v1.2, then decoded (NVIDIA's
+// Open-H3-Regenerate-2K recipe without the LMS Sharp parts and with less
+// noise; UPSCALE_PLAN appendices A.4 and A.8). The DiT draws the new detail
+// on its own canvas, so the result is at most the released 1344x768.
 
 /// The size the regeneration makes and the latent grid it runs on.
 struct OpenH3Plan: Equatable {
@@ -18,16 +18,11 @@ struct OpenH3Plan: Equatable {
 
     /// The released DiT canvas limit (h3.c H3_MAX_PIXELS).
     static let maxPixels = 768 * 1344
-    static let sigmas: [Float] = [0.909375, 0.857143, 0.666667, 0]
-    /// 等倍: at σ 0.909 the clip comes back as a new generation (another
-    /// face, an anime clip turned live action); from 0.4 it keeps its
-    /// composition and characters and the fine texture is redrawn
-    /// (UPSCALE_PLAN appendix A.8).
-    static let sameSizeSigmas: [Float] = [0.4, 0.2, 0]
-
-    static func sigmas(for factor: UpscaleFactor) -> [Float] {
-        factor == .same ? sameSizeSigmas : sigmas
-    }
+    /// Not the recipe's 0.909375, 0.857143, 0.666667, 0: at every factor
+    /// that comes back as a new generation (another face, an anime clip
+    /// turned live action). From 0.4 the clip keeps its composition and
+    /// characters and the fine texture is redrawn (UPSCALE_PLAN appendix A.8).
+    static let sigmas: [Float] = [0.4, 0.2, 0]
 
     /// `width` x `height` enlarged by `factor`: multiples of 32 at the
     /// nearest size, brought down along the aspect to the canvas limit.
@@ -47,11 +42,10 @@ struct OpenH3Plan: Equatable {
         return plan
     }
 
-    /// About how long on an M5 (appendix A.4: 1000 s for 121 frames at
+    /// About how long on an M5 (appendix A.8: 318 s for 56 frames at
     /// 1344x768 in int8-cache mode), scaled by frames and pixels.
-    func estimatedSeconds(frames: Int, factor: UpscaleFactor) -> Double {
-        1000 * Double(max(frames, 1)) / 121 * Double(width * height) / Double(Self.maxPixels)
-            * Double(Self.sigmas(for: factor).count - 1) / Double(Self.sigmas.count - 1)
+    func estimatedSeconds(frames: Int) -> Double {
+        318 * Double(max(frames, 1)) / 56 * Double(width * height) / Double(Self.maxPixels)
     }
 }
 
@@ -99,7 +93,7 @@ extension GenerationViewModel {
     }
 
     /// The regeneration of `video` into `destination`: the latent upscaled,
-    /// then a three-step generation from it. Returns the size made.
+    /// then a two-step generation from it. Returns the size made.
     func runOpenH3Regeneration(_ video: ProjectVideo, to destination: URL,
                                factor: UpscaleFactor) async throws -> (width: Int, height: Int) {
         let size = try await VideoUpscale.frameSize(of: video.url)
@@ -139,15 +133,15 @@ extension GenerationViewModel {
         }
         if cancel.isRequested { throw VideoUpscale.UpscaleError.cancelled }
 
-        // 2. Three denoising steps from it, with the refiner and Turbo.
+        // 2. Two denoising steps from it, with the refiner and Turbo.
         var params = H3GenerationParams()
         params.width = Int32(plan.width)
         params.height = Int32(plan.height)
         params.frames = Int32(record.actualFrameCount)
-        params.steps = Int32(OpenH3Plan.sigmas(for: factor).count - 1)
+        params.steps = Int32(OpenH3Plan.sigmas.count - 1)
         params.denoiseReuse = 1
         params.initialLatentPath = sameGrid ? latentURL.path : upscaledLatent.path
-        params.videoSigmas = OpenH3Plan.sigmas(for: factor)
+        params.videoSigmas = OpenH3Plan.sigmas
         params.loras = [H3LoRAInput(path: OpenH3Model.refinerPath, strength: 1),
                         H3LoRAInput(path: turboPath, strength: 1)]
         params.seed = UInt64(record.seed) ?? 1
@@ -166,7 +160,7 @@ extension GenerationViewModel {
         for try await event in engine.generate(prompt: prompt, outputPath: outputPath, params: params) {
             if cancel.isRequested { engine.cancelCurrentGeneration() }
             guard case .progress(let phase, let completed, let total) = event else { continue }
-            // Setup 5-10%, the three steps 10-85%, decoding 85-95%, the file 95-100%.
+            // Setup 5-10%, the two steps 10-85%, decoding 85-95%, the file 95-100%.
             let share: Double?
             switch phase {
             case "denoise", "denoise enqueue":

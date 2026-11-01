@@ -145,17 +145,18 @@ Good to know:
     experimental)**: not an enlargement of the frames but H3 itself
     redrawing the clip on a larger canvas. The latents it was generated
     from (the `.h3lt` beside the video) are widened onto the larger grid by
-    Open-H3's latent upscaler, noised back a little (σ 0.909) and generated
-    again in just three steps with NVIDIA's Open-H3 refiner LoRA and
+    Open-H3's latent upscaler, noised back a little (σ 0.4) and generated
+    again in just two steps with NVIDIA's Open-H3 refiner LoRA and
     LightX2V Turbo v1.2. Texture and pattern come out at the quality of
     H3's own generation, with the clip's prompt and seed carried over. At
-    the same size the latents go in as they are and two steps from a lower
-    noise level (σ 0.4) redraw them. The
+    the same size the latents go in as they are. The noise is lower than the
+    σ 0.909 of the source's recipe, which comes back as a different picture
+    (UPSCALE_PLAN.md appendix A.8). The
     size stays within H3's limit (1344×768 pixels) and the factor is
     rounded into it (a 960×544 video becomes 1344×768 at every factor).
     Only videos this app generated, with their latent file, qualify (not
     imported videos; a joined video through the clips it was joined from).
-    The time is a generation's: about 17 minutes for 5 seconds at 1344×768
+    The time is a generation's: about 12 minutes for 5 seconds at 1344×768
     on an M5, with a generation's memory (about 15 GB). The weights are not
     bundled: "モデルを準備…" shows the license notice and then downloads
     NVIDIA's merged LoRA (FP32, about 12.5 GB) and the latent upscaler,

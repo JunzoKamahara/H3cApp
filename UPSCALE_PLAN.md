@@ -961,10 +961,27 @@ At the user's request the six AI upscalers gained a same-size option (`UpscaleFa
 Times (672×384, 56 frames / 1344×768, 56 frames): Real-ESRGAN 4 s / 16 s, SwiftVR 6 s / 14 s, 4x→1/4 56 s / 135 s (through 3x), SeedVR2 54 s / 227 s, Open-H3 78 s / 318 s.
 
 - **Open-H3's standard σ 0.909 does not work at the same size.** It makes a new generation: the woman's hair changed, the anime girl became another, live-action person and the background changed too (LPIPS 0.53). At σ 0.7 faces and poses still change. σ 0.4, 0.2, 0 keeps composition and characters and redraws the yarn, the cat's fur and leaves well. σ 0.3 changes less and also adds less. The same-size default is σ 0.4. An anime face's expression still changes a little, and real foliage stays the same tree with different leaves, with more flicker than the source (4.63 against 3.14).
-- **The same problem remains at small scales.** At the standard σ 0.909 and 1.25x the anime clip became a different, live-action person. How this varies with content and scale has not been measured.
+- **The same problem existed at other scales.** As the addendum below says, the default became σ 0.4 at every scale.
 - **SwiftVR 4x→1/4 is the truest to the source.** Its LPIPS is the lowest or well below direct SwiftVR on every clip, its flicker is below the source on five of six clips (2.54 against 2.50 on the other), and the no-reference scores rise noticeably. It is the first choice at the same size.
 - **Direct SwiftVR** adds the most and draws lines along contours (the cat's whiskers, around the yarn). **SeedVR2** is the sharpest on faces but erased the yarn's texture and left moiré in the fur; its flicker is above the source on five of six clips.
 - **An existing bug was found and fixed.** When a video's length divides exactly into chunks (28 + 24n, including the default 124 frames of 5 seconds), SwiftVR's output lost its last three frames: reading ended without the scaler being told it had the last chunk, so the engine never flushed what it held. One frame of lookahead fixes it, and 124 frames now come out as 124.
 - `swiftVRFourX` quietly fell back to direct restoration when 4x passes 4096 pixels a side (videos wider than 1024). It now drops to 3x, then 2x. At 1344×768 it goes through 3x: LPIPS 0.351 to 0.299, flicker 4.39 to 2.90.
 
 Natural motion can't be judged from this table and single frames. That comparison is left to the user's eye on the videos.
+
+**Applied to every scale (same day)**: three clips at 1.25x and 2x were compared at σ 0.909 (the source's recipe, three steps), σ 0.7 (two steps) and σ 0.4 (two steps). The table gives LPIPS against the source resized with Lanczos, and flicker.
+
+| Clip | Source flicker | σ 0.909 | σ 0.7 | σ 0.4 |
+|---|---|---|---|---|
+| portrait 672×384 x1.25 | 2.50 | 0.171 / 2.47 | 0.100 / 2.49 | 0.087 / 2.38 |
+| portrait 672×384 x2 | 2.50 | 0.169 / 3.04 | 0.108 / 2.89 | 0.081 / 2.76 |
+| cat 672×384 x1.25 | 2.35 | 0.438 / 3.87 | 0.280 / 2.92 | 0.223 / 2.35 |
+| cat 672×384 x2 | 2.35 | 0.416 / 4.20 | 0.273 / 2.95 | 0.210 / 2.27 |
+| anime 448×256 x1.25 | 3.87 | 0.457 / 5.01 | 0.216 / 3.79 | 0.193 / 3.32 |
+| anime 448×256 x2 | 3.87 | 0.405 / 4.16 | 0.172 / 3.80 | 0.140 / 3.54 |
+
+- **σ 0.909** made a different picture at every scale. The anime girl became a live-action stranger at both 1.25x and 2x, the woman's hair became braids at 1.25x and her greenish eyes turned brown at 2x too, and the cat became a differently marked cat at 1.25x. The "keeps the composition" of the first release rested on this one portrait at 2x.
+- **σ 0.7** keeps the composition but changes expressions (the anime girl's closed eyes and mouth open). It adds more than σ 0.4.
+- **σ 0.4** keeps characters and composition best, and its LPIPS and flicker were the best of the three in all six conditions (flicker at or below the source for the cat and anime at 2x). Detail (Laplacian) at 2x is 1.3 to 1.7 times Lanczos's, but slightly below it for the cat and anime at 1.25x, and its no-reference MUSIQ is often the lowest of the three. The picture is calm, and out-of-focus parts stay soft.
+
+**Decision**: the default is now σ 0.4, 0.2, 0 at every scale. It is faster than three steps: 672×384 to 1344×768 at 56 frames went from 5:29 to 4:19. The woman's eyes still lean brown at σ 0.4 and 2x. Natural motion is not judged, and the 2x result the user rated highly was made at σ 0.909.

@@ -681,8 +681,9 @@ version and license facts). `OpenH3Regenerate.swift` drives it:
   3D-convolution latent upscaler (`h3_latent_upscale_file`, F32 MPSGraph
   conv3d, 19 s for 960×544 → 1344×768 × 37 latent frames), then
   `h3_generate` runs with `initial_latent_path` set to that file and
-  `video_sigmas` = 0.909375, 0.857143, 0.666667, 0: the start state is
-  `(1 − 0.909375)·z_up + 0.909375·ε` with the clip's seed, three Euler
+  `video_sigmas` = 0.4, 0.2, 0 (the recipe's three steps from 0.909375 come
+  back as a different picture at every factor, `UPSCALE_PLAN.md` appendix
+  A.8): the start state is `(1 − 0.4)·z_up + 0.4·ε` with the clip's seed, two Euler
   steps follow (CFG 1), the audio latent is held clean and carried into
   the output, and the frames are decoded and written as usual. The LoRAs
   are the Open-H3 refiner (rank 384, strength 1) and LightX2V Turbo v1.2
@@ -701,9 +702,7 @@ version and license facts). `OpenH3Regenerate.swift` drives it:
   in multiples of 32, which for 1920×1088 only 960×544 satisfies. A video
   of a ×2 size (its latent at half the frames' size) is planned from the
   frames' size and its latent widened by the larger ratio. At the same size the
-  latent skips the upscaler when its grid already matches, and two steps
-  from σ 0.4 redraw it (from 0.909 the clip comes back as another picture,
-  `UPSCALE_PLAN.md` appendix A.8).
+  latent skips the upscaler when its grid already matches.
 - **Eligibility.** Project videos with their own latent at the clip's
   frame count: `H3LatentFileInfo` reads the `.h3lt` header
   (`h3_latent_file_info`) and the frame count must equal the record's. A
@@ -727,10 +726,10 @@ version and license facts). `OpenH3Regenerate.swift` drives it:
   (`H3VSR_PROVENANCE.json`) holds every hash, the extracted range and the
   license statement; the sheet shows the MiniMax H3 Community License
   notice and links.
-- **Cost (appendix A.4, M5 24 GB).** 1344×768 × 121 frames in int8-cache
-  mode: about 1000 s per clip, peak 14–15 GB; the sheet estimates by
-  frames × pixels from that (in the app: 672×384 × 56 frames → 1344×768
-  in 5:36, 256×256 × 39 frames → 512×512 in 1:25). Quality against SwiftVR at the same size is in
+- **Cost (appendices A.4 and A.8, M5 24 GB).** 1344×768 × 56 frames in
+  int8-cache mode: 318 s, peak 14–15 GB; the sheet estimates by frames ×
+  pixels from that (in the app: 672×384 × 56 frames → 1344×768 in 4:19).
+  Quality against SwiftVR at the same size is in
   A.4: the license-clean configuration (refiner + Turbo) redraws texture
   at generation quality but scores below SwiftVR on the no-reference
   metrics there, hence "experimental".

@@ -41,7 +41,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
     /// appendix A.7). Experimental.
     case seedVR2
     /// H3 itself regenerating the clip on a larger canvas from its latent:
-    /// LBH's latent upscaler, then three denoising steps with NVIDIA's
+    /// LBH's latent upscaler, then two denoising steps with NVIDIA's
     /// Open-H3 refiner LoRA and LightX2V Turbo v1.2 (OpenH3Regenerate.swift,
     /// UPSCALE_PLAN appendix A.4). Only for the app's own clips, up to the
     /// released 1344x768 canvas. Experimental.
@@ -126,7 +126,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         case .seedVR2:
             return String(localized: "SeedVR2-3B（ByteDance Seed、Apache License 2.0）で1フレームずつ描き起こします。まつ毛や肌のきめなど細部の表現はSwiftVRより強く、そのぶん元の映像から離れることがあります（顔の印象が変わることも）。1フレームに数秒かかり、5秒の動画をM5で672×384から2倍にすると約8分（960×544からは約21分）、GPUに約10GBを使います。重みは同梱せず、配布元の記録と照合してダウンロードします。試験的な方式です。")
         case .openH3:
-            return String(localized: "H3自身に描き直させます。生成したときの潜在をOpen-H3の潜在アップスケーラで大きな格子に広げ、ノイズを少し戻して、NVIDIAのOpen-H3精緻化LoRAとLightX2V Turbo v1.2で3ステップだけ生成し直します。模様や質感がH3の生成そのものの質で描かれ、生成時の設定（文章・seed）を引き継ぎます。大きさはH3の上限（1344×768ピクセル）まで、このアプリで生成した動画（潜在ファイルのあるもの）だけに使えます。1344×768・5秒でM5で約17分、生成と同じメモリ（約15GB）を使います。重みは同梱せず、配布元の記録と照合してダウンロードし、精緻化LoRAはこのMacで取り出します。試験的な方式です。")
+            return String(localized: "H3自身に描き直させます。生成したときの潜在をOpen-H3の潜在アップスケーラで大きな格子に広げ、ノイズを少し戻して（σ 0.4）、NVIDIAのOpen-H3精緻化LoRAとLightX2V Turbo v1.2で2ステップだけ生成し直します。模様や質感がH3の生成そのものの質で描かれ、生成時の設定（文章・seed）を引き継ぎます。大きさはH3の上限（1344×768ピクセル）まで、このアプリで生成した動画（潜在ファイルのあるもの）だけに使えます。1344×768・5秒でM5で約12分、生成と同じメモリ（約15GB）を使います。重みは同梱せず、配布元の記録と照合してダウンロードし、精緻化LoRAはこのMacで取り出します。試験的な方式です。")
         case .swiftVRFourX:
             return String(localized: "SwiftVRに4倍で復元させてから、標準の拡大と同じ方法で選んだ大きさに縮めます。目や眉を描き直しにくく、質感が穏やかで元の動画に忠実になります。4倍の途中の画面がGPUのメモリに入らない大きさでは、重なりを持たせたタイルに分けて復元します。時間はSwiftVRの約5倍です（M5で5秒の544×960を2倍にするのに約4分）。")
         }

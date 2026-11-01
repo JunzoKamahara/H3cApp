@@ -218,9 +218,7 @@ struct UpscaleSheet: View {
             } else {
                 Text(choices.limitText)
                 if factor == .same {
-                    Text(upscaler.regeneratesFromLatent
-                         ? "等倍では大きさを変えず、ノイズを弱めた2ステップ（σ 0.4）で描き直します。"
-                         : "等倍では大きさを変えず、細部を描き直します。")
+                    Text("等倍では大きさを変えず、細部を描き直します。")
                 }
                 if selection == .custom, factor == nil, let range = choices.range {
                     Text("\(UpscaleFactor.text(range.lowerBound))〜\(UpscaleFactor.text(range.upperBound))倍の範囲で、小数第2位まで指定できます。")
@@ -230,7 +228,7 @@ struct UpscaleSheet: View {
             if upscaler.regeneratesFromLatent, openH3Reason == nil, let factor,
                let plan = OpenH3Plan.plan(width: pending.width, height: pending.height, factor: factor),
                let frames = pending.projectVideo?.record?.actualFrameCount {
-                Text("見込み：\("\(plan.width)×\(plan.height)")・\(frames)フレームで、M5で約\(formatElapsed(plan.estimatedSeconds(frames: frames, factor: factor)))（生成の設定による）。")
+                Text("見込み：\("\(plan.width)×\(plan.height)")・\(frames)フレームで、M5で約\(formatElapsed(plan.estimatedSeconds(frames: frames)))（生成の設定による）。")
             }
             if pending.projectVideo == nil {
                 Text("拡大した動画の保存先は、次に選びます。音声とファイルの情報は、そのままです。")
