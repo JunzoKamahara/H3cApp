@@ -102,10 +102,9 @@ struct UpscaleSheet: View {
             Picker("拡大の方法", selection: $upscaler) {
                 ForEach(VideoUpscaler.allCases) { option in
                     Text(option.label).tag(option)
-                        .disabled(!option.isAvailable)
                 }
             }
-            .pickerStyle(.radioGroup)
+            .pickerStyle(.menu)
             methodNotes
             factorChoice
             HStack {
