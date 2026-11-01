@@ -847,3 +847,55 @@ Visually (frame 60, `seedvr2-eval/cmp4_*.png`; left to right C, SwiftVR, SeedVR2
 Conditions to revisit: an implementation verified **as video** on Apple Silicon (chunks of 5 frames or more fitting 24 GB at 1344×768, the temporal VAE matching the official one), or the target changing to restoring degraded real footage. Even then, taking `seedvr2-mlx-swift` means resolving its missing LICENSE file and the dependency on mlx-swift (the Metal Toolchain to build; a departure from the app's C/Metal design). The weights' Apache-2.0 was confirmed; licensing is not the obstacle.
 
 Left behind: the INT8 weights in `~/models/seedvr2/SeedVR2-3B-mlx-int8` (4.7 GB, SHA-256 recorded), the port's clone and the evaluation driver (scratch), outputs and comparison images in `~/Documents/work/h3c/seedvr2-eval/` (the face clip stays local). Xcode's Metal Toolchain (839 MB) was installed on this Mac.
+
+### Appendix A.7: SeedVR2-3B in the engine (2026-11-01, M5 24 GB, branch seedvr2-tier)
+
+**Why.** Looking at appendix A.6's frames, the user judged SeedVR2's rendering of detail better than SwiftVR's (lashes, iris, pores). The blockers were time, memory and the missing video path, not quality, so SeedVR2-3B was implemented in the engine (`h3_seedvr2.c`) as a frame-by-frame, detail-first method, labelled experimental: "SeedVR2（AI超解像・細部重視、非常に遅い・試験的）".
+
+**What was built.**
+
+| Piece | How |
+|---|---|
+| Weights | The MLX affine 8-bit export (`mlx-community/SeedVR2-3B-mlx-int8`, revision `9dbcb304`, 2026-06-06, model card `apache-2.0`; upstream ByteDance-Seed Apache-2.0) is read as it is: `w = scale * q + bias` per group of 64 (four values per uint32, F16 scale and bias) dequantised to BF16 on the GPU at load (`h3_sv2_dequant_q8_bf16`, 1.5 s, 6.5 GB resident). No cache file. The shared blocks' text copies are not loaded. The VAE's F16 weights become F32 |
+| Constants | The time embedding at t = 1000 (sinusoid → two SiLU linears → 15360) runs once on the host; every block's six modulation vectors (emb + its `ada.params_*`) and the output modulation are F32 vectors. `txt_in(pos_emb)` runs once on the GPU |
+| Transformer | 32 blocks (10 dual-stream, 22 shared, the last leaving the text alone), BF16 rows: `rms_mod` (RMSNorm × scale + shift), the fused QKV linear, one kernel that gathers each window's rows, RMS-normalises q/k per head and rotates them (window-relative 3D RoPE: 21 frequencies × 3 axes, text position = token index, video temporal position = 58), batched SDPA per class of equal window length (windows of 15×27 tokens at most plus 58 text tokens), the text tokens' outputs averaged over windows, SwiGLU 6912 through the existing fused MLP graph. The patch order (ph, pw, c) and the unpatch order are packed on the host (the latent is small) |
+| Window partition | mflux's rule (the token grid resized to 45×80, 3×3 windows, half-window shifts in odd blocks, Python's truncating `int()`), checked by `tests/test_seedvr2.c` against lists generated from the reference code: 512×288 4/4 windows, 672×384 4/9, 1344×768 16/16, 1920×1088 25/30 |
+| VAE | One frame (T = 1): every causal 3D convolution's temporal taps see the same frame, so the (O, kt, kh, kw, I) kernels are summed over kt into 2D OIHW kernels at load; the downsamplers' stride-2 taps and the Upsample3D's 1×1 expansion (keeping temporal slice 0) likewise. F32 channels-last, padding inside the MPSGraph convolution (`h3_gpu_conv2d_padded_f32`), GroupNorm + SiLU in place where the input is not needed again, a best-fit buffer pool |
+| Pipeline | PIL's bicubic (a = −0.5, half-pixel centres) on the GPU to the output size, black padding to multiples of 16, encode (× 0.9152), `[noise, latent, mask]`, one velocity at t = 1000, `z = noise − v`, decode, crop, and the reference's wavelet (5 levels) + L*a*b* histogram transfer from the input (4096-bin CDF matching on the host, the LUTs applied on the GPU). The noise is one seed per video, the same for every frame |
+| App | `VideoUpscaler.seedVR2`, `SeedVR2ModelSetup.swift` (pinned revision, listing check and post-download SHA-256, `H3VSR_PROVENANCE.json`, the upstream LICENSE text), the model manager row, `GET /api/upscalers` fields, `POST /api/upscalers/seedVR2/setup`, strings, guides, notices |
+
+**Parity** (`tests/test_seedvr2.c` against a dump of the MLX-Swift port on a 512×288 frame, the port itself parity-locked to mflux):
+
+| Stage | Result |
+|---|---|
+| Encoder stages 0–6 | conv_in 73 dB, then 43.5 / 32.6 / 20.6 / 19.5 / 16.2 dB on the raw block outputs (rel RMS 0.2–0.4 %; the reference casts to bf16 after every GroupNorm, this engine stays F32), latent 45.7 dB |
+| Transformer | block 0 51 dB; the prediction rel RMS 1.3 % (33.9 dB) after 32 BF16 blocks |
+| Decoder on the reference latents | 67.6 dB |
+| Colour transfer | 67.5 dB |
+| The whole frame from this engine's own stages | 52.4 dB before, 53.1 dB after the colour transfer |
+
+Bugs found on the way, worth remembering: a tensor freed before `h3_gpu_submit` is read by the GPU as zeros (the encoder's input); `h3_gpu_linear_bf16` wants a BF16 bias (the F32 biases are added by `bias_gate_add` instead); MLX writes `"__metadata__": null` in safetensors (the parser now accepts it); `h3_gpu_tensor_write_bf16` refuses an I8 tensor (frames go up with `from_i8`).
+
+**Speed and memory (M5 24 GB, 672×384 → 1344×768, the face clip of appendix A.4).**
+
+| Measure | Value |
+|---|---|
+| Per frame, steady state | **6.1 s**: encode 1.3–1.4 s, transformer 1.9 s, decode 2.8 s (GPU-synchronous stage times; the transformer is bound by encoding about 800 MPSGraph operations per frame, not by the GPU; the MPSGraph F32 convolutions of the VAE run at 3–4 TFLOP/s) |
+| 124 frames | 888 s (7.2 s per frame while `make test` shared the GPU); the MLX-Swift port of A.6 took 2443 s |
+| Peak live GPU memory | 10.9 GiB (6.5 GB weights; the decoder's 256-channel stage at 768×1344 holds about three F32 planes of 1.06 GB) |
+| Model load | 1.5 s from the page cache (the 4.2 GB transformer file read and dequantised block by block) |
+
+Metrics on the face set (fidelity against the plain resize C, the face the 380,220,560×320 crop; A.6's rows repeated):
+
+| Variant | PSNR | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA | time |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| C plain resize | — | — | 68.5 | 0.262 | 6.26 | — | — | 65.3 | 0.394 | — |
+| B SwiftVR | 30.8 | 0.126 | 76.6 | 0.361 | 6.52 | 29.3 | 0.162 | 70.8 | 0.489 | 69 s |
+| D port + LAB transfer (A.6) | 25.8 | 0.157 | 75.3 | 0.373 | 6.69 | 25.4 | 0.203 | 71.5 | 0.565 | 2467 s |
+| **E this engine** | 26.0 | 0.151 | 76.1 | **0.378** | 6.87 | 25.7 | 0.202 | **72.3** | **0.569** | 888 s |
+
+E reproduces the port's output (frame 60, `seedvr2-eval/cmp_engine_f60.png`: the same lashes, iris, pores and under-eye texture; the colour transfer identical to the eye) with slightly better no-reference scores; the fidelity gap to SwiftVR and the identity changes described in A.6 are unchanged, because they are the model's. Flicker is a little higher than the port's (6.87 vs 6.69): a per-frame method with one noise for the whole video.
+
+**Decision.** Shipped on the branch as an experimental method next to SwiftVR, with the time and the drift stated in the sheet. Not the default anywhere. Follow-ups, in order of expected gain: (1) the VAE on the TensorOps tap convolution (`h3_gpu_vsr_tapconv_bf16`, BF16 activations) on the M5 — the 4.2 s of encode + decode should drop to about 1 s; (2) fewer graph launches in the transformer (the 1.9 s is CPU encode); (3) int8 row-quantised linears on the M5 (quality to be measured: the export is already 8-bit); (4) clips beyond the face one (anime, landscape, dark) before deciding whether "細部重視" should ever be the default; (5) memory for 1920×1088 (about 2× the activations, 15 GB with the weights) and 16 GB Macs, which `h3_seedvr2_check_requirements` refuses today.
+
+Left behind: `~/Documents/work/h3c/seedvr2-eval/` gained `cmp_engine_f60.png`, `metrics-E_engine_seedvr2.json`, `E_engine_seedvr2_1344x768.mp4` and the 512×288 reference input; the port's dump tool (`Sources/DumpRun`, with the VAE stage hooks) lives in this session's scratch clone and is not part of the repository.
