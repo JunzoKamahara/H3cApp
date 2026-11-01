@@ -910,3 +910,35 @@ Left behind: `~/Documents/work/h3c/seedvr2-eval/` gained `cmp_engine_f60.png`, `
 | Transformer linears per-row int8 (`h3_gpu_quantize_weight_int8` over the export's group-wise 8-bit) | 3.2 s (DiT 1.2 s), 3.3 GB resident | **41.8 dB** (DiT prediction rel 5.1 %; the MLP contributes most: keeping fc1/fc2 BF16 gives 47.6 dB, keeping all but the attention projections 52 dB) | 6.5 GiB |
 
 Kept: the grid VAE and the direct linears; int8 left **off** (`H3_SV2_INT8=1`, or `params.int8`), since this method exists for its detail and a second quantisation costs 10 dB for 0.8 s. The NAX BF16 linear's row-split and Morton variants made no difference at 4032 rows. A pooled grid buffer must have its border rows zeroed after a GroupNorm (the norm writes the interior only; the first run passed by luck on fresh zeroed buffers and the second read garbage padding, 7 % at the 512-channel stage). 960×544 → 1920×1088: 10.3 s per frame (enc 2.5, DiT 4.2, dec 3.4), 12.7 GiB. `h3_seedvr2_check_requirements` now estimates 4.8 s and 3 GB per megapixel with tensor hardware (15 s and 4.5 GB without), over the resident weights.
+
+**The other clips (appendix A.3's set, 33 frames each, 2x from the half-size input, the same crops; standard = Lanczos, SwiftVR = int8 windowed attention; fidelity against the full-size source).**
+
+| Clip | Variant | PSNR | SSIM | LPIPS↓ | MUSIQ | MANIQA | flicker | face PSNR | face LPIPS↓ | face MUSIQ | face MANIQA | s/frame |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| anime-face 336×192→672×384 | standard | 34.9 | 0.965 | 0.087 | 52.7 | 0.284 | 4.10 | 31.2 | 0.131 | 31.1 | 0.245 | — |
+| | SwiftVR | 25.6 | 0.853 | 0.103 | 73.4 | 0.432 | 5.59 | 22.2 | 0.113 | 50.2 | 0.355 | — |
+| | SeedVR2 | 26.3 | 0.852 | 0.129 | **74.5** | **0.533** | 5.84 | 22.4 | 0.120 | **58.7** | **0.442** | 0.96 |
+| face-photo-square 256→512 | standard | 35.8 | 0.962 | 0.105 | 69.2 | 0.351 | 1.21 | 34.5 | 0.081 | 39.9 | 0.351 | — |
+| | SwiftVR | 29.3 | 0.898 | 0.079 | **78.4** | 0.548 | 1.33 | 26.6 | 0.077 | 57.7 | 0.508 | — |
+| | SeedVR2 | 30.0 | 0.884 | **0.070** | 77.6 | **0.613** | 1.76 | 27.2 | **0.064** | 58.8 | 0.514 | 0.95 |
+| face-photo-tall 512×896→1024×1792 | standard | 48.6 | 0.995 | 0.012 | 42.1 | 0.311 | 5.96 | 44.6 | 0.021 | 44.7 | 0.351 | — |
+| | SwiftVR | 30.1 | 0.921 | 0.105 | 64.3 | 0.361 | 5.91 | 26.9 | 0.172 | 63.1 | 0.429 | — |
+| | SeedVR2 | **34.3** | **0.935** | 0.108 | **69.4** | 0.361 | 6.51 | **30.3** | **0.142** | **68.3** | **0.471** | 8.5 |
+| leopard-man 960×544→1920×1088 | standard | 48.4 | 0.993 | 0.014 | 42.5 | 0.193 | 4.23 | 44.2 | 0.012 | 51.4 | 0.366 | — |
+| | SwiftVR | 28.8 | 0.850 | 0.265 | **70.9** | **0.296** | 5.45 | 25.1 | 0.263 | **75.6** | 0.507 | — |
+| | SeedVR2 | **31.3** | **0.896** | **0.223** | 69.0 | 0.265 | 5.57 | **26.0** | **0.226** | 74.6 | **0.534** | 10.1 |
+| face-real-webcam 800×544→1600×1088 (real) | standard | 48.3 | 0.994 | 0.015 | 33.5 | 0.220 | 0.99 | 48.5 | 0.015 | 40.1 | 0.208 | — |
+| | SwiftVR | 29.6 | 0.923 | **0.158** | **64.8** | **0.367** | 1.42 | 30.3 | **0.130** | 59.3 | **0.309** | — |
+| | SeedVR2 | **33.3** | **0.926** | 0.172 | 58.6 | 0.291 | 1.78 | **33.5** | 0.171 | 59.0 | 0.244 | 8.1 |
+
+(The three large clips were made by halving a generated or captured video, so the plain resize scores 48 dB against the source there: both AI methods redraw, both lose fidelity by that measure, and the gap between them is what matters. Times are this engine's per frame on the M5; SwiftVR's were 69 s for a 124-frame 1344×768 clip.)
+
+Frame 16 crops side by side (`seedvr2-eval/set-v1/cmp_*.png`: top left source, top right standard, bottom left SwiftVR, bottom right SeedVR2):
+
+- **face-photo-tall** and **leopard-man**: SeedVR2 is the better restoration on every count that matters here, closer to the source (PSNR +4.2 / +2.5 dB, face LPIPS 0.142 vs 0.172 and 0.226 vs 0.263) and sharper (separate hair strands, the eyes' highlights; every hair of the leopard's fur) without the SwiftVR crops' slight smear.
+- **anime-face**: about even. SeedVR2 keeps the line art clean and gives the eye a crisper highlight (face MUSIQ 58.7 vs 50.2); its LPIPS is a little worse (0.129 vs 0.103).
+- **face-photo-square**: the case from appendix A.6 again. SeedVR2's numbers are marginally better (face LPIPS 0.064 vs 0.077) but it darkens and thickens the brows and eyelashes into a made-up look that the source does not have; SwiftVR stays softer and truer to the face.
+- **face-real-webcam** (the one real, soft capture): SeedVR2 is the more conservative of the two, closest to the source (33.3 vs 29.6 dB) and with less invented sharpness (MUSIQ 58.6 vs 64.8); the hair and the skin look natural, SwiftVR crisper.
+- Flicker is higher than SwiftVR's on every clip (per-frame restoration with one noise; +0.2 to +0.6 on the mean frame difference), visible as a faint shimmer on fine texture in motion.
+
+So the method's character is consistent: strongest on detailed, well-lit faces and fur, risky on close-up faces whose make-up or brows it tends to intensify, conservative on soft real footage. "試験的・細部重視" stays the right label; SwiftVR remains the default.
