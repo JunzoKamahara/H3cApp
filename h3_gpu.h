@@ -1114,6 +1114,23 @@ int h3_gpu_sv2_lab_match_to_rgb_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3
                                     const h3_gpu_tensor *luts, uint32_t pixels, uint32_t bins,
                                     float l_weight, const float minimum[3], const float step[3]);
 
+/* SeedVR2 VAE on the TensorOps grid (the ReAE's padded BF16 grid): GroupNorm
+ * (+ SiLU) over one frame's interior pixels in three chunked passes (in
+ * place allowed), the Upsample3D shuffle, and the stride-2 subsample. */
+int h3_gpu_sv2_grid_group_norm_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                                    const h3_gpu_tensor *weight, const h3_gpu_tensor *bias,
+                                    uint32_t height, uint32_t width, uint32_t channels,
+                                    uint32_t padded, uint32_t guard, uint32_t x_rows,
+                                    uint32_t groups, float epsilon, int silu);
+int h3_gpu_sv2_grid_shuffle_bf16(h3_gpu *gpu, h3_gpu_tensor *output, uint32_t out_padded,
+                                 uint32_t out_guard, const h3_gpu_tensor *input, uint32_t in_height,
+                                 uint32_t in_width, uint32_t in_padded, uint32_t in_guard,
+                                 uint32_t channels, uint32_t temporal);
+int h3_gpu_sv2_grid_select_bf16(h3_gpu *gpu, h3_gpu_tensor *output, uint32_t out_height,
+                                uint32_t out_width, uint32_t out_guard, const h3_gpu_tensor *input,
+                                uint32_t in_height, uint32_t in_width, uint32_t in_guard,
+                                uint32_t padded, uint32_t phase_y, uint32_t phase_x);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

@@ -623,8 +623,11 @@ appendix A.7; the short version:
 - **Weights.** The MLX affine 8-bit export (`mlx-community/SeedVR2-3B-mlx-int8`,
   pinned revision, SHA-256 checked, Apache License 2.0 upstream and declared)
   is read directly: the engine dequantises every linear to BF16 on the GPU
-  at load time (about 1.5 s, 6.5 GB resident), and the VAE's F16 weights
-  become F32. There is no cache file and no conversion step.
+  at load time (about 1.5 s, 6.5 GB resident); the VAE's F16 weights become
+  F32 on the MPSGraph path or tap-major BF16 on the TensorOps path. There is
+  no cache file and no conversion step. (Quantising the transformer again
+  to per-row int8 was measured and left off: 0.8 s faster per frame but
+  41.8 instead of 52 dB against the reference; `H3_SV2_INT8=1` turns it on.)
 - **One frame at a time.** The video model is run as the reference runs it
   on images (T = 1): the input frame is resized to the output size with
   PIL's bicubic, padded to multiples of 16, encoded by the causal 3D VAE
@@ -641,12 +644,24 @@ appendix A.7; the short version:
   windows of equal length are batched, q/k are RMS-normalised per head and
   rotated (window-relative 3D RoPE) by one kernel, and the text tokens'
   outputs are averaged over the windows.
+- **VAE on tensor hardware.** On an M5 the VAE runs on the ReAE's padded
+  BF16 grid: every convolution is `h3_gpu_vsr_tapconv_bf16` (9 taps for
+  3×3, 1 for 1×1, the residual added inside; the stride-2 convolutions as
+  the stride-1 result at the odd positions), GroupNorm + SiLU in three
+  chunked passes on the grid (`h3_sv2_grid_gn_*`), the Upsample3D shuffle
+  on the grid; only the two attention blocks go through the F32 path. The
+  transformer's text stream runs on 128 rows and the MLP as two linears
+  around the SwiGLU kernel, so all its linears take the direct TensorOps
+  kernel. `H3_SV2_VAE_F32=1` keeps the F32 MPSGraph path (every Mac without
+  tensor hardware uses it).
 - **Numbers (M5 24 GB).** Against the MLX reference on a 512×288 frame:
-  encoder latent 45.7 dB, decoder 67.6 dB, the whole frame 52 dB (bf16
-  rounding; the reference itself runs fp16). 672×384 → 1344×768: about
-  6 s per frame (encode 1.4 s, transformer 1.9 s, decode 2.8 s), peak live
-  GPU memory 10.9 GiB. The MLX-Swift port measured in appendix A.6 takes
-  19.6 s per frame on the same input.
+  encoder latent 40.6 dB (45.7 on the F32 path), decoder 59.4 dB (67.6),
+  the whole frame 51.5 dB (bf16 rounding; the reference itself runs fp16).
+  672×384 → 1344×768: 4.1 s per frame (encode 0.7 s, transformer 1.9 s
+  GPU-bound, decode 1.2 s), peak live GPU memory 9.5 GiB; 960×544 →
+  1920×1088: 10.3 s per frame, 12.7 GiB. The F32 path on the same GPU: 6.1 s
+  and 10.9 GiB at 1344×768. The MLX-Swift port measured in appendix A.6
+  takes 19.6 s per frame on the same input.
 - **Switches.** `H3_SV2_TRACE=1` prints stage times, `H3_SV2_SYNC=1` makes
   them GPU-synchronous, `H3_SV2_NO_NAX=1` keeps the BF16 linears on
   MPSGraph, `H3_SEEDVR2_MODEL_DIR` points the app at another model folder.

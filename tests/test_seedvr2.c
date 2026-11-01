@@ -134,7 +134,7 @@ int main(void) {
     float *block0_ref = h3_st_find(&h, "block0_vid") ? load_tensor(&h, "block0_vid", 0) : NULL;
     printf("fixture %s: %dx%d, latent %dx%d\n", fixture, W, H, lw, lh);
 
-    h3_seedvr2_open_params params = {"h3_shaders.metal", 1, 42, -1};
+    h3_seedvr2_open_params params = {"h3_shaders.metal", 1, 42, -1, getenv("H3_SV2_TEST_VAE_F32") != NULL, -1};
     h3_seedvr2 *m = h3_seedvr2_open(dir, &params, NULL, NULL, error, sizeof(error));
     if (!m) { fprintf(stderr, "open: %s\n", error); return 1; }
     h3_seedvr2_info info;
@@ -178,11 +178,12 @@ int main(void) {
         if (f) fclose(f);
         free(b0);
     }
-    report("dit prediction", compare(pred, pred_ref, 16 * lplane, 1.0), 0.05);
+    double dit_tol = getenv("H3_SV2_TEST_TOL") ? atof(getenv("H3_SV2_TEST_TOL")) : 0.05;
+    report("dit prediction", compare(pred, pred_ref, 16 * lplane, 1.0), dit_tol);
     /* z = noise - v */
     float *z = malloc(16 * lplane * sizeof(float));
     for (size_t i = 0; i < 16 * lplane; i++) z[i] = dit_in[i] - pred[i];
-    report("latents (noise - v)", compare(z, latents_ref, 16 * lplane, 1.0), 0.05);
+    report("latents (noise - v)", compare(z, latents_ref, 16 * lplane, 1.0), dit_tol);
 
     /* 3. decoder on the reference latents */
     float *dec = malloc(3 * plane * sizeof(float));
@@ -199,9 +200,9 @@ int main(void) {
     CHECK(h3_seedvr2_debug_dit(m, dit_in, lw, lh, pred, -1, error, sizeof(error)));
     for (size_t i = 0; i < 16 * lplane; i++) z[i] = dit_in[i] - pred[i];
     CHECK(h3_seedvr2_debug_decode(m, z, lw, lh, dec, error, sizeof(error)));
-    report("end to end (pre-colour)", compare(dec, decoded_ref, 3 * plane, 2.0), 0.1);
+    report("end to end (pre-colour)", compare(dec, decoded_ref, 3 * plane, 2.0), dit_tol * 2);
     CHECK(h3_seedvr2_debug_color(m, dec, x, W, H, cc, error, sizeof(error)));
-    report("end to end (colour)", compare(cc, cc_ref, 3 * plane, 2.0), 0.1);
+    report("end to end (colour)", compare(cc, cc_ref, 3 * plane, 2.0), dit_tol * 2);
 
     double gpu_seconds; uint64_t peak;
     h3_seedvr2_get_stats(m, &gpu_seconds, &peak);

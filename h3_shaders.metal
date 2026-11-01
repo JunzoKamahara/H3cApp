@@ -6346,3 +6346,182 @@ kernel void h3_sv2_lab_match_to_rgb_f32(device const float *lab [[buffer(0)]],
     o[1] = clamp(sv2_linear_to_srgb(g), 0.0f, 1.0f) * 2.0f - 1.0f;
     o[2] = clamp(sv2_linear_to_srgb(bl), 0.0f, 1.0f) * 2.0f - 1.0f;
 }
+
+/* --- SeedVR2 VAE on the TensorOps grid (h3_seedvr2.c, M5): the padded
+ * BF16 grid of the ReAE ([guard | (H+2) x (W+2) | tail], channels padded
+ * to 64), so h3_vsr_tapconv_bf16 does every convolution. --- */
+
+struct sv2_ggn_args {
+    uint height, width, channels, padded, groups, guard;
+    uint chunks, chunk_pixels, silu;
+    float epsilon;
+};
+
+/* GroupNorm statistics over the grid's interior pixels, one threadgroup per
+ * chunk of pixels: 256 threads, `vectors` = padded / 4 channel vectors,
+ * 256 / vectors lanes over the pixels. Pass 1 sums per (chunk, group). */
+kernel void h3_sv2_grid_gn_sum_bf16(device const ushort4 *input [[buffer(0)]],
+                                    device float *sums [[buffer(1)]],
+                                    constant sv2_ggn_args &args [[buffer(2)]],
+                                    uint chunk [[threadgroup_position_in_grid]],
+                                    uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float4 partial[256];
+    threadgroup float gsum[64];
+    uint vectors = args.padded / 4, lanes = 256 / vectors;
+    uint vector = tid % vectors, lane = tid / vectors;
+    uint pixels = args.height * args.width, wp = args.width + 2;
+    uint first = chunk * args.chunk_pixels, last = min(first + args.chunk_pixels, pixels);
+    float4 acc = 0.0f;
+    for (uint p = first + lane; p < last; p += lanes) {
+        size_t row = (size_t)args.guard + (size_t)(1 + p / args.width) * wp + 1 + p % args.width;
+        acc += h3_bf16x4_to_f32(input[row * vectors + vector]);
+    }
+    partial[tid] = acc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid < args.groups) gsum[tid] = 0.0f;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0) {
+        uint cpg = args.channels / args.groups;
+        for (uint v = 0; v < vectors && v * 4 < args.channels; v++) {
+            float4 s = 0.0f;
+            for (uint l = 0; l < lanes; l++) s += partial[l * vectors + v];
+            gsum[(v * 4) / cpg] += s.x + s.y + s.z + s.w;
+        }
+        for (uint g = 0; g < args.groups; g++) sums[chunk * args.groups + g] = gsum[g];
+    }
+}
+
+/* Pass 2: sums of squared deviations about each group's mean. */
+kernel void h3_sv2_grid_gn_sq_bf16(device const ushort4 *input [[buffer(0)]],
+                                   device const float *sums [[buffer(1)]],
+                                   device float *squares [[buffer(2)]],
+                                   constant sv2_ggn_args &args [[buffer(3)]],
+                                   uint chunk [[threadgroup_position_in_grid]],
+                                   uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float4 partial[256];
+    threadgroup float mean[64];
+    threadgroup float gsum[64];
+    uint vectors = args.padded / 4, lanes = 256 / vectors;
+    uint vector = tid % vectors, lane = tid / vectors;
+    uint pixels = args.height * args.width, wp = args.width + 2;
+    uint cpg = args.channels / args.groups;
+    if (tid < args.groups) {
+        float s = 0.0f;
+        for (uint c = 0; c < args.chunks; c++) s += sums[c * args.groups + tid];
+        mean[tid] = s / float(pixels * cpg);
+        gsum[tid] = 0.0f;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint group = (vector * 4) / cpg;
+    float centre = vector * 4 < args.channels ? mean[min(group, args.groups - 1)] : 0.0f;
+    uint first = chunk * args.chunk_pixels, last = min(first + args.chunk_pixels, pixels);
+    float4 acc = 0.0f;
+    for (uint p = first + lane; p < last; p += lanes) {
+        size_t row = (size_t)args.guard + (size_t)(1 + p / args.width) * wp + 1 + p % args.width;
+        float4 d = h3_bf16x4_to_f32(input[row * vectors + vector]) - centre;
+        acc = fma(d, d, acc);
+    }
+    partial[tid] = acc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0) {
+        for (uint v = 0; v < vectors && v * 4 < args.channels; v++) {
+            float4 s = 0.0f;
+            for (uint l = 0; l < lanes; l++) s += partial[l * vectors + v];
+            gsum[(v * 4) / cpg] += s.x + s.y + s.z + s.w;
+        }
+        for (uint g = 0; g < args.groups; g++) squares[chunk * args.groups + g] = gsum[g];
+    }
+}
+
+/* Pass 3: y = (x - mean) * rsqrt(var + eps) * w + b, SiLU when asked, on the
+ * interior pixels; padded channels stay zero. In place is fine. */
+kernel void h3_sv2_grid_gn_apply_bf16(device const ushort4 *input [[buffer(0)]],
+                                      device const float *sums [[buffer(1)]],
+                                      device const float *squares [[buffer(2)]],
+                                      device const float *weight [[buffer(3)]],
+                                      device const float *bias [[buffer(4)]],
+                                      device ushort4 *output [[buffer(5)]],
+                                      constant sv2_ggn_args &args [[buffer(6)]],
+                                      uint chunk [[threadgroup_position_in_grid]],
+                                      uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup float mean[64];
+    threadgroup float inverse[64];
+    uint vectors = args.padded / 4, lanes = 256 / vectors;
+    uint vector = tid % vectors, lane = tid / vectors;
+    uint pixels = args.height * args.width, wp = args.width + 2;
+    uint cpg = args.channels / args.groups;
+    if (tid < args.groups) {
+        float s = 0.0f, q = 0.0f;
+        for (uint c = 0; c < args.chunks; c++) { s += sums[c * args.groups + tid]; q += squares[c * args.groups + tid]; }
+        float n = float(pixels * cpg);
+        mean[tid] = s / n;
+        inverse[tid] = rsqrt(q / n + args.epsilon);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint c0 = vector * 4;
+    bool real = c0 < args.channels;
+    uint group = min(c0 / cpg, args.groups - 1);
+    float centre = real ? mean[group] : 0.0f, scale = real ? inverse[group] : 0.0f;
+    float4 w = real ? float4(weight[c0], weight[c0 + 1], weight[c0 + 2], weight[c0 + 3]) : float4(0.0f);
+    float4 b = real ? float4(bias[c0], bias[c0 + 1], bias[c0 + 2], bias[c0 + 3]) : float4(0.0f);
+    uint first = chunk * args.chunk_pixels, last = min(first + args.chunk_pixels, pixels);
+    for (uint p = first + lane; p < last; p += lanes) {
+        size_t row = (size_t)args.guard + (size_t)(1 + p / args.width) * wp + 1 + p % args.width;
+        size_t at = row * vectors + vector;
+        float4 v = fma(h3_bf16x4_to_f32(input[at]) - centre, scale * w, b);
+        if (args.silu) v = v / (1.0f + exp(-v));
+        if (!real) v = 0.0f;
+        output[at] = ushort4(h3_f32_to_bf16(v.x), h3_f32_to_bf16(v.y), h3_f32_to_bf16(v.z), h3_f32_to_bf16(v.w));
+    }
+}
+
+struct sv2_gshuffle_args {
+    uint height, width;          /* the input grid's interior */
+    uint channels, padded;       /* output channels C and its padding */
+    uint in_padded, temporal, guard, in_guard;
+};
+
+/* The Upsample3D on the grid: in [h, w, C*4*tf] -> out [2h, 2w, C],
+ * out(2y+sh, 2x+sw, c) = in(y, x, ((sh*2+sw)*tf)*C + c) (temporal slice 0).
+ * Grid (padded, 2w+2, 2h+2); borders and padded channels zero. */
+kernel void h3_sv2_grid_shuffle_bf16(device const ushort *input [[buffer(0)]],
+                                     device ushort *output [[buffer(1)]],
+                                     constant sv2_gshuffle_args &args [[buffer(2)]],
+                                     uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, x = gid.y, y = gid.z;
+    uint oh = 2 * args.height, ow = 2 * args.width;
+    uint hp = oh + 2, wp = ow + 2;
+    if (c >= args.padded || x >= wp || y >= hp) return;
+    ushort v = 0;
+    if (c < args.channels && y >= 1 && y <= oh && x >= 1 && x <= ow) {
+        uint iy = (y - 1) / 2, sh = (y - 1) % 2, ix = (x - 1) / 2, sw = (x - 1) % 2;
+        uint channel = ((sh * 2 + sw) * args.temporal) * args.channels + c;
+        size_t row = (size_t)args.in_guard + (size_t)(iy + 1) * (args.width + 2) + ix + 1;
+        v = input[row * args.in_padded + channel];
+    }
+    output[((size_t)args.guard + (size_t)y * wp + x) * args.padded + c] = v;
+}
+
+struct sv2_gselect_args {
+    uint height, width;          /* the output grid's interior */
+    uint padded, guard, in_width, in_guard, phase_y, phase_x;
+};
+
+/* out(y, x) = in(2y + phase_y, 2x + phase_x) over interior coordinates: the
+ * stride-2 convolution's output from the stride-1 one (PyTorch's padding
+ * (0, 1) means the odd phase). Same channels. Grid (padded, w+2, h+2). */
+kernel void h3_sv2_grid_select_bf16(device const ushort *input [[buffer(0)]],
+                                    device ushort *output [[buffer(1)]],
+                                    constant sv2_gselect_args &args [[buffer(2)]],
+                                    uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, x = gid.y, y = gid.z;
+    uint hp = args.height + 2, wp = args.width + 2;
+    if (c >= args.padded || x >= wp || y >= hp) return;
+    ushort v = 0;
+    if (y >= 1 && y <= args.height && x >= 1 && x <= args.width) {
+        uint iy = 2 * (y - 1) + args.phase_y, ix = 2 * (x - 1) + args.phase_x;
+        size_t row = (size_t)args.in_guard + (size_t)(iy + 1) * (args.in_width + 2) + ix + 1;
+        v = input[row * args.padded + c];
+    }
+    output[((size_t)args.guard + (size_t)y * wp + x) * args.padded + c] = v;
+}

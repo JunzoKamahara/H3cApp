@@ -113,7 +113,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     char error[512];
-    h3_seedvr2_open_params params = {"h3_shaders.metal", color, seed, -1};
+    h3_seedvr2_open_params params = {"h3_shaders.metal", color, seed, -1, 0, -1};
     double t0 = now_seconds();
     h3_seedvr2 *model = h3_seedvr2_open(model_dir, &params, NULL, NULL, error, sizeof(error));
     if (!model) { fprintf(stderr, "open: %s\n", error); return 1; }

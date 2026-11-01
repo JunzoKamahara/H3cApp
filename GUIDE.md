@@ -120,9 +120,11 @@ Good to know:
     skin texture and fabric comes out stronger than with SwiftVR, and the
     result can drift further from the source (a face's look may change; it
     is the model's known behaviour on clean inputs). Each frame takes
-    seconds: on a 24 GB M5 a 672×384 video enlarged 2x takes about 6 s per
-    frame, about 12 minutes for 5 seconds, with about 10 GB of GPU memory
-    (1920×1088 output about twice that). Its weights are not bundled: press
+    seconds: on a 24 GB M5 a 672×384 video enlarged 2x takes about 4 s per
+    frame, about 8 minutes for 5 seconds, with about 10 GB of GPU memory;
+    960×544 to 1920×1088 takes about 10 s per frame (21 minutes for 5
+    seconds) and 13 GB. Macs without the M5's tensor hardware take several
+    times longer. Its weights are not bundled: press
     "モデルを準備…" (also in モデル管理 → 拡大モデル), read the license notice,
     and the app downloads the MLX 8-bit export of the weights (about 4.7 GB,
     resumable) from the pinned revision whose model card declares them under

@@ -46,6 +46,9 @@ typedef struct {
     int color_transfer;     /* 1: the reference's LAB transfer (default 1); 0: the model's output */
     uint64_t seed;          /* the per-frame noise (the same for every frame of a session) */
     int nax_linear;         /* -1 auto (on with tensor hardware), 0 off, 1 on */
+    int vae_f32;            /* 1: the VAE on the F32 MPSGraph path even with tensor hardware */
+    int int8;               /* 1: per-row int8 transformer linears on tensor hardware (faster, about
+                               10 dB further from the reference); 0 or -1: BF16 (-1 honours H3_SV2_INT8) */
 } h3_seedvr2_open_params;
 
 h3_seedvr2 *h3_seedvr2_open(const char *model_dir, const h3_seedvr2_open_params *params,
