@@ -331,6 +331,60 @@ and `H3GenerationParams`. They're documented at their point of use in the
 source (start from [h3_dit.c](h3_dit.c), [h3_gpu.m](h3_gpu.m), and
 [h3_attention_cache.c](h3_attention_cache.c)).
 
+### How the full attention is executed (issue #2)
+
+The DiT's full attention (bf16, 56 heads, every token of the clip: about
+17k rows for 5 s at 960x544, 37k at 1344x768) is one MPSGraph
+`scaledDotProductAttention` call on the machine this project is developed on
+(Apple10 GPU, macOS 26), where it is validated up to 37k rows. An M2 Max on
+macOS 15.8.2 aborted inside that op's encode (`EXC_CRASH (SIGABRT)`,
+`GPU::ScaledDotProductAttentionOpHandler::encodeNDArrayOp` under
+`h3_gpu_sdpa_bf16`) on the DiT's first block, after the text encoder's small
+bf16 SDPA calls had run. Without the full crash report the assertion is not
+known; the pattern fits a build that materialises the `[56, S, S]` score
+matrix (tens of GB) and trips an MPSNDArray size limit. So `h3_gpu` picks the
+execution before the first call (`h3_gpu_set_sdpa_mode`, `h3_gpu.h`):
+
+- **full**: the one call above. Chosen automatically on an Apple10 GPU
+  running macOS 26 or later.
+- **chunked**: the same attention in pieces - a group of heads at a time,
+  or one head and a block of query rows when one head's score matrix is
+  still above the budget (1 GiB by default). Each piece is a complete
+  softmax over all keys, so nothing is renormalised and the result is the
+  same computation; the pieces address contiguous head-major ranges of
+  Q/K/V and of the output through MPSNDArray buffer offsets, row-major
+  inputs are transposed into a head-major scratch once per call (as the
+  one-call graph does internally), and the result is transposed back when
+  rows are wanted. Chosen automatically everywhere else (M1 to M4 on any
+  macOS). On the M5 it is as fast as the one call at 18k rows (0.84 s vs
+  0.93 s per call, 56 pieces of one head) with a smaller footprint (2.3 GiB
+  vs 4.7 GiB for the probe process) and matches it to bf16 rounding
+  (max 0.001).
+- **explicit**: chunked, with the attention written out of MPSGraph
+  matmul / f32 softmax / matmul instead of the fused op, for a machine where
+  that op itself misbehaves. About 3.5x slower; diagnostic only.
+
+`H3_SDPA_MODE=full|chunked|explicit` and `H3_SDPA_SCORE_BYTES=<bytes>`
+override the choice (diagnostics; the app is meant to choose right on its
+own), and `H3_SDPA_LOG=1` prints, once per distinct call, the OS, GPU,
+family, mode, dtype, batch, sequence lengths, heads, head_dim, layouts,
+piece plan and buffer sizes. The causal and batched SDPA calls (text
+encoder, SwiftVR's windows) are small and keep the one-call graph.
+`tests/test_sdpa.c` (`make h3_sdpa_tests`) checks every mode and layout
+against a CPU reference, and `./h3_sdpa_tests --probe 18432 56 128` runs the
+real shape in the three modes, the one-call path last, so a machine that
+crashes there shows it after the chunked numbers. Whole generations on the
+M5 (960x544, 49 frames, 4 Turbo steps, 8887 tokens): the int8-cache path
+took 169 s in both modes (DiT 114 s vs 110 s), the non-M5 emulation
+(`H3_NAX=0`, SSD streaming, the path an M2 takes) 313 s vs 314 s with the
+DiT's peak 4.42 vs 4.90 GiB (the head-major scratch); at that shape the
+chunked attention output matches the one call to 0.0005 (one bf16 ulp) in
+both layouts. The finished videos still differ (PSNR 17 to 24 dB between the
+modes) because a 4-step Turbo run amplifies ulp-level differences over 200
+attention calls - the same size of difference as between the int8-cache and
+bf16 paths (21.7 dB). **Not yet confirmed on the reporting machine** (M2 Max,
+macOS 15.8.2); see the issue.
+
 ## Speed modes
 
 Independent of the compute mode, the advanced settings (or the API's

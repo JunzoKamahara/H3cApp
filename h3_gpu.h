@@ -36,6 +36,9 @@ typedef struct {
      * backend. Checking this after a run confirms the requested backend
      * was really used for every block, rather than silently falling back. */
     uint64_t ccv_attention_dispatches;
+    /* Pieces of a chunked SDPA (h3_gpu_set_sdpa_mode): one full attention
+     * call still counts once in mps_sdpa_dispatches, each piece once here. */
+    uint64_t mps_sdpa_chunk_dispatches;
     uint64_t blit_copies;
     uint64_t submissions;
     double command_encode_seconds;
@@ -800,6 +803,39 @@ int h3_gpu_sdpa_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
  * by that SDPA call), rather than the [rows, heads, head_dim] layout a raw
  * capture of those tensors would otherwise assume. */
 int h3_gpu_head_major_sdpa_inputs(h3_gpu *gpu);
+
+/* How the dense (non-causal, batch 1) SDPA calls below are executed.
+ * FULL hands MPSGraph the whole [heads, sequence, sequence] problem in one
+ * call. CHUNKED runs it in pieces - a group of heads, or one head and a
+ * block of query rows - each a complete softmax over all keys (so the
+ * result is the same computation) and none whose score matrix exceeds
+ * `score_budget_bytes` (0 = 1 GiB). EXPLICIT is CHUNKED with the attention
+ * written out of MPSGraph matmul/softmax ops instead of its fused SDPA op
+ * (a diagnostic for machines where that op itself misbehaves). AUTO picks
+ * FULL where it is validated (Apple10 GPU on macOS 26) and CHUNKED
+ * elsewhere; the environment variable H3_SDPA_MODE (full/chunked/explicit)
+ * and H3_SDPA_SCORE_BYTES override AUTO for diagnostics, H3_SDPA_LOG=1
+ * prints each distinct call's device, OS, mode, shapes, layouts and buffer
+ * sizes once. Background: issue #2 (M2 Max, macOS 15.8.2: SIGABRT inside
+ * MPSGraph's SDPA encode on the DiT's first full attention). */
+typedef enum {
+    H3_GPU_SDPA_AUTO = 0,
+    H3_GPU_SDPA_FULL = 1,
+    H3_GPU_SDPA_CHUNKED = 2,
+    H3_GPU_SDPA_EXPLICIT = 3
+} h3_gpu_sdpa_mode;
+void h3_gpu_set_sdpa_mode(h3_gpu *gpu, h3_gpu_sdpa_mode mode,
+                          uint64_t score_budget_bytes);
+/* What AUTO (or the override) resolves to on this GPU. */
+h3_gpu_sdpa_mode h3_gpu_sdpa_effective_mode(h3_gpu *gpu);
+const char *h3_gpu_sdpa_mode_name(h3_gpu_sdpa_mode mode);
+/* The pieces a chunked call of this shape would run: heads per piece and
+ * query rows per piece (rows == sequence unless one head alone exceeds the
+ * budget). For logs and tests. */
+void h3_gpu_sdpa_chunk_plan(h3_gpu *gpu, uint32_t sequence,
+                            uint32_t kv_sequence, uint32_t heads,
+                            h3_gpu_dtype dtype, uint32_t *chunk_heads,
+                            uint32_t *chunk_rows);
 /* Preserve SDPA's native [head,row,dimension] output for an immediately
  * following layout-aware projection. */
 int h3_gpu_sdpa_bf16_head_major_output(

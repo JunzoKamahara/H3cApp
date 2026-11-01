@@ -139,6 +139,11 @@ h3_renoise_tests: tests/test_renoise.o $(LIB_OBJ)
 h3_bf16_tests: tests/test_bf16.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# Dense SDPA execution modes (issue #2): CPU reference, full vs chunked vs
+# explicit, and a probe mode for real DiT shapes (./h3_sdpa_tests --probe).
+h3_sdpa_tests: tests/test_sdpa.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 h3_tokenizer_tests: tests/test_tokenizer.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
@@ -227,13 +232,15 @@ h3_vsr_run: tests/vsr_run.o $(LIB_OBJ)
 h3_semantic_vae_test: tests/test_semantic_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-test: h3_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests h3_vsr_wan_tests h3_vsr_session_tests h3_vsr_tapconv_tests h3_real_vsr_test h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
+test: h3_tests h3_sdpa_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests h3_vsr_wan_tests h3_vsr_session_tests h3_vsr_tapconv_tests h3_real_vsr_test h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
 	h3_audio_gpu_tests h3_determinism_tests h3_real_audio_vae_test \
 	h3_real_audio_encoder_test h3_real_video_encoder_test \
 	h3_real_qwen_vision_test h3_real_multimodal_text_test \
 	h3_real_ref_video_text_test
 
 	./h3_tests
+	./h3_sdpa_tests
+	H3_NAX=0 ./h3_sdpa_tests
 	./h3_vsr_tests
 	./h3_vsr_cache_tests
 	./h3_vsr_reae_tests
@@ -342,7 +349,7 @@ tests/%.o: tests/%.c
 -include $(wildcard *.d tests/*.d)
 
 clean:
-	rm -f h3_tests h3_metal_tests h3_bf16_tests h3_renoise_tests h3_tokenizer_tests \
+	rm -f h3_tests h3_sdpa_tests h3_metal_tests h3_bf16_tests h3_renoise_tests h3_tokenizer_tests \
 		h3_text_tests h3_real_prompt_test h3_real_dit_block_test \
 		h3_audio_gpu_tests h3_determinism_tests h3_repro_check \
 		h3_real_audio_vae_test h3_real_audio_encoder_test \
