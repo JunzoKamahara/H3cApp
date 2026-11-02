@@ -46,10 +46,11 @@
   <main id="main">
     <div class="page-head">
       <h1>Enlarging videos</h1>
-      <p class="lead">How to make a finished video larger afterwards, or redraw its fine detail at the same size. There are eight methods, and they differ most in speed and in how much they add. If you are unsure, start with <a href="#choose">Choosing a method</a>. This page uses the labels of H3cApp with macOS set to English.</p>
+      <p class="lead">How to make a finished video larger afterwards, or redraw its fine detail at the same size. There are eight methods, and they differ most in speed and in how much they add. <a href="#compare">Compare the results</a> first, and if you are still unsure, see <a href="#choose">Choosing a method</a>. This page uses the labels of H3cApp with macOS set to English.</p>
       <nav class="toc" aria-label="On this page">
         <p>On this page</p>
         <ol>
+          <li><a href="#compare">Compare the results</a></li>
           <li><a href="#steps">Enlarging a video, step by step</a></li>
           <li><a href="#choose">Choosing a method</a></li>
           <li><a href="#scale">Choosing the scale</a></li>
@@ -63,6 +64,85 @@
         </ol>
       </nav>
     </div>
+
+    <section class="section compare-section" id="compare" aria-labelledby="compare-title">
+      <h2 id="compare-title">Compare the results</h2>
+      <p>The same clip, enlarged 2x (672×384 to 1344×768) by each method, side by side. Choose a clip and a method for each side, then use <span class="ui">Still</span> for detail and <span class="ui">Video</span> for motion.</p>
+      <noscript><p>This comparison needs JavaScript.</p></noscript>
+      <div id="compare-panel" data-base="../assets/compare/" hidden>
+        <div class="compare-choices">
+          <label>Clip
+            <select id="compare-clip">
+              <option value="person" data-note="Person: look at the skin, the eyelashes and the earring. Real-ESRGAN smooths the skin and loses freckles. SwiftVR and SeedVR2 sharpen eyelashes and freckles. Open-H3 changes the eye color even at Light; at Medium and Strong the freckles spread to the forehead, and at Strong the earring changes too.">Person (hair in the wind, a smile)</option>
+              <option value="anime" data-note="Anime: look at the outlines and the eyes. SwiftVR roughens the lines, and SeedVR2 adds lines around the eye. Open-H3 gives the cleanest lines, but at Medium and Strong the face and the mouth change.">Anime (a girl running)</option>
+              <option value="cat" data-note="Cat: look at the yarn and the whiskers. SwiftVR and SeedVR2 add strong whiskers and strands. Open-H3 redraws the yarn thread by thread. At Strong the cat's pose and markings change as well, making it a different scene.">Cat (yarn and fur)</option>
+            </select>
+          </label>
+          <label>Left method
+            <select id="compare-left">
+              <option value="standard" selected>Standard</option>
+              <option value="metalfx">MetalFX</option>
+              <option value="esrgan-general">Real-ESRGAN General</option>
+              <option value="esrgan-anime">Real-ESRGAN Anime</option>
+              <option value="swiftvr">SwiftVR</option>
+              <option value="swiftvr-4x">SwiftVR, restore at 4x then shrink</option>
+              <option value="seedvr2">SeedVR2</option>
+              <option value="openh3-light">Open-H3 Light</option>
+              <option value="openh3-medium">Open-H3 Medium</option>
+              <option value="openh3-strong">Open-H3 Strong</option>
+            </select>
+          </label>
+          <label>Right method
+            <select id="compare-right">
+              <option value="standard">Standard</option>
+              <option value="metalfx">MetalFX</option>
+              <option value="esrgan-general">Real-ESRGAN General</option>
+              <option value="esrgan-anime">Real-ESRGAN Anime</option>
+              <option value="swiftvr" selected>SwiftVR</option>
+              <option value="swiftvr-4x">SwiftVR, restore at 4x then shrink</option>
+              <option value="seedvr2">SeedVR2</option>
+              <option value="openh3-light">Open-H3 Light</option>
+              <option value="openh3-medium">Open-H3 Medium</option>
+              <option value="openh3-strong">Open-H3 Strong</option>
+            </select>
+          </label>
+        </div>
+        <div class="compare-buttons">
+          <button type="button" data-mode="still" aria-pressed="true">Still</button>
+          <button type="button" data-mode="video" aria-pressed="false">Video</button>
+          <span class="compare-video-controls" id="compare-video-controls" hidden>
+            <button type="button" id="compare-play">Pause</button>
+            <button type="button" data-speed="1" aria-pressed="true">Normal speed</button>
+            <button type="button" data-speed="0.25" aria-pressed="false">Quarter speed</button>
+          </span>
+        </div>
+        <div class="compare-panes">
+          <figure data-pane="left"><img src="../assets/compare/person/standard.jpg" width="640" height="360" alt=""><video width="640" height="360" muted playsinline preload="auto" hidden></video><figcaption></figcaption></figure>
+          <figure data-pane="right"><img src="../assets/compare/person/swiftvr.jpg" width="640" height="360" alt=""><video width="640" height="360" muted playsinline preload="auto" hidden></video><figcaption></figcaption></figure>
+        </div>
+        <p class="compare-note" id="compare-note" aria-live="polite"></p>
+      </div>
+      <p>Motion is easier to compare at <span class="ui">Quarter speed</span>. Watch whether fine detail in the hair or background shimmers as it moves, and whether a face changes partway through. Whether it looks natural depends on your eye and the footage, so try a short clip of your own as well.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Method</th><th scope="col">Time</th><th scope="col">Change between frames</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Standard</th><td>2 s</td><td class="num">2.10</td></tr>
+            <tr><th scope="row">MetalFX</th><td>2 s</td><td class="num">2.39</td></tr>
+            <tr><th scope="row">Real-ESRGAN General</th><td>4 s</td><td class="num">1.77</td></tr>
+            <tr><th scope="row">Real-ESRGAN Anime</th><td>4 s</td><td class="num">1.83</td></tr>
+            <tr><th scope="row">SwiftVR</th><td>18 s</td><td class="num">1.86</td></tr>
+            <tr><th scope="row">SwiftVR, restore at 4x then shrink</th><td>about 1 min</td><td class="num">1.91</td></tr>
+            <tr><th scope="row">SeedVR2</th><td>about 5 min</td><td class="num">2.79</td></tr>
+            <tr><th scope="row">Open-H3 Light</th><td>about 6 min</td><td class="num">2.19</td></tr>
+            <tr><th scope="row">Open-H3 Medium</th><td>about 6 min</td><td class="num">2.87</td></tr>
+            <tr><th scope="row">Open-H3 Strong</th><td>about 7 min 30 s</td><td class="num">4.16</td></tr>
+          </tbody>
+          <caption>Times are measured on an M5 with 24 GB, enlarging the anime clip (73 frames) 2x. Change is the mean difference in brightness between adjacent frames of the nearly still cat clip (56 frames), on a 0–255 scale; the source is 2.20. A larger number means the picture changes more from frame to frame, but it does not measure how natural the motion looks.</caption>
+        </table>
+      </div>
+      <p class="small muted">Every clip was generated in H3cApp from text alone. Each result is from a single run, and the same 640×360 area is cropped from each. The videos are recompressed for this page, so they show less fine grain than the real output.</p>
+    </section>
 
     <section class="section section-narrow" id="steps" aria-labelledby="steps-title">
       <h2 id="steps-title">Enlarging a video, step by step</h2>
@@ -226,7 +306,7 @@
             <tr><th scope="row">SwiftVR</th><td>5 s of 960×544 at 2x: about 40 seconds</td></tr>
             <tr><th scope="row">SwiftVR, restore at 4x then shrink</th><td>5 s of 544×960 at 2x: about 4 minutes</td></tr>
             <tr><th scope="row">SeedVR2</th><td>5 s of 672×384 at 2x: about 8 minutes (about 10 GB of GPU memory). 5 s of 960×544 at 2x: about 21 minutes (about 13 GB)</td></tr>
-            <tr><th scope="row">Open-H3 regeneration</th><td>56 frames of 672×384 at 2x: about 4 min 20 s at Light, about 5 min 30 s at Strong. 5 s at 1344×768 takes about 12 minutes at Strong (memory as in generation, about 15 GB)</td></tr>
+            <tr><th scope="row">Open-H3 regeneration</th><td>56 frames of 672×384 at 2x: about 4 to 5 minutes at Light, about 5.5 to 7 minutes at Strong. 5 s at 1344×768 takes about 12 minutes at Strong (memory as in generation, about 15 GB)</td></tr>
           </tbody>
           <caption>Approximate times on an M5 with 24 GB.</caption>
         </table>
@@ -294,6 +374,7 @@
       <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). Videos are generated with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>, a video generation model by MiniMax, which comes under its own license, the MiniMax H3 Community License.</p>
     </div>
   </footer>
+  <script src="../assets/js/compare.js" defer></script>
   <script src="../assets/js/main.js" defer></script>
 </body>
 </html>

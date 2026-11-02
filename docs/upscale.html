@@ -47,10 +47,11 @@
   <main id="main">
     <div class="page-head">
       <h1>動画の拡大</h1>
-      <p class="lead">できあがった動画を、あとから大きくしたり、同じ大きさのまま細部を描き直したりする手順です。方法は8つあり、「早さ」と「描き足しの強さ」が大きく違います。迷ったら、次の<a href="#choose">方法の選び方</a>から入ってください。</p>
+      <p class="lead">できあがった動画を、あとから大きくしたり、同じ大きさのまま細部を描き直したりする手順です。方法は8つあり、「早さ」と「描き足しの強さ」が大きく違います。まず<a href="#compare">仕上がりを見比べて</a>、迷ったら<a href="#choose">方法の選び方</a>をご覧ください。</p>
       <nav class="toc" aria-label="このページの目次">
         <p>このページの内容</p>
         <ol>
+          <li><a href="#compare">仕上がりを見比べる</a></li>
           <li><a href="#steps">拡大の手順</a></li>
           <li><a href="#choose">方法の選び方</a></li>
           <li><a href="#scale">倍率の決め方</a></li>
@@ -64,6 +65,85 @@
         </ol>
       </nav>
     </div>
+
+    <section class="section compare-section" id="compare" aria-labelledby="compare-title">
+      <h2 id="compare-title">仕上がりを見比べる</h2>
+      <p>同じクリップを方法ごとに2倍（672×384から1344×768）にしたものを、左右に並べて比べられます。映像と左右の方法を選び、「<span class="ui">静止画</span>」で細部を、「<span class="ui">動画</span>」で動きを見てください。</p>
+      <noscript><p>この比較にはJavaScriptが必要です。</p></noscript>
+      <div id="compare-panel" data-base="assets/compare/" hidden>
+        <div class="compare-choices">
+          <label>映像
+            <select id="compare-clip">
+              <option value="person" data-note="人物：見るところは肌、まつ毛、イヤリングです。Real-ESRGANは肌がなめらかになり、そばかすが減ります。SwiftVRとSeedVR2はまつ毛とそばかすがくっきりします。Open-H3は弱いでも瞳の色が変わり、中と強いではそばかすが額まで広がり、強いではイヤリングの形も変わります。">人物（風に揺れる髪と笑顔）</option>
+              <option value="anime" data-note="アニメ：見るところは輪郭の線と目です。SwiftVRは線が荒れ、SeedVR2は目のまわりに線が足されます。Open-H3は線がいちばんきれいになりますが、中と強いでは顔立ちや口の形が変わります。">アニメ（走る少女）</option>
+              <option value="cat" data-note="猫：見るところは毛糸とひげです。SwiftVRとSeedVR2はひげと毛糸の筋を強く描き足します。Open-H3は毛糸を糸から描き直します。強いでは猫の向きや模様まで変わり、別の場面になります。">猫（毛糸と毛並み）</option>
+            </select>
+          </label>
+          <label>左の方法
+            <select id="compare-left">
+              <option value="standard" selected>標準</option>
+              <option value="metalfx">MetalFX</option>
+              <option value="esrgan-general">Real-ESRGAN 汎用</option>
+              <option value="esrgan-anime">Real-ESRGAN アニメ</option>
+              <option value="swiftvr">SwiftVR</option>
+              <option value="swiftvr-4x">SwiftVR 4倍で生成してから縮小</option>
+              <option value="seedvr2">SeedVR2</option>
+              <option value="openh3-light">Open-H3 弱い</option>
+              <option value="openh3-medium">Open-H3 中</option>
+              <option value="openh3-strong">Open-H3 強い</option>
+            </select>
+          </label>
+          <label>右の方法
+            <select id="compare-right">
+              <option value="standard">標準</option>
+              <option value="metalfx">MetalFX</option>
+              <option value="esrgan-general">Real-ESRGAN 汎用</option>
+              <option value="esrgan-anime">Real-ESRGAN アニメ</option>
+              <option value="swiftvr" selected>SwiftVR</option>
+              <option value="swiftvr-4x">SwiftVR 4倍で生成してから縮小</option>
+              <option value="seedvr2">SeedVR2</option>
+              <option value="openh3-light">Open-H3 弱い</option>
+              <option value="openh3-medium">Open-H3 中</option>
+              <option value="openh3-strong">Open-H3 強い</option>
+            </select>
+          </label>
+        </div>
+        <div class="compare-buttons">
+          <button type="button" data-mode="still" aria-pressed="true">静止画</button>
+          <button type="button" data-mode="video" aria-pressed="false">動画</button>
+          <span class="compare-video-controls" id="compare-video-controls" hidden>
+            <button type="button" id="compare-play">一時停止</button>
+            <button type="button" data-speed="1" aria-pressed="true">等速</button>
+            <button type="button" data-speed="0.25" aria-pressed="false">4分の1の速さ</button>
+          </span>
+        </div>
+        <div class="compare-panes">
+          <figure data-pane="left"><img src="assets/compare/person/standard.jpg" width="640" height="360" alt=""><video width="640" height="360" muted playsinline preload="auto" hidden></video><figcaption></figcaption></figure>
+          <figure data-pane="right"><img src="assets/compare/person/swiftvr.jpg" width="640" height="360" alt=""><video width="640" height="360" muted playsinline preload="auto" hidden></video><figcaption></figcaption></figure>
+        </div>
+        <p class="compare-note" id="compare-note" aria-live="polite"></p>
+      </div>
+      <p>動きは、動画を「<span class="ui">4分の1の速さ</span>」にすると見比べやすくなります。髪や背景の細部が動く間に揺れないか、顔が途中で変わらないかを見てください。自然に見えるかどうかは好みと映像によるので、自分の動画でも短いクリップで試すことをおすすめします。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">方法</th><th scope="col">かかった時間</th><th scope="col">隣のフレームとの差</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">標準</th><td>2秒</td><td class="num">2.10</td></tr>
+            <tr><th scope="row">MetalFX</th><td>2秒</td><td class="num">2.39</td></tr>
+            <tr><th scope="row">Real-ESRGAN 汎用</th><td>4秒</td><td class="num">1.77</td></tr>
+            <tr><th scope="row">Real-ESRGAN アニメ</th><td>4秒</td><td class="num">1.83</td></tr>
+            <tr><th scope="row">SwiftVR</th><td>18秒</td><td class="num">1.86</td></tr>
+            <tr><th scope="row">SwiftVR 4倍で生成してから縮小</th><td>約1分</td><td class="num">1.91</td></tr>
+            <tr><th scope="row">SeedVR2</th><td>約5分</td><td class="num">2.79</td></tr>
+            <tr><th scope="row">Open-H3 弱い</th><td>約6分</td><td class="num">2.19</td></tr>
+            <tr><th scope="row">Open-H3 中</th><td>約6分</td><td class="num">2.87</td></tr>
+            <tr><th scope="row">Open-H3 強い</th><td>約7分30秒</td><td class="num">4.16</td></tr>
+          </tbody>
+          <caption>時間はアニメのクリップ（73フレーム）を2倍にしたときのM5・24GBでの実測です。差は、ほとんど動かない猫のクリップ（56フレーム）で測った、隣り合うフレームの明るさの平均の差です（0〜255、元の動画は2.20）。大きいほど画面が細かく変わっていることを示しますが、動きの自然さそのものは測れません。</caption>
+        </table>
+      </div>
+      <p class="small muted">どのクリップも、H3cAppで文章だけから生成した動画です。Open-H3の結果も含めて1回ずつ拡大し、同じ場所を640×360で切り出しています。動画はページ用に圧縮し直しているので、細かな粒状感は実際の出力より減っています。</p>
+    </section>
 
     <section class="section section-narrow" id="steps" aria-labelledby="steps-title">
       <h2 id="steps-title">拡大の手順</h2>
@@ -227,7 +307,7 @@
             <tr><th scope="row">SwiftVR</th><td>960×544の5秒を2倍に：約40秒</td></tr>
             <tr><th scope="row">SwiftVR 4倍で生成してから縮小</th><td>544×960の5秒を2倍に：約4分</td></tr>
             <tr><th scope="row">SeedVR2</th><td>672×384の5秒を2倍に：約8分（GPUに約10GB）。960×544の5秒を2倍に：約21分（約13GB）</td></tr>
-            <tr><th scope="row">Open-H3 再生成</th><td>672×384の56フレームを2倍に：弱いで約4分20秒、強いで約5分30秒。1344×768の5秒は強いで約12分（メモリは生成と同じ約15GB）</td></tr>
+            <tr><th scope="row">Open-H3 再生成</th><td>672×384の56フレームを2倍に：弱いで約4〜5分、強いで約5分30秒〜7分。1344×768の5秒は強いで約12分（メモリは生成と同じ約15GB）</td></tr>
           </tbody>
           <caption>M5・24GBでの時間の目安。</caption>
         </table>
@@ -295,6 +375,7 @@
       <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画の生成にはMiniMaxの動画生成モデル<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>を使っています。モデルにはMiniMax H3独自のライセンス（MiniMax H3 Community License）が適用されます。</p>
     </div>
   </footer>
+  <script src="assets/js/compare.js" defer></script>
   <script src="assets/js/main.js" defer></script>
 </body>
 </html>
