@@ -132,6 +132,13 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The method chosen last in the sheet, which it opens on next time.
+    static var lastChosen: VideoUpscaler? {
+        get { UserDefaults.standard.string(forKey: lastChosenKey).flatMap(VideoUpscaler.init(rawValue:)) }
+        set { UserDefaults.standard.set(newValue?.rawValue, forKey: lastChosenKey) }
+    }
+    private static let lastChosenKey = "h3c-app.lastUpscaler"
+
     /// Whether this Mac can run it.
     var isAvailable: Bool {
         switch self {

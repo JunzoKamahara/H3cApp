@@ -17,6 +17,13 @@ struct UpscaleSheet: View {
     @State private var showingSwiftVRSetup = false
     @State private var showingSeedVR2Setup = false
     @State private var showingOpenH3Setup = false
+    /// Whether the chosen upscaler's model is here, as last checked. A
+    /// setup finishing changes nothing else the sheet holds for Open-H3, so
+    /// this is what redraws it.
+    @State private var modelReady = true
+    @ObservedObject private var swiftVRSetup = SwiftVRSetup.shared
+    @ObservedObject private var seedVR2Setup = SeedVR2Setup.shared
+    @ObservedObject private var openH3Setup = OpenH3Setup.shared
     @Environment(\.colorScheme) private var colorScheme
     private var palette: H3Palette { H3Palette(colorScheme) }
 
@@ -64,6 +71,7 @@ struct UpscaleSheet: View {
     /// the one chosen when it can, else the next below it.
     private func updateChoices() {
         let old = factor
+        modelReady = upscaler.isAvailable
         choices = UpscaleChoices(upscaler: upscaler, width: pending.width, height: pending.height)
         switch selection {
         case .usual(let chosen):
@@ -118,13 +126,23 @@ struct UpscaleSheet: View {
                     viewModel.startUpscale(pending, upscaler: chosen, factor: scale, strength: strength)
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(factor == nil || !upscaler.isAvailable || viewModel.isUpscalingVideo
+                .disabled(factor == nil || !modelReady || viewModel.isUpscalingVideo
                           || viewModel.upscaleBlockedReason(upscaler) != nil || openH3Reason != nil)
             }
         }
         .padding(H3Spacing.lg)
         .frame(width: 500)
-        .onChange(of: upscaler) { _, _ in updateChoices() }
+        .onAppear {
+            if let last = VideoUpscaler.lastChosen { upscaler = last }
+            updateChoices()
+        }
+        .onChange(of: upscaler) { _, chosen in
+            VideoUpscaler.lastChosen = chosen
+            updateChoices()
+        }
+        .onChange(of: swiftVRSetup.phase) { _, _ in updateChoices() }
+        .onChange(of: seedVR2Setup.phase) { _, _ in updateChoices() }
+        .onChange(of: openH3Setup.phase) { _, _ in updateChoices() }
         .sheet(isPresented: $showingSwiftVRSetup, onDismiss: updateChoices) {
             SwiftVRSetupView(busy: viewModel.isGenerating || viewModel.isBuildingCache) { showingSwiftVRSetup = false }
         }
@@ -149,28 +167,28 @@ struct UpscaleSheet: View {
             }
             if upscaler.isSwiftVR {
                 HStack {
-                    Button(upscaler.isAvailable ? "モデルを管理…" : "モデルを準備…") { showingSwiftVRSetup = true }
+                    Button(modelReady ? "モデルを管理…" : "モデルを準備…") { showingSwiftVRSetup = true }
                         .controlSize(.small)
-                    if SwiftVRSetup.shared.isBusy {
-                        Text("準備中です（\(SwiftVRSetup.shared.phase.apiText)）").foregroundStyle(.orange)
+                    if swiftVRSetup.isBusy {
+                        Text("準備中です（\(swiftVRSetup.phase.apiText)）").foregroundStyle(.orange)
                     }
                 }
             }
             if upscaler == .seedVR2 {
                 HStack {
-                    Button(upscaler.isAvailable ? "モデルを管理…" : "モデルを準備…") { showingSeedVR2Setup = true }
+                    Button(modelReady ? "モデルを管理…" : "モデルを準備…") { showingSeedVR2Setup = true }
                         .controlSize(.small)
-                    if SeedVR2Setup.shared.isBusy {
-                        Text("準備中です（\(SeedVR2Setup.shared.phase.apiText)）").foregroundStyle(.orange)
+                    if seedVR2Setup.isBusy {
+                        Text("準備中です（\(seedVR2Setup.phase.apiText)）").foregroundStyle(.orange)
                     }
                 }
             }
             if upscaler == .openH3 {
                 HStack {
-                    Button(upscaler.isAvailable ? "モデルを管理…" : "モデルを準備…") { showingOpenH3Setup = true }
+                    Button(modelReady ? "モデルを管理…" : "モデルを準備…") { showingOpenH3Setup = true }
                         .controlSize(.small)
-                    if OpenH3Setup.shared.isBusy {
-                        Text("準備中です（\(OpenH3Setup.shared.phase.apiText)）").foregroundStyle(.orange)
+                    if openH3Setup.isBusy {
+                        Text("準備中です（\(openH3Setup.phase.apiText)）").foregroundStyle(.orange)
                     }
                 }
             }
