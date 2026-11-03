@@ -1,5 +1,6 @@
 #include "h3_video_encoder.h"
 
+#include "h3_host.h"
 #include "h3_weights.h"
 
 #include <errno.h>
@@ -9,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/sysctl.h>
 #include <time.h>
 
 enum {
@@ -20,7 +22,9 @@ enum {
     GROUPS = 32,
     SPATIAL_RATIO = 16,
     TILE_PIXELS = 256,
-    TILE_OVERLAP_MIN = 64
+    TILE_OVERLAP_MIN = 64,
+    /* Every causal Conv3d of the encoder (30 of them) keeps one history. */
+    HISTORY_SLOTS = 40
 };
 
 static const uint32_t level_channels[LEVELS] = {128, 256, 256, 512, 512, 1024};
@@ -75,6 +79,14 @@ typedef struct {
     float latent_std[LATENT_CHANNELS];
     /* Conv3d as 2D convolutions (h3_video_vae_encode_fast). */
     int fast;
+    /* A tile encoded in chunks over time (see "Memory over time"): each
+     * causal Conv3d takes its two front frames from `history` - the last
+     * two padded input frames of the previous chunk - instead of zeros. */
+    int streaming;
+    int stream_chunk;
+    int history_count;
+    const encoder_conv *history_conv[HISTORY_SLOTS];
+    h3_gpu_tensor *history[HISTORY_SLOTS];
     /* H3_ENCODER_PROFILE=1: where the time goes (see checkpoint). */
     double profile_mark;
 } encoder_context;
@@ -157,8 +169,17 @@ static void free_norm(encoder_norm *norm) {
     free_tensor(&norm->bias);
 }
 
+static void reset_history(encoder_context *encoder) {
+    for (int index = 0; index < encoder->history_count; index++) {
+        free_tensor(&encoder->history[index]);
+        encoder->history_conv[index] = NULL;
+    }
+    encoder->history_count = 0;
+}
+
 static void cleanup(encoder_context *encoder) {
     if (!encoder) return;
+    reset_history(encoder);
     free_conv(&encoder->conv_in);
     for (int level = 0; level < LEVELS; level++) {
         for (int block = 0; block < BLOCKS; block++) {
@@ -394,6 +415,40 @@ static size_t tensor_elements(uint32_t depth, uint32_t height, uint32_t width,
     return (size_t)depth * height * width * channels;
 }
 
+/* Chunk `stream_chunk` of a tile: the padded input's front frames become
+ * the previous chunk's last ones (the first chunk keeps the zeros, as the
+ * one-pass encode has), and its own last frames are kept for the next. */
+static int carry_history(encoder_context *encoder, const encoder_conv *conv,
+                         h3_gpu_tensor *padded, uint32_t depth,
+                         size_t frame_elements, char *error,
+                         size_t error_size) {
+    size_t keep = (size_t)conv->depth_front * frame_elements;
+    int slot = 0;
+    while (slot < encoder->history_count && encoder->history_conv[slot] != conv)
+        slot++;
+    if (slot == encoder->history_count) {
+        if (slot == HISTORY_SLOTS || encoder->stream_chunk) {
+            fail(error, error_size, "visual encoder history has no slot");
+            return 0;
+        }
+        encoder->history[slot] = h3_gpu_tensor_new_f32(encoder->gpu, keep);
+        if (!encoder->history[slot]) {
+            fail(error, error_size, "cannot allocate visual encoder history");
+            return 0;
+        }
+        encoder->history_conv[slot] = conv;
+        encoder->history_count++;
+    }
+    h3_gpu_tensor *history = encoder->history[slot];
+    return (!encoder->stream_chunk ||
+            gpu_op(encoder, h3_gpu_copy_f32(encoder->gpu, padded, 0, history, 0,
+                                            keep), error, error_size,
+                   "visual encoder history in")) &&
+           gpu_op(encoder, h3_gpu_copy_f32(encoder->gpu, history, 0, padded,
+                                           (size_t)depth * frame_elements, keep),
+                  error, error_size, "visual encoder history out");
+}
+
 static int conv_op(encoder_context *encoder, h3_gpu_tensor *output,
                    const h3_gpu_tensor *input, const encoder_conv *conv,
                    uint32_t depth, uint32_t height, uint32_t width,
@@ -411,6 +466,14 @@ static int conv_op(encoder_context *encoder, h3_gpu_tensor *output,
         source_depth += conv->depth_front;
         source_height += conv->height_before + conv->height_after;
         source_width += conv->width_before + conv->width_after;
+        if (encoder->streaming && conv->depth_front &&
+            !carry_history(encoder, conv, padded, depth,
+                           (size_t)source_height * source_width *
+                           conv->input_channels, error, error_size)) return 0;
+    } else if (encoder->streaming && conv->depth_front) {
+        fail(error, error_size, "a causal convolution without padding cannot "
+             "be encoded in chunks");
+        return 0;
     }
     return gpu_op(encoder, (encoder->fast ? h3_gpu_conv3d_as_2d_f32 : h3_gpu_conv3d_f32)(
         encoder->gpu, output, source, conv->weight, conv->bias, 1,
@@ -537,9 +600,10 @@ done:
     return output;
 }
 
-static float *encode_tile(encoder_context *encoder, const float *pixels,
-                          int frames, int height, int width,
-                          int *latent_time, char *error, size_t error_size) {
+static float *encode_tile_frames(encoder_context *encoder, const float *pixels,
+                                 int frames, int height, int width,
+                                 int *latent_time, char *error,
+                                 size_t error_size) {
     if (profiling()) encoder->profile_mark = profile_now();
     size_t pixel_count = (size_t)frames * height * width * RGB_CHANNELS;
     float *normalized = malloc(pixel_count * sizeof(*normalized));
@@ -657,6 +721,93 @@ static float *encode_tile(encoder_context *encoder, const float *pixels,
         return NULL;
     }
     *latent_time = (int)depth;
+    return latent;
+}
+
+/* One tile, in chunks of chunk_frames (a multiple of 4) when that is set
+ * and shorter than the clip. A chunk that starts at frame 4m gives latent
+ * steps m, m + 1, ...: step n ends at frame 4n (the two temporal
+ * downsamples have stride 2), and with the history carried every Conv3d
+ * sees the same frames as in one pass. GroupNorm normalizes each frame on
+ * its own, so nothing else spans frames. The last chunk is filled up to
+ * chunk_frames with copies of its final frame and the extra steps are
+ * dropped: being causal, later frames cannot change earlier steps, and one
+ * chunk length means one set of MPSGraph convolutions (each shape keeps
+ * its own graph and memory: with a second, shorter last chunk, 6.3 GiB
+ * instead of 4.0 GiB was still allocated after a 256x256 x 243 tile). */
+static float *encode_tile(encoder_context *encoder, const float *pixels,
+                          int frames, int height, int width, int chunk_frames,
+                          int *latent_time, char *error, size_t error_size) {
+    if (!chunk_frames || chunk_frames >= frames)
+        return encode_tile_frames(encoder, pixels, frames, height, width,
+                                  latent_time, error, error_size);
+    if (chunk_frames % 4) {
+        fail(error, error_size, "visual encoder chunks must be a multiple of 4 frames");
+        return NULL;
+    }
+    int latents = h3_video_encoder_latent_t(frames);
+    size_t plane = (size_t)(height / SPATIAL_RATIO) * (width / SPATIAL_RATIO);
+    size_t area = (size_t)height * width;
+    float *latent = malloc((size_t)LATENT_CHANNELS * latents * plane *
+                           sizeof(*latent));
+    float *chunk = malloc((size_t)RGB_CHANNELS * chunk_frames * area *
+                          sizeof(*chunk));
+    if (!latent || !chunk) {
+        free(latent);
+        free(chunk);
+        fail(error, error_size, "out of memory encoding visual anchor in chunks");
+        return NULL;
+    }
+    reset_history(encoder);
+    encoder->streaming = 1;
+    int ok = 1, filled = 0;
+    for (int first = 0, index = 0; ok && first < frames;
+         first += chunk_frames, index++) {
+        int count = frames - first < chunk_frames ? frames - first : chunk_frames;
+        for (int channel = 0; channel < RGB_CHANNELS; channel++) {
+            float *target = chunk + (size_t)channel * chunk_frames * area;
+            memcpy(target, pixels + ((size_t)channel * frames + first) * area,
+                   (size_t)count * area * sizeof(*chunk));
+            for (int extra = count; extra < chunk_frames; extra++)
+                memcpy(target + (size_t)extra * area,
+                       target + (size_t)(count - 1) * area,
+                       area * sizeof(*chunk));
+        }
+        encoder->stream_chunk = index;
+        int steps = 0;
+        float *part = encode_tile_frames(encoder, chunk, chunk_frames, height,
+                                         width, &steps, error, error_size);
+        ok = part != NULL;
+        int keep = h3_video_encoder_latent_t(count);
+        if (ok && (steps != chunk_frames / 4 || keep > steps ||
+                   first / 4 != filled || filled + keep > latents)) {
+            fail(error, error_size, "visual encoder chunk at frame %d gave %d "
+                 "latent steps", first, steps);
+            ok = 0;
+        }
+        if (ok) {
+            for (int channel = 0; channel < LATENT_CHANNELS; channel++)
+                memcpy(latent + ((size_t)channel * latents + filled) * plane,
+                       part + (size_t)channel * steps * plane,
+                       (size_t)keep * plane * sizeof(*latent));
+            filled += keep;
+        }
+        free(part);
+    }
+    encoder->streaming = 0;
+    encoder->stream_chunk = 0;
+    reset_history(encoder);
+    free(chunk);
+    if (ok && filled != latents) {
+        fail(error, error_size, "visual encoder chunks gave %d of %d latent steps",
+             filled, latents);
+        ok = 0;
+    }
+    if (!ok) {
+        free(latent);
+        return NULL;
+    }
+    *latent_time = latents;
     return latent;
 }
 
@@ -804,6 +955,7 @@ static int stitch_latents(float **tiles, int latent_time,
 static int encode_video(const char *weight_directory,
                         const char *shader_source_path,
                         const float *pixels, int frames, int height, int width,
+                        int chunk_frames,
                         h3_video_encoder_progress progress, void *progress_opaque,
                         h3_video_latent *output, int fast,
                         char *error, size_t error_size) {
@@ -811,7 +963,8 @@ static int encode_video(const char *weight_directory,
     if (output) memset(output, 0, sizeof(*output));
     if (!weight_directory || !*weight_directory || !shader_source_path ||
         !*shader_source_path || !pixels || !output || frames < 1 || height < 32 ||
-        width < 32 || height % SPATIAL_RATIO || width % SPATIAL_RATIO) {
+        width < 32 || height % SPATIAL_RATIO || width % SPATIAL_RATIO ||
+        chunk_frames < 0 || chunk_frames % 4) {
         fail(error, error_size, "invalid visual encoder arguments");
         return 0;
     }
@@ -856,7 +1009,7 @@ static int encode_video(const char *weight_directory,
             int current_time = 0;
             if (tile) tiles[completed] = encode_tile(
                 &encoder, tile, frames, y_axis.length, x_axis.length,
-                &current_time, error, error_size);
+                chunk_frames, &current_time, error, error_size);
             free(tile);
             ok = tiles[completed] != NULL &&
                  (!latent_time || latent_time == current_time);
@@ -870,8 +1023,10 @@ static int encode_video(const char *weight_directory,
     if (profiling()) {
         profile_charge(&encoder, PROFILE_STITCH);
         double total = profile_now() - started, counted = 0;
-        fprintf(stderr, "h3 encoder profile: %dx%d, %d frames, %d tiles, %s, %.2f s\n",
-                width, height, frames, tile_count, encoder.fast ? "2D convs" : "Conv3d", total);
+        fprintf(stderr, "h3 encoder profile: %dx%d, %d frames, %d tiles, "
+                "chunks of %d frames, %s, %.2f s\n", width, height, frames,
+                tile_count, chunk_frames, encoder.fast ? "2D convs" : "Conv3d",
+                total);
         for (int index = 0; index < PROFILE_COUNT; index++) {
             counted += profile_seconds[index];
             fprintf(stderr, "  %-16s %7.2f s  %5.1f%%\n", profile_names[index],
@@ -889,15 +1044,110 @@ static int encode_video(const char *weight_directory,
     return ok;
 }
 
+/* Memory over time.
+ *
+ * Each tile goes through the encoder with all of its frames at once, and
+ * the largest moment is a level-0 residual block: its input plus six more
+ * 128-channel F32 tensors of the tile's full size (two norms, two padded
+ * copies, the hidden state, the output). Measured on an M5 (2026-11-03,
+ * one-pass encodes of 5 to 56 frames at 96x64, 128x96 and 256x128), the
+ * GPU tensors grow by 3.6 KiB per tile pixel per frame and the process
+ * footprint by 4.5 to 5.3 KiB, over about 1.3 GiB of weights and set-up.
+ * 243 frames of a 256x256 tile ask for some 85 GiB: on a 24 GB Mac the
+ * system stalls in swap until the watchdog restarts it (2026-11-02/03).
+ *
+ * A clip whose estimate is over the budget is encoded in chunks over time
+ * instead (encode_tile), which gives the same latent: the encoder is
+ * causal in time and normalizes frame by frame, so carrying each Conv3d's
+ * last two input frames into the next chunk is all that spans chunks. The
+ * histories cost about two frames more. */
+static const uint64_t ENCODER_BASE_BYTES = 3ull << 29;          /* 1.5 GiB */
+static const uint64_t ENCODER_PIXEL_FRAME_BYTES = 5632;         /* 5.5 KiB */
+enum { HISTORY_FRAMES = 2 };
+
+static uint64_t tile_frame_bytes(int height, int width) {
+    uint64_t tile_h = height <= TILE_PIXELS ? (uint64_t)height : TILE_PIXELS;
+    uint64_t tile_w = width <= TILE_PIXELS ? (uint64_t)width : TILE_PIXELS;
+    return tile_h * tile_w * ENCODER_PIXEL_FRAME_BYTES;
+}
+
+uint64_t h3_video_encoder_peak_bytes(int frames, int height, int width) {
+    if (frames < 1 || height < 1 || width < 1) return 0;
+    return ENCODER_BASE_BYTES + (uint64_t)frames * tile_frame_bytes(height, width);
+}
+
+uint64_t h3_video_encoder_chunked_peak_bytes(int chunk_frames, int height,
+                                             int width) {
+    return h3_video_encoder_peak_bytes(chunk_frames + HISTORY_FRAMES, height,
+                                       width);
+}
+
+uint64_t h3_video_encoder_default_budget(void) {
+    const char *value = getenv("H3_VAE_ENCODE_BUDGET_BYTES");
+    if (value && *value) {
+        unsigned long long parsed = strtoull(value, NULL, 10);
+        if (parsed >= (64ull << 20)) return parsed;
+        fprintf(stderr, "h3: warning: H3_VAE_ENCODE_BUDGET_BYTES=%s is below "
+                "64 MiB; ignoring\n", value);
+    }
+    uint64_t memory = 0;
+    size_t size = sizeof(memory);
+    if (sysctlbyname("hw.memsize", &memory, &size, NULL, 0) != 0 || !memory)
+        memory = 8ull << 30;
+    /* A third of the RAM: the encoder runs before the DiT is loaded, but
+     * the decoded clip (up to 3 GiB at 362 frames of 1120x640), the app and
+     * the rest of the system need room too. Measured on a 24 GB M5: a
+     * 1120x640 x 243 clip in 28-frame chunks (an 11.8 GiB budget, before the
+     * last chunk was padded) peaked at a 16 GiB footprint and pushed 2.6 GB
+     * into swap; chunk length does not
+     * change the speed (243 frames of a 256x256 tile: 137 s in chunks of
+     * 12, 150 s in chunks of 28). */
+    return memory / 3;
+}
+
+int h3_video_encoder_plan(int frames, int height, int width,
+                          uint64_t budget_bytes, int *chunk_frames) {
+    if (!chunk_frames || frames < 1 || height < 1 || width < 1) return 0;
+    *chunk_frames = 0;
+    if (!budget_bytes || frames <= 4 ||
+        h3_video_encoder_peak_bytes(frames, height, width) <= budget_bytes)
+        return 1;
+    uint64_t room = budget_bytes > ENCODER_BASE_BYTES ?
+                    budget_bytes - ENCODER_BASE_BYTES : 0;
+    uint64_t fit = room / tile_frame_bytes(height, width);
+    fit = fit > HISTORY_FRAMES ? fit - HISTORY_FRAMES : 0;
+    uint64_t chunk = fit / 4 * 4;
+    if (chunk < 4) chunk = 4;          /* the smallest chunk there is */
+    if (chunk >= (uint64_t)frames) return 1;
+    *chunk_frames = (int)chunk;
+    return 1;
+}
+
+static int encode_planned(const char *weight_directory,
+                          const char *shader_source_path,
+                          const float *pixels, int frames, int height,
+                          int width, h3_video_encoder_progress progress,
+                          void *progress_opaque, h3_video_latent *output,
+                          int fast, char *error, size_t error_size) {
+    int chunk_frames = 0;
+    if (!h3_video_encoder_plan(frames, height, width,
+                               h3_video_encoder_default_budget(),
+                               &chunk_frames))
+        chunk_frames = 0;   /* encode_video reports the bad arguments */
+    return encode_video(weight_directory, shader_source_path, pixels, frames,
+                        height, width, chunk_frames, progress, progress_opaque,
+                        output, fast, error, error_size);
+}
+
 int h3_video_vae_encode(const char *weight_directory,
                         const char *shader_source_path,
                         const float *pixels, int frames, int height, int width,
                         h3_video_encoder_progress progress, void *progress_opaque,
                         h3_video_latent *output,
                         char *error, size_t error_size) {
-    return encode_video(weight_directory, shader_source_path, pixels, frames,
-                        height, width, progress, progress_opaque, output, 0,
-                        error, error_size);
+    return encode_planned(weight_directory, shader_source_path, pixels,
+                          frames, height, width, progress, progress_opaque,
+                          output, 0, error, error_size);
 }
 
 int h3_video_vae_encode_fast(const char *weight_directory,
@@ -906,9 +1156,21 @@ int h3_video_vae_encode_fast(const char *weight_directory,
                              h3_video_encoder_progress progress, void *progress_opaque,
                              h3_video_latent *output,
                              char *error, size_t error_size) {
+    return encode_planned(weight_directory, shader_source_path, pixels,
+                          frames, height, width, progress, progress_opaque,
+                          output, 1, error, error_size);
+}
+
+int h3_video_vae_encode_chunked(const char *weight_directory,
+                                const char *shader_source_path,
+                                const float *pixels, int frames, int height,
+                                int width, int chunk_frames, int fast,
+                                h3_video_encoder_progress progress,
+                                void *progress_opaque, h3_video_latent *output,
+                                char *error, size_t error_size) {
     return encode_video(weight_directory, shader_source_path, pixels, frames,
-                        height, width, progress, progress_opaque, output, 1,
-                        error, error_size);
+                        height, width, chunk_frames, progress, progress_opaque,
+                        output, fast, error, error_size);
 }
 
 void h3_video_latent_free(h3_video_latent *latent) {

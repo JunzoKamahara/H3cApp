@@ -158,6 +158,16 @@ Related documentation: [Local API](API.md) Â· [Building and testing](BUILD.md) Â
   (about 37 dB from the reference at 800x544) and show the 16-pixel patches
   as a staircase of blocks on dark edges. `H3_VAE_TILE_PIXELS` still picks
   another size.
+- **Long reference videos in chunks**: the video VAE encoder runs each
+  256-pixel tile with all of its frames at once, about 5.5 KiB per pixel
+  per frame, so a 243-frame reference would need some 85 GiB for one tile;
+  on a 24 GB Mac that stalled the system in swap until the watchdog
+  restarted it. A clip that does not fit a third of the RAM
+  (`H3_VAE_ENCODE_BUDGET_BYTES` sets another budget) is now encoded in
+  chunks of frames, 16 at a time on 24 GB. The encoder is causal in time and
+  normalizes each frame on its own, so each convolution carries its last
+  two input frames into the next chunk and the latent is bit-identical to
+  one pass. Clips that fit still take the one pass.
 - **Video compression**: every video the app keeps (generated, joined,
   enlarged, imported) is HEVC at a constant quality: General Settings > Saved Quality,
   Quality of Saved Videos, Standard (0.85), High (0.90, the default) or
