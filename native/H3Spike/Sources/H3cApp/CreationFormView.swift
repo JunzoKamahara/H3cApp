@@ -246,12 +246,49 @@ struct CreationFormView: View {
                             }
                         }
                     }
+                    if let plan = viewModel.currentGenerationPlan {
+                        referencePlanView(plan)
+                    }
                 }
             }
         }
+        .task(id: viewModel.generationPlanKey) { await viewModel.refreshGenerationPlan() }
         .padding(H3Spacing.md)
         .background(palette.surfaceMuted)
         .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
+    }
+
+    /// What the references add (h3_plan_generation), and whether it fits.
+    private func referencePlanView(_ plan: H3GenerationPlan) -> some View {
+        let gib = 1024.0 * 1024.0 * 1024.0
+        let ratio = String(format: "%.1f", plan.ditCostRatio)
+        let peak = String(format: "%.1f", Double(plan.peakBytes) / gib)
+        let memory = String(format: "%.0f", Double(plan.memoryBytes) / gib)
+        return VStack(alignment: .leading, spacing: 2) {
+            if plan.referenceVideoFrames > 0 {
+                Text("参照動画は最初の\(plan.referenceVideoFrames)コマを\(plan.referenceVideoWidth)×\(plan.referenceVideoHeight)で使います")
+            }
+            Text("参照で増えるトークン: \(plan.ditReferenceTokens)（生成の計算は参照なしの約\(ratio)倍）")
+            Text("テキストエンコーダー: \(plan.textTokens)トークン（上限 \(plan.textTokenLimit)）")
+            Text("必要なメモリの目安: 約\(peak) GB（このMacは\(memory) GB）")
+            switch plan.verdict {
+            case .ok:
+                EmptyView()
+            case .tight:
+                Text(plan.textTokens > plan.textFastLimit
+                     ? String(localized: "テキストエンコーダーのトークン数が速い処理の上限（\(plan.textFastLimit)）を超えるので、遅い方法で処理します")
+                     : String(localized: "メモリに余裕がありません。スワップが起きて、かなり遅くなる見込みです"))
+                    .foregroundStyle(palette.errorColor)
+            case .tooLarge:
+                Text(plan.textTokens > plan.textTokenLimit
+                     ? String(localized: "テキストエンコーダーの上限を超えるので生成できません。参照動画を短くするか、参照の数を減らしてください")
+                     : String(localized: "このMacのメモリでは生成できません。参照動画を短くするか、サイズや秒数を下げてください"))
+                    .foregroundStyle(palette.errorColor)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(palette.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: 続きを作る (continuation)

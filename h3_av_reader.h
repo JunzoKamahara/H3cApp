@@ -13,6 +13,17 @@ typedef enum {
 int h3_av_visual_size(const char *path, int *width, int *height,
                       char *error, size_t error_size);
 
+/* How many frames h3_av_read_video_f32 would decode from the first video
+ * stream at 24 fps (before its 5+17k trim), from the asset's duration
+ * without decoding anything. */
+int h3_av_video_frame_count(const char *path, int *frames,
+                            char *error, size_t error_size);
+
+/* The length of the first audio stream in 32 kHz samples, from its
+ * duration without decoding. */
+int h3_av_audio_sample_count(const char *path, int64_t *samples,
+                             char *error, size_t error_size);
+
 /* Decode one visual stream. The caller owns channel-major F32 [3,height,width]
  * RGB in [0,1]. */
 int h3_av_read_image_f32(const char *path, int width, int height,

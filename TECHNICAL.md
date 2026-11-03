@@ -544,6 +544,63 @@ value. An extreme case is refused outright with a clear error (a 512 MiB
 attention-mask cap in the MPSGraph fallback path, see [h3_gpu.m](h3_gpu.m))
 rather than risking an out-of-memory crash.
 
+### Checking a request before it runs
+
+`h3_plan_generation` (h3.h) works out what a generation will take without
+loading weights or decoding media, in about half a second: it reads each
+reference's size and length, picks the canvas and frame count the
+generation will use, counts the text encoder's and the DiT's tokens with
+the same code (a generation warns if its own counts differ), and estimates
+each stage's peak memory. `h3_generate` runs it first and refuses a request
+whose verdict is "too large" before anything loads; `H3_PREFLIGHT=0` skips
+that. The app shows the counts under the reference list and blocks the
+Generate button on that verdict; `H3SPIKE_PLAN=1` prints them from the CLI.
+
+- **Tokens.** A reference video adds `(W/32)*(H/32)` DiT tokens per 4
+  frames and the same number of Qwen tokens per 24 frames; it is read at
+  most as long as the output. The 243-frame 1120x640 reference that
+  restarted a 24 GB Mac adds 42,700 DiT tokens and 7,700 Qwen tokens, so a
+  256x256 output's DiT sequence grows from 5,522 to 55,922 tokens (Qwen's
+  output becomes DiT rows too, image tokens included) and its DiT compute
+  about 26 times.
+- **Limits.** Qwen's fast causal attention takes at most 7,936 tokens (one
+  F32 score row in 32 KiB of threadgroup memory); past that an MPSGraph
+  fallback runs, and past 16,384 tokens it refuses. The plan refuses those
+  up front - before the reference video has been encoded for many
+  minutes - and warns about the fallback. On an M5 with macOS 26 or later
+  the fallback took only its mask and 0.25 GiB more (7.84 GiB at 9,261
+  tokens); elsewhere it is counted as if it held all 64 heads' scores,
+  which refuses about 16,000 tokens on 24 GB.
+- **Memory.** Each stage is a fixed part plus a part per token, measured
+  with `H3_MEMORY_TRACE=1` on a 24 GB M5 (GGUF import, SSD streaming, the
+  app's `H3_QWEN_PREFETCH_DEPTH=1`) and checked against each stage's own
+  allocations: the text encoder 4.8 GiB (1.8 GiB more per further layer
+  read ahead, 0.5 GiB more after images or video) plus 253 KiB a token
+  (176 KiB of its own buffers, the rest the vision outputs it injects and
+  its output); Qwen's vision tower 1.5 GiB plus 39 KiB a patch of the
+  largest image; the DiT 4.0 GiB plus 199.5 KiB a token (measured 190)
+  and 64 KiB more a text row;
+  the video VAE encoder its chunked estimate plus the decoded references
+  (F32) and 0.6 GiB. Every measured run came in under its estimate. Past 85% of the RAM the verdict is "tight" (expect swapping); past
+  125% it is "too large", since running out of swap is what restarted the
+  Mac.
+- **Time.** The DiT cost ratio, against the same generation without its
+  references, counts projections per token and attention per pair of
+  tokens (equal at 26,880 tokens). The app scales its
+  denoising estimate by it and adds the reference video's VAE encode at
+  14 µs per pixel-frame (measured on M5).
+- **Measuring.** `H3_MEMORY_TRACE=1` prints each phase's peak footprint,
+  sampled every 20 ms by a thread in the process. `H3_MEMORY_LIMIT_GIB=n`
+  ends the process once its footprint passes n GiB: for measuring a job
+  that might not fit, since a watcher in another process (`ps`) stalls
+  once the Mac swaps hard.
+- **Encoders in their own autorelease pools.** Measuring found each Qwen
+  vision call (its own GPU and weights) leaving about 1 GiB of autoreleased
+  Metal objects until the whole generation ended, about 11 GiB for the 11
+  two-frame blocks of a 243-frame reference. The vision, video VAE, audio
+  VAE and text encoder calls in `h3_generate` now run in a pool each
+  (`h3_autorelease_push`); three vision calls in a row stay at 1.2 GiB.
+
 ## AI video super-resolution (SwiftVR)
 
 "動画を拡大" has, next to the resize, MetalFX and Real-ESRGAN upscalers, the

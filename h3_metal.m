@@ -6,6 +6,18 @@
 #include <stdio.h>
 #include <string.h>
 
+/* What @autoreleasepool compiles to; exported by libobjc. */
+extern void *objc_autoreleasePoolPush(void);
+extern void objc_autoreleasePoolPop(void *pool);
+
+void *h3_autorelease_push(void) {
+    return objc_autoreleasePoolPush();
+}
+
+void h3_autorelease_pop(void *pool) {
+    if (pool) objc_autoreleasePoolPop(pool);
+}
+
 static void h3_copy_string(char *destination, size_t size, NSString *value) {
     if (!destination || !size) return;
     const char *source = value ? value.UTF8String : "unknown";

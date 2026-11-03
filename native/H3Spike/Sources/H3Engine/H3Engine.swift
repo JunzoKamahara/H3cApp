@@ -51,6 +51,44 @@ public struct H3DeviceInfo: Sendable {
     public var hasTensorHardware: Bool { appleGPUFamily >= 10 }
 }
 
+/// h3_plan_generation's answer: what a generation's references add and
+/// how much memory each stage should need, before anything runs.
+public struct H3GenerationPlan: Sendable, Equatable {
+    public enum Verdict: Sendable, Equatable {
+        /// Fits in memory.
+        case ok
+        /// Runs, but near or past this Mac's memory: expect swapping.
+        case tight
+        /// Would not run, or would risk the whole Mac; the engine refuses it.
+        case tooLarge
+    }
+    public let verdict: Verdict
+    /// The Qwen text encoder's sequence and the image tokens in it.
+    public let textTokens: Int
+    public let visionTokens: Int
+    public let textFastLimit: Int
+    public let textTokenLimit: Int
+    /// The DiT's sequence: all of it, the part being generated, and the
+    /// reference rows.
+    public let ditTokens: Int
+    public let ditGeneratedTokens: Int
+    public let ditReferenceTokens: Int
+    /// DiT compute against the same generation without reference rows.
+    public let ditCostRatio: Double
+    /// The longest reference video as it will be read (0 frames: none).
+    public let referenceVideoFrames: Int
+    public let referenceVideoWidth: Int
+    public let referenceVideoHeight: Int
+    /// Reference pixel-frames the video VAE encodes.
+    public let referencePixelFrames: Double
+    public let peakBytes: UInt64
+    public let memoryBytes: UInt64
+    /// "video encoder", "vision encoder", "text encoder" or "DiT".
+    public let peakStage: String
+    /// The engine's English explanation; empty when the verdict is ok.
+    public let message: String
+}
+
 public struct H3GenerationResult: Sendable {
     public let frames: Int
     public let fps: Int
@@ -466,6 +504,66 @@ public final class H3Engine: @unchecked Sendable {
     /// built with the ccv backend and the GPU has the neural matrix
     /// accelerators it needs.
     public static var fastAttentionAvailable: Bool { h3_fast_attention_available() != 0 }
+
+    /// h3_plan_generation for these settings: reads only the references'
+    /// sizes and lengths and the tokenizer, so it takes a fraction of a
+    /// second and can run beside a generation (not on workQueue). nil when
+    /// the request cannot be planned (a reference that cannot be read, say);
+    /// the generation then reports that itself.
+    public func plan(prompt: String, params: H3GenerationParams) -> H3GenerationPlan? {
+        let promptText = prompt.isEmpty ? " " : prompt
+        var cParams = h3_params()
+        cParams.width = params.width
+        cParams.height = params.height
+        cParams.render_width = params.renderWidth
+        cParams.render_height = params.renderHeight
+        cParams.frames = params.frames
+        cParams.steps = params.steps
+        cParams.ssd_streaming = params.ssdStreaming ? 1 : 0
+        cParams.continue_frames = params.continueFrames
+        var plan = h3_plan()
+        let planned: Int32 = withReferenceArray(params.references) { refBuffer in
+            promptText.withCString { promptC in
+                withOptionalCString(params.firstFrame) { firstFrameC in
+                    withOptionalCString(params.lastFrame) { lastFrameC in
+                        withOptionalCString(params.continueLatentPath) { continueLatentC in
+                            cParams.first_frame = firstFrameC
+                            cParams.last_frame = lastFrameC
+                            cParams.continue_latent_path = continueLatentC
+                            cParams.references = refBuffer.baseAddress
+                            cParams.reference_count = refBuffer.count
+                            return h3_plan_generation(ctx, promptC, &cParams, &plan)
+                        }
+                    }
+                }
+            }
+        }
+        guard planned != 0 else { return nil }
+        let verdict: H3GenerationPlan.Verdict
+        switch Int(plan.verdict) {
+        case Int(H3_PLAN_TOO_LARGE.rawValue): verdict = .tooLarge
+        case Int(H3_PLAN_TIGHT.rawValue): verdict = .tight
+        default: verdict = .ok
+        }
+        return H3GenerationPlan(
+            verdict: verdict,
+            textTokens: Int(plan.text_tokens),
+            visionTokens: Int(plan.vision_tokens),
+            textFastLimit: Int(plan.text_fast_limit),
+            textTokenLimit: Int(plan.text_token_limit),
+            ditTokens: Int(plan.dit_tokens),
+            ditGeneratedTokens: Int(plan.dit_generated_tokens),
+            ditReferenceTokens: Int(plan.dit_reference_tokens),
+            ditCostRatio: plan.dit_cost_ratio,
+            referenceVideoFrames: Int(plan.reference_video_frames),
+            referenceVideoWidth: Int(plan.reference_video_width),
+            referenceVideoHeight: Int(plan.reference_video_height),
+            referencePixelFrames: plan.reference_pixel_frames,
+            peakBytes: plan.peak_bytes,
+            memoryBytes: plan.memory_bytes,
+            peakStage: fixedCString(plan.peak_stage),
+            message: fixedCString(plan.message))
+    }
 
     public func generate(prompt: String, outputPath: String,
                           params: H3GenerationParams) -> AsyncThrowingStream<H3GenerationEvent, Error> {

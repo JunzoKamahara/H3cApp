@@ -126,12 +126,15 @@ static int build_positions(const h3_vision_output *const *images,
     return 1;
 }
 
+/* count_only: a vision output with only its token count and grid set,
+ * for h3_multimodal_*_token_count - the sequence is built the same way,
+ * without embeddings. */
 static int append_vision(h3_ids *ids, h3_text_vision_span *span,
                          const h3_vision_output *vision, uint32_t pad,
-                         char *error, size_t error_size) {
-    if (!vision || !vision->merged || !vision->deepstack[0] ||
-        !vision->deepstack[1] || !vision->deepstack[2] || !vision->tokens ||
-        vision->tokens > UINT32_MAX) {
+                         int count_only, char *error, size_t error_size) {
+    if (!vision || !vision->tokens || vision->tokens > UINT32_MAX ||
+        (!count_only && (!vision->merged || !vision->deepstack[0] ||
+                         !vision->deepstack[1] || !vision->deepstack[2]))) {
         fail(error, error_size, "invalid Qwen vision output");
         return 0;
     }
@@ -194,6 +197,26 @@ static int encode_presentation(const char *weight_directory,
     return ok;
 }
 
+/* The FL2VA presentation: `<Picture n>: ` and its image per anchor, then
+ * the prompt. */
+static int build_fl2va(const h3_tokenizer *tokenizer, const char *prompt,
+                       const h3_vision_output *images, size_t image_count,
+                       int count_only, h3_ids *ids, h3_text_vision_span *spans,
+                       const h3_vision_output **visions,
+                       char *error, size_t error_size) {
+    for (size_t image = 0; image < image_count; image++) {
+        const h3_vision_output *vision = &images[image];
+        char prefix[64];
+        int length = snprintf(prefix, sizeof(prefix), "<Picture %zu>: ", image + 1);
+        visions[image] = vision;
+        if (length < 0 || (size_t)length >= sizeof(prefix) ||
+            !tokenize_append(tokenizer, prefix, ids, error, error_size) ||
+            !append_vision(ids, &spans[image], vision, H3_IMAGE_PAD,
+                           count_only, error, error_size)) return 0;
+    }
+    return tokenize_append(tokenizer, prompt, ids, error, error_size);
+}
+
 int h3_multimodal_encode_fl2va_bf16(
                         const h3_tokenizer *tokenizer,
                         const char *weight_directory,
@@ -214,26 +237,179 @@ int h3_multimodal_encode_fl2va_bf16(
     h3_text_vision_span *spans = calloc(image_count, sizeof(*spans));
     const h3_vision_output **visions = calloc(image_count, sizeof(*visions));
     int ok = 0;
-    if (!spans || !visions) goto oom;
-    for (size_t image = 0; image < image_count; image++) {
-        const h3_vision_output *vision = &images[image];
-        char prefix[64];
-        int length = snprintf(prefix, sizeof(prefix), "<Picture %zu>: ", image + 1);
-        visions[image] = vision;
-        if (length < 0 || (size_t)length >= sizeof(prefix) ||
-            !tokenize_append(tokenizer, prefix, &ids, error, error_size) ||
-            !append_vision(&ids, &spans[image], vision, H3_IMAGE_PAD,
-                           error, error_size)) goto cleanup;
+    if (!spans || !visions) {
+        fail(error, error_size, "out of memory constructing FL2VA presentation");
+    } else if (build_fl2va(tokenizer, prompt, images, image_count, 0, &ids,
+                           spans, visions, error, error_size)) {
+        ok = encode_presentation(weight_directory, shader_source_path,
+            &ids, spans, visions, image_count, progress, progress_opaque,
+            output, error, error_size);
     }
-    if (!tokenize_append(tokenizer, prompt, &ids, error, error_size)) goto cleanup;
-    ok = encode_presentation(weight_directory, shader_source_path,
-        &ids, spans, visions, image_count, progress, progress_opaque,
-        output, error, error_size);
-    goto cleanup;
+    free(ids.values);
+    free(spans);
+    free(visions);
+    return ok;
+}
 
-oom:
-    fail(error, error_size, "out of memory constructing FL2VA presentation");
-cleanup:
+int h3_multimodal_fl2va_token_count(const h3_tokenizer *tokenizer,
+                                    const char *prompt,
+                                    const h3_vision_output *images,
+                                    size_t image_count, size_t *tokens,
+                                    char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (tokens) *tokens = 0;
+    if (!tokenizer || !prompt || !*prompt || !images || !image_count || !tokens) {
+        fail(error, error_size, "invalid FL2VA token count arguments");
+        return 0;
+    }
+    h3_ids ids = {0};
+    h3_text_vision_span *spans = calloc(image_count, sizeof(*spans));
+    const h3_vision_output **visions = calloc(image_count, sizeof(*visions));
+    int ok = spans && visions &&
+        build_fl2va(tokenizer, prompt, images, image_count, 1, &ids, spans,
+                    visions, error, error_size);
+    if (!spans || !visions)
+        fail(error, error_size, "out of memory counting FL2VA tokens");
+    if (ok) *tokens = ids.count;
+    free(ids.values);
+    free(spans);
+    free(visions);
+    return ok;
+}
+
+/* Checks the references and counts their Qwen vision spans. */
+static int ref2va_spans(const h3_reference_presentation *references,
+                        size_t reference_count, size_t *span_count,
+                        char *error, size_t error_size) {
+    size_t count = 0;
+    int have_visual = 0;
+    for (size_t index = 0; index < reference_count; index++) {
+        const h3_reference_presentation *reference = &references[index];
+        if (reference->kind == H3_PRESENTATION_IMAGE) {
+            if (reference->has_audio || reference->vision_count != 1 ||
+                !reference->vision) goto invalid;
+            count++;
+            have_visual = 1;
+        } else if (reference->kind == H3_PRESENTATION_VIDEO) {
+            if (!reference->vision || !reference->vision_count ||
+                !reference->timestamps ||
+                count > SIZE_MAX - reference->vision_count) goto invalid;
+            count += reference->vision_count;
+            have_visual = 1;
+        } else if (reference->kind == H3_PRESENTATION_AUDIO) {
+            if (!reference->has_audio || reference->vision ||
+                reference->vision_count) goto invalid;
+        } else goto invalid;
+    }
+    if (!have_visual || !count) {
+        fail(error, error_size,
+             "Ref2VA audio requires an image or video reference");
+        return 0;
+    }
+    *span_count = count;
+    return 1;
+invalid:
+    fail(error, error_size, "invalid Ref2VA reference presentation");
+    return 0;
+}
+
+/* The Ref2VA presentation: labels in exact request order, including
+ * pending audio labels and per-block video timestamps, then the prompt. */
+static int build_ref2va(const h3_tokenizer *tokenizer, const char *prompt,
+                        const h3_reference_presentation *references,
+                        size_t reference_count, size_t span_count,
+                        int count_only, h3_ids *ids,
+                        h3_text_vision_span *spans,
+                        const h3_vision_output **visions,
+                        char *error, size_t error_size) {
+    size_t span_index = 0;
+    size_t image_ordinal = 0, video_ordinal = 0, audio_ordinal = 0;
+    for (size_t index = 0; index < reference_count; index++) {
+        const h3_reference_presentation *reference = &references[index];
+        char prefix[96];
+        if (reference->has_audio) {
+            int length = snprintf(prefix, sizeof(prefix), "<Audio %zu>: ",
+                                  ++audio_ordinal);
+            if (length < 0 || (size_t)length >= sizeof(prefix) ||
+                !tokenize_append(tokenizer, prefix, ids,
+                                 error, error_size)) return 0;
+        }
+        if (reference->kind == H3_PRESENTATION_AUDIO) continue;
+        if (reference->kind == H3_PRESENTATION_IMAGE) {
+            int length = snprintf(prefix, sizeof(prefix), "<Picture %zu>: ",
+                                  ++image_ordinal);
+            visions[span_index] = reference->vision;
+            if (length < 0 || (size_t)length >= sizeof(prefix) ||
+                !tokenize_append(tokenizer, prefix, ids,
+                                 error, error_size) ||
+                !append_vision(ids, &spans[span_index], reference->vision,
+                               H3_IMAGE_PAD, count_only,
+                               error, error_size)) return 0;
+            span_index++;
+            continue;
+        }
+        video_ordinal++;
+        for (size_t block = 0; block < reference->vision_count; block++) {
+            if (!isfinite(reference->timestamps[block]) ||
+                reference->timestamps[block] < 0.0) {
+                fail(error, error_size, "invalid Ref2VA video timestamp");
+                return 0;
+            }
+            if (block == 0) {
+                int length = snprintf(prefix, sizeof(prefix), "<Video %zu>: ",
+                                      video_ordinal);
+                if (length < 0 || (size_t)length >= sizeof(prefix) ||
+                    !tokenize_append(tokenizer, prefix, ids,
+                                     error, error_size)) return 0;
+            }
+            int length = snprintf(prefix, sizeof(prefix), "<%.1f seconds>",
+                                  reference->timestamps[block]);
+            visions[span_index] = &reference->vision[block];
+            if (length < 0 || (size_t)length >= sizeof(prefix) ||
+                !tokenize_append(tokenizer, prefix, ids,
+                                 error, error_size) ||
+                !append_vision(ids, &spans[span_index],
+                               &reference->vision[block], H3_VIDEO_PAD,
+                               count_only, error, error_size)) return 0;
+            span_index++;
+        }
+    }
+    if (span_index != span_count) {
+        fail(error, error_size, "invalid Ref2VA reference presentation");
+        return 0;
+    }
+    return tokenize_append(tokenizer, prompt, ids, error, error_size);
+}
+
+static int ref2va_run(const h3_tokenizer *tokenizer,
+                      const char *weight_directory,
+                      const char *shader_source_path, const char *prompt,
+                      const h3_reference_presentation *references,
+                      size_t reference_count, int count_only,
+                      h3_text_progress progress, void *progress_opaque,
+                      h3_text_embedding *output, size_t *tokens,
+                      char *error, size_t error_size) {
+    size_t span_count = 0;
+    if (!ref2va_spans(references, reference_count, &span_count,
+                      error, error_size)) return 0;
+    h3_ids ids = {0};
+    h3_text_vision_span *spans = calloc(span_count, sizeof(*spans));
+    const h3_vision_output **visions = calloc(span_count, sizeof(*visions));
+    int ok = 0;
+    if (!spans || !visions) {
+        fail(error, error_size, "out of memory constructing Ref2VA presentation");
+    } else if (build_ref2va(tokenizer, prompt, references, reference_count,
+                            span_count, count_only, &ids, spans, visions,
+                            error, error_size)) {
+        if (count_only) {
+            *tokens = ids.count;
+            ok = 1;
+        } else {
+            ok = encode_presentation(weight_directory, shader_source_path,
+                &ids, spans, visions, span_count, progress, progress_opaque,
+                output, error, error_size);
+        }
+    }
     free(ids.values);
     free(spans);
     free(visions);
@@ -257,104 +433,24 @@ int h3_multimodal_encode_ref2va_bf16(
         fail(error, error_size, "invalid Ref2VA presentation arguments");
         return 0;
     }
-    size_t span_count = 0;
-    int have_visual = 0;
-    for (size_t index = 0; index < reference_count; index++) {
-        const h3_reference_presentation *reference = &references[index];
-        if (reference->kind == H3_PRESENTATION_IMAGE) {
-            if (reference->has_audio || reference->vision_count != 1 ||
-                !reference->vision) goto invalid;
-            span_count++;
-            have_visual = 1;
-        } else if (reference->kind == H3_PRESENTATION_VIDEO) {
-            if (!reference->vision || !reference->vision_count ||
-                !reference->timestamps ||
-                span_count > SIZE_MAX - reference->vision_count) goto invalid;
-            span_count += reference->vision_count;
-            have_visual = 1;
-        } else if (reference->kind == H3_PRESENTATION_AUDIO) {
-            if (!reference->has_audio || reference->vision ||
-                reference->vision_count) goto invalid;
-        } else goto invalid;
-    }
-    if (!have_visual || !span_count) {
-        fail(error, error_size,
-             "Ref2VA audio requires an image or video reference");
+    return ref2va_run(tokenizer, weight_directory, shader_source_path, prompt,
+                      references, reference_count, 0, progress,
+                      progress_opaque, output, NULL, error, error_size);
+}
+
+int h3_multimodal_ref2va_token_count(
+                        const h3_tokenizer *tokenizer, const char *prompt,
+                        const h3_reference_presentation *references,
+                        size_t reference_count, size_t *tokens,
+                        char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (tokens) *tokens = 0;
+    if (!tokenizer || !prompt || !*prompt || !references || !reference_count ||
+        !tokens) {
+        fail(error, error_size, "invalid Ref2VA token count arguments");
         return 0;
     }
-    h3_ids ids = {0};
-    h3_text_vision_span *spans = calloc(span_count, sizeof(*spans));
-    const h3_vision_output **visions = calloc(span_count, sizeof(*visions));
-    if (!spans || !visions) goto oom;
-    size_t span_index = 0;
-    size_t image_ordinal = 0, video_ordinal = 0, audio_ordinal = 0;
-    for (size_t index = 0; index < reference_count; index++) {
-        const h3_reference_presentation *reference = &references[index];
-        char prefix[96];
-        if (reference->has_audio) {
-            int length = snprintf(prefix, sizeof(prefix), "<Audio %zu>: ",
-                                  ++audio_ordinal);
-            if (length < 0 || (size_t)length >= sizeof(prefix) ||
-                !tokenize_append(tokenizer, prefix, &ids,
-                                 error, error_size)) goto cleanup;
-        }
-        if (reference->kind == H3_PRESENTATION_AUDIO) continue;
-        if (reference->kind == H3_PRESENTATION_IMAGE) {
-            int length = snprintf(prefix, sizeof(prefix), "<Picture %zu>: ",
-                                  ++image_ordinal);
-            visions[span_index] = reference->vision;
-            if (length < 0 || (size_t)length >= sizeof(prefix) ||
-                !tokenize_append(tokenizer, prefix, &ids,
-                                 error, error_size) ||
-                !append_vision(&ids, &spans[span_index], reference->vision,
-                               H3_IMAGE_PAD, error, error_size)) goto cleanup;
-            span_index++;
-            continue;
-        }
-        video_ordinal++;
-        for (size_t block = 0; block < reference->vision_count; block++) {
-            if (!isfinite(reference->timestamps[block]) ||
-                reference->timestamps[block] < 0.0) goto invalid_cleanup;
-            if (block == 0) {
-                int length = snprintf(prefix, sizeof(prefix), "<Video %zu>: ",
-                                      video_ordinal);
-                if (length < 0 || (size_t)length >= sizeof(prefix) ||
-                    !tokenize_append(tokenizer, prefix, &ids,
-                                     error, error_size)) goto cleanup;
-            }
-            int length = snprintf(prefix, sizeof(prefix), "<%.1f seconds>",
-                                  reference->timestamps[block]);
-            visions[span_index] = &reference->vision[block];
-            if (length < 0 || (size_t)length >= sizeof(prefix) ||
-                !tokenize_append(tokenizer, prefix, &ids,
-                                 error, error_size) ||
-                !append_vision(&ids, &spans[span_index],
-                               &reference->vision[block], H3_VIDEO_PAD,
-                               error, error_size)) goto cleanup;
-            span_index++;
-        }
-    }
-    if (span_index != span_count ||
-        !tokenize_append(tokenizer, prompt, &ids, error, error_size))
-        goto cleanup;
-    {
-        int ok = encode_presentation(weight_directory, shader_source_path,
-            &ids, spans, visions, span_count, progress, progress_opaque,
-            output, error, error_size);
-        free(ids.values); free(spans); free(visions);
-        return ok;
-    }
-
-invalid:
-    fail(error, error_size, "invalid Ref2VA reference presentation");
-    return 0;
-invalid_cleanup:
-    fail(error, error_size, "invalid Ref2VA video timestamp");
-cleanup:
-    free(ids.values); free(spans); free(visions);
-    return 0;
-oom:
-    fail(error, error_size, "out of memory constructing Ref2VA presentation");
-    free(spans); free(visions);
-    return 0;
+    return ref2va_run(tokenizer, NULL, NULL, prompt, references,
+                      reference_count, 1, NULL, NULL, NULL, tokens,
+                      error, error_size);
 }

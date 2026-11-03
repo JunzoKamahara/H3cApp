@@ -236,6 +236,9 @@ final class ProgressEstimator {
         let totalFrames: Int
         let ditUnits: Double     // frames x pixels the DiT actually runs at
         let decodeUnits: Double  // frames x output pixels
+        /// Setup seconds earlier jobs don't predict: a reference video's
+        /// VAE encode (GenerationViewModel.progressShape).
+        var extraSetup: Double = 0
     }
 
     struct Snapshot {
@@ -313,7 +316,7 @@ final class ProgressEstimator {
         // fraction), counted down by this job's own elapsed time.
         if stage == .setup {
             if let typical = median(calibration.setup) {
-                remaining += max(typical - elapsed, 2)
+                remaining += max(typical + shape.extraSetup - elapsed, 2)
             } else {
                 known = false
             }

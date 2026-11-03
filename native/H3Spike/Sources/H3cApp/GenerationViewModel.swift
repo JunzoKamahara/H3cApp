@@ -403,7 +403,8 @@ final class GenerationViewModel: ObservableObject {
                                                  fastAttention: useFastAttention,
                                                  ditLayers: ditLayers.clamped(to: ditLayersRange))
         let shape = progressShape(sizeProfile: sizeProfile, frames: frames,
-                                  steps: steps.clamped(to: stepsRange), reuse: effectiveDenoiseReuse)
+                                  steps: steps.clamped(to: stepsRange), reuse: effectiveDenoiseReuse,
+                                  plan: currentGenerationPlan)
         let now = Date()
         return ProgressEstimator(shape: shape, calibration: calibration, start: now)
             .snapshot(now: now).remaining
@@ -432,7 +433,11 @@ final class GenerationViewModel: ObservableObject {
     /// Estimates past this are flagged in 詳細設定.
     static let longGenerationSeconds = 60.0 * 60
 
-    func progressShape(sizeProfile: SizeProfile, frames: Int, steps: Int, reuse: Int) -> ProgressEstimator.Shape {
+    /// `plan`: a reference job's plan, whose DiT cost ratio scales the
+    /// denoise units (its rows join every step's attention) and whose
+    /// reference video adds its encode time to setup.
+    func progressShape(sizeProfile: SizeProfile, frames: Int, steps: Int, reuse: Int,
+                       plan: H3GenerationPlan? = nil) -> ProgressEstimator.Shape {
         // Both use the canvas the DiT runs at: an upscaled size is also
         // decoded at that canvas, and the 2x upscale per chunk (vImage) adds
         // ~0.1 s for a 5 s clip, so output pixels would overstate it 4x.
@@ -440,8 +445,9 @@ final class GenerationViewModel: ObservableObject {
             steps: steps,
             reuse: reuse,
             totalFrames: frames,
-            ditUnits: Double(frames) * Double(sizeProfile.ditPixels),
-            decodeUnits: Double(frames) * Double(sizeProfile.ditPixels))
+            ditUnits: Double(frames) * Double(sizeProfile.ditPixels) * (plan?.ditCostRatio ?? 1),
+            decodeUnits: Double(frames) * Double(sizeProfile.ditPixels),
+            extraSetup: (plan?.referencePixelFrames ?? 0) * Self.referenceEncodeSecondsPerPixelFrame)
     }
 
     /// Resident mode holds every DiT block in memory at once (h3_dit.c's
@@ -457,6 +463,76 @@ final class GenerationViewModel: ObservableObject {
         let physicalGiB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
         return physicalGiB < (supportsInt8Cache ? 32.0 : 64.0)
     }
+
+    // MARK: Generation plan (h3_plan_generation): what the references add,
+    // worked out before generating so a request that cannot run is caught
+    // in the form rather than after minutes of encoding - or by the Mac
+    // running out of memory.
+
+    @Published private(set) var generationPlan: H3GenerationPlan?
+    private var generationPlanInputs: String?
+
+    /// Everything the plan depends on, as CreationFormView's .task(id:);
+    /// nil when there is nothing to plan: no references, or a つなげて生成
+    /// (its clips have their own lengths - the engine still checks each).
+    var generationPlanKey: String? {
+        guard let engine, creationMethod == .image, imageInputMode == .referenceImage,
+              !referenceImages.isEmpty, !isChained else { return nil }
+        let params = planParams()
+        let references = params.references.map { "\($0.kind)|\($0.path)|\($0.audioPath ?? "")|\($0.includeEmbeddedAudio)" }
+        // The engine too: another model has its own tokenizer.
+        return (["\(ObjectIdentifier(engine).hashValue)", prompt, "\(params.width)x\(params.height)", "\(params.renderWidth)x\(params.renderHeight)",
+                 "\(params.frames)", "\(params.ssdStreaming)", params.continueLatentPath ?? "",
+                 "\(params.continueFrames)"] + references).joined(separator: "\n")
+    }
+
+    /// The plan while it still describes the form, else nil.
+    var currentGenerationPlan: H3GenerationPlan? {
+        guard let key = generationPlanKey, key == generationPlanInputs else { return nil }
+        return generationPlan
+    }
+
+    /// The part of makeRequest's params the plan reads.
+    private func planParams() -> H3GenerationParams {
+        let dimensions = sizeProfile.dimensions
+        let requestedSeconds = seconds.clamped(to: currentSecondsRange)
+        var params = H3GenerationParams()
+        params.width = dimensions.width
+        params.height = dimensions.height
+        params.renderWidth = dimensions.renderWidth
+        params.renderHeight = dimensions.renderHeight
+        params.frames = h3AlignedFrameCount(seconds: Double(min(requestedSeconds, secondsRange.upperBound)))
+        params.steps = Int32(steps.clamped(to: stepsRange))
+        params.references = referenceImages
+        params.ssdStreaming = computeMode == .ssdStreaming
+        params.continueLatentPath = continuation?.latentURL.path
+        params.continueFrames = Int32(clamping: continuation?.frames ?? continuationFrames)
+        return params
+    }
+
+    /// Plans the form's current settings off the main thread (the engine
+    /// reads the references' headers and loads its tokenizer, ~0.2 s).
+    /// Waits a moment first, so typing a prompt does not plan every key.
+    func refreshGenerationPlan() async {
+        guard let key = generationPlanKey, let engine else { return }
+        if key == generationPlanInputs { return }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        if Task.isCancelled { return }
+        let params = planParams()
+        let prompt = self.prompt
+        let plan = await Task.detached(priority: .userInitiated) {
+            engine.plan(prompt: prompt, params: params)
+        }.value
+        if Task.isCancelled || generationPlanKey != key { return }
+        generationPlan = plan
+        generationPlanInputs = key
+    }
+
+    /// The reference video's VAE encode, measured on a 24 GB M5 at 14 µs
+    /// per pixel-frame (243 frames at 1120x640 took 41 minutes): the part
+    /// of a reference job's setup that earlier runs without one don't
+    /// predict.
+    static let referenceEncodeSecondsPerPixelFrame = 14.2e-6
 
     // MARK: Attention cache build - separate from generation job state,
     // same invariant as engine/job/result: none of these overwrite each
@@ -791,6 +867,11 @@ final class GenerationViewModel: ObservableObject {
             }
         }
         if let continuationValidationMessage { return continuationValidationMessage }
+        if let plan = currentGenerationPlan, plan.verdict == .tooLarge {
+            return plan.textTokens > plan.textTokenLimit
+                ? String(localized: "参照が多すぎて生成できません。参照動画を短くするか、参照の数を減らしてください")
+                : String(localized: "このMacのメモリでは生成できない大きさです。参照動画を短くするか、サイズや秒数を下げてください")
+        }
         if let customClipsValidationMessage { return customClipsValidationMessage }
         if let forcedAudioPath, !FileManager.default.fileExists(atPath: forcedAudioPath) {
             return String(localized: "合わせる音声のファイルが見つかりません: \(URL(fileURLWithPath: forcedAudioPath).lastPathComponent)")
@@ -1064,7 +1145,8 @@ final class GenerationViewModel: ObservableObject {
             referenceNames: referenceNames(draft),
             deviceLine: deviceLine,
             shape: progressShape(sizeProfile: sizeProfile, frames: requestedFrames,
-                                 steps: steps.clamped(to: stepsRange), reuse: effectiveDenoiseReuse),
+                                 steps: steps.clamped(to: stepsRange), reuse: effectiveDenoiseReuse,
+                                 plan: currentGenerationPlan),
             projectURL: project?.url,
             draft: draft,
             soundLateness: lateness,

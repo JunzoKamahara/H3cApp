@@ -1123,3 +1123,13 @@
 "人物と構図を保ち、細かな質感を描き直します。描き足しは控えめです。" = "Keeps the people and the composition and redraws the fine texture. Adds the least detail.";
 "構図は保ちますが、表情や顔つきが変わることがあります。" = "Keeps the composition, but expressions and faces can change.";
 "配布元の手順です。描き足しは最も多く、別の人物や別の絵になることがあります（アニメが実写になることも）。時間は弱い・中の約1.3倍です。" = "The source's recipe. Adds the most detail, and can come back as a different person or picture (even anime as live action). Takes about 1.3 times as long as Light or Medium.";
+"参照動画は最初の%lldコマを%lld×%lldで使います" = "The reference video's first %lld frames are used, at %lld×%lld";
+"参照で増えるトークン: %lld（生成の計算は参照なしの約%@倍）" = "Tokens the references add: %lld (about %@ times the computation without them)";
+"テキストエンコーダー: %lldトークン（上限 %lld）" = "Text encoder: %lld tokens (limit %lld)";
+"必要なメモリの目安: 約%@ GB（このMacは%@ GB）" = "Memory needed: about %@ GB (this Mac has %@ GB)";
+"テキストエンコーダーのトークン数が速い処理の上限（%lld）を超えるので、遅い方法で処理します" = "The text encoder's tokens pass the fast method's limit (%lld), so a slower method is used";
+"メモリに余裕がありません。スワップが起きて、かなり遅くなる見込みです" = "Memory is tight. Expect swapping and a much slower run";
+"テキストエンコーダーの上限を超えるので生成できません。参照動画を短くするか、参照の数を減らしてください" = "This passes the text encoder's limit and cannot be generated. Use a shorter reference video or fewer references";
+"このMacのメモリでは生成できません。参照動画を短くするか、サイズや秒数を下げてください" = "This Mac does not have the memory to generate this. Use a shorter reference video, or a smaller size or duration";
+"参照が多すぎて生成できません。参照動画を短くするか、参照の数を減らしてください" = "Too many references to generate. Use a shorter reference video or fewer references";
+"このMacのメモリでは生成できない大きさです。参照動画を短くするか、サイズや秒数を下げてください" = "Too large for this Mac's memory. Use a shorter reference video, or a smaller size or duration";

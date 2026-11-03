@@ -17,6 +17,7 @@
 #import <ImageIO/ImageIO.h>
 
 #include "h3_av_reader.h"
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -139,6 +140,62 @@ int h3_av_visual_size(const char *path, int *width, int *height,
     h3_av_set_error(error, error_size,
         [NSString stringWithFormat:@"cannot inspect visual stream %s", path]);
     return 0;
+}
+
+static double h3_track_seconds(const char *path, NSString *media_type) {
+    @autoreleasepool {
+        NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
+        AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
+        #pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        /* Synchronous for the same reason as h3_probe_video_size. */
+        NSArray<AVAssetTrack *> *tracks = [asset tracksWithMediaType:media_type];
+        if (tracks.count == 0) return -1.0;
+        /* h3_av_read_video_f32 composes over the asset's duration. */
+        CMTime duration = [media_type isEqualToString:AVMediaTypeVideo] ?
+            asset.duration : tracks.firstObject.timeRange.duration;
+        #pragma clang diagnostic pop
+        if (!CMTIME_IS_NUMERIC(duration)) return -1.0;
+        double seconds = CMTimeGetSeconds(duration);
+        return isfinite(seconds) && seconds >= 0.0 ? seconds : -1.0;
+    }
+}
+
+int h3_av_video_frame_count(const char *path, int *frames,
+                            char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (frames) *frames = 0;
+    if (!path || !*path || !frames) {
+        h3_av_set_error(error, error_size, @"invalid frame-count arguments");
+        return 0;
+    }
+    double seconds = h3_track_seconds(path, AVMediaTypeVideo);
+    if (seconds < 0.0 || seconds * 24.0 > (double)INT_MAX) {
+        h3_av_set_error(error, error_size,
+            [NSString stringWithFormat:@"cannot read the length of video %s", path]);
+        return 0;
+    }
+    /* One composed frame per 1/24 s that starts before the end. */
+    *frames = (int)ceil(seconds * 24.0 - 1e-6);
+    return 1;
+}
+
+int h3_av_audio_sample_count(const char *path, int64_t *samples,
+                             char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (samples) *samples = 0;
+    if (!path || !*path || !samples) {
+        h3_av_set_error(error, error_size, @"invalid sample-count arguments");
+        return 0;
+    }
+    double seconds = h3_track_seconds(path, AVMediaTypeAudio);
+    if (seconds < 0.0 || seconds > 1e9) {
+        h3_av_set_error(error, error_size,
+            [NSString stringWithFormat:@"%s has no readable audio track", path]);
+        return 0;
+    }
+    *samples = (int64_t)llround(seconds * 32000.0);
+    return 1;
 }
 
 /* ---- image decode ------------------------------------------------------ */

@@ -144,6 +144,60 @@ defer { loraPaths.forEach { free($0) } }
 var loras = zip(loraPaths, loraSpecs).map { h3_lora(path: $0.0, strength: $0.1.1) }
 for (path, strength) in loraSpecs { print("LoRA: \(path) @ \(strength)") }
 
+// H3SPIKE_REF_IMAGE / H3SPIKE_REF_VIDEO="path,path2": Ref2VA references,
+// images first, then videos, in the order given. H3SPIKE_REF_IMAGE_MAX=1
+// keeps reference images up to a 2048-pixel short edge instead of the
+// output's area.
+func envList(_ name: String) -> [String] {
+    (ProcessInfo.processInfo.environment[name] ?? "").split(separator: ",").map(String.init)
+}
+let referenceSpecs = envList("H3SPIKE_REF_IMAGE").map { (H3_REFERENCE_IMAGE, $0) } +
+    envList("H3SPIKE_REF_VIDEO").map { (H3_REFERENCE_VIDEO, $0) }
+let referencePaths = referenceSpecs.map { strdup($0.1) }
+defer { referencePaths.forEach { free($0) } }
+var references = zip(referenceSpecs, referencePaths).map {
+    h3_reference(kind: $0.0.0, path: $0.1, audio_path: nil, include_embedded_audio: 0)
+}
+for (kind, path) in referenceSpecs {
+    print("Reference: \(kind == H3_REFERENCE_IMAGE ? "image" : "video") \(path)")
+}
+if ProcessInfo.processInfo.environment["H3SPIKE_REF_IMAGE_MAX"] == "1" {
+    params.reference_image_size = H3_REFERENCE_IMAGE_MAX
+}
+
+// H3SPIKE_PLAN=1: print h3_plan_generation's plan for these settings and
+// exit without generating (h3_generate prints a one-line summary itself).
+if ProcessInfo.processInfo.environment["H3SPIKE_PLAN"] == "1" {
+    var plan = h3_plan()
+    let planned = prompt.withCString { promptC in
+        references.withUnsafeBufferPointer { referenceBuffer in
+            params.references = referenceBuffer.baseAddress
+            params.reference_count = referenceBuffer.count
+            return h3_plan_generation(ctx, promptC, &params, &plan)
+        }
+    }
+    let gib = 1024.0 * 1024.0 * 1024.0
+    guard planned != 0 else {
+        print("Plan failed: \(fixedCString(plan.message))")
+        exit(1)
+    }
+    let verdicts = ["ok", "tight", "too large"]
+    print("Plan: \(verdicts[Int(plan.verdict)])")
+    print("  text encoder: \(plan.text_tokens) tokens (\(plan.vision_tokens) from images/video; fast up to \(plan.text_fast_limit), limit \(plan.text_token_limit))")
+    print("  DiT: \(plan.dit_tokens) tokens (\(plan.dit_generated_tokens) generated, \(plan.dit_reference_tokens) from references), cost x" + String(format: "%.2f", plan.dit_cost_ratio))
+    if plan.reference_video_frames > 0 {
+        print("  reference video: \(plan.reference_video_frames) frames at \(plan.reference_video_width)x\(plan.reference_video_height), VAE chunk \(plan.reference_video_chunk_frames)")
+    }
+    for (name, bytes) in [("video encoder", plan.video_encoder_bytes), ("vision encoder", plan.vision_encoder_bytes),
+                          ("text encoder", plan.text_encoder_bytes), ("DiT", plan.dit_bytes)] {
+        print("  " + name + String(format: ": %.1f GiB", Double(bytes) / gib))
+    }
+    print("  peak: " + String(format: "%.1f GiB", Double(plan.peak_bytes) / gib) + " in the \(fixedCString(plan.peak_stage)) of " + String(format: "%.0f GiB", Double(plan.memory_bytes) / gib))
+    let message = fixedCString(plan.message)
+    if !message.isEmpty { print("  \(message)") }
+    exit(0)
+}
+
 // H3SPIKE_REPEAT=<n>: run the same generation n times in this process
 // (outputs <name>_run<k>.<ext> after the first), to exercise state that
 // survives between generations - e.g. attention-backend scratch released
@@ -169,10 +223,14 @@ let start = Date()
 let result: UnsafeMutablePointer<h3_result>? = runOutputPath.withCString { outputPathC in
     prompt.withCString { promptC in
         loras.withUnsafeBufferPointer { loraBuffer in
-            params.output_path = outputPathC
-            params.loras = loraBuffer.baseAddress
-            params.lora_count = loraBuffer.count
-            return h3_generate(ctx, promptC, &params)
+            references.withUnsafeBufferPointer { referenceBuffer in
+                params.output_path = outputPathC
+                params.loras = loraBuffer.baseAddress
+                params.lora_count = loraBuffer.count
+                params.references = referenceBuffer.baseAddress
+                params.reference_count = referenceBuffer.count
+                return h3_generate(ctx, promptC, &params)
+            }
         }
     }
 }

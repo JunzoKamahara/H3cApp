@@ -375,6 +375,70 @@ int h3_continuation_latent_from_video(const char *model_dir,
  * accelerators it needs (M5 class). */
 int h3_fast_attention_available(void);
 
+/* What a generation will take, worked out before it runs (h3_plan_generation):
+ * how many tokens its references add, and how much memory each stage
+ * should need on this Mac. */
+typedef enum {
+    H3_PLAN_OK = 0,        /* fits in memory */
+    H3_PLAN_TIGHT = 1,     /* runs, but near or past this Mac's memory:
+                              expect swapping and a much slower run */
+    H3_PLAN_TOO_LARGE = 2  /* would not run (or would risk the whole Mac);
+                              h3_generate refuses it */
+} h3_plan_verdict;
+
+typedef struct {
+    int verdict;              /* h3_plan_verdict */
+    /* The Qwen text encoder's sequence: prompt, labels and image tokens. */
+    size_t text_tokens;
+    size_t vision_tokens;     /* of text_tokens: from reference images/videos */
+    /* Its fast attention kernel takes up to text_fast_limit tokens; past
+     * that a slower fallback runs, and past text_token_limit the encoder
+     * refuses (after any reference video has already been encoded). */
+    size_t text_fast_limit;
+    size_t text_token_limit;
+    /* The DiT's sequence, attended to on every evaluated step. */
+    size_t dit_tokens;            /* all of it */
+    size_t dit_generated_tokens;  /* the video and audio being generated */
+    size_t dit_reference_tokens;  /* reference image, video and audio rows */
+    /* DiT compute against the same generation without its references
+     * (their rows and the image tokens they add to the text rows; 1
+     * without references): attention grows with the square of the
+     * sequence, everything else with its length. */
+    double dit_cost_ratio;
+    /* The longest reference video as it will be read and encoded. */
+    int reference_video_frames;
+    int reference_video_width;
+    int reference_video_height;
+    int reference_video_chunk_frames;   /* VAE encode chunk, 0 = one pass */
+    /* Reference pixel-frames the video VAE encodes (images count once). */
+    double reference_pixel_frames;
+    /* Estimated peak memory footprint per stage, in bytes. */
+    uint64_t video_encoder_bytes;
+    uint64_t vision_encoder_bytes;
+    uint64_t text_encoder_bytes;
+    uint64_t dit_bytes;
+    uint64_t peak_bytes;          /* the largest of them */
+    uint64_t memory_bytes;        /* this Mac's RAM */
+    char peak_stage[32];          /* "video encoder", "text encoder", ... */
+    /* English: what limits it and what to change; empty when it is OK. */
+    char message[512];
+} h3_plan;
+
+/* Plans h3_generate(ctx, prompt, params) without loading any weights or
+ * decoding media: reads the references' sizes and lengths, counts the
+ * text encoder's and DiT's tokens exactly as the generation will, and
+ * estimates each stage's memory from measured per-token costs. Takes a
+ * fraction of a second (it loads the tokenizer). Returns 1 with *plan
+ * filled for every verdict, or 0 when the request itself is invalid or a
+ * reference cannot be read (the reason in plan->message). Safe to call
+ * while another generation runs on the same ctx.
+ *
+ * h3_generate runs this first and fails with plan->message when the
+ * verdict is H3_PLAN_TOO_LARGE; H3_PREFLIGHT=0 in the environment skips
+ * that check. */
+int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
+                       const h3_params *params, h3_plan *plan);
+
 /* Generate media, delivering decoded frames incrementally through on_frame. */
 h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                        const h3_params *params);

@@ -6,8 +6,10 @@
 #include "h3_av_writer.h"
 #include "h3_dit.h"
 #include "h3_lora.h"
+#include "h3_memory.h"
 #include "h3_metal.h"
 #include "h3_multimodal.h"
+#include "h3_plan.h"
 #include "h3_safetensors.h"
 #include "h3_text_encoder.h"
 #include "h3_tokenizer.h"
@@ -17,6 +19,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -1176,6 +1179,7 @@ static void h3_debug_hash_video_done(const h3_debug_video_hash *state) {
 static void h3_progress_emit(h3_generation_progress *state, const char *phase,
                              int completed, int total) {
     if (!state || state->cancelled) return;
+    h3_memory_phase(phase);
     if (state->params->cancel_requested && *state->params->cancel_requested) {
         state->cancelled = 1;
         h3_set_error(state->ctx, "generation cancelled during %s", phase);
@@ -1612,6 +1616,356 @@ static h3_dit_attention_mode h3_resolve_attention_mode(const h3_params *params) 
     return H3_DIT_ATTENTION_MPS;
 }
 
+/* The conditioning encoders, each in an autorelease pool of its own (see
+ * h3_autorelease_push): without one, every call's autoreleased Metal
+ * objects stay until the whole generation ends. */
+static int h3_pooled_vision_encode(const char *weight_directory,
+                                   const float *pixels, int frames,
+                                   int height, int width,
+                                   h3_vision_progress progress, void *opaque,
+                                   h3_vision_output *output,
+                                   char *error, size_t error_size) {
+    void *pool = h3_autorelease_push();
+    int ok = h3_vision_encode_bf16(weight_directory, "h3_shaders.metal",
+                                   pixels, frames, height, width, progress,
+                                   opaque, output, error, error_size);
+    h3_autorelease_pop(pool);
+    return ok;
+}
+
+static int h3_pooled_video_encode(const char *vae_path, const float *pixels,
+                                  int frames, int height, int width,
+                                  h3_video_encoder_progress progress,
+                                  void *opaque, h3_video_latent *latent,
+                                  char *error, size_t error_size) {
+    void *pool = h3_autorelease_push();
+    int ok = h3_video_vae_encode(vae_path, "h3_shaders.metal", pixels, frames,
+                                 height, width, progress, opaque, latent,
+                                 error, error_size);
+    h3_autorelease_pop(pool);
+    return ok;
+}
+
+static int h3_pooled_audio_encode(const char *audio_vae_path,
+                                  const float *pcm, int samples,
+                                  h3_audio_vae_progress progress, void *opaque,
+                                  h3_audio_latent *latent,
+                                  char *error, size_t error_size) {
+    void *pool = h3_autorelease_push();
+    int ok = h3_audio_vae_encode(audio_vae_path, "h3_shaders.metal", pcm,
+                                 samples, progress, opaque, latent,
+                                 error, error_size);
+    h3_autorelease_pop(pool);
+    return ok;
+}
+
+/* The canvas a visual Ref2VA reference is read at, for h3_generate and
+ * h3_plan_generation alike. */
+static int h3_reference_canvas(const h3_ctx *ctx, const h3_params *params,
+                               const h3_reference *reference,
+                               int render_width, int render_height,
+                               int source_width, int source_height,
+                               int *width, int *height) {
+    if (reference->kind == H3_REFERENCE_IMAGE)
+        return h3_reference_image_canvas(
+            source_width, source_height, render_width, render_height,
+            params->reference_image_size == H3_REFERENCE_IMAGE_MAX ? 2048 : 0,
+            width, height);
+    return h3_reference_video_canvas(
+        source_width, source_height,
+        h3_reference_max_pixels(h3_device(ctx)->physical_memory),
+        width, height);
+}
+
+/* Whether h3_gpu.m will run dense attention as one MPSGraph call (its
+ * policy: Apple10 GPUs on macOS 26 or later, unless H3_SDPA_MODE says). */
+static int h3_plan_full_sdpa(const h3_ctx *ctx) {
+    const char *mode = getenv("H3_SDPA_MODE");
+    if (mode && *mode) return !strcmp(mode, "full");
+    if (h3_device(ctx)->apple_gpu_family < 10) return 0;
+    if (__builtin_available(macOS 26.0, *)) return 1;
+    return 0;
+}
+
+int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
+                       const h3_params *params, h3_plan *plan) {
+    if (!plan) return 0;
+    memset(plan, 0, sizeof(*plan));
+    char *message = plan->message;
+    size_t message_size = sizeof(plan->message);
+    if (!ctx || !prompt || !*prompt || !params) {
+        snprintf(message, message_size,
+                 "planning needs a context, a prompt and parameters");
+        return 0;
+    }
+    int render_width = params->render_width ? params->render_width :
+                                               params->width;
+    int render_height = params->render_height ? params->render_height :
+                                                 params->height;
+    if (render_width < 32 || render_height < 32 ||
+        render_width % H3_CANVAS_MULTIPLE || render_height % H3_CANVAS_MULTIPLE ||
+        params->frames < 5 || h3_align_frame_count(params->frames) > 362 ||
+        (params->reference_count && !params->references)) {
+        snprintf(message, message_size,
+                 "invalid canvas, frame count or references");
+        return 0;
+    }
+    int ref2va = params->reference_count != 0;
+    h3_temporal_shape temporal = h3_temporal(params->frames);
+    int latent_w, latent_h;
+    h3_latent_canvas(render_width, render_height, &latent_w, &latent_h);
+    h3_continuation continuation;
+    if (!h3_continuation_plan(params, latent_h, latent_w, temporal,
+                              &continuation, message, message_size))
+        return 0;
+
+    size_t reference_count = ref2va ? params->reference_count : 0;
+    size_t visual_capacity = ref2va ? reference_count :
+        (size_t)(params->first_frame != NULL) +
+        (size_t)(params->last_frame != NULL);
+    /* At most this many Qwen vision calls: one per image, one per
+     * two-frame block of a video (362 frames: 31 samples, 16 blocks). */
+    size_t vision_capacity = visual_capacity * 16 + 1;
+    h3_plan_visual *visuals = calloc(visual_capacity + 1, sizeof(*visuals));
+    h3_vision_output *visions = calloc(vision_capacity, sizeof(*visions));
+    double *timestamps = calloc(vision_capacity, sizeof(*timestamps));
+    h3_reference_presentation *presentations =
+        calloc(reference_count + 1, sizeof(*presentations));
+    h3_layout_ref *layout_references =
+        calloc(reference_count + 1, sizeof(*layout_references));
+    char *tokenizer_path = h3_path(ctx->model_dir, ref2va ?
+        "Ref2VA/tokenizer/tokenizer.json" : "FL2VA/tokenizer/tokenizer.json");
+    h3_tokenizer *tokenizer = NULL;
+    h3_layout layout;
+    memset(&layout, 0, sizeof(layout));
+    int ok = 0;
+    if (!visuals || !visions || !timestamps || !presentations ||
+        !layout_references || !tokenizer_path) {
+        snprintf(message, message_size, "out of memory planning the generation");
+        goto done;
+    }
+
+    size_t visual_count = 0, vision_count = 0, vision_tokens = 0;
+    size_t reference_rows = 0;
+    size_t audio_samples_total = 0;
+    char detail[512];
+    for (size_t index = 0; index < reference_count; index++) {
+        const h3_reference *reference = &params->references[index];
+        if (!reference->path || !*reference->path) {
+            snprintf(message, message_size, "reference %zu has no file",
+                     index + 1);
+            goto done;
+        }
+        int64_t samples = 0;
+        if (reference->kind == H3_REFERENCE_AUDIO) {
+            if (!h3_av_audio_sample_count(reference->path, &samples,
+                                          detail, sizeof(detail))) {
+                snprintf(message, message_size, "%s", detail);
+                goto done;
+            }
+            presentations[index].kind = H3_PRESENTATION_AUDIO;
+            presentations[index].has_audio = 1;
+            layout_references[index] = (h3_layout_ref){
+                H3_LAYOUT_REF_AUDIO, 0, 0, 0, 0};
+        } else {
+            int source_width, source_height, width, height;
+            if (!h3_av_visual_size(reference->path, &source_width,
+                                   &source_height, detail, sizeof(detail))) {
+                snprintf(message, message_size, "%s", detail);
+                goto done;
+            }
+            if (!h3_reference_canvas(ctx, params, reference, render_width,
+                                     render_height, source_width,
+                                     source_height, &width, &height)) {
+                snprintf(message, message_size,
+                         "cannot resolve reference %zu canvas", index + 1);
+                goto done;
+            }
+            size_t block_tokens = (size_t)(width / 32) * (size_t)(height / 32);
+            int frames = 1;
+            if (reference->kind == H3_REFERENCE_IMAGE) {
+                presentations[index].kind = H3_PRESENTATION_IMAGE;
+                presentations[index].vision = &visions[vision_count];
+                presentations[index].vision_count = 1;
+                visions[vision_count++] = (h3_vision_output){
+                    height / 16, width / 16, block_tokens, NULL, {NULL}, {0}};
+                vision_tokens += block_tokens;
+            } else {
+                if (!h3_av_video_frame_count(reference->path, &frames,
+                                             detail, sizeof(detail))) {
+                    snprintf(message, message_size, "%s", detail);
+                    goto done;
+                }
+                if (frames > temporal.frame_count) frames = temporal.frame_count;
+                if (frames < 5) {
+                    snprintf(message, message_size,
+                             "reference videos require at least 5 decoded "
+                             "frames");
+                    goto done;
+                }
+                while (frames % 17 != 5) frames--;
+                /* As h3_generate samples Qwen's view of the video. */
+                size_t sampled = ((size_t)frames + 11) / 12;
+                size_t blocks = (sampled + 1) / 2;
+                presentations[index].kind = H3_PRESENTATION_VIDEO;
+                presentations[index].vision = &visions[vision_count];
+                presentations[index].vision_count = blocks;
+                presentations[index].timestamps = &timestamps[vision_count];
+                for (size_t block = 0; block < blocks; block++) {
+                    size_t first = 2 * block;
+                    size_t second = first + 1 < sampled ? first + 1 : first;
+                    timestamps[vision_count] =
+                        ((double)first + (double)second) / 4.0;
+                    visions[vision_count++] = (h3_vision_output){
+                        height / 16, width / 16, block_tokens, NULL, {NULL},
+                        {0}};
+                    vision_tokens += block_tokens;
+                }
+                const char *audio_path =
+                    reference->kind == H3_REFERENCE_VIDEO_AUDIO ?
+                        reference->audio_path :
+                    reference->include_embedded_audio ? reference->path : NULL;
+                if (audio_path) {
+                    int64_t limit = llround((double)frames * 32000.0 / H3_FPS);
+                    if (limit < 64000) {
+                        snprintf(message, message_size,
+                                 "video soundtrack %zu requires at least 2 "
+                                 "seconds; request at least 56 output frames",
+                                 index + 1);
+                        goto done;
+                    }
+                    if (!h3_av_audio_sample_count(audio_path, &samples,
+                                                  detail, sizeof(detail))) {
+                        snprintf(message, message_size, "%s", detail);
+                        goto done;
+                    }
+                    if (samples > limit) samples = limit;
+                    presentations[index].has_audio = 1;
+                }
+            }
+            visuals[visual_count++] = (h3_plan_visual){width, height, frames};
+            layout_references[index] = (h3_layout_ref){
+                reference->kind == H3_REFERENCE_IMAGE ?
+                    H3_LAYOUT_REF_IMAGE : H3_LAYOUT_REF_VIDEO,
+                h3_video_encoder_latent_t(frames), height / 16, width / 16, 0};
+            reference_rows += (size_t)layout_references[index].latent_t *
+                              (size_t)(height / 32) * (size_t)(width / 32);
+        }
+        if (samples > 0) {
+            if ((uint64_t)samples > (uint64_t)32000 * 15 - audio_samples_total) {
+                snprintf(message, message_size,
+                         "ordered reference audio exceeds 15 seconds in total");
+                goto done;
+            }
+            audio_samples_total += (size_t)samples;
+            /* The AudioVAE encoder's hop is 800 samples (2*4*4*5*5). */
+            layout_references[index].audio_t = (int)((samples + 799) / 800);
+            reference_rows += (size_t)layout_references[index].audio_t * 2;
+        }
+    }
+
+    int keyframes[2 + 17] = {0};
+    size_t keyframe_count = 0;
+    if (!ref2va) {
+        const char *anchors[2] = {params->first_frame, params->last_frame};
+        for (int anchor = 0; anchor < 2; anchor++) {
+            if (!anchors[anchor]) continue;
+            int source_width, source_height;
+            if (!h3_av_visual_size(anchors[anchor], &source_width,
+                                   &source_height, detail, sizeof(detail))) {
+                snprintf(message, message_size, "%s", detail);
+                goto done;
+            }
+            keyframes[keyframe_count++] =
+                anchor ? temporal.frame_count - 1 : 0;
+            size_t tokens = (size_t)(render_width / 32) *
+                            (size_t)(render_height / 32);
+            visions[vision_count++] = (h3_vision_output){
+                render_height / 16, render_width / 16, tokens, NULL, {NULL},
+                {0}};
+            vision_tokens += tokens;
+            visuals[visual_count++] =
+                (h3_plan_visual){render_width, render_height, 1};
+        }
+    }
+    for (int step = 0; continuation.active && step < continuation.steps; step++)
+        keyframes[keyframe_count++] = continuation.keyframes[step];
+
+    tokenizer = h3_tokenizer_load(tokenizer_path, detail, sizeof(detail));
+    if (!tokenizer) {
+        snprintf(message, message_size, "%s", detail);
+        goto done;
+    }
+    size_t text_tokens = 0;
+    int counted;
+    if (ref2va) {
+        counted = h3_multimodal_ref2va_token_count(
+            tokenizer, prompt, presentations, reference_count, &text_tokens,
+            detail, sizeof(detail));
+    } else if (vision_count) {
+        counted = h3_multimodal_fl2va_token_count(
+            tokenizer, prompt, visions, vision_count, &text_tokens,
+            detail, sizeof(detail));
+    } else {
+        uint32_t *ids = NULL;
+        counted = h3_tokenizer_encode(tokenizer, prompt, 1, &ids, &text_tokens,
+                                      detail, sizeof(detail));
+        h3_tokenizer_ids_free(ids);
+    }
+    if (!counted || text_tokens > INT_MAX) {
+        snprintf(message, message_size, "%s",
+                 counted ? "the prompt is too long" : detail);
+        goto done;
+    }
+
+    h3_layout_spec spec = {(int)text_tokens, temporal.video_t, latent_h,
+                           latent_w, temporal.audio_t, temporal.frame_count,
+                           keyframes, keyframe_count, layout_references,
+                           reference_count, continuation.audio_t,
+                           continuation.audio_start};
+    if (!h3_layout_build(&spec, &layout, detail, sizeof(detail))) {
+        snprintf(message, message_size, "%s", detail);
+        goto done;
+    }
+    size_t generated_rows = 0;
+    for (size_t segment = 0; segment < layout.segment_count; segment++) {
+        const h3_segment *part = &layout.segments[segment];
+        if (part->kind == H3_SEG_VIDEO || part->kind == H3_SEG_AUDIO)
+            generated_rows += part->stop - part->start;
+    }
+    /* As h3_text_encoder.c reads ahead: 3 layers on M5, 2 elsewhere. */
+    const char *prefetch = getenv("H3_QWEN_PREFETCH_DEPTH");
+    int prefetch_depth = prefetch && *prefetch ? atoi(prefetch) :
+        h3_device(ctx)->apple_gpu_family >= 10 ? 3 : 2;
+    if (prefetch_depth < 1) prefetch_depth = 1;
+    if (prefetch_depth > 6) prefetch_depth = 6;
+    /* Resident mode: neither SSD streaming nor the attention cache. Int8
+     * on a GPU with tensor units (~18 GiB, like the cache file), BF16
+     * elsewhere (~37 GiB). */
+    const char *cache = getenv("H3_ATTENTION_CACHE");
+    uint64_t resident = params->ssd_streaming || (cache && *cache) ? 0 :
+        h3_device(ctx)->apple_gpu_family >= 10 ? 18ull << 30 : 37ull << 30;
+    h3_plan_input input = {
+        h3_device(ctx)->physical_memory, params->ssd_streaming,
+        h3_plan_full_sdpa(ctx), prefetch_depth, resident,
+        text_tokens, vision_tokens, layout.seq_len,
+        generated_rows, reference_rows,
+        visuals, visual_count};
+    h3_plan_compute(&input, plan);
+    ok = 1;
+
+done:
+    h3_layout_free(&layout);
+    h3_tokenizer_free(tokenizer);
+    free(tokenizer_path);
+    free(layout_references);
+    free(presentations);
+    free(timestamps);
+    free(visions);
+    free(visuals);
+    return ok;
+}
+
 h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                        const h3_params *params) {
     if (!ctx) return NULL;
@@ -1621,6 +1975,37 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         return NULL;
     }
     if (!h3_valid_params(ctx, params)) return NULL;
+    h3_memory_watch_start();
+    int planned = 0;
+    size_t planned_text_tokens = 0, planned_dit_tokens = 0;
+    {
+        /* Refuse what cannot run before loading anything - a reference
+         * that only fails at the text encoder would otherwise do so after
+         * encoding it for many minutes, and one past this Mac's memory can
+         * take the whole system down. A plan that cannot be made (say, an
+         * unreadable file) is left for the generation to report. */
+        const char *preflight = getenv("H3_PREFLIGHT");
+        h3_plan plan;
+        planned = (!preflight || strcmp(preflight, "0")) &&
+            h3_plan_generation(ctx, prompt, params, &plan);
+        if (planned) {
+            planned_text_tokens = plan.text_tokens;
+            planned_dit_tokens = plan.dit_tokens;
+            fprintf(stderr, "h3: plan: text encoder %zu tokens (%zu from "
+                    "images and video), DiT %zu tokens (%zu from references, "
+                    "cost x%.2f), peak about %.1f GiB in the %s\n",
+                    plan.text_tokens, plan.vision_tokens, plan.dit_tokens,
+                    plan.dit_reference_tokens, plan.dit_cost_ratio,
+                    (double)plan.peak_bytes / (1024.0 * 1024.0 * 1024.0),
+                    plan.peak_stage);
+            if (plan.verdict == H3_PLAN_TOO_LARGE) {
+                h3_set_error(ctx, "%s", plan.message);
+                return NULL;
+            }
+            if (plan.verdict == H3_PLAN_TIGHT)
+                fprintf(stderr, "h3: plan: %s\n", plan.message);
+        }
+    }
     int render_width = params->render_width ? params->render_width :
                                                params->width;
     int render_height = params->render_height ? params->render_height :
@@ -1824,16 +2209,16 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                 h3_set_error(ctx, "%s", detail);
                 goto cleanup;
             }
+            if (!h3_reference_canvas(ctx, params, reference, render_width,
+                                     render_height, source_width,
+                                     source_height, &media_width,
+                                     &media_height)) {
+                h3_set_error(ctx, "cannot resolve reference %s %zu canvas",
+                             reference->kind == H3_REFERENCE_IMAGE ?
+                                 "image" : "video", index + 1);
+                goto cleanup;
+            }
             if (reference->kind == H3_REFERENCE_IMAGE) {
-                if (!h3_reference_image_canvas(
-                        source_width, source_height,
-                        render_width, render_height,
-                        params->reference_image_size == H3_REFERENCE_IMAGE_MAX ?
-                        2048 : 0, &media_width, &media_height)) {
-                    h3_set_error(ctx,
-                        "cannot resolve reference image %zu canvas", index + 1);
-                    goto cleanup;
-                }
                 if (!h3_av_read_image_f32(
                         reference->path, media_width, media_height,
                         H3_IMAGE_FIT_STRETCH, &condition_pixels[visual_count],
@@ -1846,14 +2231,6 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                 presentations[index].vision_count = 1;
                 vision_output_count++;
             } else {
-                if (!h3_reference_video_canvas(
-                        source_width, source_height,
-                        h3_reference_max_pixels(h3_device(ctx)->physical_memory),
-                        &media_width, &media_height)) {
-                    h3_set_error(ctx,
-                        "cannot resolve reference video %zu canvas", index + 1);
-                    goto cleanup;
-                }
                 if (!h3_av_read_video_f32(
                         reference->path, media_width, media_height,
                         temporal.frame_count, &condition_pixels[visual_count],
@@ -1951,8 +2328,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             }
             h3_audio_latent latent;
             memset(&latent, 0, sizeof(latent));
-            if (!h3_audio_vae_encode(
-                    audio_vae_path, "h3_shaders.metal", pcm, samples,
+            if (!h3_pooled_audio_encode(
+                    audio_vae_path, pcm, samples,
                     h3_audio_encoder_progress_bridge, &progress, &latent,
                     detail, sizeof(detail))) {
                 free(pcm);
@@ -2087,8 +2464,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                                   (size_t)image_latent_w / 4 * 96;
             h3_video_latent latent;
             memset(&latent, 0, sizeof(latent));
-            if (!h3_video_vae_encode(
-                    vae_path, "h3_shaders.metal", condition_pixels[image],
+            if (!h3_pooled_video_encode(
+                    vae_path, condition_pixels[image],
                     condition_frames[image], condition_heights[image],
                     condition_widths[image],
                     h3_video_encoder_progress_bridge, &progress,
@@ -2127,8 +2504,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             size_t reference_index = visual_reference_indices[image];
             if (!ref2va ||
                 params->references[reference_index].kind == H3_REFERENCE_IMAGE) {
-                if (!h3_vision_encode_bf16(
-                        text_path, "h3_shaders.metal", condition_pixels[image],
+                if (!h3_pooled_vision_encode(
+                        text_path, condition_pixels[image],
                         1, condition_heights[image], condition_widths[image],
                         h3_vision_progress_bridge, &progress,
                         &vision_outputs[vision_cursor], detail, sizeof(detail))) {
@@ -2159,8 +2536,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                             "out of memory extracting Qwen video pair");
                         goto cleanup;
                     }
-                    int ok = h3_vision_encode_bf16(
-                        text_path, "h3_shaders.metal", pair, 2,
+                    int ok = h3_pooled_vision_encode(
+                        text_path, pair, 2,
                         condition_heights[image], condition_widths[image],
                         h3_vision_progress_bridge, &progress,
                         &vision_outputs[vision_cursor], detail, sizeof(detail));
@@ -2188,6 +2565,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             h3_debug_hash("vision deepstack0", vision_outputs[image].deepstack[0], bytes);
         }
         h3_progress_emit(&progress, "text encoder", 0, 50);
+        void *text_pool = h3_autorelease_push();
         int text_ok = ref2va ? h3_multimodal_encode_ref2va_bf16(
                 tokenizer, text_path, "h3_shaders.metal", prompt,
                 presentations, params->reference_count,
@@ -2198,6 +2576,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                 vision_outputs, visual_count,
                 h3_text_progress_bridge, &progress, &text,
                 detail, sizeof(detail));
+        h3_autorelease_pop(text_pool);
         if (!text_ok) {
             h3_set_error(ctx, "%s", detail);
             goto cleanup;
@@ -2211,10 +2590,13 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             goto cleanup;
         }
         h3_progress_emit(&progress, "text encoder", 0, 50);
-        if (!h3_text_encode_bf16(
+        void *text_pool = h3_autorelease_push();
+        int text_ok = h3_text_encode_bf16(
                 text_path, "h3_shaders.metal", ids, token_count,
                 h3_text_progress_bridge, &progress, &text,
-                detail, sizeof(detail))) {
+                detail, sizeof(detail));
+        h3_autorelease_pop(text_pool);
+        if (!text_ok) {
             h3_set_error(ctx, "%s", detail);
             goto cleanup;
         }
@@ -2295,8 +2677,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         }
         h3_audio_latent latent;
         memset(&latent, 0, sizeof(latent));
-        if (!h3_audio_vae_encode(
-                audio_vae_path, "h3_shaders.metal", forced_pcm,
+        if (!h3_pooled_audio_encode(
+                audio_vae_path, forced_pcm,
                 forced_samples, h3_audio_encoder_progress_bridge, &progress,
                 &latent, detail, sizeof(detail))) {
             h3_audio_latent_free(&latent);
@@ -2328,6 +2710,12 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         h3_set_error(ctx, "%s", detail);
         goto cleanup;
     }
+    if (planned && (planned_text_tokens != text.tokens ||
+                    planned_dit_tokens != layout.seq_len))
+        fprintf(stderr, "h3: warning: the plan counted %zu text and %zu DiT "
+                "tokens, the generation has %zu and %zu\n",
+                planned_text_tokens, planned_dit_tokens, text.tokens,
+                layout.seq_len);
     h3_sigma_schedule sigmas;
     if (!h3_serving_schedule_build_shifted(
             params->steps, h3_audio_sigma_shift(params), &sigmas)) {
@@ -2735,6 +3123,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     }
 
 cleanup:
+    h3_memory_phase(NULL);
     h3_video_vae_set_cancel(NULL);
     free(forced_pcm);
     free(forced_latent);
