@@ -482,7 +482,8 @@ final class GenerationViewModel: ObservableObject {
         let references = params.references.map { "\($0.kind)|\($0.path)|\($0.audioPath ?? "")|\($0.includeEmbeddedAudio)" }
         // The engine too: another model has its own tokenizer.
         return (["\(ObjectIdentifier(engine).hashValue)", prompt, "\(params.width)x\(params.height)", "\(params.renderWidth)x\(params.renderHeight)",
-                 "\(params.frames)", "\(params.ssdStreaming)", params.continueLatentPath ?? "",
+                 "\(params.frames)", "\(params.ssdStreaming)", params.attentionCachePath ?? "",
+                 params.continueLatentPath ?? "",
                  "\(params.continueFrames)"] + references).joined(separator: "\n")
     }
 
@@ -505,6 +506,7 @@ final class GenerationViewModel: ObservableObject {
         params.steps = Int32(steps.clamped(to: stepsRange))
         params.references = referenceImages
         params.ssdStreaming = computeMode == .ssdStreaming
+        params.attentionCachePath = computeMode == .attentionCache ? currentAttentionCachePath : nil
         params.continueLatentPath = continuation?.latentURL.path
         params.continueFrames = Int32(clamping: continuation?.frames ?? continuationFrames)
         return params

@@ -1935,7 +1935,9 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
     }
     /* As h3_text_encoder.c reads ahead: 3 layers on M5, 2 elsewhere. */
     const char *prefetch = getenv("H3_QWEN_PREFETCH_DEPTH");
-    int prefetch_depth = prefetch && *prefetch ? atoi(prefetch) :
+    int prefetch_depth = params->plan_text_prefetch_depth > 0 ?
+        params->plan_text_prefetch_depth :
+        prefetch && *prefetch ? atoi(prefetch) :
         h3_device(ctx)->apple_gpu_family >= 10 ? 3 : 2;
     if (prefetch_depth < 1) prefetch_depth = 1;
     if (prefetch_depth > 6) prefetch_depth = 6;
@@ -1943,7 +1945,9 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
      * on a GPU with tensor units (~18 GiB, like the cache file), BF16
      * elsewhere (~37 GiB). */
     const char *cache = getenv("H3_ATTENTION_CACHE");
-    uint64_t resident = params->ssd_streaming || (cache && *cache) ? 0 :
+    int cached = params->plan_attention_cache ?
+        params->plan_attention_cache > 0 : (cache && *cache);
+    uint64_t resident = params->ssd_streaming || cached ? 0 :
         h3_device(ctx)->apple_gpu_family >= 10 ? 18ull << 30 : 37ull << 30;
     h3_plan_input input = {
         h3_device(ctx)->physical_memory, params->ssd_streaming,

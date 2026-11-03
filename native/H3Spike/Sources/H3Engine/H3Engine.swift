@@ -520,6 +520,11 @@ public final class H3Engine: @unchecked Sendable {
         cParams.frames = params.frames
         cParams.steps = params.steps
         cParams.ssd_streaming = params.ssdStreaming ? 1 : 0
+        // As generate() will set the environment for this job (below): the
+        // plan may run before any generation has, or after one in another
+        // mode.
+        cParams.plan_text_prefetch_depth = getenv("H3_QWEN_PREFETCH_DEPTH") == nil ? 1 : 0
+        cParams.plan_attention_cache = params.attentionCachePath != nil ? 1 : -1
         cParams.continue_frames = params.continueFrames
         var plan = h3_plan()
         let planned: Int32 = withReferenceArray(params.references) { refBuffer in

@@ -159,6 +159,15 @@ typedef struct {
     /* Keep only two original BF16 DiT blocks in memory and overlap reading the
      * next block from the checkpoint with execution of the current block. */
     int ssd_streaming;
+    /* How h3_plan_generation should expect the run to go when the caller
+     * sets the environment only at generation time. plan_text_prefetch_depth:
+     * the Qwen layers read ahead (0: as H3_QWEN_PREFETCH_DEPTH says now, else
+     * 3 on M5 and 2 elsewhere). plan_attention_cache: 1 when the int8
+     * attention cache will stream the DiT blocks, -1 when the transformer
+     * will stay resident, 0: as H3_ATTENTION_CACHE says now. h3_generate
+     * ignores both. */
+    int plan_text_prefetch_depth;
+    int plan_attention_cache;
     /* Optional lower internal model canvas. Both must be zero (exact output
      * canvas) or valid same-aspect dimensions no larger than width/height.
      * The 768*1344 pixel limit applies to this canvas when set; the output
