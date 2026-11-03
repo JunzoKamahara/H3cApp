@@ -157,13 +157,15 @@ struct CreationFormView: View {
                 Text("保存したプリセットはありません")
             } else {
                 ForEach(presetStore.presets) { preset in
+                    let name = preset.id == presetStore.defaultID
+                        ? String(localized: "\(preset.name)（デフォルト）") : preset.name
                     Button {
                         viewModel.applyPreset(preset)
                     } label: {
                         if preset.id == viewModel.activePresetID {
-                            Label(preset.name, systemImage: "checkmark")
+                            Label(name, systemImage: "checkmark")
                         } else {
-                            Text(preset.name)
+                            Text(name)
                         }
                     }
                 }
@@ -173,6 +175,19 @@ struct CreationFormView: View {
                 viewModel.presetPendingName = viewModel.presetFromCurrentSettings()
             }
             if !presetStore.presets.isEmpty {
+                // New windows without a project start from the default, and
+                // 詳細設定's "変更あり" is measured against it.
+                Menu("デフォルトにする") {
+                    ForEach(presetStore.presets) { preset in
+                        Toggle(preset.name, isOn: Binding(
+                            get: { presetStore.defaultID == preset.id },
+                            set: { presetStore.setDefault(id: $0 ? preset.id : nil) }))
+                    }
+                    Divider()
+                    Toggle("なし（アプリの既定値）", isOn: Binding(
+                        get: { presetStore.defaultID == nil || presetStore.defaultPreset == nil },
+                        set: { if $0 { presetStore.setDefault(id: nil) } }))
+                }
                 Menu("削除") {
                     ForEach(presetStore.presets) { preset in
                         Button(preset.name) { viewModel.deletePreset(id: preset.id) }
@@ -210,7 +225,7 @@ struct CreationFormView: View {
             Button {
                 viewModel.showingAdvancedSettings = true
             } label: {
-                Label(viewModel.hasAdvancedChanges ? String(localized: "詳細設定・変更あり") : String(localized: "詳細設定"),
+                Label(viewModel.hasSettingsChanges ? String(localized: "詳細設定・変更あり") : String(localized: "詳細設定"),
                       systemImage: "slider.horizontal.3")
             }
             .help("詳細設定を開く（⌘,）")

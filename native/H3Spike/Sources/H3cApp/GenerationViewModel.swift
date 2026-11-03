@@ -808,7 +808,16 @@ final class GenerationViewModel: ObservableObject {
         referenceImages.move(fromOffsets: source, toOffset: destination)
     }
 
+    /// 既定に戻す: the default preset's settings (length and つなげて生成
+    /// stay), or the app's own defaults when no preset is the default.
     func resetAdvancedSettings() {
+        if let preset = PresetStore.shared.defaultPreset {
+            let (keptSeconds, keptChained) = (seconds, chained)
+            applyPreset(preset)
+            chained = keptChained
+            seconds = keptSeconds.clamped(to: currentSecondsRange)
+            return
+        }
         sizeProfile = defaultSizeProfile
         steps = defaultSteps
         denoiseReuse = defaultReuse

@@ -30,17 +30,21 @@ struct SettingsPreset: Codable, Identifiable, Equatable {
 }
 
 /// Presets are shared by every window: saving in one shows up in the
-/// others. Also remembers the preset used last, which new windows start
-/// from.
+/// others. Also remembers the preset used last, and the default preset:
+/// the one new windows without a project start from, and the settings
+/// "変更あり" is measured against.
 @MainActor
 final class PresetStore: ObservableObject {
     static let shared = PresetStore()
 
     private static let presetsKey = "h3c-app.settingsPresets"
     private static let lastUsedKey = "h3c-app.lastUsedPresetID"
+    /// An empty string means "no default" (the app's own defaults).
+    private static let defaultKey = "h3c-app.defaultPresetID"
 
     @Published private(set) var presets: [SettingsPreset]
     @Published private(set) var lastUsedID: UUID?
+    @Published private(set) var defaultID: UUID?
 
     private init() {
         if let data = UserDefaults.standard.data(forKey: Self.presetsKey),
@@ -50,9 +54,23 @@ final class PresetStore: ObservableObject {
             presets = []
         }
         lastUsedID = UserDefaults.standard.string(forKey: Self.lastUsedKey).flatMap(UUID.init)
+        if let stored = UserDefaults.standard.string(forKey: Self.defaultKey) {
+            defaultID = UUID(uuidString: stored)
+        } else {
+            // Before there was a default, new windows took the preset used
+            // last; that one becomes the default.
+            defaultID = lastUsedID
+            UserDefaults.standard.set(lastUsedID?.uuidString ?? "", forKey: Self.defaultKey)
+        }
     }
 
     var lastUsed: SettingsPreset? { presets.first { $0.id == lastUsedID } }
+    var defaultPreset: SettingsPreset? { presets.first { $0.id == defaultID } }
+
+    func setDefault(id: UUID?) {
+        defaultID = id
+        UserDefaults.standard.set(id?.uuidString ?? "", forKey: Self.defaultKey)
+    }
 
     /// Saves under the preset's name, replacing one of the same name, and
     /// returns what was stored.
@@ -73,6 +91,7 @@ final class PresetStore: ObservableObject {
     func delete(id: UUID) {
         presets.removeAll { $0.id == id }
         if lastUsedID == id { lastUsedID = nil; UserDefaults.standard.removeObject(forKey: Self.lastUsedKey) }
+        if defaultID == id { setDefault(id: nil) }
         persist()
     }
 
@@ -148,10 +167,54 @@ extension GenerationViewModel {
         if activePresetID == id { activePresetID = nil }
     }
 
-    /// New windows (and the first one at launch) start from the preset
-    /// used last, if there is one.
-    func applyLastUsedPreset() {
-        if let preset = PresetStore.shared.lastUsed { applyPreset(preset) }
+    /// A new window without a project (and the first one at launch when
+    /// no project reopens): no prompt or input files, and the default
+    /// settings, so nothing reads "変更あり".
+    func startBlankDraft() {
+        var draft = currentDraft()
+        draft.prompt = ""
+        draft.creationMethod = CreationMethod.text.rawValue
+        draft.imageInputMode = ImageInputMode.firstLastFrame.rawValue
+        draft.firstFrame = nil
+        draft.lastFrame = nil
+        draft.references = []
+        draft.forcedAudio = nil
+        draft.forcedAudioOffset = nil
+        draft.continueFrom = nil
+        draft.continueFrames = nil
+        draft.chained = nil
+        draft.clipPrompts = nil
+        draft.clipReferences = nil
+        draft.chainCustom = nil
+        draft.customClips = nil
+        applyDraft(draft, projectURL: nil)
+        batchCount = 1
+        applyDefaultSettings()
+    }
+
+    /// The default preset, or the app's own defaults when none is set.
+    func applyDefaultSettings() {
+        if let preset = PresetStore.shared.defaultPreset {
+            applyPreset(preset)
+        } else {
+            activePresetID = nil
+            chained = false
+            resetAdvancedSettings()
+            seconds = 5
+        }
+    }
+
+    /// Whether the settings differ from the default preset (or, with none,
+    /// the app's defaults) - the "変更あり" on 詳細設定. Length and
+    /// つなげて生成 live in the composer and don't count; nor does the seed
+    /// text while the seed isn't fixed.
+    var hasSettingsChanges: Bool {
+        guard let preset = PresetStore.shared.defaultPreset else { return hasAdvancedChanges }
+        var current = presetFromCurrentSettings()
+        current.seconds = preset.seconds
+        current.chained = preset.chained
+        if !current.seedFixed && !preset.seedFixed { current.seed = preset.seed }
+        return !preset.hasSameSettings(as: current)
     }
 
     /// Puts a preset's settings into the form (the prompt is left alone).

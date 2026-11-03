@@ -194,7 +194,7 @@ struct ContentView: View {
                 // Opened from the menu bar's プロジェクト menu with no window.
                 store.pendingAction = nil
                 store.didReopenAtLaunch = true
-                if fresh { viewModel.applyLastUsedPreset() }
+                if fresh { viewModel.startBlankDraft() }
                 switch action {
                 case .new: viewModel.showingNewProject = true
                 case .choose: DispatchQueue.main.async { viewModel.chooseAndOpenProject() }
@@ -202,8 +202,12 @@ struct ContentView: View {
                 }
             } else if fresh && !viewModel.reopenLastProjectIfAny() {
                 // The first window reopens the project open at the last
-                // quit; otherwise the form starts from the preset used last.
-                viewModel.applyLastUsedPreset()
+                // quit; otherwise the form starts blank on the default preset.
+                viewModel.startBlankDraft()
+            } else if !fresh && viewModel.project == nil && !viewModel.isGenerating {
+                // The primary model again, its last window closed (which
+                // closed its project): a new window still starts blank.
+                viewModel.startBlankDraft()
             }
         }
         // initial: the engine can already have failed (no model registered)

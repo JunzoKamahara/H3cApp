@@ -86,6 +86,9 @@
 "保存したプリセットはありません" = "No saved presets";
 "現在の設定をプリセットとして保存…" = "Save Current Settings as Preset…";
 "削除" = "Delete";
+"デフォルトにする" = "Make Default";
+"なし（アプリの既定値）" = "None (App Defaults)";
+"%@（デフォルト）" = "%@ (Default)";
 "%@・変更あり" = "%@ · modified";
 "プリセット" = "Presets";
 "作り方" = "Mode";

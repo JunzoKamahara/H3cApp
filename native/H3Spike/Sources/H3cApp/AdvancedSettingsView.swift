@@ -15,7 +15,7 @@ struct AdvancedSettingsView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("詳細設定").font(.system(size: 16, weight: .semibold))
-                if viewModel.hasAdvancedChanges {
+                if viewModel.hasSettingsChanges {
                     Text("変更あり").font(.caption).foregroundStyle(palette.accent)
                 }
                 Spacer()
