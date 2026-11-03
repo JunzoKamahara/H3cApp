@@ -168,6 +168,18 @@ Related documentation: [Local API](API.md) Â· [Building and testing](BUILD.md) Â
   normalizes each frame on its own, so each convolution carries its last
   two input frames into the next chunk and the latent is bit-identical to
   one pass. Clips that fit still take the one pass.
+- **Still images through the video VAE encoder**: a reference image (and a
+  first or last frame) is one frame, and each of the encoder's causal
+  Conv3d layers puts two frames of zeros in front of it, so two of every
+  three time taps multiplied zeros. These zero frames are now neither
+  padded in nor convolved (`h3_gpu_conv3d_zero_front_f32`). The latent
+  stays bit-for-bit the same (checked on the M5 at 256x256 to 1344x768, in
+  both the Conv3d and the 2D-convolution encoder) and a 1344x768 image
+  takes 8.9 s instead of 21.2 s (960x544: 4.8 s instead of 11.5 s).
+  A Ref2VA run with six 1344x768 reference images (1344x768 x 22 frames,
+  2 steps, SSD streaming) wrote the same frames byte for byte; its reference encode went
+  from 125 s to 53 s and the whole run from 472 s to 392 s.
+  `H3_ENCODER_STILL=0` convolves the zeros as before.
 - **Video compression**: every video the app keeps (generated, joined,
   enlarged, imported) is HEVC at a constant quality: General Settings > Saved Quality,
   Quality of Saved Videos, Standard (0.85), High (0.90, the default) or

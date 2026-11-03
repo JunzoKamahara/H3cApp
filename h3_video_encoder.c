@@ -79,6 +79,11 @@ typedef struct {
     float latent_std[LATENT_CHANNELS];
     /* Conv3d as 2D convolutions (h3_video_vae_encode_fast). */
     int fast;
+    /* A still image (one frame, one pass): each causal Conv3d's two front
+     * frames are zeros, so they are neither padded in nor convolved (see
+     * h3_gpu_conv3d_zero_front_f32) - the same latent, bit for bit, in
+     * about half the time. H3_ENCODER_STILL=0 convolves them as before. */
+    int still;
     /* A tile encoded in chunks over time (see "Memory over time"): each
      * causal Conv3d takes its two front frames from `history` - the last
      * two padded input frames of the previous chunk - instead of zeros. */
@@ -449,21 +454,28 @@ static int carry_history(encoder_context *encoder, const encoder_conv *conv,
                   error, error_size, "visual encoder history out");
 }
 
+/* The zero frames padded in front of a causal Conv3d's input. */
+static uint32_t front_frames(const encoder_context *encoder,
+                             const encoder_conv *conv) {
+    return encoder->still ? 0 : conv->depth_front;
+}
+
 static int conv_op(encoder_context *encoder, h3_gpu_tensor *output,
                    const h3_gpu_tensor *input, const encoder_conv *conv,
                    uint32_t depth, uint32_t height, uint32_t width,
                    h3_gpu_tensor *padded, char *error, size_t error_size) {
     const h3_gpu_tensor *source = input;
     uint32_t source_depth = depth, source_height = height, source_width = width;
+    uint32_t front = front_frames(encoder, conv);
     if (padded) {
         if (!gpu_op(encoder, h3_gpu_vae_encoder_pad_f32(
                 encoder->gpu, padded, input, 1, depth, height, width,
-                conv->input_channels, conv->depth_front, conv->height_before,
+                conv->input_channels, front, conv->height_before,
                 conv->height_after, conv->width_before, conv->width_after),
                 error, error_size, "visual encoder causal padding")) return 0;
         if (!checkpoint(encoder, PROFILE_PAD, error, error_size)) return 0;
         source = padded;
-        source_depth += conv->depth_front;
+        source_depth += front;
         source_height += conv->height_before + conv->height_after;
         source_width += conv->width_before + conv->width_after;
         if (encoder->streaming && conv->depth_front &&
@@ -475,6 +487,14 @@ static int conv_op(encoder_context *encoder, h3_gpu_tensor *output,
              "be encoded in chunks");
         return 0;
     }
+    if (conv->depth_front && !front)
+        return gpu_op(encoder, h3_gpu_conv3d_zero_front_f32(
+            encoder->gpu, output, source, conv->weight, conv->bias,
+            source_depth, source_height, source_width, conv->input_channels,
+            conv->output_channels, conv->kernel, conv->kernel, conv->kernel,
+            conv->stride_t, conv->stride_h, conv->stride_w, conv->depth_front,
+            encoder->fast), error, error_size, "visual encoder Conv3d") &&
+            checkpoint(encoder, PROFILE_CONV, error, error_size);
     return gpu_op(encoder, (encoder->fast ? h3_gpu_conv3d_as_2d_f32 : h3_gpu_conv3d_f32)(
         encoder->gpu, output, source, conv->weight, conv->bias, 1,
         source_depth, source_height, source_width, conv->input_channels,
@@ -491,10 +511,11 @@ static h3_gpu_tensor *run_conv(encoder_context *encoder,
                                uint32_t *output_depth, uint32_t *output_height,
                                uint32_t *output_width, char *error,
                                size_t error_size) {
-    uint32_t padded_d = depth + conv->depth_front;
+    uint32_t padded_d = depth + front_frames(encoder, conv);
     uint32_t padded_h = height + conv->height_before + conv->height_after;
     uint32_t padded_w = width + conv->width_before + conv->width_after;
-    *output_depth = (padded_d - conv->kernel) / conv->stride_t + 1;
+    *output_depth = (depth + conv->depth_front - conv->kernel) /
+                    conv->stride_t + 1;
     *output_height = (padded_h - conv->kernel) / conv->stride_h + 1;
     *output_width = (padded_w - conv->kernel) / conv->stride_w + 1;
     h3_gpu_tensor *padded = NULL;
@@ -537,10 +558,12 @@ static h3_gpu_tensor *run_block(encoder_context *encoder,
                                 size_t error_size) {
     size_t input_count = tensor_elements(depth, height, width, input_channels);
     size_t output_count = tensor_elements(depth, height, width, output_channels);
-    size_t pad1_count = tensor_elements(depth + 2, height + 2, width + 2,
-                                        input_channels);
-    size_t pad2_count = tensor_elements(depth + 2, height + 2, width + 2,
-                                        output_channels);
+    size_t pad1_count = tensor_elements(
+        depth + front_frames(encoder, &block->conv1), height + 2, width + 2,
+        input_channels);
+    size_t pad2_count = tensor_elements(
+        depth + front_frames(encoder, &block->conv2), height + 2, width + 2,
+        output_channels);
     h3_gpu_tensor *norm1 = h3_gpu_tensor_new_f32(encoder->gpu, input_count);
     h3_gpu_tensor *pad1 = h3_gpu_tensor_new_f32(encoder->gpu, pad1_count);
     h3_gpu_tensor *hidden = h3_gpu_tensor_new_f32(encoder->gpu, output_count);
@@ -605,6 +628,9 @@ static float *encode_tile_frames(encoder_context *encoder, const float *pixels,
                                  int *latent_time, char *error,
                                  size_t error_size) {
     if (profiling()) encoder->profile_mark = profile_now();
+    const char *still = getenv("H3_ENCODER_STILL");
+    encoder->still = frames == 1 && !encoder->streaming &&
+                     !(still && *still == '0');
     size_t pixel_count = (size_t)frames * height * width * RGB_CHANNELS;
     float *normalized = malloc(pixel_count * sizeof(*normalized));
     if (!normalized) {
@@ -664,7 +690,8 @@ static float *encode_tile_frames(encoder_context *encoder, const float *pixels,
     if (!hidden) return NULL;
 
     size_t hidden_count = tensor_elements(depth, h, w, 1024);
-    size_t padded_count = tensor_elements(depth + 2, h + 2, w + 2, 1024);
+    size_t padded_count = tensor_elements(
+        depth + front_frames(encoder, &encoder->conv_out), h + 2, w + 2, 1024);
     size_t moment_count = tensor_elements(depth, h, w, MOMENT_CHANNELS);
     h3_gpu_tensor *norm = h3_gpu_tensor_new_f32(encoder->gpu, hidden_count);
     h3_gpu_tensor *padded = h3_gpu_tensor_new_f32(encoder->gpu, padded_count);

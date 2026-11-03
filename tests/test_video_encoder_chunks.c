@@ -8,7 +8,10 @@
  *       the history is reset between tiles). H3_CHUNKS_WIDTH/HEIGHT/FRAMES
  *       run one other size instead; H3_CHUNKS_ONLY=<chunk frames> skips the
  *       one-pass encode and reports the chunked run alone (for clips whose
- *       one pass would not fit).
+ *       one pass would not fit). The clip's first frame, as a still image
+ *       at 320x256 (two by two tiles), must also encode bit for bit the
+ *       same with its causal zero frames left out (the default for stills)
+ *       and convolved (H3_ENCODER_STILL=0), in both encoders.
  *
  * The one-pass encode holds every frame of a tile at once, so its estimate
  * is checked against a fixed ceiling here, before anything is allocated:
@@ -189,6 +192,36 @@ static void check_clip(const char *weights, const char *video, int width,
     free(pixels);
 }
 
+static void check_still(const char *weights, const char *video) {
+    const int width = 320, height = 256;
+    float *clip = read_clip(video, width, height, 5);
+    size_t area = (size_t)width * height;
+    float *pixels = malloc(3 * area * sizeof(*pixels));
+    if (!pixels) die("out of memory");
+    for (int channel = 0; channel < 3; channel++)   /* [3,5,H,W] -> [3,1,H,W] */
+        memcpy(pixels + channel * area, clip + (size_t)channel * 5 * area,
+               area * sizeof(*pixels));
+    free(clip);
+    for (int fast = 0; fast <= 1; fast++) {
+        h3_video_latent skipped, convolved;
+        encode(weights, pixels, 1, height, width, 0, fast, &skipped);
+        setenv("H3_ENCODER_STILL", "0", 1);
+        encode(weights, pixels, 1, height, width, 0, fast, &convolved);
+        unsetenv("H3_ENCODER_STILL");
+        if (memcmp(skipped.values, convolved.values,
+                   latent_count(&skipped) * sizeof(float)))
+            die("a still image encodes differently without its zero frames");
+        printf("still %dx%d (%s): the same latent without the zero frames, "
+               "peak live %.2f vs %.2f GiB\n", width, height,
+               fast ? "2D convs" : "Conv3d",
+               (double)skipped.gpu_stats.peak_live_bytes / GIB,
+               (double)convolved.gpu_stats.peak_live_bytes / GIB);
+        h3_video_latent_free(&skipped);
+        h3_video_latent_free(&convolved);
+    }
+    free(pixels);
+}
+
 int main(int argc, char **argv) {
     plan_checks();
     if (argc < 3) {
@@ -196,6 +229,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     const char *weights = argv[1], *video = argv[2];
+    check_still(weights, video);
     int only = env_int("H3_CHUNKS_ONLY", 0);
     if (getenv("H3_CHUNKS_WIDTH") || only) {
         int width = env_int("H3_CHUNKS_WIDTH", 96);

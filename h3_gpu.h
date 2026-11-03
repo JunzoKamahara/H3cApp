@@ -528,6 +528,22 @@ int h3_gpu_conv3d_as_2d_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                             uint32_t kernel_depth, uint32_t kernel_height,
                             uint32_t kernel_width, uint32_t stride_depth,
                             uint32_t stride_height, uint32_t stride_width);
+/* h3_gpu_conv3d_f32 (as_2d 0) or h3_gpu_conv3d_as_2d_f32 (1) for one
+ * output frame whose input starts with `zero_frames` frames of zeros, which
+ * are not passed: `input` holds the kernel_depth - zero_frames frames after
+ * them, and the taps that would meet the zeros are left out. On an M5 the
+ * result matched the full convolution's bit for bit in every encoder layer
+ * (still images of 256x256 to 1344x768, both forms; 2026-11-03). */
+int h3_gpu_conv3d_zero_front_f32(h3_gpu *gpu, h3_gpu_tensor *output,
+                                 const h3_gpu_tensor *input,
+                                 const h3_gpu_tensor *weight,
+                                 const h3_gpu_tensor *bias,
+                                 uint32_t depth, uint32_t height, uint32_t width,
+                                 uint32_t input_channels, uint32_t output_channels,
+                                 uint32_t kernel_depth, uint32_t kernel_height,
+                                 uint32_t kernel_width, uint32_t stride_depth,
+                                 uint32_t stride_height, uint32_t stride_width,
+                                 uint32_t zero_frames, int as_2d);
 /* One 2D convolution with explicit zero padding in the graph: F32 NHWC
  * [height, width, C_in] -> [(height + pads - kh) / stride + 1, ..., C_out],
  * weight OIHW [C_out, C_in, kh, kw]. */

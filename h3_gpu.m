@@ -2725,13 +2725,13 @@ static H3Conv *h3_gpu_conv3d_graph(
         uint32_t kernel_depth, uint32_t kernel_height, uint32_t kernel_width,
         uint32_t stride_depth, uint32_t stride_height, uint32_t stride_width,
         uint32_t output_depth, uint32_t output_height, uint32_t output_width,
-        int has_bias, int as_2d) {
+        int has_bias, int as_2d, uint32_t skipped_taps) {
     @autoreleasepool {
         NSString *key = [NSString stringWithFormat:
-            @"3:%u:%u:%u:%u:%u:%u:%u:%u:%u:%u:%u:%u:%d:%d", batch, depth,
+            @"3:%u:%u:%u:%u:%u:%u:%u:%u:%u:%u:%u:%u:%d:%d:%u", batch, depth,
             height, width, input_channels, output_channels, kernel_depth,
             kernel_height, kernel_width, stride_depth, stride_height,
-            stride_width, has_bias, as_2d];
+            stride_width, has_bias, as_2d, skipped_taps];
         H3Conv *cached = gpu.convCache[key];
         if (cached) return cached;
         H3Conv *conv = [[H3Conv alloc] init];
@@ -2749,6 +2749,15 @@ static H3Conv *h3_gpu_conv3d_graph(
         conv.weight = [conv.graph placeholderWithShape:conv.weightShape
                                                dataType:MPSDataTypeFloat32
                                                    name:nil];
+        /* h3_gpu_conv3d_zero_front_f32: the taps that would meet the
+         * skipped zero frames are left out of the kernel. */
+        MPSGraphTensor *weights = conv.weight;
+        if (skipped_taps) {
+            weights = [conv.graph sliceTensor:weights dimension:2
+                start:(NSInteger)skipped_taps
+                length:(NSInteger)(kernel_depth - skipped_taps) name:nil];
+            kernel_depth -= skipped_taps;
+        }
         MPSGraphTensor *result = nil;
         if (as_2d) {
             /* The same convolution as one 2D convolution per time tap over
@@ -2764,7 +2773,6 @@ static H3Conv *h3_gpu_conv3d_graph(
                     dataLayout:MPSGraphTensorNamedDataLayoutNHWC
                     weightsLayout:MPSGraphTensorNamedDataLayoutOIHW];
             MPSGraphTensor *source = conv.input;
-            MPSGraphTensor *weights = conv.weight;
             for (uint32_t tap = 0; tap < kernel_depth; tap++) {
                 MPSGraphTensor *frames = [conv.graph sliceTensor:source
                     starts:@[@0, @(tap), @0, @0, @0]
@@ -2799,7 +2807,7 @@ static H3Conv *h3_gpu_conv3d_graph(
                     dataLayout:MPSGraphTensorNamedDataLayoutNDHWC
                     weightsLayout:MPSGraphTensorNamedDataLayoutOIDHW];
             result = [conv.graph
-                convolution3DWithSourceTensor:conv.input weightsTensor:conv.weight
+                convolution3DWithSourceTensor:conv.input weightsTensor:weights
                 descriptor:descriptor name:nil];
         }
         if (has_bias) {
@@ -2965,10 +2973,12 @@ static int h3_gpu_conv3d_by_tap(
         uint32_t height, uint32_t width, uint32_t input_channels,
         uint32_t output_channels, uint32_t kernel_depth, uint32_t kernel_height,
         uint32_t kernel_width, uint32_t stride_height, uint32_t stride_width,
-        uint32_t output_depth, uint32_t output_height, uint32_t output_width) {
+        uint32_t output_depth, uint32_t output_height, uint32_t output_width,
+        uint32_t skipped_taps) {
+    uint32_t taps = kernel_depth - skipped_taps;
     size_t output_bytes = (size_t)output_depth * output_height * output_width *
                           output_channels * sizeof(float);
-    if (kernel_depth > 1 && gpu.convScratch.length < output_bytes) {
+    if (taps > 1 && gpu.convScratch.length < output_bytes) {
         gpu.convScratch = [gpu.device newBufferWithLength:output_bytes
                                                   options:MTLResourceStorageModePrivate];
         if (!gpu.convScratch) {
@@ -2977,16 +2987,17 @@ static int h3_gpu_conv3d_by_tap(
         }
     }
     size_t frame_bytes = (size_t)height * width * input_channels * sizeof(float);
-    for (uint32_t tap = 0; tap < kernel_depth; tap++) {
+    for (uint32_t run = 0; run < taps; run++) {
+        uint32_t tap = skipped_taps + run;
         H3Conv *conv = h3_gpu_conv_tap_graph(
             gpu, output_depth, height, width, input_channels, output_channels,
             kernel_depth, kernel_height, kernel_width, stride_height, stride_width,
-            output_height, output_width, tap, tap == 0 && bias != NULL, tap > 0);
+            output_height, output_width, tap, run == 0 && bias != NULL, run > 0);
         /* The last tap writes the output; the ones before alternate. */
-        id<MTLBuffer> target = (kernel_depth - 1 - tap) % 2 ? gpu.convScratch
-                                                            : TENSOR(output).buffer;
-        id<MTLBuffer> previous = (kernel_depth - tap) % 2 ? gpu.convScratch
-                                                          : TENSOR(output).buffer;
+        id<MTLBuffer> target = (taps - 1 - run) % 2 ? gpu.convScratch
+                                                    : TENSOR(output).buffer;
+        id<MTLBuffer> previous = (taps - run) % 2 ? gpu.convScratch
+                                                  : TENSOR(output).buffer;
         @autoreleasepool {
             MPSCommandBuffer *command = h3_gpu_mps_command(gpu);
             MPSNDArrayDescriptor *frames = [MPSNDArrayDescriptor
@@ -2994,7 +3005,7 @@ static int h3_gpu_conv3d_by_tap(
             /* As stored: no padding of the channel rows (3 at the input). */
             frames.preferPackedRows = YES;
             MPSNDArray *view = [[MPSNDArray alloc]
-                initWithBuffer:TENSOR(input).buffer offset:tap * frame_bytes
+                initWithBuffer:TENSOR(input).buffer offset:run * frame_bytes
                 descriptor:frames];
             NSMutableDictionary *feeds = [@{
                 conv.input: [[MPSGraphTensorData alloc] initWithMPSNDArray:view],
@@ -3025,7 +3036,7 @@ static int h3_gpu_conv3d_by_tap(
         }
     }
     h3_gpu_stats stats = gpu.stats;
-    stats.mps_conv_dispatches += kernel_depth;
+    stats.mps_conv_dispatches += taps;
     gpu.stats = stats;
     return 1;
 }
@@ -3038,14 +3049,18 @@ static int h3_gpu_conv3d_impl(h3_gpu *opaque, h3_gpu_tensor *output,
                       uint32_t input_channels, uint32_t output_channels,
                       uint32_t kernel_depth, uint32_t kernel_height,
                       uint32_t kernel_width, uint32_t stride_depth,
-                      uint32_t stride_height, uint32_t stride_width, int as_2d) {
+                      uint32_t stride_height, uint32_t stride_width, int as_2d,
+                      uint32_t skipped_taps) {
     H3GPU *gpu = GPU(opaque);
     if (!batch || !depth || !height || !width || !input_channels ||
         !output_channels || !kernel_depth || !kernel_height || !kernel_width ||
         !stride_depth || !stride_height || !stride_width ||
-        depth < kernel_depth || height < kernel_height || width < kernel_width)
+        skipped_taps >= kernel_depth ||
+        (skipped_taps && depth + skipped_taps != kernel_depth) ||
+        depth + skipped_taps < kernel_depth || height < kernel_height ||
+        width < kernel_width)
         return 0;
-    uint32_t output_depth = (depth - kernel_depth) / stride_depth + 1;
+    uint32_t output_depth = (depth + skipped_taps - kernel_depth) / stride_depth + 1;
     uint32_t output_height = (height - kernel_height) / stride_height + 1;
     uint32_t output_width = (width - kernel_width) / stride_width + 1;
     size_t input_count = (size_t)batch * depth * height * width * input_channels;
@@ -3068,11 +3083,12 @@ static int h3_gpu_conv3d_impl(h3_gpu *opaque, h3_gpu_tensor *output,
             gpu, output, input, weight, bias, height, width, input_channels,
             output_channels, kernel_depth, kernel_height, kernel_width,
             stride_height, stride_width, output_depth, output_height,
-            output_width);
+            output_width, skipped_taps);
     H3Conv *conv = h3_gpu_conv3d_graph(
         gpu, batch, depth, height, width, input_channels, output_channels,
         kernel_depth, kernel_height, kernel_width, stride_depth, stride_height,
-        stride_width, output_depth, output_height, output_width, bias != NULL, as_2d);
+        stride_width, output_depth, output_height, output_width, bias != NULL, as_2d,
+        skipped_taps);
     if (!conv) return 0;
     @autoreleasepool {
         MPSCommandBuffer *command = h3_gpu_mps_command(gpu);
@@ -3123,7 +3139,7 @@ int h3_gpu_conv3d_f32(h3_gpu *opaque, h3_gpu_tensor *output,
     return h3_gpu_conv3d_impl(opaque, output, input, weight, bias, batch, depth,
                               height, width, input_channels, output_channels,
                               kernel_depth, kernel_height, kernel_width,
-                              stride_depth, stride_height, stride_width, 0);
+                              stride_depth, stride_height, stride_width, 0, 0);
 }
 
 int h3_gpu_conv3d_as_2d_f32(h3_gpu *opaque, h3_gpu_tensor *output,
@@ -3138,7 +3154,24 @@ int h3_gpu_conv3d_as_2d_f32(h3_gpu *opaque, h3_gpu_tensor *output,
     return h3_gpu_conv3d_impl(opaque, output, input, weight, bias, batch, depth,
                               height, width, input_channels, output_channels,
                               kernel_depth, kernel_height, kernel_width,
-                              stride_depth, stride_height, stride_width, 1);
+                              stride_depth, stride_height, stride_width, 1, 0);
+}
+
+int h3_gpu_conv3d_zero_front_f32(h3_gpu *opaque, h3_gpu_tensor *output,
+                                 const h3_gpu_tensor *input,
+                                 const h3_gpu_tensor *weight,
+                                 const h3_gpu_tensor *bias,
+                                 uint32_t depth, uint32_t height, uint32_t width,
+                                 uint32_t input_channels, uint32_t output_channels,
+                                 uint32_t kernel_depth, uint32_t kernel_height,
+                                 uint32_t kernel_width, uint32_t stride_depth,
+                                 uint32_t stride_height, uint32_t stride_width,
+                                 uint32_t zero_frames, int as_2d) {
+    return h3_gpu_conv3d_impl(opaque, output, input, weight, bias, 1, depth,
+                              height, width, input_channels, output_channels,
+                              kernel_depth, kernel_height, kernel_width,
+                              stride_depth, stride_height, stride_width, as_2d,
+                              zero_frames);
 }
 
 int h3_gpu_conv1d_stride_f32(h3_gpu *opaque, h3_gpu_tensor *output,
