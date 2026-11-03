@@ -1,6 +1,7 @@
 #include "h3_plan.h"
 #include "h3_video_encoder.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -28,6 +29,10 @@ static const double text_fixed = 4.8 * GIB;
 static const double text_per_prefetch = 1.83 * GIB;
 static const double text_per_token = 256.0 * 1024.0;
 static const double text_after_visuals = 0.5 * GIB;
+/* The GQA kernels keep their F32 score rows in a device scratch of at most
+ * 256 MiB (64 heads x tokens^2 floats below that). */
+static const double text_score_rows_cap = 256.0 * 1024.0 * 1024.0;
+static const double text_score_rows_heads = 64.0;
 /* The MPSGraph fallback past H3_PLAN_TEXT_FAST_LIMIT. On an M5 with
  * macOS 26 or later (full_sdpa) it is one attention call with an explicit
  * BF16 causal mask, which took the mask and about 0.25 GiB more (7.84 GiB
@@ -169,10 +174,14 @@ void h3_plan_compute(const h3_plan_input *input, h3_plan *plan) {
             text_tokens * text_tokens * 2.0 + text_fallback_extra :
             text_fallback_chunked_fixed +
                 text_tokens * text_fallback_chunked_per_token;
+    double score_rows = text_tokens > H3_PLAN_TEXT_FAST_LIMIT ? 0.0 :
+        fmin(text_score_rows_cap,
+             text_score_rows_heads * text_tokens * text_tokens * 4.0);
     int depth = input->text_prefetch_depth > 1 ? input->text_prefetch_depth : 1;
     plan->text_encoder_bytes = (uint64_t)(text_fixed +
         (depth - 1) * text_per_prefetch + text_tokens * text_per_token +
-        (input->visual_count ? text_after_visuals : 0.0) + fallback);
+        (input->visual_count ? text_after_visuals : 0.0) + fallback +
+        score_rows);
 
     plan->dit_bytes = (uint64_t)(dit_fixed + (double)input->dit_resident_bytes +
         (double)input->dit_tokens * dit_per_token +

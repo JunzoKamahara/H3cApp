@@ -4508,6 +4508,208 @@ kernel void h3_gqa_causal_bf16(
     }
 }
 
+/* h3_gqa_causal_bf16 with each score row in device memory instead of
+ * threadgroup memory, for a batch of query rows starting at row_offset.
+ * The arithmetic and its order are the same, so the output is bit-for-bit
+ * the same; what changes is occupancy. A threadgroup holding a whole score
+ * row of a long sequence (25 KiB at 6,400 tokens) leaves room for one per
+ * GPU core, and the serial value sums below then wait on memory with
+ * nothing to hide the latency. */
+struct gqa_rows_args {
+    uint sequence, query_heads, kv_heads, head_dim;
+    float scale;
+    uint row_offset, score_stride;
+};
+
+kernel void h3_gqa_causal_rows_bf16(
+        device const ushort *query [[buffer(0)]],
+        device const ushort *key [[buffer(1)]],
+        device const ushort *value [[buffer(2)]],
+        device ushort *output [[buffer(3)]],
+        constant gqa_rows_args &args [[buffer(4)]],
+        device float *score_rows [[buffer(5)]],
+        uint3 group [[threadgroup_position_in_grid]],
+        uint3 thread_position [[thread_position_in_threadgroup]],
+        uint3 threadgroup_size [[threads_per_threadgroup]]) {
+    uint tid = thread_position.x;
+    uint threads = threadgroup_size.x;
+    uint query_row = args.row_offset + group.x;
+    uint query_head = group.y;
+    if (query_row >= args.sequence || query_head >= args.query_heads) return;
+    uint kv_head = query_head / (args.query_heads / args.kv_heads);
+    uint q_base = (query_row * args.query_heads + query_head) * args.head_dim;
+    uint key_count = query_row + 1;
+    device float *scores = score_rows +
+        ((ulong)group.x * args.query_heads + query_head) * args.score_stride;
+    threadgroup float reductions[128];
+    threadgroup float shared_query[128];
+
+    for (uint d = tid; d < args.head_dim; d += threads) {
+        /* MLX's fused SDPA applies the scale to Q before the tiled QK
+         * contraction. Matching that order matters at sharp late-layer
+         * attention boundaries. */
+        shared_query[d] = h3_bf16_to_f32(h3_f32_to_bf16(
+            h3_bf16_to_f32(query[q_base + d]) * args.scale));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    float local_max = -INFINITY;
+    for (uint key_row = tid; key_row < key_count; key_row += threads) {
+        uint k_base = (key_row * args.kv_heads + kv_head) * args.head_dim;
+        float dot = 0.0f;
+        for (uint d = 0; d < args.head_dim; d++) {
+            dot = fma(shared_query[d], h3_bf16_to_f32(key[k_base + d]), dot);
+        }
+        float score = dot;
+        scores[key_row] = score;
+        local_max = max(local_max, score);
+    }
+    reductions[tid] = local_max;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = threads / 2; stride; stride >>= 1) {
+        if (tid < stride) reductions[tid] = max(reductions[tid], reductions[tid + stride]);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    float maximum = reductions[0];
+    /* Every thread must have read reductions[0] before any thread reuses
+     * the array for the sum below - without this barrier a fast thread 0
+     * overwrote the maximum with its partial sum while slower threads were
+     * still reading it, so the same inputs intermittently gave different
+     * attention output (seen as same-seed videos differing, most often
+     * with the longer FL2VA/Ref2VA Qwen sequences). */
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float local_sum = 0.0f;
+    for (uint key_row = tid; key_row < key_count; key_row += threads) {
+        float probability = exp(scores[key_row] - maximum);
+        scores[key_row] = probability;
+        local_sum += probability;
+    }
+    reductions[tid] = local_sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = threads / 2; stride; stride >>= 1) {
+        if (tid < stride) reductions[tid] += reductions[tid + stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    float inverse_sum = 1.0f / reductions[0];
+    /* The value sums read score rows other threads wrote; in device memory
+     * that needs a device barrier, not only the threadgroup ones above. */
+    threadgroup_barrier(mem_flags::mem_device);
+    for (uint d = tid; d < args.head_dim; d += threads) {
+        float sum = 0.0f;
+        for (uint key_row = 0; key_row < key_count; key_row++) {
+            uint v_index = (key_row * args.kv_heads + kv_head) * args.head_dim + d;
+            sum = fma(scores[key_row] * inverse_sum,
+                      h3_bf16_to_f32(value[v_index]), sum);
+        }
+        output[q_base + d] = h3_f32_to_bf16(sum);
+    }
+}
+
+/* h3_gqa_causal_rows_bf16 for all the query heads that share one KV head
+ * at once (exactly eight of them, so the per-head loops unroll into
+ * registers): thread x does, for each of those heads, exactly what thread x of
+ * that head does in h3_gqa_causal_bf16 - the same keys in the same order,
+ * the same fma chains, the same 128-wide reductions - so the output is bit-
+ * for-bit the same. A key or value element is then loaded and converted
+ * once for up to eight heads instead of once per head, and the eight
+ * independent chains in each thread hide each other's latency. */
+#define H3_GQA_GROUP 8 /* Qwen3-VL-32B: 64 query heads over 8 KV heads */
+kernel void h3_gqa_causal_group_bf16(
+        device const ushort *query [[buffer(0)]],
+        device const ushort *key [[buffer(1)]],
+        device const ushort *value [[buffer(2)]],
+        device ushort *output [[buffer(3)]],
+        constant gqa_rows_args &args [[buffer(4)]],
+        device float *score_rows [[buffer(5)]],
+        uint3 group [[threadgroup_position_in_grid]],
+        uint3 thread_position [[thread_position_in_threadgroup]],
+        uint3 threadgroup_size [[threads_per_threadgroup]]) {
+    uint tid = thread_position.x;
+    uint threads = threadgroup_size.x;
+    uint groups = args.query_heads / args.kv_heads;
+    uint query_row = args.row_offset + group.x;
+    uint kv_head = group.y;
+    if (query_row >= args.sequence || groups != H3_GQA_GROUP) return;
+    uint first_head = kv_head * groups;
+    uint key_count = query_row + 1;
+    device float *scores = score_rows +
+        ((ulong)group.x * args.query_heads + first_head) * args.score_stride;
+    threadgroup float reductions[H3_GQA_GROUP][128];
+    threadgroup float shared_query[H3_GQA_GROUP][128];
+
+    for (uint m = 0; m < H3_GQA_GROUP; m++) {
+        uint q_base = (query_row * args.query_heads + first_head + m) * args.head_dim;
+        for (uint d = tid; d < args.head_dim; d += threads)
+            shared_query[m][d] = h3_bf16_to_f32(h3_f32_to_bf16(
+                h3_bf16_to_f32(query[q_base + d]) * args.scale));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    float local_max[H3_GQA_GROUP];
+    for (uint m = 0; m < H3_GQA_GROUP; m++) local_max[m] = -INFINITY;
+    for (uint key_row = tid; key_row < key_count; key_row += threads) {
+        uint k_base = (key_row * args.kv_heads + kv_head) * args.head_dim;
+        float dot[H3_GQA_GROUP];
+        for (uint m = 0; m < H3_GQA_GROUP; m++) dot[m] = 0.0f;
+        for (uint d = 0; d < args.head_dim; d++) {
+            float k = h3_bf16_to_f32(key[k_base + d]);
+            for (uint m = 0; m < H3_GQA_GROUP; m++)
+                dot[m] = fma(shared_query[m][d], k, dot[m]);
+        }
+        for (uint m = 0; m < H3_GQA_GROUP; m++) {
+            scores[(ulong)m * args.score_stride + key_row] = dot[m];
+            local_max[m] = max(local_max[m], dot[m]);
+        }
+    }
+    for (uint m = 0; m < H3_GQA_GROUP; m++) reductions[m][tid] = local_max[m];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = threads / 2; stride; stride >>= 1) {
+        if (tid < stride)
+            for (uint m = 0; m < H3_GQA_GROUP; m++)
+                reductions[m][tid] = max(reductions[m][tid], reductions[m][tid + stride]);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    float maximum[H3_GQA_GROUP];
+    for (uint m = 0; m < H3_GQA_GROUP; m++) maximum[m] = reductions[m][0];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float local_sum[H3_GQA_GROUP];
+    for (uint m = 0; m < H3_GQA_GROUP; m++) local_sum[m] = 0.0f;
+    for (uint key_row = tid; key_row < key_count; key_row += threads)
+        for (uint m = 0; m < H3_GQA_GROUP; m++) {
+            device float *score = scores + (ulong)m * args.score_stride + key_row;
+            float probability = exp(*score - maximum[m]);
+            *score = probability;
+            local_sum[m] += probability;
+        }
+    for (uint m = 0; m < H3_GQA_GROUP; m++) reductions[m][tid] = local_sum[m];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = threads / 2; stride; stride >>= 1) {
+        if (tid < stride)
+            for (uint m = 0; m < H3_GQA_GROUP; m++)
+                reductions[m][tid] += reductions[m][tid + stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    float inverse_sum[H3_GQA_GROUP];
+    for (uint m = 0; m < H3_GQA_GROUP; m++) inverse_sum[m] = 1.0f / reductions[m][0];
+    /* The value sums read score rows other threads wrote; in device memory
+     * that needs a device barrier, not only the threadgroup ones above. */
+    threadgroup_barrier(mem_flags::mem_device);
+    for (uint d = tid; d < args.head_dim; d += threads) {
+        float sum[H3_GQA_GROUP];
+        for (uint m = 0; m < H3_GQA_GROUP; m++) sum[m] = 0.0f;
+        for (uint key_row = 0; key_row < key_count; key_row++) {
+            uint v_index = (key_row * args.kv_heads + kv_head) * args.head_dim + d;
+            float v = h3_bf16_to_f32(value[v_index]);
+            for (uint m = 0; m < H3_GQA_GROUP; m++)
+                sum[m] = fma(scores[(ulong)m * args.score_stride + key_row] *
+                             inverse_sum[m], v, sum[m]);
+        }
+        for (uint m = 0; m < H3_GQA_GROUP; m++)
+            output[(query_row * args.query_heads + first_head + m) *
+                   args.head_dim + d] = h3_f32_to_bf16(sum[m]);
+    }
+}
+
 kernel void h3_add_bf16(device const ushort *left [[buffer(0)]],
                          device const ushort *right [[buffer(1)]],
                          device ushort *output [[buffer(2)]],

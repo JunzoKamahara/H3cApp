@@ -390,6 +390,21 @@ forced to pieces it took 0.25 s per call at 8,200 tokens (one call 0.20 s)
 and 0.50 s at 16,384 (one call 0.80 s), with 1.07 and 1.94 GiB of probe
 footprint, and matched the one call to 0.0005; `./h3_sdpa_tests --probe-gqa
 9152` runs such a shape.
+Up to 7,936 tokens the kernel itself used to hold each score row in
+threadgroup memory, which at a few thousand tokens leaves room for one
+threadgroup per GPU core, and it loaded every key and value once per query
+head. It now keeps the score rows in a 256 MiB device scratch (batches of
+query rows) and runs the eight query heads of one KV head in one thread,
+each with the same keys, fma order and 128-wide reductions as before
+(`h3_gqa_causal_group_bf16`; `h3_gqa_causal_rows_bf16` for other head
+ratios), so its output is bit-for-bit the old one's: `tests/test_sdpa.c`
+compares every value. Per call at 64/8 heads on the M5: 2.1x faster at 64
+tokens, 2.7x at 1,000, 4.0x at 3,428, 6.8x at 6,416 (6.89 s to 1.01 s) and
+8.8x at 7,900. A Ref2VA run with six 1344x768 reference images (6,104 Qwen
+tokens, 1344x768 x 22 frames, 2 steps, SSD streaming) wrote the same frames
+byte for byte; its text encoder went from 333 s to 75 s and the whole run
+from 728 s to 469 s, with 0.25 GiB more peak memory (11.41 vs 11.15 GiB).
+`H3_GQA_ROWS=0` restores the old kernel for comparison.
 `tests/test_sdpa.c` (`make h3_sdpa_tests`) checks every mode and layout
 against a CPU reference, and `./h3_sdpa_tests --probe 18432 56 128` runs the
 real shape in the three modes, the one-call path last, so a machine that
@@ -573,8 +588,10 @@ Generate button on that verdict; `H3SPIKE_PLAN=1` prints them from the CLI.
   256x256 output's DiT sequence grows from 5,522 to 55,922 tokens (Qwen's
   output becomes DiT rows too, image tokens included) and its DiT compute
   about 26 times.
-- **Limits.** Qwen's fast causal attention takes at most 7,936 tokens (one
-  F32 score row in 32 KiB of threadgroup memory); past that an MPSGraph
+- **Limits.** Qwen's own causal attention kernel takes at most 7,936 tokens
+  (the limit of the original kernel's F32 score row in 32 KiB of
+  threadgroup memory, kept so that longer prompts keep the results they
+  had); past that an MPSGraph
   fallback runs, and past 16,384 tokens it refuses. The plan refuses those
   up front - before the reference video has been encoded for many
   minutes - and warns about the fallback. On an M5 with macOS 26 or later

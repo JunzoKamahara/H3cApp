@@ -136,6 +136,8 @@
 @property(nonatomic) h3_gpu_tensor *sdpaScratchK;
 @property(nonatomic) h3_gpu_tensor *sdpaScratchV;
 @property(nonatomic) h3_gpu_tensor *sdpaScratchO;
+/* Score rows of h3_gqa_causal_rows_bf16 (f32, one batch of query rows). */
+@property(nonatomic) h3_gpu_tensor *gqaScores;
 @property(nonatomic, strong) NSMutableArray<NSValue *> *sdpaRetired;
 @property(nonatomic) h3_gpu_stats profileStartStats;
 @property(nonatomic) h3_gpu_stats profileMarkStats;
@@ -485,7 +487,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_vision_qkv_rope_bf16",
             @"h3_embedding_bf16", @"h3_text_qk_rope_bf16",
             @"h3_head_rms_norm_bf16", @"h3_rope_text_bf16",
-            @"h3_gqa_causal_bf16", @"h3_add_bf16", @"h3_sub_bf16",
+            @"h3_gqa_causal_bf16", @"h3_gqa_causal_rows_bf16", @"h3_gqa_causal_group_bf16", @"h3_add_bf16", @"h3_sub_bf16",
             @"h3_token_pool_bf16", @"h3_token_pool_adaln_bf16",
             @"h3_token_expand_delta_bf16",
             @"h3_token_expand_adaln_bf16",
@@ -617,6 +619,7 @@ void h3_gpu_free(h3_gpu *gpu) {
         if (object.sdpaScratchK) h3_gpu_tensor_free(object.sdpaScratchK);
         if (object.sdpaScratchV) h3_gpu_tensor_free(object.sdpaScratchV);
         if (object.sdpaScratchO) h3_gpu_tensor_free(object.sdpaScratchO);
+        if (object.gqaScores) h3_gpu_tensor_free(object.gqaScores);
         for (NSValue *retired in object.sdpaRetired)
             h3_gpu_tensor_free((h3_gpu_tensor *)retired.pointerValue);
         object.sdpaRetired = nil;
@@ -1193,6 +1196,15 @@ typedef struct {
     uint32_t sequence, query_heads, kv_heads, head_dim;
     float scale;
 } gqa_args;
+typedef struct {
+    uint32_t sequence, query_heads, kv_heads, head_dim;
+    float scale;
+    uint32_t row_offset, score_stride;
+} gqa_rows_args;
+/* Shortest sequences the device-memory GQA kernels take; below them the
+ * threadgroup-memory kernel is as fast (measured, see h3_gpu_gqa_rows). */
+enum { H3_GQA_GROUP_MIN_SEQUENCE = 64, H3_GQA_ROWS_MIN_SEQUENCE = 2048 };
+static const uint64_t H3_GQA_ROWS_SCRATCH_BYTES = 256ull << 20;
 typedef struct { uint32_t sample_offset, elements; float delta, ratio; }
     euler_args;
 typedef struct {
@@ -6291,6 +6303,91 @@ int h3_gpu_gqa_causal_graph_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
                                   query_heads, kv_heads, head_dim, scale);
 }
 
+/* The same attention with its score rows in device memory, in batches of
+ * query rows under a fixed scratch size. h3_gqa_causal_group_bf16 runs the
+ * eight query heads of one KV head in one threadgroup (Qwen's layout),
+ * h3_gqa_causal_rows_bf16 one head per threadgroup otherwise. Both keep
+ * the arithmetic, its order and the thread count the reductions depend on
+ * from h3_gqa_causal_bf16, so the output is bit-for-bit the same (checked
+ * by tests/test_sdpa.c). Measured on the M5 at 64/8 heads: the grouped
+ * kernel 2.1x faster at 64 tokens, 2.7x at 1,000, 4.0x at 3,428, 6.8x at
+ * 6,416 and 8.8x at 7,900; the per-head one 1.5x at 3,428 and 2.5x at
+ * 6,416 and no faster below about 2,000. Returns 1 when it ran, -1 on an
+ * error, and 0 when this path does not apply (too short, H3_GQA_ROWS=0, or
+ * a pipeline that cannot run the same thread count); the caller then runs
+ * the original kernel. H3_GQA_ROWS=<n> sets the shortest sequence either
+ * kernel takes, H3_GQA_GROUP=0 turns the grouped one off. */
+static int h3_gpu_gqa_rows(H3GPU *gpu, h3_gpu_tensor *output,
+                           const h3_gpu_tensor *query,
+                           const h3_gpu_tensor *key,
+                           const h3_gpu_tensor *value, uint32_t sequence,
+                           uint32_t query_heads, uint32_t kv_heads,
+                           uint32_t head_dim, float scale,
+                           NSUInteger threads) {
+    uint32_t groups = query_heads / kv_heads;
+    const char *group_env = getenv("H3_GQA_GROUP");
+    int grouped = groups == 8 && !(group_env && !strcmp(group_env, "0"));
+    id<MTLComputePipelineState> pipeline = grouped ?
+        h3_gpu_pipeline(gpu, @"h3_gqa_causal_group_bf16") : nil;
+    if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < threads) {
+        grouped = 0;
+        pipeline = h3_gpu_pipeline(gpu, @"h3_gqa_causal_rows_bf16");
+    }
+    if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < threads)
+        return 0;
+    const char *env = getenv("H3_GQA_ROWS");
+    uint32_t minimum = env && *env ? (uint32_t)strtoul(env, NULL, 10) :
+        grouped ? H3_GQA_GROUP_MIN_SEQUENCE : H3_GQA_ROWS_MIN_SEQUENCE;
+    if (!minimum || sequence < minimum) return 0;
+    uint64_t row_bytes = (uint64_t)query_heads * sequence * sizeof(float);
+    uint64_t batch = H3_GQA_ROWS_SCRATCH_BYTES / row_bytes;
+    if (batch < 1) batch = 1;
+    if (batch > sequence) batch = sequence;
+    size_t elements = (size_t)batch * query_heads * sequence;
+    h3_gpu_tensor *scores = gpu.gqaScores;
+    if (!scores || TENSOR(scores).elements < elements) {
+        if (scores) {
+            if (!gpu.sdpaRetired) gpu.sdpaRetired = [NSMutableArray array];
+            [gpu.sdpaRetired addObject:[NSValue valueWithPointer:scores]];
+        }
+        scores = h3_gpu_tensor_new_f32((__bridge h3_gpu *)gpu, elements);
+        gpu.gqaScores = scores;
+        if (!scores) {
+            h3_gpu_set_error(gpu, @"cannot allocate GQA score rows "
+                             @"(%zu floats)", elements);
+            return -1;
+        }
+    }
+    @autoreleasepool {
+        /* A serial encoder: each batch finishes before the next one
+         * reuses the score rows. */
+        id<MTLComputeCommandEncoder> encoder = [gpu.command computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:TENSOR(query).buffer offset:0 atIndex:0];
+        [encoder setBuffer:TENSOR(key).buffer offset:0 atIndex:1];
+        [encoder setBuffer:TENSOR(value).buffer offset:0 atIndex:2];
+        [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:3];
+        [encoder setBuffer:TENSOR(scores).buffer offset:0 atIndex:5];
+        for (uint32_t r0 = 0; r0 < sequence; r0 += (uint32_t)batch) {
+            uint32_t rows = sequence - r0 < batch ? sequence - r0 : (uint32_t)batch;
+            gqa_rows_args args = {sequence, query_heads, kv_heads, head_dim,
+                                  scale, r0, sequence};
+            [encoder setBytes:&args length:sizeof(args) atIndex:4];
+            if (grouped)
+                [encoder dispatchThreadgroups:MTLSizeMake(rows, kv_heads, 1)
+                         threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+            else
+                [encoder dispatchThreadgroups:MTLSizeMake(rows, query_heads, 1)
+                         threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+        }
+        [encoder endEncoding];
+    }
+    h3_gpu_stats stats = gpu.stats;
+    stats.direct_dispatches++;
+    gpu.stats = stats;
+    return 1;
+}
+
 int h3_gpu_gqa_causal_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
                            const h3_gpu_tensor *query,
                            const h3_gpu_tensor *key,
@@ -6364,6 +6461,10 @@ int h3_gpu_gqa_causal_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
                                      pipeline.maxTotalThreadsPerThreadgroup);
     NSUInteger threads = 1;
     while (threads * 2 <= maximum_threads) threads *= 2;
+    int rows = h3_gpu_gqa_rows(gpu, output, query, key, value, sequence,
+                               query_heads, kv_heads, head_dim, scale,
+                               threads);
+    if (rows) return rows > 0;
     @autoreleasepool {
         id<MTLComputeCommandEncoder> encoder = [gpu.command computeCommandEncoder];
         [encoder setComputePipelineState:pipeline];

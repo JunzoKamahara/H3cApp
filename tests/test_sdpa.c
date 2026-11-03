@@ -395,6 +395,53 @@ static void run_gqa(h3_gpu *gpu, uint32_t S, uint32_t QH, uint32_t KH,
     free(q); free(k); free(v); free(ref); free(qb); free(kb); free(vb);
 }
 
+/* The device-memory GQA kernels (h3_gqa_causal_group_bf16 for eight query
+ * heads per KV head, h3_gqa_causal_rows_bf16 otherwise) must give the
+ * threadgroup-memory kernel's output bit for bit: generations made before
+ * them stay reproducible. H3_GQA_ROWS picks the path for each run. */
+static void run_gqa_exact(h3_gpu *gpu, uint32_t S, uint32_t QH, uint32_t KH,
+                          uint32_t D) {
+    size_t q_count = (size_t)S * QH * D, kv_count = (size_t)S * KH * D;
+    float scale = 1.0f / sqrtf((float)D);
+    uint16_t *qb = malloc(q_count * 2), *kb = malloc(kv_count * 2), *vb = malloc(kv_count * 2);
+    for (size_t i = 0; i < q_count; i++) qb[i] = f32_to_bf16(rng_normal() * 1.5f);
+    for (size_t i = 0; i < kv_count; i++) {
+        kb[i] = f32_to_bf16(rng_normal() * 1.5f);
+        vb[i] = f32_to_bf16(rng_normal());
+    }
+    h3_gpu_tensor *tq = h3_gpu_tensor_from_bf16(gpu, qb, q_count);
+    h3_gpu_tensor *tk = h3_gpu_tensor_from_bf16(gpu, kb, kv_count);
+    h3_gpu_tensor *tv = h3_gpu_tensor_from_bf16(gpu, vb, kv_count);
+    h3_gpu_tensor *to = h3_gpu_tensor_new_bf16(gpu, q_count);
+    const char *paths[][3] = {
+        {"threadgroup kernel", "0", "1"},
+        {"device rows, grouped", "1", "1"},
+        {"device rows, per head", "1", "0"},
+    };
+    uint16_t *first = malloc(q_count * 2), *rows = malloc(q_count * 2);
+    for (size_t p = 0; p < sizeof(paths) / sizeof(*paths); p++) {
+        setenv("H3_GQA_ROWS", paths[p][1], 1);
+        setenv("H3_GQA_GROUP", paths[p][2], 1);
+        int ok = h3_gpu_begin(gpu) &&
+                 h3_gpu_gqa_causal_bf16(gpu, to, tq, tk, tv, S, QH, KH, D, scale) &&
+                 h3_gpu_submit(gpu) &&
+                 h3_gpu_tensor_read_bf16(to, p ? rows : first, q_count);
+        CHECK(ok, "GQA %s S=%u: %s", paths[p][0], S, h3_gpu_error(gpu));
+        if (!ok || !p) continue;
+        size_t differing = 0;
+        for (size_t i = 0; i < q_count; i++) differing += rows[i] != first[i];
+        printf("  GQA bit-exact %-22s S=%5u QH=%2u KH=%u D=%3u  %zu of %zu "
+               "values differ\n", paths[p][0], S, QH, KH, D, differing, q_count);
+        CHECK(differing == 0, "GQA %s S=%u: %zu values differ from the "
+              "threadgroup kernel", paths[p][0], S, differing);
+    }
+    unsetenv("H3_GQA_ROWS");
+    unsetenv("H3_GQA_GROUP");
+    free(first); free(rows); free(qb); free(kb); free(vb);
+    h3_gpu_tensor_free(tq); h3_gpu_tensor_free(tk);
+    h3_gpu_tensor_free(tv); h3_gpu_tensor_free(to);
+}
+
 /* GPU-only consistency at a real shape: chunked vs full for the row-major
  * and the head-major (M5 int8) layouts, without a CPU reference. */
 static void probe_layouts(h3_gpu *gpu, uint32_t S, uint32_t H, uint32_t D) {
@@ -603,6 +650,12 @@ int main(int argc, char **argv) {
      * a tail row block. */
     run_gqa(gpu, 301, 16, 2, 128);
     run_gqa(gpu, 64, 8, 1, 64);
+    /* Qwen's own shape (long enough for several score-row batches only at
+     * real lengths; --probe-gqa covers those), a tail, and a group size
+     * other than eight, which takes the per-head kernel. */
+    run_gqa_exact(gpu, 1500, 64, 8, 128);
+    run_gqa_exact(gpu, 333, 16, 2, 128);
+    run_gqa_exact(gpu, 257, 12, 3, 64);
     h3_gpu_free(gpu);
     if (failures) { fprintf(stderr, "FAIL tests/test_sdpa.c: %d failures\n", failures); return 1; }
     printf("ok: dense SDPA modes (full, chunked, explicit) and causal GQA match the CPU reference\n");
