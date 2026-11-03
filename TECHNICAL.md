@@ -378,8 +378,18 @@ execution before the first call (`h3_gpu_set_sdpa_mode`, `h3_gpu.h`):
 override the choice (diagnostics; the app is meant to choose right on its
 own), and `H3_SDPA_LOG=1` prints, once per distinct call, the OS, GPU,
 family, mode, dtype, batch, sequence lengths, heads, head_dim, layouts,
-piece plan and buffer sizes. The causal and batched SDPA calls (text
-encoder, SwiftVR's windows) are small and keep the one-call graph.
+piece plan and buffer sizes. The batched SDPA calls (SwiftVR's windows)
+are small and keep the one-call graph. The text encoder's causal attention
+(Qwen, 64 query heads over 8 KV heads) has its own kernel up to 7,936
+tokens; past that, a long reference prompt used to reach the same one-call
+MPSGraph op, with an S x S mask. Outside **full** that fallback now runs in
+pieces too (`h3_gpu_gqa_causal_graph_bf16`): one KV head's eight query heads
+and a block of query rows per piece, keys only up to the block's last row,
+and the causal mask built inside the graph from coordinates. On the M5
+forced to pieces it took 0.25 s per call at 8,200 tokens (one call 0.20 s)
+and 0.50 s at 16,384 (one call 0.80 s), with 1.07 and 1.94 GiB of probe
+footprint, and matched the one call to 0.0005; `./h3_sdpa_tests --probe-gqa
+9152` runs such a shape.
 `tests/test_sdpa.c` (`make h3_sdpa_tests`) checks every mode and layout
 against a CPU reference, and `./h3_sdpa_tests --probe 18432 56 128` runs the
 real shape in the three modes, the one-call path last, so a machine that
@@ -568,9 +578,10 @@ Generate button on that verdict; `H3SPIKE_PLAN=1` prints them from the CLI.
   fallback runs, and past 16,384 tokens it refuses. The plan refuses those
   up front - before the reference video has been encoded for many
   minutes - and warns about the fallback. On an M5 with macOS 26 or later
-  the fallback took only its mask and 0.25 GiB more (7.84 GiB at 9,261
-  tokens); elsewhere it is counted as if it held all 64 heads' scores,
-  which refuses about 16,000 tokens on 24 GB.
+  the fallback is one call and took only its mask and 0.25 GiB more
+  (7.84 GiB at 9,261 tokens); elsewhere it runs in pieces and is counted as
+  1.1 GiB plus 36 KiB per token (1.3 GiB beyond the inputs measured at
+  16,384 tokens on the M5 forced to pieces).
 - **Memory.** Each stage is a fixed part plus a part per token, measured
   with `H3_MEMORY_TRACE=1` on a 24 GB M5 (GGUF import, SSD streaming, the
   app's `H3_QWEN_PREFETCH_DEPTH=1`) and checked against each stage's own

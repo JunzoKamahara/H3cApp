@@ -888,6 +888,22 @@ int h3_gpu_gqa_causal_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                            uint32_t sequence, uint32_t query_heads,
                            uint32_t kv_heads, uint32_t head_dim,
                            float scale);
+/* The MPSGraph route h3_gpu_gqa_causal_bf16 takes past its kernel's
+ * threadgroup ceiling (about 7,900 tokens), callable at any length for
+ * tests: one call in FULL mode, otherwise pieces of one KV head's query
+ * heads and a block of query rows under the h3_gpu_set_sdpa_mode budget.
+ * h3_gpu_gqa_chunk_plan reports the query rows per piece (sequence in FULL
+ * mode); there are kv_heads x ceil(sequence / rows) pieces. */
+int h3_gpu_gqa_causal_graph_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                                 const h3_gpu_tensor *query,
+                                 const h3_gpu_tensor *key,
+                                 const h3_gpu_tensor *value,
+                                 uint32_t sequence, uint32_t query_heads,
+                                 uint32_t kv_heads, uint32_t head_dim,
+                                 float scale);
+void h3_gpu_gqa_chunk_plan(h3_gpu *gpu, uint32_t sequence,
+                           uint32_t query_heads, uint32_t kv_heads,
+                           uint32_t *chunk_rows);
 int h3_gpu_add_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                     const h3_gpu_tensor *left, const h3_gpu_tensor *right,
                     uint32_t elements);

@@ -6039,6 +6039,258 @@ static int h3_gpu_gqa_mps(H3GPU *gpu, h3_gpu_tensor *output,
     return 1;
 }
 
+/* --- Causal GQA in bounded pieces -------------------------------------
+ *
+ * Past the custom kernel's threadgroup ceiling, h3_gpu_gqa_mps() hands the
+ * whole causal attention to MPSGraph's SDPA in one call: [1, 64, S, S]
+ * scores for Qwen's 64 query heads, with S in the thousands once reference
+ * videos add their vision tokens. That is the op issue #2 aborted in on an
+ * M2 Max / macOS 15 (there in the DiT), so outside the validated FULL mode
+ * this path follows the same policy as h3_gpu_sdpa_chunked(): pieces of one
+ * KV head's group of query heads and a block of query rows, each under the
+ * score budget. A piece over rows [r0, r0 + rn) reads keys [0, r0 + rn)
+ * only and builds its causal mask in the graph from coordinates, so no
+ * S x S constant is held. Q is viewed as [S, kv_heads, groups * D] and
+ * transposed once to [kv_heads, S, groups * D], K and V to
+ * [kv_heads, S, D], which makes every piece a contiguous range. */
+static H3SDPA *h3_gpu_gqa_chunk_graph(H3GPU *gpu, uint32_t groups,
+                                      uint32_t rows, uint32_t first_row,
+                                      uint32_t head_dim, float scale,
+                                      int explicit) {
+    @autoreleasepool {
+        uint32_t kv_rows = first_row + rows;
+        NSString *cacheKey = [NSString stringWithFormat:
+                              @"G:%u:%u:%u:%u:%.9g:%d", groups, rows,
+                              first_row, head_dim, scale, explicit];
+        H3SDPA *cached = gpu.sdpaCache[cacheKey];
+        if (cached) return cached;
+        if (!explicit &&
+            ![[MPSGraph class] instancesRespondToSelector:@selector(scaledDotProductAttentionWithQueryTensor:keyTensor:valueTensor:maskTensor:scale:name:)]) {
+            h3_gpu_set_error(gpu, @"native MPSGraph SDPA is unavailable");
+            return nil;
+        }
+        MPSGraph *graph = [[MPSGraph alloc] init];
+        MPSDataType bf16 = MPSDataTypeBFloat16;
+        NSArray<NSNumber *> *qShape = @[@1, @(rows), @(groups), @(head_dim)];
+        NSArray<NSNumber *> *kvShape = @[@1, @1, @(kv_rows), @(head_dim)];
+        MPSGraphTensor *q = [graph placeholderWithShape:qShape dataType:bf16
+                                                   name:nil];
+        MPSGraphTensor *k = [graph placeholderWithShape:kvShape dataType:bf16
+                                                   name:nil];
+        MPSGraphTensor *v = [graph placeholderWithShape:kvShape dataType:bf16
+                                                   name:nil];
+        MPSGraphTensor *qt = [graph transposeTensor:q dimension:1
+                                      withDimension:2 name:nil];
+        MPSShape *expanded = @[@1, @(groups), @(kv_rows), @(head_dim)];
+        MPSGraphTensor *kb = [graph broadcastTensor:k toShape:expanded name:nil];
+        MPSGraphTensor *vb = [graph broadcastTensor:v toShape:expanded name:nil];
+        /* Key j is in the future of query row r0 + i when j > r0 + i. */
+        MPSShape *maskShape = @[@1, @1, @(rows), @(kv_rows)];
+        MPSGraphTensor *row = [graph coordinateAlongAxis:2 withShape:maskShape
+                                                    name:nil];
+        MPSGraphTensor *column = [graph coordinateAlongAxis:3
+                                                  withShape:maskShape name:nil];
+        row = [graph additionWithPrimaryTensor:row
+            secondaryTensor:[graph constantWithScalar:(double)first_row
+                                             dataType:MPSDataTypeInt32]
+            name:nil];
+        MPSGraphTensor *future = [graph greaterThanWithPrimaryTensor:column
+                                                     secondaryTensor:row
+                                                                name:nil];
+        MPSDataType maskType = explicit ? MPSDataTypeFloat32 : bf16;
+        MPSGraphTensor *mask = [graph selectWithPredicateTensor:future
+            truePredicateTensor:[graph constantWithScalar:-INFINITY
+                                                 dataType:maskType]
+            falsePredicateTensor:[graph constantWithScalar:0.0
+                                                  dataType:maskType]
+            name:nil];
+        MPSGraphTensor *attention;
+        if (explicit) {
+            MPSGraphTensor *kT = [graph transposeTensor:kb dimension:2
+                                          withDimension:3 name:nil];
+            MPSGraphTensor *scores = [graph
+                matrixMultiplicationWithPrimaryTensor:qt secondaryTensor:kT
+                name:nil];
+            scores = [graph castTensor:scores toType:MPSDataTypeFloat32
+                                  name:nil];
+            scores = [graph multiplicationWithPrimaryTensor:scores
+                secondaryTensor:[graph constantWithScalar:scale
+                                                 dataType:MPSDataTypeFloat32]
+                name:nil];
+            scores = [graph additionWithPrimaryTensor:scores
+                                      secondaryTensor:mask name:nil];
+            MPSGraphTensor *probabilities = [graph softMaxWithTensor:scores
+                                                                axis:3 name:nil];
+            probabilities = [graph castTensor:probabilities toType:bf16
+                                         name:nil];
+            attention = [graph matrixMultiplicationWithPrimaryTensor:probabilities
+                                                     secondaryTensor:vb name:nil];
+        } else {
+            attention = [graph scaledDotProductAttentionWithQueryTensor:qt
+                keyTensor:kb valueTensor:vb maskTensor:mask scale:scale
+                name:nil];
+        }
+        H3SDPA *result = [[H3SDPA alloc] init];
+        result.graph = graph;
+        result.query = q;
+        result.key = k;
+        result.value = v;
+        result.output = [graph transposeTensor:attention dimension:1
+                                 withDimension:2 name:nil];
+        result.inputShape = qShape;
+        result.kvShape = kvShape;
+        result.outputShape = qShape;
+        gpu.sdpaCache[cacheKey] = result;
+        return result;
+    }
+}
+
+/* Query rows per piece: a piece's scores are groups x rows x keys, and the
+ * last row block sees all `sequence` keys. */
+static uint32_t h3_gpu_gqa_plan_rows(uint64_t budget, uint64_t cost,
+                                     uint32_t sequence, uint32_t groups) {
+    uint64_t per_row = (uint64_t)groups * sequence * cost;
+    uint64_t rows = per_row ? budget / per_row : sequence;
+    return (uint32_t)(rows < 1 ? 1 : rows < sequence ? rows : sequence);
+}
+
+static int h3_gpu_gqa_chunked(H3GPU *gpu, h3_gpu_tensor *output,
+                              const h3_gpu_tensor *query,
+                              const h3_gpu_tensor *key,
+                              const h3_gpu_tensor *value, uint32_t sequence,
+                              uint32_t query_heads, uint32_t kv_heads,
+                              uint32_t head_dim, float scale, int explicit,
+                              uint32_t chunk_rows) {
+    uint32_t groups = query_heads / kv_heads;
+    size_t elem = 2;
+    if (((size_t)head_dim * elem) % 16) {
+        h3_gpu_set_error(gpu, @"chunked causal GQA needs head_dim * 2 to be "
+                         @"a multiple of 16 (head_dim %u)", head_dim);
+        return 0;
+    }
+    MPSDataType bf16 = MPSDataTypeBFloat16;
+    size_t q_elements = (size_t)sequence * query_heads * head_dim;
+    size_t kv_elements = (size_t)sequence * kv_heads * head_dim;
+    h3_gpu_tensor *sq = h3_gpu_sdpa_scratch(gpu, 0, q_elements, H3_GPU_BF16);
+    h3_gpu_tensor *sk = h3_gpu_sdpa_scratch(gpu, 1, kv_elements, H3_GPU_BF16);
+    h3_gpu_tensor *sv = h3_gpu_sdpa_scratch(gpu, 2, kv_elements, H3_GPU_BF16);
+    h3_gpu_tensor *so = h3_gpu_sdpa_scratch(gpu, 3, q_elements, H3_GPU_BF16);
+    if (!sq || !sk || !sv || !so) return 0;
+    if (!h3_gpu_sdpa_run_transpose(gpu, query, sq, sequence, kv_heads,
+                                   groups * head_dim, bf16, 1) ||
+        !h3_gpu_sdpa_run_transpose(gpu, key, sk, sequence, kv_heads,
+                                   head_dim, bf16, 1) ||
+        !h3_gpu_sdpa_run_transpose(gpu, value, sv, sequence, kv_heads,
+                                   head_dim, bf16, 1)) return 0;
+    uint64_t pieces = 0;
+    for (uint32_t g = 0; g < kv_heads; g++) {
+        for (uint32_t r0 = 0; r0 < sequence; r0 += chunk_rows) {
+            uint32_t rn = sequence - r0 < chunk_rows ? sequence - r0 : chunk_rows;
+            H3SDPA *piece = h3_gpu_gqa_chunk_graph(gpu, groups, rn, r0,
+                                                   head_dim, scale, explicit);
+            if (!piece) return 0;
+            size_t q_offset = ((size_t)g * sequence + r0) * groups *
+                              head_dim * elem;
+            size_t kv_offset = (size_t)g * sequence * head_dim * elem;
+            @autoreleasepool {
+                MPSCommandBuffer *command = h3_gpu_mps_command(gpu);
+                NSDictionary *feeds = @{
+                    piece.query: h3_gpu_graph_view(sq, piece.inputShape, bf16,
+                                                   q_offset),
+                    piece.key: h3_gpu_graph_view(sk, piece.kvShape, bf16,
+                                                 kv_offset),
+                    piece.value: h3_gpu_graph_view(sv, piece.kvShape, bf16,
+                                                   kv_offset)
+                };
+                NSDictionary *results = @{
+                    piece.output: h3_gpu_graph_view(so, piece.outputShape,
+                                                    bf16, q_offset)
+                };
+                @try {
+                    [piece.graph encodeToCommandBuffer:command feeds:feeds
+                                      targetOperations:nil
+                                     resultsDictionary:results
+                                   executionDescriptor:nil];
+                } @catch (NSException *exception) {
+                    h3_gpu_set_error(gpu, @"MPSGraph chunked causal GQA "
+                                     @"failed (KV head %u, rows %u..%u): %@",
+                                     g, r0, r0 + rn, exception.reason);
+                    return 0;
+                }
+                gpu.command = command.rootCommandBuffer;
+            }
+            pieces++;
+        }
+    }
+    if (!h3_gpu_sdpa_run_transpose(gpu, so, output, sequence, kv_heads,
+                                   groups * head_dim, bf16, 0)) return 0;
+    h3_gpu_stats stats = gpu.stats;
+    stats.mps_sdpa_dispatches++;
+    stats.mps_sdpa_chunk_dispatches += pieces;
+    gpu.stats = stats;
+    return 1;
+}
+
+/* The MPSGraph route for causal GQA: one call in FULL mode, pieces
+ * otherwise. */
+static int h3_gpu_gqa_graph_route(H3GPU *gpu, h3_gpu_tensor *output,
+                                  const h3_gpu_tensor *query,
+                                  const h3_gpu_tensor *key,
+                                  const h3_gpu_tensor *value,
+                                  uint32_t sequence, uint32_t query_heads,
+                                  uint32_t kv_heads, uint32_t head_dim,
+                                  float scale) {
+    h3_gpu_sdpa_mode mode = h3_gpu_sdpa_resolve_mode(gpu);
+    uint64_t budget = h3_gpu_sdpa_budget(gpu);
+    uint32_t groups = query_heads / kv_heads;
+    uint32_t chunk_rows = mode == H3_GPU_SDPA_FULL ? sequence :
+        h3_gpu_gqa_plan_rows(budget, h3_gpu_sdpa_score_cost(
+                                 H3_GPU_BF16, mode == H3_GPU_SDPA_EXPLICIT),
+                             sequence, groups);
+    h3_gpu_sdpa_log(gpu, mode, budget,
+                    mode == H3_GPU_SDPA_FULL ? query_heads : groups,
+                    chunk_rows, MPSDataTypeBFloat16, 1, sequence, sequence,
+                    query_heads, head_dim, 1, 0, 0, query, key, value, output);
+    if (mode == H3_GPU_SDPA_FULL)
+        return h3_gpu_gqa_mps(gpu, output, query, key, value, sequence,
+                              query_heads, kv_heads, head_dim, scale);
+    return h3_gpu_gqa_chunked(gpu, output, query, key, value, sequence,
+                              query_heads, kv_heads, head_dim, scale,
+                              mode == H3_GPU_SDPA_EXPLICIT, chunk_rows);
+}
+
+void h3_gpu_gqa_chunk_plan(h3_gpu *opaque, uint32_t sequence,
+                           uint32_t query_heads, uint32_t kv_heads,
+                           uint32_t *chunk_rows) {
+    H3GPU *gpu = GPU(opaque);
+    h3_gpu_sdpa_mode mode = h3_gpu_sdpa_resolve_mode(gpu);
+    *chunk_rows = mode == H3_GPU_SDPA_FULL || !kv_heads ? sequence :
+        h3_gpu_gqa_plan_rows(h3_gpu_sdpa_budget(gpu), h3_gpu_sdpa_score_cost(
+                                 H3_GPU_BF16, mode == H3_GPU_SDPA_EXPLICIT),
+                             sequence, query_heads / kv_heads);
+}
+
+int h3_gpu_gqa_causal_graph_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
+                                 const h3_gpu_tensor *query,
+                                 const h3_gpu_tensor *key,
+                                 const h3_gpu_tensor *value,
+                                 uint32_t sequence, uint32_t query_heads,
+                                 uint32_t kv_heads, uint32_t head_dim,
+                                 float scale) {
+    H3GPU *gpu = GPU(opaque);
+    size_t query_count = (size_t)sequence * query_heads * head_dim;
+    size_t kv_count = (size_t)sequence * kv_heads * head_dim;
+    if (!sequence || !query_heads || !kv_heads || !head_dim ||
+        query_heads % kv_heads ||
+        !h3_gpu_require_bf16(gpu, query, query_count, @"GQA query") ||
+        !h3_gpu_require_bf16(gpu, key, kv_count, @"GQA key") ||
+        !h3_gpu_require_bf16(gpu, value, kv_count, @"GQA value") ||
+        !h3_gpu_require_bf16(gpu, output, query_count, @"GQA output") ||
+        !h3_gpu_require_command(gpu)) return 0;
+    return h3_gpu_gqa_graph_route(gpu, output, query, key, value, sequence,
+                                  query_heads, kv_heads, head_dim, scale);
+}
+
 int h3_gpu_gqa_causal_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
                            const h3_gpu_tensor *query,
                            const h3_gpu_tensor *key,
@@ -6090,7 +6342,9 @@ int h3_gpu_gqa_causal_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
          * failure for a system crash. 16384 tokens = a 512 MiB mask; real
          * prompts/reference conditioning haven't been seen anywhere near
          * that once the fast kernel's own ~8000-token ceiling is
-         * accounted for, so this only ever bites the pathological case. */
+         * accounted for, so this only ever bites the pathological case.
+         * Below the cap the fallback is h3_gpu_gqa_graph_route(): one
+         * MPSGraph call where FULL is validated, bounded pieces elsewhere. */
         size_t mask_bytes = (size_t)sequence * (size_t)sequence * sizeof(uint16_t);
         size_t max_fallback_mask_bytes = (size_t)512 * 1024 * 1024;
         if (mask_bytes > max_fallback_mask_bytes) {
@@ -6102,8 +6356,9 @@ int h3_gpu_gqa_causal_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
                 sequence, (double)mask_bytes / (1024.0 * 1024.0 * 1024.0));
             return 0;
         }
-        return h3_gpu_gqa_mps(gpu, output, query, key, value, sequence,
-                              query_heads, kv_heads, head_dim, scale);
+        return h3_gpu_gqa_graph_route(gpu, output, query, key, value,
+                                      sequence, query_heads, kv_heads,
+                                      head_dim, scale);
     }
     NSUInteger maximum_threads = MIN((NSUInteger)128,
                                      pipeline.maxTotalThreadsPerThreadgroup);

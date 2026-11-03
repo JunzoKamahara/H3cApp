@@ -3,6 +3,10 @@
  *   ./h3_sdpa_tests                 regression: every mode against a CPU
  *                                   reference, row- and head-major layouts,
  *                                   tails, f32 and bf16; exits 1 on failure
+ *   ./h3_sdpa_tests --probe-gqa S   Qwen's causal GQA (64/8 heads, D 128)
+ *                                   at S tokens through the route long
+ *                                   reference prompts take: chunked,
+ *                                   explicit, then one call, with memory
  *   ./h3_sdpa_tests --probe S H D   the shape a generation really sends
  *                                   (e.g. 17408 56 128): logs the device and
  *                                   call, times chunked, explicit and, last,
@@ -10,6 +14,10 @@
  *                                   On a machine that crashes in the
  *                                   one-call path, the chunked lines print
  *                                   first and the crash comes at the end.
+ *
+ * The causal GQA of the text encoder is checked the same way: its kernel
+ * and the MPSGraph route it takes past the kernel's threadgroup ceiling,
+ * one call and in pieces.
  *
  * The reference is plain f32 attention on the CPU from the same bf16 (or
  * f32) inputs; every GPU mode must match it within bf16 output rounding and
@@ -272,6 +280,121 @@ static void run_shape(h3_gpu *gpu, uint32_t S, uint32_t H, uint32_t D,
     free(qb); free(kb); free(vb); free(qh); free(kh); free(vh);
 }
 
+/* Causal GQA (the Qwen text encoder), row-major q [S, QH, D] and k/v
+ * [S, KH, D]: query head h reads KV head h / (QH / KH), row i keys 0..i. */
+static void reference_gqa(const float *q, const float *k, const float *v,
+                          uint32_t S, uint32_t QH, uint32_t KH, uint32_t D,
+                          float scale, float *out) {
+    float *scores = malloc((size_t)S * sizeof(*scores));
+    uint32_t groups = QH / KH;
+    for (uint32_t h = 0; h < QH; h++) {
+        uint32_t g = h / groups;
+        for (uint32_t i = 0; i < S; i++) {
+            const float *qi = q + ((size_t)i * QH + h) * D;
+            float max_score = -INFINITY;
+            for (uint32_t j = 0; j <= i; j++) {
+                const float *kj = k + ((size_t)j * KH + g) * D;
+                float dot = 0.0f;
+                for (uint32_t d = 0; d < D; d++) dot += qi[d] * kj[d];
+                scores[j] = dot * scale;
+                if (scores[j] > max_score) max_score = scores[j];
+            }
+            double sum = 0.0;
+            for (uint32_t j = 0; j <= i; j++) {
+                scores[j] = expf(scores[j] - max_score);
+                sum += scores[j];
+            }
+            float *oi = out + ((size_t)i * QH + h) * D;
+            for (uint32_t d = 0; d < D; d++) oi[d] = 0.0f;
+            for (uint32_t j = 0; j <= i; j++) {
+                float p = (float)(scores[j] / sum);
+                const float *vj = v + ((size_t)j * KH + g) * D;
+                for (uint32_t d = 0; d < D; d++) oi[d] += p * vj[d];
+            }
+        }
+    }
+    free(scores);
+}
+
+/* The long-sequence route of h3_gpu_gqa_causal_bf16 in every mode, and its
+ * custom kernel, against the CPU reference. */
+static void run_gqa(h3_gpu *gpu, uint32_t S, uint32_t QH, uint32_t KH,
+                    uint32_t D) {
+    size_t q_count = (size_t)S * QH * D, kv_count = (size_t)S * KH * D;
+    float scale = 1.0f / sqrtf((float)D);
+    float *q = malloc(q_count * sizeof(float)), *k = malloc(kv_count * sizeof(float));
+    float *v = malloc(kv_count * sizeof(float)), *ref = malloc(q_count * sizeof(float));
+    uint16_t *qb = malloc(q_count * 2), *kb = malloc(kv_count * 2), *vb = malloc(kv_count * 2);
+    for (size_t i = 0; i < q_count; i++) {
+        qb[i] = f32_to_bf16(rng_normal() * 0.7f); q[i] = bf16_to_f32(qb[i]);
+    }
+    for (size_t i = 0; i < kv_count; i++) {
+        kb[i] = f32_to_bf16(rng_normal() * 0.7f); k[i] = bf16_to_f32(kb[i]);
+        vb[i] = f32_to_bf16(rng_normal()); v[i] = bf16_to_f32(vb[i]);
+    }
+    reference_gqa(q, k, v, S, QH, KH, D, scale, ref);
+    uint64_t one_row = (uint64_t)(QH / KH) * S * 2;
+    mode_case cases[] = {
+        {"kernel", H3_GPU_SDPA_AUTO, 0},
+        {"graph full", H3_GPU_SDPA_FULL, 0},
+        {"graph chunked, all rows", H3_GPU_SDPA_CHUNKED, 0},
+        {"graph chunked, row blocks", H3_GPU_SDPA_CHUNKED, one_row * (S / 3 + 1)},
+        {"graph chunked, tiny blocks", H3_GPU_SDPA_CHUNKED, one_row * 7},
+        {"graph explicit, row blocks", H3_GPU_SDPA_EXPLICIT, one_row * 4 * (S / 3 + 1)},
+    };
+    float *kernel_rows = NULL;
+    for (size_t c = 0; c < sizeof(cases) / sizeof(*cases); c++) {
+        int kernel = c == 0;
+        h3_gpu_tensor *tq = h3_gpu_tensor_from_bf16(gpu, qb, q_count);
+        h3_gpu_tensor *tk = h3_gpu_tensor_from_bf16(gpu, kb, kv_count);
+        h3_gpu_tensor *tv = h3_gpu_tensor_from_bf16(gpu, vb, kv_count);
+        h3_gpu_tensor *to = h3_gpu_tensor_new_bf16(gpu, q_count);
+        h3_gpu_set_sdpa_mode(gpu, cases[c].mode, cases[c].budget);
+        uint32_t plan_rows = S;
+        h3_gpu_gqa_chunk_plan(gpu, S, QH, KH, &plan_rows);
+        h3_gpu_stats before; h3_gpu_get_stats(gpu, &before);
+        int ok = h3_gpu_begin(gpu);
+        if (ok) ok = kernel ?
+            h3_gpu_gqa_causal_bf16(gpu, to, tq, tk, tv, S, QH, KH, D, scale) :
+            h3_gpu_gqa_causal_graph_bf16(gpu, to, tq, tk, tv, S, QH, KH, D, scale);
+        if (ok) ok = h3_gpu_submit(gpu);
+        CHECK(ok, "GQA %s S=%u: %s", cases[c].name, S, h3_gpu_error(gpu));
+        if (ok) {
+            h3_gpu_stats after; h3_gpu_get_stats(gpu, &after);
+            uint64_t pieces = after.mps_sdpa_chunk_dispatches -
+                              before.mps_sdpa_chunk_dispatches;
+            uint64_t expected = kernel || cases[c].mode == H3_GPU_SDPA_FULL ? 0 :
+                (uint64_t)KH * ((S + plan_rows - 1) / plan_rows);
+            CHECK(pieces == expected, "GQA %s: %llu pieces, expected %llu",
+                  cases[c].name, (unsigned long long)pieces,
+                  (unsigned long long)expected);
+            float *rows = read_output(gpu, to, q_count, 1, 0, S, QH, D);
+            error_stats e = compare(rows, ref, q_count);
+            printf("  GQA %-27s S=%5u QH=%2u KH=%u D=%3u pieces %3llu "
+                   "(%u rows)  max %.5f mean %.6f non-finite %zu\n",
+                   cases[c].name, S, QH, KH, D, (unsigned long long)pieces,
+                   plan_rows, e.max_abs, e.mean_abs, e.non_finite);
+            CHECK(e.non_finite == 0, "GQA %s: non-finite outputs", cases[c].name);
+            CHECK(e.max_abs <= 0.03 && e.mean_abs <= 0.003,
+                  "GQA %s: error vs reference too large (max %.5f mean %.6f)",
+                  cases[c].name, e.max_abs, e.mean_abs);
+            if (kernel) kernel_rows = rows;
+            else {
+                error_stats d = compare(rows, kernel_rows, q_count);
+                CHECK(d.max_abs <= 0.02,
+                      "GQA %s: differs from the kernel (max %.5f)",
+                      cases[c].name, d.max_abs);
+                free(rows);
+            }
+        }
+        h3_gpu_tensor_free(tq); h3_gpu_tensor_free(tk);
+        h3_gpu_tensor_free(tv); h3_gpu_tensor_free(to);
+    }
+    h3_gpu_set_sdpa_mode(gpu, H3_GPU_SDPA_AUTO, 0);
+    free(kernel_rows);
+    free(q); free(k); free(v); free(ref); free(qb); free(kb); free(vb);
+}
+
 /* GPU-only consistency at a real shape: chunked vs full for the row-major
  * and the head-major (M5 int8) layouts, without a CPU reference. */
 static void probe_layouts(h3_gpu *gpu, uint32_t S, uint32_t H, uint32_t D) {
@@ -377,6 +500,73 @@ static void probe(h3_gpu *gpu, uint32_t S, uint32_t H, uint32_t D, int reps) {
     free(first);
 }
 
+/* Qwen's causal GQA at a real length through its long-sequence route:
+ * chunked, explicit, then the one-call graph last, as probe() does. */
+static void probe_gqa(h3_gpu *gpu, uint32_t S, uint32_t QH, uint32_t KH,
+                      uint32_t D, int reps) {
+    size_t q_count = (size_t)S * QH * D, kv_count = (size_t)S * KH * D;
+    float scale = 1.0f / sqrtf((float)D);
+    uint16_t *data = malloc(q_count * 2);
+    for (size_t i = 0; i < q_count; i++) data[i] = f32_to_bf16(rng_normal() * 0.7f);
+    h3_gpu_tensor *tq = h3_gpu_tensor_from_bf16(gpu, data, q_count);
+    for (size_t i = 0; i < kv_count; i++) data[i] = f32_to_bf16(rng_normal() * 0.7f);
+    h3_gpu_tensor *tk = h3_gpu_tensor_from_bf16(gpu, data, kv_count);
+    for (size_t i = 0; i < kv_count; i++) data[i] = f32_to_bf16(rng_normal());
+    h3_gpu_tensor *tv = h3_gpu_tensor_from_bf16(gpu, data, kv_count);
+    free(data);
+    h3_gpu_tensor *to = h3_gpu_tensor_new_bf16(gpu, q_count);
+    if (!tq || !tk || !tv || !to) { fprintf(stderr, "allocation failed\n"); exit(1); }
+    setenv("H3_SDPA_LOG", "1", 0);
+    printf("probe-gqa: S=%u QH=%u KH=%u D=%u causal bf16; auto mode here = %s; "
+           "footprint before %.2f GiB\n", S, QH, KH, D,
+           h3_gpu_sdpa_mode_name(h3_gpu_sdpa_effective_mode(gpu)),
+           footprint_gib());
+    mode_case cases[] = {
+        {"chunked", H3_GPU_SDPA_CHUNKED, 0},
+        {"explicit", H3_GPU_SDPA_EXPLICIT, 0},
+        {"full", H3_GPU_SDPA_FULL, 0},
+    };
+    float *first = NULL;
+    for (size_t c = 0; c < sizeof(cases) / sizeof(*cases); c++) {
+        h3_gpu_set_sdpa_mode(gpu, cases[c].mode, 0);
+        if (cases[c].mode == H3_GPU_SDPA_FULL)
+            printf("probe-gqa: running the one-call path last\n");
+        fflush(stdout);
+        double best = INFINITY;
+        for (int r = 0; r < reps; r++) {
+            double start = now_seconds();
+            int ok = h3_gpu_begin(gpu) &&
+                     h3_gpu_gqa_causal_graph_bf16(gpu, to, tq, tk, tv, S, QH,
+                                                  KH, D, scale) &&
+                     h3_gpu_submit(gpu);
+            double elapsed = now_seconds() - start;
+            if (!ok) {
+                printf("probe-gqa: %s FAILED: %s\n", cases[c].name, h3_gpu_error(gpu));
+                break;
+            }
+            if (elapsed < best) best = elapsed;
+        }
+        h3_gpu_stats stats; h3_gpu_get_stats(gpu, &stats);
+        printf("probe-gqa: %-8s best %.3f s/call  footprint %.2f GiB  "
+               "peak live %.2f GiB  chunk pieces so far %llu\n", cases[c].name,
+               best, footprint_gib(),
+               (double)stats.peak_live_bytes / (1024.0 * 1024.0 * 1024.0),
+               (unsigned long long)stats.mps_sdpa_chunk_dispatches);
+        float *rows = read_output(gpu, to, q_count, 1, 0, S, QH, D);
+        if (!first) first = rows;
+        else {
+            error_stats d = compare(rows, first, q_count);
+            printf("probe-gqa: %-8s vs chunked: max %.5f mean %.6f non-finite %zu\n",
+                   cases[c].name, d.max_abs, d.mean_abs, d.non_finite);
+            free(rows);
+        }
+        fflush(stdout);
+    }
+    free(first);
+    h3_gpu_tensor_free(tq); h3_gpu_tensor_free(tk);
+    h3_gpu_tensor_free(tv); h3_gpu_tensor_free(to);
+}
+
 int main(int argc, char **argv) {
     char error[512];
     h3_gpu *gpu = h3_gpu_create("h3_shaders.metal", error, sizeof(error));
@@ -384,6 +574,15 @@ int main(int argc, char **argv) {
     if (argc >= 5 && !strcmp(argv[1], "--probe-layouts")) {
         probe_layouts(gpu, (uint32_t)atoi(argv[2]), (uint32_t)atoi(argv[3]),
                       (uint32_t)atoi(argv[4]));
+        h3_gpu_free(gpu);
+        return 0;
+    }
+    if (argc >= 3 && !strcmp(argv[1], "--probe-gqa")) {
+        probe_gqa(gpu, (uint32_t)atoi(argv[2]),
+                  argc > 3 ? (uint32_t)atoi(argv[3]) : 64,
+                  argc > 4 ? (uint32_t)atoi(argv[4]) : 8,
+                  argc > 5 ? (uint32_t)atoi(argv[5]) : 128,
+                  argc > 6 ? atoi(argv[6]) : 3);
         h3_gpu_free(gpu);
         return 0;
     }
@@ -400,8 +599,12 @@ int main(int argc, char **argv) {
     run_shape(gpu, 333, 5, 128, 1);
     run_shape(gpu, 700, 8, 128, 1);
     run_shape(gpu, 257, 4, 64, 0);
+    /* Qwen's head layout (8 query heads per KV head) with fewer heads, and
+     * a tail row block. */
+    run_gqa(gpu, 301, 16, 2, 128);
+    run_gqa(gpu, 64, 8, 1, 64);
     h3_gpu_free(gpu);
     if (failures) { fprintf(stderr, "FAIL tests/test_sdpa.c: %d failures\n", failures); return 1; }
-    printf("ok: dense SDPA modes (full, chunked, explicit) match the CPU reference\n");
+    printf("ok: dense SDPA modes (full, chunked, explicit) and causal GQA match the CPU reference\n");
     return 0;
 }

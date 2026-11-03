@@ -76,20 +76,22 @@ int main(void) {
           7800, 30000, 20000, 9000, NULL, 0).text_encoder_bytes,
           "the fallback costs memory");
     {
-        /* Off the measured one-call path the fallback is counted as if it
-         * held every head's scores: a 16000-token sequence then needs more
-         * than 24 GB and is refused. */
+        /* Off the one-call path the fallback runs in pieces, so a
+         * 16000-token sequence fits 24 GB there too, and costs more than
+         * the one call's mask. */
         h3_plan_input input = {ram24, 1, 0, 1, 0, 16000, 15900, 60000, 40000,
                                20000, NULL, 0};
         h3_plan chunked;
         h3_plan_compute(&input, &chunked);
-        check(chunked.verdict == H3_PLAN_TOO_LARGE &&
-              !strcmp(chunked.peak_stage, "text encoder"),
-              "unmeasured fallback at 16000 tokens is refused on 24 GB");
+        check(chunked.verdict != H3_PLAN_TOO_LARGE,
+              "chunked fallback at 16000 tokens is not refused on 24 GB");
+        uint64_t pieces_bytes = chunked.text_encoder_bytes;
         input.full_sdpa = 1;
         h3_plan_compute(&input, &chunked);
         check(chunked.verdict == H3_PLAN_TIGHT,
               "measured fallback at 16000 tokens only warns");
+        check(pieces_bytes > chunked.text_encoder_bytes,
+              "the pieces are counted above the one call's mask");
     }
 
     /* A DiT sequence far past 24 GB is refused and blamed on the DiT;

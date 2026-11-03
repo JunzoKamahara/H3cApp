@@ -28,13 +28,18 @@ static const double text_fixed = 4.8 * GIB;
 static const double text_per_prefetch = 1.83 * GIB;
 static const double text_per_token = 256.0 * 1024.0;
 static const double text_after_visuals = 0.5 * GIB;
-/* The MPSGraph fallback past H3_PLAN_TEXT_FAST_LIMIT builds an explicit
- * BF16 causal mask and runs all 64 query heads in one attention call. On
- * an M5 with macOS 26 or later (full_sdpa) that took the mask and about
- * 0.25 GiB more (7.84 GiB at 9261 tokens); elsewhere it is counted as if
- * the call held all the heads' BF16 scores, unmeasured. */
-static const double text_fallback_heads = 64.0;
+/* The MPSGraph fallback past H3_PLAN_TEXT_FAST_LIMIT. On an M5 with
+ * macOS 26 or later (full_sdpa) it is one attention call with an explicit
+ * BF16 causal mask, which took the mask and about 0.25 GiB more (7.84 GiB
+ * at 9261 tokens). Elsewhere it runs in pieces (h3_gpu_gqa_chunked): head-
+ * major copies of Q, K, V and the output (64 + 8 + 8 + 64 heads of 128
+ * BF16 values per token), one piece's scores within the 1 GiB budget and
+ * its in-graph mask (an eighth of that, eight query heads per KV head). In
+ * a probe on the M5 forced to pieces, 16384 tokens took 1.3 GiB beyond the
+ * inputs; this counts 1.7. */
 static const double text_fallback_extra = 0.25 * GIB;
+static const double text_fallback_chunked_per_token = 144.0 * 128.0 * 2.0;
+static const double text_fallback_chunked_fixed = 1.125 * GIB;
 
 /* Qwen's vision tower runs one image (or two-frame video block) at a
  * time: 16-pixel patches, 1152 wide, 10 hidden-sized BF16 buffers and a
@@ -162,7 +167,8 @@ void h3_plan_compute(const h3_plan_input *input, h3_plan *plan) {
     if (input->text_tokens > H3_PLAN_TEXT_FAST_LIMIT)
         fallback = input->full_sdpa ?
             text_tokens * text_tokens * 2.0 + text_fallback_extra :
-            text_tokens * text_tokens * 2.0 * (text_fallback_heads + 1.0);
+            text_fallback_chunked_fixed +
+                text_tokens * text_fallback_chunked_per_token;
     int depth = input->text_prefetch_depth > 1 ? input->text_prefetch_depth : 1;
     plan->text_encoder_bytes = (uint64_t)(text_fixed +
         (depth - 1) * text_per_prefetch + text_tokens * text_per_token +
