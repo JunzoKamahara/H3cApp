@@ -3,7 +3,23 @@ import QuickLook
 import SwiftUI
 
 // Shown in grey while the prompt is empty; Tab turns it into real text.
-private let promptSuggestion = "A cat playing with a ball of yarn."
+// One is picked at random, and a new one each time the prompt is cleared.
+private let promptSuggestions = [
+    "A cat playing with a ball of yarn.",
+    "A red fox walks through fresh snow in a pine forest.",
+    "Waves crash against a rocky shore at sunset.",
+    "A street musician plays the violin on a rainy night in Paris.",
+    "A hummingbird hovers beside a bright red flower.",
+    "A steam train crosses a stone bridge in the mountains.",
+    "A barista pours latte art into a cup of coffee.",
+    "Children laugh as they run through a field of sunflowers.",
+    "A campfire crackles under a sky full of stars.",
+    "A golden retriever splashes into a lake to fetch a stick.",
+]
+
+private func randomPromptSuggestion(excluding current: String? = nil) -> String {
+    promptSuggestions.filter { $0 != current }.randomElement() ?? promptSuggestions[0]
+}
 
 struct CreationFormView: View {
     @ObservedObject var viewModel: GenerationViewModel
@@ -23,6 +39,7 @@ struct CreationFormView: View {
     /// The input file shown in Quick Look (clicking its name).
     @State private var quickLookURL: URL?
     @State private var showingClipEditor = false
+    @State private var promptSuggestion = randomPromptSuggestion()
 
     private var palette: H3Palette { H3Palette(colorScheme) }
 
@@ -383,6 +400,11 @@ struct CreationFormView: View {
                         viewModel.requestGenerate()
                     }
                     .frame(height: 84)
+                    .onChange(of: viewModel.prompt.isEmpty) { wasEmpty, isEmpty in
+                        if isEmpty && !wasEmpty {
+                            promptSuggestion = randomPromptSuggestion(excluding: promptSuggestion)
+                        }
+                    }
                     if viewModel.prompt.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(promptSuggestion)
