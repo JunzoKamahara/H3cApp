@@ -5,7 +5,14 @@ import SwiftUI
 // Shown in grey while the prompt is empty; Tab turns it into real text.
 // One is picked at random, and a new one each time the prompt is cleared.
 private let promptSuggestions = [
+    // The site's examples (index, joined example, enlarging comparison).
+    "A small orange cat plays with a ball of yarn on a wooden floor in soft afternoon light. Static camera, gentle movement. Soft room ambience, no speech, no music.",
+    "A street musician plays an acoustic guitar in a quiet stone plaza at dusk, warm lights in the windows behind him. Slow push-in camera. Gentle guitar melody, distant footsteps, no speech.",
+    "A fluffy orange cat sits on a wooden windowsill, watching the garden outside. The cat slowly turns its head and gently moves its ears. Soft afternoon sunlight, a calm atmosphere, a fixed camera, realistic video. Quiet outdoor ambience and birds chirping. No speech, no subtitles.",
+    "A young woman with long dark hair and freckles, wearing a chunky knitted sweater, turns her head toward the camera and smiles while the wind moves her hair, soft daylight, photorealistic",
+    "Anime style, hand-drawn look. A girl with short pink hair in a blue school uniform runs along a seaside road, her hair and skirt flowing, bright summer clouds behind her.",
     "A cat playing with a ball of yarn.",
+    // Short ones.
     "A red fox walks through fresh snow in a pine forest.",
     "Waves crash against a rocky shore at sunset.",
     "A street musician plays the violin on a rainy night in Paris.",
@@ -409,6 +416,7 @@ struct CreationFormView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(promptSuggestion)
                                 .font(.body)
+                                .lineLimit(3)
                             Text("Tabで入力 ・ Enterで生成 ・ Shift+Enterで改行")
                                 .font(.caption)
                         }
