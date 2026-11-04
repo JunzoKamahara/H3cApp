@@ -64,6 +64,7 @@ M5で高速化用のキャッシュを作る場合は、**モデルごとに約1
 
 - [動画の続きを作る・つなげて生成する](GUIDE.ja.md)
 - [GGUFモデルのダウンロードと取り込み](GGUF.ja.md)
+- [RefMod（保存した参照）の作り方と使い方](REFMOD.ja.md)
 - [操作ガイドと詳細設定](https://junzokamahara.github.io/H3cApp/guide.html)
 - [技術資料](TECHNICAL.ja.md) · [ローカルAPI](API.ja.md) · [ソースからのビルド](BUILD.ja.md)
 - [よくある質問](https://junzokamahara.github.io/H3cApp/faq.html) · [不具合の報告](https://github.com/JunzoKamahara/H3cApp/issues)

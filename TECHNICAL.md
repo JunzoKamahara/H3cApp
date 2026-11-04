@@ -30,7 +30,8 @@ Related documentation: [Local API](API.md) Â· [Building and testing](BUILD.md) Â
   references like the others but are not shown to Qwen, so the prompt
   carries no `<Picture N>` for them. The app makes them from a reference
   (Full, or compressed to a small grid) and keeps them in a RefMods folder;
-  see "RefMods: saved reference latents" below.
+  see "RefMods: saved reference latents" below, and [REFMOD.md](REFMOD.md)
+  for how to use them.
 - **Lip sync** (forced audio): choose a voice or song in the panel (Match
   a Voice or Song, with a start offset) and the picture is generated to
   match it - the audio is given to the model clean at every step and the

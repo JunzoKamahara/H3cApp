@@ -192,7 +192,8 @@ Good to know:
   Full keeps everything the ordinary reference would; Compressed pools it
   to a small grid for fewer reference tokens, at a cost in detail. Files
   made with ComfyUI-MiniMaxH3Mod load too, bundles included. Strength
-  below 1 blurs the reference rather than weighting it.
+  below 1 blurs the reference rather than weighting it. See
+  [REFMOD.md](REFMOD.md).
 - **First image, references and lip sync.** Reference images are used by
   every clip, so the people look the same when they come back after leaving
   the frame; in Custom Clips, “Use the same reference images” can be turned

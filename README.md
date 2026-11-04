@@ -64,6 +64,7 @@ For screenshots and step-by-step instructions, visit the [Getting Started guide]
 
 - [Continuing and joining videos](GUIDE.md)
 - [Model downloads and GGUF imports](GGUF.md)
+- [Making and using RefMods (saved references)](REFMOD.md)
 - [User guide and advanced settings](https://junzokamahara.github.io/H3cApp/en/guide.html)
 - [Technical reference](TECHNICAL.md) · [Local API](API.md) · [Building from source](BUILD.md)
 - [FAQ](https://junzokamahara.github.io/H3cApp/en/faq.html) · [Report an issue](https://github.com/JunzoKamahara/H3cApp/issues)
