@@ -987,3 +987,46 @@ Natural motion can't be judged from this table and single frames. That compariso
 **Decision**: the default is now σ 0.4, 0.2, 0 at every scale. It is faster than three steps: 672×384 to 1344×768 at 56 frames went from 5:29 to 4:19. The woman's eyes still lean brown at σ 0.4 and 2x. Natural motion is not judged, and the 2x result the user rated highly was made at σ 0.909.
 
 **Choosing the strength (2026-11-02)**: the user had rated the σ 0.909 output highly, for all that it is another picture with more detail, so the sheet and the API now choose how much is redrawn: Light (σ 0.4, 0.2, 0, the default), Medium (σ 0.7, 0.494118, 0) or Strong (σ 0.909375, 0.857143, 0.666667, 0), the very schedules compared above. At 448×256 to 896×512 and 73 frames all three matched this comparison's videos on every frame (same seed, PSNR inf). Strong took 185 s, Medium and Light 145 s. The strength goes into the record (`upscaleStrength`), and a continuation of an enlarged copy is enlarged at the same strength.
+
+### Appendix A.9: The LTX-2.5 Refine Details gating experiment (2026-11-04, generated on an RTX PRO 4000 Blackwell 24 GB, compared on the M5 24 GB)
+
+**Trigger.** An analysis proposed that LTX-2.5's Refine Details IC-LoRA was worth prototyping as a "high-quality finish" upscaler. Its 22B DiT does not fit a 24 GB Mac, so the quality was checked first on another machine (the user's RTX PRO 4000 Blackwell, 24 GB of VRAM) before deciding whether to port. The memory strategy for a port would be the generator's SSD streaming (weights read per layer), not 4-bit quantization.
+
+**Primary sources checked.**
+
+| Item | Verified fact |
+|---|---|
+| Model | `Lightricks/LTX-2.5`: a 22B DiT (distilled; the ComfyUI int8 file is 21.5 GB), a 1.5 GB video VAE, a 0.4 GB audio VAE, and Gemma-4 12B as the text encoder (15.4 GB in int8). `Lightricks/LTX-2.5-22b-IC-LoRA-Refine-Details`: a rank-128 LoRA, 1.31 GB. Both are gated on Hugging Face behind the LTX-2.x Community License |
+| Recommended use (model card) | The input video as the condition, 1024×576 tiles, 97-frame windows, overlap 0.5 or more, 8 steps, guidance 1.0, LoRA strength 1.0; output sizes snap to multiples of 32 |
+| Runner | `Bambushu/redetail`, a CLI driving ComfyUI + ComfyUI-LTXVideo. `--cached-cond` uses the bundled precomputed prompt conditioning for Refine, so Gemma need not be installed. Published figure: 97 frames to 1216×2112 in 526 s on a 32 GB card (about 2.1 s per frame-megapixel) |
+| Apple Silicon implementations | `ltx-video-swift-mlx` (MIT) only generates; it has no Refine path (video as condition), and even at INT4 it needs about 38 GB with Gemma |
+| Estimate for a port | Read the DiT's 21.5 GB of int8 weights from the SSD every step (about 4 s per step, hidden under compute), conditioning precomputed. Temporary disk: original plus cache, about 65 GB |
+
+**Method.** The same three clips as Appendix A.3 (face-real-webcam, leopard-man, anime-face) were halved into 33-frame inputs (re-encoded as H.264 crf 8, so the SwiftVR numbers in this table differ slightly from A.3's; every method in the table shares the same input). The app's six methods ran on the M5; LTX ran on the RTX machine through redetail (`--cached-cond --scale 2.0 --guide-strength 1.0`), all at 2x. The metrics are A.3's (`tools/quality_metrics.py`: PSNR / LPIPS against the source, no-reference MUSIQ / MANIQA, frame-to-frame difference, a face crop). The comparison kit lives in `~/Documents/work/h3c/ltx-refine-eval/` (`README.ja.md`, `compare.sh`, `report.md`; the face clip stays local).
+
+**Results.**
+
+| Clip | Method | PSNR | LPIPS↓ | MUSIQ | MANIQA | frame diff | face LPIPS↓ | face MUSIQ | face MANIQA |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| face-real-webcam | source | — | — | 37.0 | 0.208 | 0.99 | — | — | — |
+| | LTX Refine | 34.4 | **0.066** | 41.2 | 0.251 | **0.78** | **0.054** | 44.8 | 0.224 |
+| | SwiftVR | 30.5 | 0.155 | **64.3** | 0.365 | 1.38 | 0.122 | 56.3 | 0.290 |
+| | SwiftVR 4x-then-shrink | 32.2 | 0.160 | 67.2 | **0.429** | 1.24 | 0.133 | **59.5** | **0.323** |
+| leopard-man | source | — | — | 46.2 | 0.190 | 4.32 | — | — | — |
+| | LTX Refine | 31.8 | **0.122** | 55.6 | 0.212 | **4.25** | **0.124** | 63.2 | 0.436 |
+| | SwiftVR | 29.5 | 0.256 | 70.4 | 0.299 | 5.33 | 0.252 | 75.3 | 0.510 |
+| | SwiftVR 4x-then-shrink | 30.3 | 0.318 | **72.8** | **0.393** | 5.50 | 0.251 | **75.5** | **0.563** |
+| anime-face | source | — | — | 70.8 | 0.394 | 4.70 | — | — | — |
+| | LTX Refine | 28.1 | **0.076** | 64.0 | 0.343 | **3.92** | 0.068 | 43.8 | 0.292 |
+| | SwiftVR | 26.0 | 0.102 | 73.3 | 0.428 | 5.62 | 0.117 | 50.4 | 0.354 |
+| | SwiftVR 4x-then-shrink | 29.5 | 0.076 | **74.9** | **0.531** | 5.36 | **0.063** | **59.2** | **0.432** |
+
+By eye (frame 16 at 1:1, `ltx-refine-eval/set/<clip>/ab-crops.png` and `frames-sheet.png`): on all three clips LTX leaves eyes, brows and mouths as they were, shows no pattern at the 1024×576 tile borders, and adds no noise to the anime's flat areas. Skin, fur, scars and leather come out as "the source, slightly crisper"; there is none of SwiftVR's drawn-back fur or skin texture. Its frame-to-frame difference is below the source's, so it is if anything smoother in time. SwiftVR draws texture back in the same places at the price of a face LPIPS more than twice as bad.
+
+Time and memory: the two 1080p clips took 2026 s and 2086 s on the RTX machine, but with 15.7 GB of host RAM it had to use `--cpu-vae` and 16 GB of swap, so those are not valid timings. anime-face without swap (16 s for 8.5 frame-megapixels) matched redetail's published rate of about 2 s per frame-megapixel. At that rate, 5 s of 1920×1088 (124 frames, 260 frame-megapixels) is about 9 minutes on an RTX-class GPU and, at the several-to-10x of SSD streaming on the M5, **45 to 90 minutes**, which would miss §1's time target (under an hour for 5 s).
+
+**Judgment.** **Not ported.** LTX Refine Details is the most faithful of the generative methods (best LPIPS, no face redraw, no seams, flicker below the source), but it does not draw texture back in, and its no-reference scores stay near the source's. That role is already filled by "SwiftVR at 4x, then shrink" (A.3) and the light strength of Open-H3 regeneration (A.4, A.8), and it does not justify porting a 22B model (about 65 GB of temporary disk, about an hour per 5 s, a gated download procedure).
+
+Conditions for revisiting: a small (5B-class) LTX-family Refine model being released, or the target changing to restoring degraded live footage, where LTX's fidelity counts most.
+
+Left behind: the comparison kit in `~/Documents/work/h3c/ltx-refine-eval/` (the three inputs, the app's six outputs, the three RTX outputs with logs, `report.md`, a results section in `README.ja.md`) and the metrics venv (python3.12, torch 2.15, pyiqa 0.1.16, in the session scratchpad).
