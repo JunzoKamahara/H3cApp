@@ -198,6 +198,9 @@ h3_plan_tests: tests/test_plan.o $(LIB_OBJ)
 h3_refmod_tests: tests/test_refmod.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+h3_real_refmod_test: tests/test_real_refmod.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 h3_real_qwen_vision_test: tests/test_real_qwen_vision.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
@@ -257,7 +260,7 @@ h3_semantic_vae_test: tests/test_semantic_vae.o $(LIB_OBJ)
 test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_lora_extract_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests h3_vsr_wan_tests h3_vsr_session_tests h3_vsr_tapconv_tests h3_real_vsr_test h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
 	h3_audio_gpu_tests h3_determinism_tests h3_real_audio_vae_test \
 	h3_real_audio_encoder_test h3_real_video_encoder_test \
-	h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests \
+	h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests h3_real_refmod_test \
 	h3_real_qwen_vision_test h3_real_multimodal_text_test \
 	h3_real_ref_video_text_test
 
@@ -325,6 +328,11 @@ test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_lora_extract_tests h3_vsr_tests
 	./h3_video_encoder_chunks_test
 	./h3_plan_tests
 	./h3_refmod_tests
+	@if test -f MiniMax-H3/Ref2VA/video_vae/source/model.safetensors; then \
+		./h3_real_refmod_test; \
+	else \
+		echo "skip: released Ref2VA VAE weights are not installed (RefMod extraction)"; \
+	fi
 	@if test -f MiniMax-H3/Ref2VA/video_vae/source/model.safetensors && \
 	         test -n "$(H3_CHUNKS_VIDEO)" && test -f "$(H3_CHUNKS_VIDEO)"; then \
 		./h3_video_encoder_chunks_test MiniMax-H3/Ref2VA/video_vae/source \
@@ -384,7 +392,7 @@ tests/%.o: tests/%.c
 -include $(wildcard *.d tests/*.d)
 
 clean:
-	rm -f h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests
+	rm -f h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests h3_real_refmod_test
 	rm -f h3_tests h3_sdpa_tests h3_seedvr2_tests h3_lora_extract_tests h3_seedvr2_cli h3_metal_tests h3_bf16_tests h3_renoise_tests h3_tokenizer_tests \
 		h3_text_tests h3_real_prompt_test h3_real_dit_block_test \
 		h3_audio_gpu_tests h3_determinism_tests h3_repro_check \

@@ -503,6 +503,165 @@ int h3_av_read_video_f32(const char *path, int width, int height,
     }
 }
 
+int h3_av_read_video_frames_f32(const char *path, int width, int height,
+                                const int *indices, int count,
+                                float **pixels, char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (pixels) *pixels = NULL;
+    if (!path || !*path || !pixels || !indices || width < 1 || height < 1 ||
+        count < 1 || (size_t)width > SIZE_MAX / (size_t)height) {
+        h3_av_set_error(error, error_size, @"invalid video input arguments");
+        return 0;
+    }
+    for (int index = 0; index < count; index++)
+        if (indices[index] < 0 || (index && indices[index] <= indices[index - 1])) {
+            h3_av_set_error(error, error_size, @"video frame indices must ascend");
+            return 0;
+        }
+    int max_frames = count;
+    size_t area = (size_t)width * (size_t)height;
+    if (area > SIZE_MAX / 3) {
+        h3_av_set_error(error, error_size, @"decoded video frame size overflows");
+        return 0;
+    }
+    size_t frameBytes = area * 3;
+    if ((size_t)max_frames > SIZE_MAX / frameBytes) {
+        h3_av_set_error(error, error_size, @"decoded video size overflows");
+        return 0;
+    }
+    @autoreleasepool {
+        NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
+        AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
+        #pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        /* Synchronous by design: this whole C ABI is synchronous, and for a
+         * local file tracksWithMediaType: already blocks until track info is
+         * available - the async replacement would need the same blocking
+         * wrapper here for no behavioral difference. */
+        NSArray<AVAssetTrack *> *tracks = [asset tracksWithMediaType:AVMediaTypeVideo];
+        #pragma clang diagnostic pop
+        if (tracks.count == 0) {
+            h3_av_set_error(error, error_size,
+                [NSString stringWithFormat:@"%s has no video track", path]);
+            return 0;
+        }
+        AVAssetTrack *track = tracks.firstObject;
+
+        AVMutableVideoComposition *composition = [AVMutableVideoComposition videoComposition];
+        composition.renderSize = CGSizeMake(width, height);
+        composition.frameDuration = CMTimeMake(1, 24); /* resample to 24 fps */
+        AVMutableVideoCompositionInstruction *instruction =
+            [AVMutableVideoCompositionInstruction videoCompositionInstruction];
+        instruction.timeRange = CMTimeRangeMake(kCMTimeZero, asset.duration);
+        AVMutableVideoCompositionLayerInstruction *layerInstruction =
+            [AVMutableVideoCompositionLayerInstruction
+                videoCompositionLayerInstructionWithAssetTrack:track];
+        [layerInstruction setTransform:h3_video_render_transform(track, width, height)
+                                 atTime:kCMTimeZero];
+        instruction.layerInstructions = @[layerInstruction];
+        composition.instructions = @[instruction];
+
+        NSError *readerError = nil;
+        AVAssetReader *reader = [[AVAssetReader alloc] initWithAsset:asset error:&readerError];
+        if (!reader) {
+            h3_av_set_error(error, error_size,
+                readerError.localizedDescription ? readerError.localizedDescription
+                                                  : @"cannot open video for reading");
+            return 0;
+        }
+        AVAssetReaderVideoCompositionOutput *output = [AVAssetReaderVideoCompositionOutput
+            assetReaderVideoCompositionOutputWithVideoTracks:@[track]
+                                               videoSettings:@{
+                (id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_24RGB),
+            }];
+        output.videoComposition = composition;
+        if (![reader canAddOutput:output]) {
+            h3_av_set_error(error, error_size, @"cannot add video composition output");
+            return 0;
+        }
+        [reader addOutput:output];
+        if (![reader startReading]) {
+            h3_av_set_error(error, error_size,
+                reader.error.localizedDescription ? reader.error.localizedDescription
+                                                   : @"cannot start reading video");
+            return 0;
+        }
+
+        size_t capacity = (size_t)max_frames * frameBytes;
+        uint8_t *rgb = malloc(capacity);
+        if (!rgb) {
+            [reader cancelReading];
+            h3_av_set_error(error, error_size, @"out of memory decoding video");
+            return 0;
+        }
+        int frameCount = 0;
+        int decoded = 0;   /* the 24 fps frame number of the next sample */
+        while (frameCount < max_frames) {
+            CMSampleBufferRef sampleBuffer = [output copyNextSampleBuffer];
+            if (!sampleBuffer) break;
+            CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+            if (!imageBuffer) {
+                CFRelease(sampleBuffer);
+                continue;
+            }
+            if (decoded++ != indices[frameCount]) {
+                CFRelease(sampleBuffer);
+                continue;
+            }
+            CVPixelBufferLockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+            const uint8_t *base = (const uint8_t *)CVPixelBufferGetBaseAddress(imageBuffer);
+            size_t bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer);
+            uint8_t *dest = rgb + (size_t)frameCount * frameBytes;
+            size_t rowBytes = (size_t)width * 3;
+            for (int y = 0; y < height; y++)
+                memcpy(dest + (size_t)y * rowBytes, base + (size_t)y * bytesPerRow, rowBytes);
+            CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+            CFRelease(sampleBuffer);
+            frameCount++;
+        }
+        if (reader.status == AVAssetReaderStatusFailed) {
+            free(rgb);
+            h3_av_set_error(error, error_size,
+                reader.error.localizedDescription ? reader.error.localizedDescription
+                                                   : @"video decode failed");
+            return 0;
+        }
+        [reader cancelReading];
+        if (frameCount < count) {
+            free(rgb);
+            h3_av_set_error(error, error_size,
+                [NSString stringWithFormat:@"%s has only %d frames of the %d "
+                 "asked for", path, decoded, indices[count - 1] + 1]);
+            return 0;
+        }
+        if ((size_t)frameCount > SIZE_MAX / 3 / area ||
+            (size_t)frameCount * 3 * area > SIZE_MAX / sizeof(float)) {
+            free(rgb);
+            h3_av_set_error(error, error_size, @"converted video size overflows");
+            return 0;
+        }
+        size_t values = (size_t)frameCount * 3 * area;
+        float *channelMajor = malloc(values * sizeof(*channelMajor));
+        if (!channelMajor) {
+            free(rgb);
+            h3_av_set_error(error, error_size, @"out of memory converting video");
+            return 0;
+        }
+        const float scale = 1.0f / 255.0f;
+        for (int time = 0; time < frameCount; time++)
+            for (size_t pixel = 0; pixel < area; pixel++)
+                for (size_t channel = 0; channel < 3; channel++) {
+                    size_t sourceIndex = ((size_t)time * area + pixel) * 3 + channel;
+                    size_t destination = (channel * (size_t)frameCount + (size_t)time) * area + pixel;
+                    channelMajor[destination] = (float)rgb[sourceIndex] * scale;
+                }
+        free(rgb);
+        *pixels = channelMajor;
+        return 1;
+    }
+}
+
+
 int h3_av_read_video_tail_f32(const char *path, int width, int height,
                               int frames, float **pixels, double *start_seconds,
                               char *error, size_t error_size) {

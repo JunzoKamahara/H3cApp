@@ -126,7 +126,7 @@ extension GenerationViewModel {
             var draft = currentDraft()
             draft.firstFrame = draft.firstFrame.map { ProjectFiles.stored($0, in: project.url) }
             draft.lastFrame = draft.lastFrame.map { ProjectFiles.stored($0, in: project.url) }
-            draft.references = draft.references.map { .init(kind: $0.kind, path: ProjectFiles.stored($0.path, in: project.url)) }
+            draft.references = draft.references.map { $0.mappingPath { ProjectFiles.stored($0, in: project.url) } }
             draft.seconds = Int(seconds.rounded())
             draft.forcedAudio = nil
             draft.forcedAudioOffset = nil

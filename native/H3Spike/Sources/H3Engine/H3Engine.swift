@@ -103,6 +103,9 @@ public struct H3GenerationResult: Sendable {
 
 public enum H3ReferenceKind: Sendable, Equatable {
     case image, video, audio, videoAudio
+    /// A RefMod file (H3RefModInfo): a saved reference latent the DiT takes
+    /// as a reference without Qwen being shown it.
+    case refmod
 
     var cValue: h3_reference_kind {
         switch self {
@@ -110,6 +113,7 @@ public enum H3ReferenceKind: Sendable, Equatable {
         case .video: return H3_REFERENCE_VIDEO
         case .audio: return H3_REFERENCE_AUDIO
         case .videoAudio: return H3_REFERENCE_VIDEO_AUDIO
+        case .refmod: return H3_REFERENCE_REFMOD
         }
     }
 }
@@ -120,13 +124,21 @@ public struct H3ReferenceInput: Sendable, Identifiable {
     public var path: String
     public var audioPath: String?
     public var includeEmbeddedAudio: Bool
+    /// RefMods only: 0 < strength <= 1 (1 = the stored latent as it is;
+    /// below that it is mixed toward a blurred copy of itself).
+    public var strength: Float
+    /// RefMods only: the bundle member to use, or -1 for a single-latent
+    /// file.
+    public var member: Int32
 
     public init(kind: H3ReferenceKind = .image, path: String, audioPath: String? = nil,
-                includeEmbeddedAudio: Bool = false) {
+                includeEmbeddedAudio: Bool = false, strength: Float = 1, member: Int32 = -1) {
         self.kind = kind
         self.path = path
         self.audioPath = audioPath
         self.includeEmbeddedAudio = includeEmbeddedAudio
+        self.strength = strength
+        self.member = member
     }
 }
 
@@ -311,7 +323,8 @@ private func withReferenceArray<R>(_ references: [H3ReferenceInput], built: [h3_
         withOptionalCString(reference.audioPath) { audioC in
             var next = built
             next.append(h3_reference(kind: reference.kind.cValue, path: pathC, audio_path: audioC,
-                                      include_embedded_audio: reference.includeEmbeddedAudio ? 1 : 0))
+                                      include_embedded_audio: reference.includeEmbeddedAudio ? 1 : 0,
+                                      strength: reference.strength, member: reference.member))
             return withReferenceArray(rest, built: next, body)
         }
     }
@@ -322,6 +335,8 @@ public enum H3EngineError: Error, LocalizedError {
     case generationFailed(String)
     case cacheBuildFailed(String)
     case unusableLoRA(String)
+    case unusableRefMod(String)
+    case refModExtractFailed(String)
     case cancelled
 
     public var errorDescription: String? {
@@ -330,12 +345,14 @@ public enum H3EngineError: Error, LocalizedError {
         case .generationFailed(let message): return "Generation failed: \(message)"
         case .cacheBuildFailed(let message): return "Attention cache build failed: \(message)"
         case .unusableLoRA(let message): return message
+        case .unusableRefMod(let message): return message
+        case .refModExtractFailed(let message): return message
         case .cancelled: return "Cancelled"
         }
     }
 }
 
-private func fixedCString<T>(_ tuple: T) -> String {
+func fixedCString<T>(_ tuple: T) -> String {
     withUnsafeBytes(of: tuple) { raw in
         String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
     }
@@ -448,6 +465,7 @@ public final class H3Engine: @unchecked Sendable {
     private let modelDirectory: String
     private var currentCancelFlag: CancelFlag?
     private var currentCacheBuildCancelFlag: CancelFlag?
+    private var currentRefModExtractCancelFlag: CancelFlag?
 
     public init(modelDirectory: String) throws {
         guard let ctx = h3_load_dir(modelDirectory) else {
@@ -770,6 +788,71 @@ public final class H3Engine: @unchecked Sendable {
 
     public func cancelCurrentCacheBuild() {
         currentCacheBuildCancelFlag?.cancel()
+    }
+
+    public func cancelCurrentRefModExtract() {
+        currentRefModExtractCancelFlag?.cancel()
+    }
+
+    /// Makes a RefMod file from an image, video or audio file with the
+    /// Ref2VA VAE (h3_refmod_extract): on the engine's queue, after any
+    /// generation in flight. The stream carries the engine's progress
+    /// phases ("refmod read", "video VAE encoder" / "audio VAE encoder",
+    /// "refmod refine", "refmod write") and ends when the file is written;
+    /// cancelCurrentRefModExtract() stops it with H3EngineError.cancelled.
+    public func extractRefMod(_ request: H3RefModExtractRequest) -> AsyncThrowingStream<H3GenerationEvent, Error> {
+        return AsyncThrowingStream { continuation in
+            let cancelFlag = CancelFlag()
+            self.currentRefModExtractCancelFlag = cancelFlag
+            let bridge = GenerationBridge(continuation: continuation, cancelFlag: cancelFlag)
+            let bridgeHandle = Unmanaged.passRetained(bridge)
+
+            Self.workQueue.async { [self] in
+                defer { bridgeHandle.release() }
+                let activity = ProcessInfo.processInfo.beginActivity(
+                    options: [.userInitiated, .idleSystemSleepDisabled],
+                    reason: "Extracting a RefMod")
+                defer { ProcessInfo.processInfo.endActivity(activity) }
+
+                var errorBuffer = [CChar](repeating: 0, count: 512)
+                let ok = modelDirectory.withCString { modelC in
+                    request.sourcePath.withCString { sourceC in
+                        request.outputPath.withCString { outputC in
+                            request.name.withCString { nameC in
+                                request.description.withCString { descriptionC in
+                                    errorBuffer.withUnsafeMutableBufferPointer { errorBuf in
+                                        var params = h3_refmod_extract_params()
+                                        params.model_dir = modelC
+                                        params.source_path = sourceC
+                                        params.output_path = outputC
+                                        params.name = request.name.isEmpty ? nil : nameC
+                                        params.kind = request.kind.cValue
+                                        params.mode = Int32(request.mode.cValue.rawValue)
+                                        params.resolution_cap = Int32(request.resolutionCap)
+                                        params.latent_frames = Int32(request.latentFrames)
+                                        params.pool_long_edge = Int32(request.poolLongEdge)
+                                        params.optimize_steps = Int32(request.optimizeSteps)
+                                        params.max_seconds = Int32(request.maxSeconds)
+                                        params.description = request.description.isEmpty ? nil : descriptionC
+                                        params.cancel_requested = UnsafePointer(cancelFlag.engineFlag)
+                                        return h3_refmod_extract(&params, h3ProgressTrampoline,
+                                                                 bridgeHandle.toOpaque(),
+                                                                 errorBuf.baseAddress, errorBuf.count)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if ok != 0 {
+                    continuation.finish()
+                } else {
+                    let message = String(cString: errorBuffer)
+                    continuation.finish(throwing: cancelFlag.isCancelled
+                        ? H3EngineError.cancelled : H3EngineError.refModExtractFailed(message))
+                }
+            }
+        }
     }
 
     /// For continuing a video that wasn't generated here: writes a latent

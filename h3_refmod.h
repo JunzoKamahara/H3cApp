@@ -97,6 +97,77 @@ int h3_refmod_apply_strength(float *latent, int c, int t, int h, int w,
  * linearly interpolated back; t <= 1 is left unchanged. */
 int h3_refmod_apply_strength_audio(float *latent, int t, float strength);
 
+/* ---- making RefMods ---------------------------------------------------
+ * The upstream extractor's rules, so a file made here reads the same way
+ * there, and a Full one reproduces this engine's own reference rows. */
+
+/* The pooling grid of a compressed RefMod: the latent's longer side gets
+ * `pool_long_edge` cells, the shorter one its share by aspect, both even
+ * and at least 2, never more than the latent itself. */
+void h3_refmod_aspect_grid(int pool_long_edge, int latent_h, int latent_w,
+                           int *gh, int *gw);
+/* The pixel canvas a source is encoded at: shrunk (never enlarged) so its
+ * short side is at most `cap_px` (0 = 1024), snapped to multiples of 32,
+ * then enlarged to a short side of at least 320. */
+int h3_refmod_extract_canvas(int source_w, int source_h, int cap_px,
+                             int *w, int *h);
+/* Which of a video's `source_frames` (24 fps) a RefMod keeps: at most
+ * `latent_frames` (0 = 16) spread evenly, snapped down to 17k+5 of them;
+ * fewer than 5 means the first frame alone. `indices` holds at least
+ * `latent_frames` (or 16) entries. */
+int h3_refmod_extract_frames(int source_frames, int latent_frames,
+                             int *indices, int *count);
+/* Adam (lr 0.02, PyTorch defaults otherwise) on the small latent so that
+ * its trilinear upsample matches `full` in mean squared error, for
+ * `steps` iterations. Progress phase "refmod refine"; a nonzero callback
+ * return or *cancel stops it with an error. */
+int h3_refmod_refine(float *small, int c, int st, int sh, int sw,
+                     const float *full, int t, int h, int w,
+                     int steps, float lr,
+                     h3_progress_callback on_progress, void *opaque,
+                     const volatile int *cancel, char *error, size_t error_size);
+
+typedef struct {
+    h3_refmod_kind kind;
+    int mode;                  /* h3_refmod_mode */
+    int optimize_steps;
+    const char *name;
+    const char *source;        /* "image", "video", "audio" */
+    const char *source_shape;  /* "TxHxW" of the full latent */
+    const char *pool;          /* "TxGHxGW" or the full-res note */
+    const char *description;   /* optional */
+    const char *concept_type;  /* NULL = "generic" */
+    const char *const *tags;   /* optional */
+    size_t tag_count;
+} h3_refmod_meta;
+/* Writes a single-latent file (format 4): the latent as F16 "latent"
+ * [1,24,T,H,W] or [1,32,2,T] and refmod_meta in the header, through a
+ * .partial file renamed into place. */
+int h3_refmod_write(const char *path, const h3_refmod_latent *latent,
+                    const h3_refmod_meta *meta, char *error, size_t error_size);
+
+typedef struct {
+    const char *model_dir;     /* the MiniMax-H3 folder; Ref2VA's VAEs are used */
+    const char *source_path;   /* an image, a video or an audio file */
+    const char *output_path;   /* the .safetensors to write */
+    const char *name;          /* refmod_meta.name (NULL = the file's stem) */
+    h3_refmod_kind kind;       /* what source_path is */
+    int mode;                  /* h3_refmod_mode; audio is always full */
+    int resolution_cap;        /* short-edge cap in pixels, 0 = 1024 */
+    int latent_frames;         /* video: frames kept, 0 = 16 */
+    int pool_long_edge;        /* compressed: 0 = 16 */
+    int optimize_steps;        /* compressed: Adam steps, 0 = none */
+    int max_seconds;           /* audio: 0 = 15 */
+    const char *description;   /* optional */
+    const volatile int *cancel_requested;   /* optional */
+} h3_refmod_extract_params;
+/* Encodes the source with the Ref2VA VAE and writes the RefMod. Progress
+ * phases: "refmod read", "video VAE encoder" / "audio VAE encoder",
+ * "refmod refine" (compressed), "refmod write". */
+int h3_refmod_extract(const h3_refmod_extract_params *params,
+                      h3_progress_callback on_progress, void *opaque,
+                      char *error, size_t error_size);
+
 #ifdef __cplusplus
 }
 #endif

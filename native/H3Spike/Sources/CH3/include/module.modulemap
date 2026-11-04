@@ -4,5 +4,6 @@ module CH3 {
     header "h3_seedvr2.h"
     header "h3_latent_upscale.h"
     header "h3_lora_extract.h"
+    header "h3_refmod.h"
     export *
 }

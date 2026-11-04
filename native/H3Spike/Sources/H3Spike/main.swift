@@ -156,7 +156,8 @@ let referenceSpecs = envList("H3SPIKE_REF_IMAGE").map { (H3_REFERENCE_IMAGE, $0)
 let referencePaths = referenceSpecs.map { strdup($0.1) }
 defer { referencePaths.forEach { free($0) } }
 var references = zip(referenceSpecs, referencePaths).map {
-    h3_reference(kind: $0.0.0, path: $0.1, audio_path: nil, include_embedded_audio: 0)
+    h3_reference(kind: $0.0.0, path: $0.1, audio_path: nil, include_embedded_audio: 0,
+                 strength: 1, member: -1)
 }
 for (kind, path) in referenceSpecs {
     print("Reference: \(kind == H3_REFERENCE_IMAGE ? "image" : "video") \(path)")

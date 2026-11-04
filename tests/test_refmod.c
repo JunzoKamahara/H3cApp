@@ -4,12 +4,17 @@
  * and pooling arithmetic against closed-form cases. The Ref2VA label test
  * runs only when a tokenizer path is given:
  *
- *   ./h3_refmod_tests [MiniMax-H3/Ref2VA/tokenizer/tokenizer.json]
- */
+ *   ./h3_refmod_tests [MiniMax-H3/Ref2VA/tokenizer/tokenizer.json] [fixture]
+ *
+ * The numeric fixture (misc/fixtures/h3_refmod_fixture.safetensors, made by
+ * tools/dump_refmod_fixture.py with torch) checks the pooling, upsampling,
+ * strength mix and Adam refinement against PyTorch; it is skipped when the
+ * file is missing. */
 #include "h3_refmod.h"
 #include "h3_dit.h"
 #include "h3_multimodal.h"
 #include "h3_quant.h"
+#include "h3_safetensors.h"
 #include "h3_tokenizer.h"
 
 #include <fcntl.h>
@@ -424,6 +429,213 @@ static void test_strength(void) {
     h3_refmod_latent_free(&loaded);
 }
 
+static void test_extraction_rules(void) {
+    int w, h;
+    CHECK(h3_refmod_extract_canvas(1920, 1080, 1024, &w, &h));
+    CHECK(w == 1824 && h == 1024);
+    CHECK(h3_refmod_extract_canvas(200, 100, 1024, &w, &h));
+    CHECK(w == 640 && h == 320);
+    CHECK(h3_refmod_extract_canvas(512, 512, 1024, &w, &h));
+    CHECK(w == 512 && h == 512);
+    CHECK(h3_refmod_extract_canvas(4000, 3000, 0, &w, &h));
+    CHECK(w == 1376 && h == 1024);
+    CHECK(h3_refmod_extract_canvas(1000, 2000, 1024, &w, &h));
+    CHECK(w == 992 && h == 1984);
+
+    int indices[64], count;
+    CHECK(h3_refmod_extract_frames(100, 16, indices, &count));
+    CHECK(count == 5 && indices[0] == 0 && indices[4] == 99);
+    /* 16 evenly spaced of 100 (0, 7, 13, 20, ...), then 5 of those. */
+    CHECK(indices[1] == 26 && indices[2] == 53 && indices[3] == 73);
+    CHECK(h3_refmod_extract_frames(3, 16, indices, &count));
+    CHECK(count == 1 && indices[0] == 0);
+    CHECK(h3_refmod_extract_frames(40, 40, indices, &count));
+    CHECK(count == 39 && indices[0] == 0 && indices[38] == 39);
+    CHECK(h3_refmod_extract_frames(22, 0, indices, &count));
+    CHECK(count == 5);
+    for (int index = 1; index < count; index++) CHECK(indices[index] > indices[index - 1]);
+
+    int gh, gw;
+    h3_refmod_aspect_grid(16, 34, 60, &gh, &gw);
+    CHECK(gw == 16 && gh == 10);
+    h3_refmod_aspect_grid(16, 64, 64, &gh, &gw);
+    CHECK(gw == 16 && gh == 16);
+    h3_refmod_aspect_grid(16, 60, 34, &gh, &gw);
+    CHECK(gh == 16 && gw == 10);
+    h3_refmod_aspect_grid(8, 4, 64, &gh, &gw);
+    CHECK(gw == 8 && gh == 2);
+    h3_refmod_aspect_grid(16, 4, 6, &gh, &gw);
+    CHECK(gh == 4 && gw == 6);
+}
+
+static void test_write_round_trip(void) {
+    enum { T = 2, H = 6, W = 8, COUNT = 24 * T * H * W };
+    static float values[COUNT];
+    fill_pattern(values, COUNT, 0.75f);
+    h3_refmod_latent latent = {H3_REFMOD_VIDEO, T, H, W, 0, values};
+    const char *tags[] = {"0 img, 1 vid", "x1"};
+    h3_refmod_meta meta = {H3_REFMOD_VIDEO, H3_REFMOD_COMPRESSED, 500,
+                           "walk \"two\"", "video", "7x34x60", "2x6x8",
+                           "a note\nwith a newline", NULL, tags, 2};
+    char error[512];
+    CHECK(h3_refmod_write(path_in_directory("written.safetensors"), &latent,
+                          &meta, error, sizeof(error)));
+    h3_refmod_info info;
+    CHECK(h3_refmod_inspect(path_in_directory("written.safetensors"), &info,
+                            error, sizeof(error)));
+    CHECK(info.format_version == 4 && !info.bundle && info.member_count == 1);
+    CHECK(!strcmp(info.name, "walk \"two\""));
+    CHECK(info.members[0].kind == H3_REFMOD_VIDEO &&
+          info.members[0].mode == H3_REFMOD_COMPRESSED &&
+          info.members[0].optimize_steps == 500 &&
+          info.members[0].latent_t == T && info.members[0].latent_h == H &&
+          info.members[0].latent_w == W && info.members[0].tokens == T * (H / 2) * (W / 2));
+    CHECK(!strcmp(info.members[0].pool, "2x6x8") &&
+          !strcmp(info.members[0].source_shape, "7x34x60") &&
+          !strcmp(info.members[0].description, "a note\nwith a newline") &&
+          !strcmp(info.members[0].concept_type, "generic"));
+    h3_refmod_info_free(&info);
+    h3_refmod_latent loaded;
+    CHECK(h3_refmod_load(path_in_directory("written.safetensors"), -1, 1.0f,
+                         &loaded, NULL, error, sizeof(error)));
+    CHECK(loaded.time == T && loaded.height == H && loaded.width == W);
+    CHECK(max_abs_difference(loaded.values, values, COUNT) < 1e-3f);
+    h3_refmod_latent_free(&loaded);
+    /* The header is 8-byte aligned, as the format requires. */
+    FILE *file = fopen(path_in_directory("written.safetensors"), "rb");
+    CHECK(file != NULL);
+    uint64_t header_size = 0;
+    CHECK(fread(&header_size, 8, 1, file) == 1 && header_size % 8 == 0);
+    fclose(file);
+    /* No .partial is left behind. */
+    CHECK(access(path_in_directory("written.safetensors.partial"), F_OK) != 0);
+
+    /* Audio. */
+    static float audio[32 * 2 * 40];
+    fill_pattern(audio, 32 * 2 * 40, 1.5f);
+    h3_refmod_latent audio_latent = {H3_REFMOD_AUDIO, 0, 0, 0, 40, audio};
+    h3_refmod_meta audio_meta = {H3_REFMOD_AUDIO, H3_REFMOD_FULL, 0, "hum", "audio",
+                                 "40x0x0", "4x4x1", NULL, NULL, NULL, 0};
+    CHECK(h3_refmod_write(path_in_directory("written-audio.safetensors"),
+                          &audio_latent, &audio_meta, error, sizeof(error)));
+    CHECK(h3_refmod_inspect(path_in_directory("written-audio.safetensors"), &info,
+                            error, sizeof(error)));
+    CHECK(info.members[0].kind == H3_REFMOD_AUDIO && info.members[0].latent_t == 40 &&
+          info.members[0].tokens == 80);
+    h3_refmod_info_free(&info);
+    CHECK(h3_refmod_load(path_in_directory("written-audio.safetensors"), -1, 1.0f,
+                         &loaded, NULL, error, sizeof(error)));
+    CHECK(loaded.kind == H3_REFMOD_AUDIO && loaded.audio_t == 40);
+    CHECK(max_abs_difference(loaded.values, audio, 32 * 2 * 40) < 2e-3f);
+    h3_refmod_latent_free(&loaded);
+    /* An image latent with two frames is refused. */
+    h3_refmod_meta image_meta = {H3_REFMOD_IMAGE, H3_REFMOD_FULL, 0, "x", NULL,
+                                 NULL, NULL, NULL, NULL, NULL, 0};
+    CHECK(!h3_refmod_write(path_in_directory("bad.safetensors"), &latent,
+                           &image_meta, error, sizeof(error)));
+}
+
+static void test_refine(void) {
+    /* A small latent refined toward a full one it can reproduce exactly
+     * (the full is itself a trilinear upsample of a target): the loss must
+     * fall below the pooled start. */
+    enum { C = 2, ST = 1, SH = 2, SW = 3, T = 1, H = 8, W = 12 };
+    float target[C * ST * SH * SW], full[C * T * H * W];
+    fill_pattern(target, C * ST * SH * SW, 1.0f);
+    CHECK(h3_refmod_trilinear(target, C, ST, SH, SW, T, H, W, full));
+    float small[C * ST * SH * SW];
+    CHECK(h3_refmod_pool3d(full, C, T, H, W, ST, SH, SW, small));
+    float up[C * T * H * W];
+    double before = 0.0, after = 0.0;
+    CHECK(h3_refmod_trilinear(small, C, ST, SH, SW, T, H, W, up));
+    for (size_t index = 0; index < C * T * H * W; index++)
+        before += (up[index] - full[index]) * (up[index] - full[index]);
+    char error[512];
+    int cancel = 0;
+    CHECK(h3_refmod_refine(small, C, ST, SH, SW, full, T, H, W, 200, 0.02f,
+                           NULL, NULL, &cancel, error, sizeof(error)));
+    CHECK(h3_refmod_trilinear(small, C, ST, SH, SW, T, H, W, up));
+    for (size_t index = 0; index < C * T * H * W; index++)
+        after += (up[index] - full[index]) * (up[index] - full[index]);
+    CHECK(after < before * 0.05);
+    /* Zero steps is a no-op; a raised cancel flag stops it. */
+    float copy[C * ST * SH * SW];
+    memcpy(copy, small, sizeof(copy));
+    CHECK(h3_refmod_refine(small, C, ST, SH, SW, full, T, H, W, 0, 0.02f,
+                           NULL, NULL, NULL, error, sizeof(error)));
+    CHECK(memcmp(copy, small, sizeof(copy)) == 0);
+    cancel = 1;
+    CHECK(!h3_refmod_refine(small, C, ST, SH, SW, full, T, H, W, 10, 0.02f,
+                            NULL, NULL, &cancel, error, sizeof(error)));
+    CHECK(strstr(error, "cancelled") != NULL);
+}
+
+/* Against torch (tools/dump_refmod_fixture.py), when the fixture exists. */
+static void test_fixture(const char *path) {
+    h3_st_header header;
+    char error[512];
+    if (!h3_st_read_header(path, &header, error, sizeof(error))) {
+        printf("skip: RefMod numeric fixture %s is not installed\n", path);
+        return;
+    }
+    enum { C = 24, T = 3, H = 16, W = 24, PT = 2, PH = 8, PW = 12 };
+    enum { FULL = C * T * H * W, SMALL = C * PT * PH * PW };
+    static float z[FULL], expect_blur[FULL], expect_mix[FULL], expect_up[FULL],
+                 pooled[SMALL], expect_pooled[SMALL], expect_refined[SMALL],
+                 expect_grad[SMALL], work[FULL];
+    #define LOAD(name, buffer, count) do { \
+        const h3_st_tensor *tensor = h3_st_find(&header, name); \
+        CHECK(tensor && tensor->dtype == H3_DTYPE_F32 && \
+              h3_st_tensor_elements(tensor) == (count)); \
+        CHECK(h3_st_read_data(&header, tensor, buffer, (count) * sizeof(float), \
+                              error, sizeof(error))); \
+    } while (0)
+    LOAD("z", z, FULL);
+    LOAD("blur", expect_blur, FULL);
+    LOAD("mix_0_4", expect_mix, FULL);
+    LOAD("pooled_2x8x12", expect_pooled, SMALL);
+    LOAD("up_from_pooled", expect_up, FULL);
+    LOAD("refined_20", expect_refined, SMALL);
+    LOAD("grad_0", expect_grad, SMALL);
+    #undef LOAD
+    h3_st_free_header(&header);
+    /* Pooling and the upsample back. */
+    CHECK(h3_refmod_pool3d(z, C, T, H, W, PT, PH, PW, pooled));
+    CHECK(max_abs_difference(pooled, expect_pooled, SMALL) < 1e-5f);
+    CHECK(h3_refmod_trilinear(expect_pooled, C, PT, PH, PW, T, H, W, work));
+    CHECK(max_abs_difference(work, expect_up, FULL) < 1e-5f);
+    /* The strength blur and mix. */
+    memcpy(work, z, sizeof(work));
+    CHECK(h3_refmod_apply_strength(work, C, T, H, W, 0.0f));
+    CHECK(max_abs_difference(work, expect_blur, FULL) < 1e-5f);
+    memcpy(work, z, sizeof(work));
+    CHECK(h3_refmod_apply_strength(work, C, T, H, W, 0.4f));
+    CHECK(max_abs_difference(work, expect_mix, FULL) < 1e-5f);
+    /* The first Adam step's gradient (the trilinear adjoint of the loss)
+     * and 20 steps of refinement from the F16-rounded pool. */
+    static float small[SMALL];
+    for (size_t index = 0; index < SMALL; index++)
+        small[index] = h3_half_to_float(h3_float_to_half(expect_pooled[index]));
+    static float start[SMALL];
+    memcpy(start, small, sizeof(start));
+    CHECK(h3_refmod_refine(small, C, PT, PH, PW, z, T, H, W, 1, 0.02f,
+                           NULL, NULL, NULL, error, sizeof(error)));
+    /* After one Adam step every parameter moves by lr in the direction of
+     * minus the gradient (m_hat/sqrt(v_hat) = sign(g)), so the gradient's
+     * sign is checked through the step itself. */
+    for (size_t index = 0; index < SMALL; index++) {
+        /* Adam's epsilon blunts the step where the gradient is tiny. */
+        if (fabsf(expect_grad[index]) < 1e-5f) continue;
+        float moved = small[index] - start[index];
+        CHECK(fabsf(moved + 0.02f * (expect_grad[index] > 0 ? 1.0f : -1.0f)) < 1e-4f);
+    }
+    memcpy(small, start, sizeof(start));
+    CHECK(h3_refmod_refine(small, C, PT, PH, PW, z, T, H, W, 20, 0.02f,
+                           NULL, NULL, NULL, error, sizeof(error)));
+    CHECK(max_abs_difference(small, expect_refined, SMALL) < 1e-3f);
+    printf("ok: RefMod arithmetic matches the torch fixture\n");
+}
+
 static void test_half_round_trip(void) {
     const float samples[] = {0.0f, 1.0f, -1.0f, 0.5f, 65504.0f, 1e-7f,
                              3.14159f, -0.33333f, 1024.5f, 6.1e-5f};
@@ -480,7 +692,11 @@ int main(int argc, char **argv) {
     test_bundle();
     test_pooling_and_interpolation();
     test_strength();
-    if (argc > 1) test_ref2va_labels(argv[1]);
+    test_extraction_rules();
+    test_write_round_trip();
+    test_refine();
+    test_fixture(argc > 2 ? argv[2] : "misc/fixtures/h3_refmod_fixture.safetensors");
+    if (argc > 1 && *argv[1]) test_ref2va_labels(argv[1]);
     else printf("skip: Ref2VA label test needs a tokenizer path\n");
     char command[1400];
     snprintf(command, sizeof(command), "rm -rf '%s'", directory);

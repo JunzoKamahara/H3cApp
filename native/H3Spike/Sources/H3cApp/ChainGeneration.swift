@@ -243,7 +243,7 @@ extension GenerationViewModel {
             draft.references = []
         case .references(let references):
             request.params.references = references
-            draft.references = references.map { .init(kind: $0.kind.storedName, path: stored($0.path)) }
+            draft.references = references.map { ProjectDraft.Reference($0, stored: stored) }
         case .frames(let first, let last):
             request.params.references = []
             request.params.firstFrame = first

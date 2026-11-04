@@ -271,6 +271,9 @@ final class GenerationViewModel: ObservableObject {
     @Published var firstFramePath: String?
     @Published var lastFramePath: String?
     @Published var referenceImages: [H3ReferenceInput] = []
+    /// A RefMod bundle just picked: the form asks which members to add
+    /// (RefModMemberPickerSheet), then appends one row per member.
+    @Published var pendingRefModBundle: RefModBundleChoice?
     /// Lip sync (h3_params.forced_audio_path): this file's audio, from
     /// forcedAudioOffset seconds on, is the video's soundtrack, and only the
     /// picture is generated - to match it. Works with every creation method.
@@ -479,7 +482,9 @@ final class GenerationViewModel: ObservableObject {
         guard let engine, creationMethod == .image, imageInputMode == .referenceImage,
               !referenceImages.isEmpty, !isChained else { return nil }
         let params = planParams()
-        let references = params.references.map { "\($0.kind)|\($0.path)|\($0.audioPath ?? "")|\($0.includeEmbeddedAudio)" }
+        let references = params.references.map {
+            "\($0.kind)|\($0.path)|\($0.audioPath ?? "")|\($0.includeEmbeddedAudio)|\($0.strength)|\($0.member)"
+        }
         // The engine too: another model has its own tokenizer.
         return (["\(ObjectIdentifier(engine).hashValue)", prompt, "\(params.width)x\(params.height)", "\(params.renderWidth)x\(params.renderHeight)",
                  "\(params.frames)", "\(params.ssdStreaming)", params.attentionCachePath ?? "",
@@ -795,9 +800,19 @@ final class GenerationViewModel: ObservableObject {
 
     func addReferenceImages() {
         for path in chooseFiles(allowedContentTypes: referenceMediaTypes) {
-            let kind: H3ReferenceKind = isVideoFile(path: path) ? .video : (isAudioFile(path: path) ? .audio : .image)
-            referenceImages.append(H3ReferenceInput(kind: kind, path: path))
+            addReference(path: path)
         }
+    }
+
+    /// Adds one picked file: a RefMod bundle asks which members to use
+    /// (pendingRefModBundle), anything else becomes one row.
+    func addReference(path: String) {
+        let kind = referenceKind(forPath: path)
+        if kind == .refmod, let info = try? H3RefModInfo.inspect(path: path), info.isBundle {
+            pendingRefModBundle = RefModBundleChoice(path: path, info: info)
+            return
+        }
+        referenceImages.append(H3ReferenceInput(kind: kind, path: path))
     }
 
     func removeReferenceImages(at offsets: IndexSet) {
@@ -871,7 +886,7 @@ final class GenerationViewModel: ObservableObject {
                 // requires an image or video reference") - an audio file
                 // can season a visual reference but can't carry a
                 // generation on its own.
-                let hasVisualReference = referenceImages.contains { $0.kind == .image || $0.kind == .video }
+                let hasVisualReference = referenceImages.contains { $0.kind == .image || $0.kind == .video || $0.kind == .refmod }
                 if !hasVisualReference {
                     return String(localized: "音声だけの参照はできません。画像か動画の参照も追加してください")
                 }
@@ -1118,7 +1133,7 @@ final class GenerationViewModel: ObservableObject {
             draft.lastFrame = draft.lastFrame.map { ProjectFiles.stored($0, in: projectURL) }
             draft.forcedAudio = draft.forcedAudio.map { ProjectFiles.stored($0, in: projectURL) }
             draft.continueFrom = draft.continueFrom.map { ProjectFiles.stored($0, in: projectURL) }
-            draft.references = draft.references.map { .init(kind: $0.kind, path: ProjectFiles.stored($0.path, in: projectURL)) }
+            draft.references = draft.references.map { $0.mappingPath { ProjectFiles.stored($0, in: projectURL) } }
             draft = draft.mappingClipPaths { ProjectFiles.stored($0, in: projectURL) }
         }
         draft.fastAttention = params.fastAttention
@@ -1496,4 +1511,12 @@ final class GenerationViewModel: ObservableObject {
         seedFixed = true
         seedText = result.seedDecimalString
     }
+}
+
+
+/// A RefMod bundle whose members are being chosen for the references.
+struct RefModBundleChoice: Identifiable {
+    let id = UUID()
+    let path: String
+    let info: H3RefModInfo
 }

@@ -864,9 +864,9 @@ extension GenerationViewModel {
                     }
                     clip.images = parsed
                 }
-                clip.references = ((item["reference_paths"] as? [String]) ?? []).map { path in
-                    .init(kind: (isVideoFile(path: path) ? H3ReferenceKind.video
-                                 : isAudioFile(path: path) ? .audio : .image).storedName, path: path)
+                switch parseReferenceEntries(item["reference_paths"]) {
+                case .success(let references): clip.references = references.map { ProjectDraft.Reference($0) }
+                case .failure(let error): return .error(400, "clip \(index + 1): \(error.message)")
                 }
                 clip.firstFrame = item["first_frame_path"] as? String
                 clip.lastFrame = item["last_frame_path"] as? String
@@ -960,23 +960,24 @@ extension GenerationViewModel {
 
         let firstFrame = json["first_frame_path"] as? String
         let lastFrame = json["last_frame_path"] as? String
-        let referencePaths = (json["reference_paths"] as? [String]) ?? []
+        let references: [H3ReferenceInput]
+        switch parseReferenceEntries(json["reference_paths"]) {
+        case .success(let parsed): references = parsed
+        case .failure(let error): return .error(400, error.message)
+        }
 
         if firstFrame != nil || lastFrame != nil {
-            if !referencePaths.isEmpty {
+            if !references.isEmpty {
                 return .error(400, "first_frame_path/last_frame_path cannot be combined with reference_paths")
             }
             creationMethod = .image
             imageInputMode = .firstLastFrame
             firstFramePath = firstFrame
             lastFramePath = lastFrame
-        } else if !referencePaths.isEmpty {
+        } else if !references.isEmpty {
             creationMethod = .image
             imageInputMode = .referenceImage
-            referenceImages = referencePaths.map { path in
-                let kind: H3ReferenceKind = isVideoFile(path: path) ? .video : (isAudioFile(path: path) ? .audio : .image)
-                return H3ReferenceInput(kind: kind, path: path)
-            }
+            referenceImages = references
         } else {
             creationMethod = .text
         }
@@ -1140,6 +1141,46 @@ private let defaultStepsForAPI = 20
 /// A JSON number as an Int. JSONSerialization hands booleans back as
 /// NSNumber too, and `true as? Int` succeeds as 1 - so without this check
 /// "reuse": true would quietly run reuse 1.
+/// "reference_paths": an array of paths, or of {"path", "strength"?,
+/// "member"?} objects for RefMods (a plain .safetensors path is a RefMod at
+/// strength 1, single-latent file). Absent or null means none.
+struct ReferenceParseError: Error { let message: String }
+
+func parseReferenceEntries(_ value: Any?) -> Result<[H3ReferenceInput], ReferenceParseError> {
+    guard let value, !(value is NSNull) else { return .success([]) }
+    guard let list = value as? [Any] else {
+        return .failure(ReferenceParseError(message: "\"reference_paths\" must be an array of paths or {\"path\", \"strength\", \"member\"} objects"))
+    }
+    var references: [H3ReferenceInput] = []
+    for (index, item) in list.enumerated() {
+        if let path = item as? String {
+            references.append(H3ReferenceInput(kind: referenceKind(forPath: path), path: path))
+            continue
+        }
+        guard let object = item as? [String: Any], let path = object["path"] as? String, !path.isEmpty else {
+            return .failure(ReferenceParseError(message: "reference \(index + 1) must be a path or an object with \"path\""))
+        }
+        var reference = H3ReferenceInput(kind: referenceKind(forPath: path), path: path)
+        if let raw = object["strength"], !(raw is NSNull) {
+            guard let number = raw as? NSNumber, !(raw is Bool), number.doubleValue > 0, number.doubleValue <= 1 else {
+                return .failure(ReferenceParseError(message: "reference \(index + 1): \"strength\" must be a number above 0 and at most 1"))
+            }
+            reference.strength = number.floatValue
+        }
+        if let raw = object["member"], !(raw is NSNull) {
+            guard let member = jsonInteger(raw), member >= -1 else {
+                return .failure(ReferenceParseError(message: "reference \(index + 1): \"member\" must be a member index (0-based) or -1"))
+            }
+            reference.member = Int32(member)
+        }
+        if reference.kind != .refmod && (object["strength"] != nil || object["member"] != nil) {
+            return .failure(ReferenceParseError(message: "reference \(index + 1): \"strength\" and \"member\" apply to RefMod (.safetensors) files only"))
+        }
+        references.append(reference)
+    }
+    return .success(references)
+}
+
 private func jsonInteger(_ value: Any) -> Int? {
     guard let number = value as? NSNumber,
           CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }

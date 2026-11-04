@@ -1,4 +1,5 @@
 import AppKit
+import H3Engine
 import AVFoundation
 import UniformTypeIdentifiers
 
@@ -8,7 +9,7 @@ let imageTypes: [UTType] = [.image]
 // three natively. An audio reference can't stand on its own though - h3.c
 // rejects any reference set with audio but no image/video among them
 // ("reference audio requires an image or video reference").
-let referenceMediaTypes: [UTType] = [.image, .movie, .audio]
+let referenceMediaTypes: [UTType] = [.image, .movie, .audio, UTType(filenameExtension: "safetensors") ?? .data]
 // Lip sync takes the audio track of an audio file or of a video.
 let forcedAudioTypes: [UTType] = [.audio, .movie]
 // "safetensors" has no registered system UTI, so this synthesizes a dynamic
@@ -46,8 +47,22 @@ func chooseDirectory() -> String? {
 }
 
 /// Which H3ReferenceKind a picked reference file should be tagged as -
-/// image, video, or audio, by extension (via the same UTType conformance
-/// checks referenceMediaTypes filters the open panel with).
+/// image, video, audio, or a RefMod (.safetensors) - by extension (via the
+/// same UTType conformance checks referenceMediaTypes filters the open
+/// panel with). Anything that is neither a video, an audio file nor a
+/// RefMod counts as an image, as the open panel only offers images beyond
+/// those.
+func referenceKind(forPath path: String) -> H3ReferenceKind {
+    if isRefModFile(path: path) { return .refmod }
+    if isVideoFile(path: path) { return .video }
+    if isAudioFile(path: path) { return .audio }
+    return .image
+}
+
+func isRefModFile(path: String) -> Bool {
+    (path as NSString).pathExtension.lowercased() == "safetensors"
+}
+
 func isVideoFile(path: String) -> Bool {
     let ext = (path as NSString).pathExtension
     guard let type = UTType(filenameExtension: ext) else { return false }

@@ -36,6 +36,15 @@ int h3_av_read_video_f32(const char *path, int width, int height,
                          int max_frames, float **pixels, int *frames,
                          char *error, size_t error_size);
 
+/* The 24 fps frames whose indices (ascending, counted as
+ * h3_av_video_frame_count counts them) are listed, scaled to fill width x
+ * height as h3_av_read_video_f32 does, as channel-major F32 [3,count,H,W]
+ * in [0,1]. Decodes sequentially and keeps only the listed frames, so a
+ * long clip costs the memory of `count` frames. Used to extract a RefMod. */
+int h3_av_read_video_frames_f32(const char *path, int width, int height,
+                                const int *indices, int count,
+                                float **pixels, char *error, size_t error_size);
+
 /* The last `frames` frames of a video at 24 fps, scaled to fill width x
  * height and centred (the overflow cropped), as channel-major F32
  * [3,frames,H,W] in [0,1]; *start_seconds is where the first of them is.

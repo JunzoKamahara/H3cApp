@@ -20,6 +20,41 @@ struct ProjectDraft: Codable, Equatable {
     struct Reference: Codable, Equatable {
         var kind: String
         var path: String
+        /// RefMods only (absent for the other kinds and in older projects):
+        /// the strength (nil = 1) and the bundle member (nil = a
+        /// single-latent file).
+        var strength: Float? = nil
+        var member: Int? = nil
+
+        init(kind: String, path: String, strength: Float? = nil, member: Int? = nil) {
+            self.kind = kind
+            self.path = path
+            self.strength = strength
+            self.member = member
+        }
+
+        /// The record of a form reference, with its path passed through
+        /// `stored` (ProjectFiles.stored when written into a project).
+        init(_ input: H3ReferenceInput, stored: (String) -> String = { $0 }) {
+            kind = input.kind.storedName
+            path = stored(input.path)
+            strength = input.kind == .refmod && input.strength != 1 ? input.strength : nil
+            member = input.kind == .refmod && input.member >= 0 ? Int(input.member) : nil
+        }
+
+        /// Back into a form reference; nil for a kind this build does not
+        /// know (a record from a newer version).
+        func input(resolve: (String) -> String = { $0 }) -> H3ReferenceInput? {
+            guard let kind = H3ReferenceKind(storedName: kind) else { return nil }
+            return H3ReferenceInput(kind: kind, path: resolve(path), strength: strength ?? 1,
+                                    member: Int32(member ?? -1))
+        }
+
+        func mappingPath(_ map: (String) -> String) -> Reference {
+            var copy = self
+            copy.path = map(path)
+            return copy
+        }
     }
 
     var prompt: String
@@ -403,6 +438,7 @@ extension H3ReferenceKind {
         case .video: return "video"
         case .audio: return "audio"
         case .videoAudio: return "videoAudio"
+        case .refmod: return "refmod"
         }
     }
 
@@ -412,6 +448,7 @@ extension H3ReferenceKind {
         case "video": self = .video
         case "audio": self = .audio
         case "videoAudio": self = .videoAudio
+        case "refmod": self = .refmod
         default: return nil
         }
     }
@@ -429,7 +466,7 @@ extension GenerationViewModel {
             imageInputMode: imageInputMode.rawValue,
             firstFrame: firstFramePath,
             lastFrame: lastFramePath,
-            references: referenceImages.map { .init(kind: $0.kind.storedName, path: $0.path) },
+            references: referenceImages.map { ProjectDraft.Reference($0) },
             sizeProfile: sizeProfile.rawValue,
             seconds: seconds,
             steps: steps,
@@ -478,9 +515,7 @@ extension GenerationViewModel {
                                       frames: frames ?? continuationFrames,
                                       enlargement: enlargement(of: video))
         }
-        referenceImages = draft.references.compactMap { reference in
-            H3ReferenceKind(storedName: reference.kind).map { H3ReferenceInput(kind: $0, path: resolve(reference.path)) }
-        }
+        referenceImages = draft.references.compactMap { $0.input(resolve: resolve) }
         if let profile = SizeProfile(rawValue: draft.sizeProfile) { sizeProfile = profile }
         chained = draft.chained ?? false
         chainClipLength = draft.chainClipFrames.flatMap(ChainClipLength.init(rawValue:)) ?? defaultChainClipLength
@@ -757,7 +792,7 @@ extension GenerationViewModel {
         draft.lastFrame = draft.lastFrame.map { ProjectFiles.stored($0, in: project.url) }
         draft.forcedAudio = draft.forcedAudio.map { ProjectFiles.stored($0, in: project.url) }
         draft.continueFrom = draft.continueFrom.map { ProjectFiles.stored($0, in: project.url) }
-        draft.references = draft.references.map { .init(kind: $0.kind, path: ProjectFiles.stored($0.path, in: project.url)) }
+        draft.references = draft.references.map { $0.mappingPath { ProjectFiles.stored($0, in: project.url) } }
         draft = draft.mappingClipPaths { ProjectFiles.stored($0, in: project.url) }
         guard force || draft != file.draft || batchCount != file.batchCount else { return }
         file.draft = draft

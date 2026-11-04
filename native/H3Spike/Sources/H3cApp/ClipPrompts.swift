@@ -55,8 +55,7 @@ struct StoryboardFile: Codable {
                         clip.images = images
                     }
                     clip.references = ((object["referencePaths"] as? [String]) ?? []).map { path in
-                        .init(kind: (isVideoFile(path: path) ? H3ReferenceKind.video
-                                     : isAudioFile(path: path) ? .audio : .image).storedName, path: path)
+                        .init(kind: referenceKind(forPath: path).storedName, path: path)
                     }
                     clip.firstFrame = object["firstFrame"] as? String
                     clip.lastFrame = object["lastFrame"] as? String
@@ -308,7 +307,8 @@ private struct CustomClipRow: View {
                     ForEach(Array(clip.references.enumerated()), id: \.offset) { offset, reference in
                         HStack {
                             Image(systemName: reference.kind == "audio" ? "waveform"
-                                  : reference.kind == "video" ? "video" : "photo")
+                                  : reference.kind == "video" ? "video"
+                                  : reference.kind == "refmod" ? "cube" : "photo")
                                 .foregroundStyle(palette.textSecondary)
                             Text(URL(fileURLWithPath: reference.path).lastPathComponent).font(.caption)
                             Spacer()
@@ -319,9 +319,7 @@ private struct CustomClipRow: View {
                         Button("ファイルを選ぶ…") {
                             for path in chooseFiles(allowedContentTypes: referenceMediaTypes)
                             where !clip.references.contains(where: { $0.path == path }) {
-                                let kind: H3ReferenceKind = isVideoFile(path: path) ? .video
-                                    : isAudioFile(path: path) ? .audio : .image
-                                clip.references.append(.init(kind: kind.storedName, path: path))
+                                clip.references.append(.init(kind: referenceKind(forPath: path).storedName, path: path))
                             }
                         }
                         .font(.caption)

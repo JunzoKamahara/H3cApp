@@ -406,6 +406,7 @@ struct CreationFormView: View {
         case .video, .videoAudio: return "video"
         case .audio: return "waveform"
         case .image: return "photo"
+        case .refmod: return "cube"
         }
     }
 

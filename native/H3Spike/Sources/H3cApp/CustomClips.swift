@@ -52,7 +52,7 @@ struct ChainClipSpec: Codable, Equatable, Identifiable {
     /// The same clip with every file path passed through `map`.
     func mappingPaths(_ map: (String) -> String) -> ChainClipSpec {
         var clip = self
-        clip.references = references.map { .init(kind: $0.kind, path: map($0.path)) }
+        clip.references = references.map { $0.mappingPath(map) }
         clip.firstFrame = firstFrame.map(map)
         clip.lastFrame = lastFrame.map(map)
         clip.audioPath = audioPath.map(map)
@@ -65,9 +65,7 @@ struct ChainClipSpec: Codable, Equatable, Identifiable {
     }
 
     var referenceInputs: [H3ReferenceInput] {
-        references.compactMap { reference in
-            H3ReferenceKind(storedName: reference.kind).map { H3ReferenceInput(kind: $0, path: reference.path) }
-        }
+        references.compactMap { $0.input() }
     }
 }
 
