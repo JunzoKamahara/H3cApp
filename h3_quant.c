@@ -10,6 +10,36 @@
 
 enum { QK = 32, QK_K = 256 };
 
+uint16_t h3_float_to_half(float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    uint32_t sign = (bits >> 16) & 0x8000u;
+    uint32_t exponent = (bits >> 23) & 0xffu;
+    uint32_t mantissa = bits & 0x7fffffu;
+    if (exponent == 0xffu)   /* inf or nan */
+        return (uint16_t)(sign | 0x7c00u | (mantissa ? 0x200u : 0u));
+    int unbiased = (int)exponent - 127 + 15;
+    if (unbiased >= 0x1f) return (uint16_t)(sign | 0x7c00u);
+    if (unbiased <= 0) {
+        if (unbiased < -10) return (uint16_t)sign;
+        /* subnormal half: shift the hidden bit in and round */
+        mantissa |= 0x800000u;
+        unsigned shift = (unsigned)(14 - unbiased);
+        uint32_t half_mantissa = mantissa >> shift;
+        uint32_t remainder = mantissa & ((1u << shift) - 1u);
+        uint32_t halfway = 1u << (shift - 1);
+        if (remainder > halfway || (remainder == halfway && (half_mantissa & 1u)))
+            half_mantissa++;
+        return (uint16_t)(sign | half_mantissa);
+    }
+    uint32_t half_mantissa = mantissa >> 13;
+    uint32_t remainder = mantissa & 0x1fffu;
+    uint32_t result = sign | ((uint32_t)unbiased << 10) | half_mantissa;
+    if (remainder > 0x1000u || (remainder == 0x1000u && (result & 1u)))
+        result++;   /* may carry into the exponent, which is correct */
+    return (uint16_t)result;
+}
+
 float h3_half_to_float(uint16_t half) {
     uint32_t sign = (uint32_t)(half & 0x8000u) << 16;
     uint32_t exponent = (half >> 10) & 0x1fu;

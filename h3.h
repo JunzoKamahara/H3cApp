@@ -33,7 +33,12 @@ typedef enum {
     H3_REFERENCE_IMAGE = 1,
     H3_REFERENCE_VIDEO = 2,
     H3_REFERENCE_AUDIO = 3,
-    H3_REFERENCE_VIDEO_AUDIO = 4
+    H3_REFERENCE_VIDEO_AUDIO = 4,
+    /* A RefMod: a .safetensors file holding an already encoded reference
+     * latent (image, video or audio; see h3_refmod.h). It joins the DiT's
+     * references like the others but is not shown to Qwen, so the prompt
+     * carries no <Picture n> label for it. */
+    H3_REFERENCE_REFMOD = 5
 } h3_reference_kind;
 
 typedef struct {
@@ -41,6 +46,12 @@ typedef struct {
     const char *path;
     const char *audio_path;
     int include_embedded_audio;
+    /* H3_REFERENCE_REFMOD only: 0 < strength <= 1 (1 = the stored latent;
+     * below that it is mixed toward a blurred copy of itself, as the
+     * upstream Apply node does), and member is the 0-based bundle member or
+     * -1 for a single-latent file. Ignored for the other kinds. */
+    float strength;
+    int member;
 } h3_reference;
 
 typedef enum {

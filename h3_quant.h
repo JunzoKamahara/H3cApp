@@ -61,5 +61,8 @@ int h3_mlx_dequantize_row(const uint32_t *packed, const uint16_t *scales,
                           uint32_t bits, uint32_t group_size, float *out);
 
 float h3_half_to_float(uint16_t half);
+/* IEEE half from float, round to nearest even; out-of-range values become
+ * infinities, NaN stays NaN. */
+uint16_t h3_float_to_half(float value);
 
 #endif

@@ -1,4 +1,5 @@
 #include "h3_safetensors.h"
+#include "h3_json.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -15,28 +16,20 @@
  * untrusted and every level costs stack; real ones skip only flat values. */
 #define H3_JSON_MAX_DEPTH 64u
 
-typedef struct {
-    const char *at;
-    const char *end;
-    char *error;
-    size_t error_size;
-    unsigned depth;
-} h3_json_cursor;
-
-static int h3_json_fail(h3_json_cursor *cursor, const char *message) {
+int h3_json_fail(h3_json_cursor *cursor, const char *message) {
     if (cursor->error && cursor->error_size) {
         snprintf(cursor->error, cursor->error_size, "%s", message);
     }
     return 0;
 }
 
-static void h3_json_ws(h3_json_cursor *cursor) {
+void h3_json_ws(h3_json_cursor *cursor) {
     while (cursor->at < cursor->end &&
            (*cursor->at == ' ' || *cursor->at == '\n' ||
             *cursor->at == '\r' || *cursor->at == '\t')) cursor->at++;
 }
 
-static int h3_json_take(h3_json_cursor *cursor, char expected) {
+int h3_json_take(h3_json_cursor *cursor, char expected) {
     h3_json_ws(cursor);
     if (cursor->at >= cursor->end || *cursor->at != expected) {
         return h3_json_fail(cursor, "malformed safetensors JSON header");
@@ -52,7 +45,7 @@ static int h3_hex(char value) {
     return -1;
 }
 
-static char *h3_json_string(h3_json_cursor *cursor) {
+char *h3_json_string(h3_json_cursor *cursor) {
     h3_json_ws(cursor);
     if (cursor->at >= cursor->end || *cursor->at != '"') {
         h3_json_fail(cursor, "expected JSON string");
@@ -119,7 +112,27 @@ malformed:
     return NULL;
 }
 
-static int h3_json_uint(h3_json_cursor *cursor, uint64_t *result) {
+char h3_json_peek(h3_json_cursor *cursor) {
+    h3_json_ws(cursor);
+    return cursor->at < cursor->end ? *cursor->at : '\0';
+}
+
+int h3_json_int(h3_json_cursor *cursor, int *result) {
+    h3_json_ws(cursor);
+    int negative = 0;
+    if (cursor->at < cursor->end && *cursor->at == '-') {
+        negative = 1;
+        cursor->at++;
+    }
+    uint64_t magnitude;
+    if (!h3_json_uint(cursor, &magnitude)) return 0;
+    if (magnitude > (uint64_t)INT_MAX + (negative ? 1u : 0u))
+        return h3_json_fail(cursor, "JSON integer out of range");
+    *result = negative ? (int)(-(int64_t)magnitude) : (int)magnitude;
+    return 1;
+}
+
+int h3_json_uint(h3_json_cursor *cursor, uint64_t *result) {
     h3_json_ws(cursor);
     if (cursor->at >= cursor->end || *cursor->at < '0' || *cursor->at > '9') {
         return h3_json_fail(cursor, "expected unsigned JSON integer");
@@ -137,7 +150,6 @@ static int h3_json_uint(h3_json_cursor *cursor, uint64_t *result) {
     return 1;
 }
 
-static int h3_json_skip(h3_json_cursor *cursor);
 
 static int h3_json_skip_compound(h3_json_cursor *cursor, char open, char close) {
     if (cursor->depth >= H3_JSON_MAX_DEPTH)
@@ -169,7 +181,7 @@ static int h3_json_skip_compound(h3_json_cursor *cursor, char open, char close) 
     }
 }
 
-static int h3_json_skip(h3_json_cursor *cursor) {
+int h3_json_skip(h3_json_cursor *cursor) {
     h3_json_ws(cursor);
     if (cursor->at >= cursor->end) return h3_json_fail(cursor, "missing JSON value");
     if (*cursor->at == '"') {

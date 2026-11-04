@@ -299,9 +299,15 @@ static int ref2va_spans(const h3_reference_presentation *references,
         } else if (reference->kind == H3_PRESENTATION_AUDIO) {
             if (!reference->has_audio || reference->vision ||
                 reference->vision_count) goto invalid;
+        } else if (reference->kind == H3_PRESENTATION_HIDDEN) {
+            if (reference->has_audio || reference->vision ||
+                reference->vision_count) goto invalid;
+            /* A RefMod stands in for the visual Ref2VA needs; the prompt
+             * is then encoded without any vision span. */
+            have_visual = 1;
         } else goto invalid;
     }
-    if (!have_visual || !count) {
+    if (!have_visual) {
         fail(error, error_size,
              "Ref2VA audio requires an image or video reference");
         return 0;
@@ -334,7 +340,8 @@ static int build_ref2va(const h3_tokenizer *tokenizer, const char *prompt,
                 !tokenize_append(tokenizer, prefix, ids,
                                  error, error_size)) return 0;
         }
-        if (reference->kind == H3_PRESENTATION_AUDIO) continue;
+        if (reference->kind == H3_PRESENTATION_AUDIO ||
+            reference->kind == H3_PRESENTATION_HIDDEN) continue;
         if (reference->kind == H3_PRESENTATION_IMAGE) {
             int length = snprintf(prefix, sizeof(prefix), "<Picture %zu>: ",
                                   ++image_ordinal);
@@ -404,6 +411,17 @@ static int ref2va_run(const h3_tokenizer *tokenizer,
         if (count_only) {
             *tokens = ids.count;
             ok = 1;
+        } else if (span_count == 0) {
+            /* Only hidden (RefMod) and audio references: the prompt alone,
+             * through the same text-only path T2V uses, on the Ref2VA
+             * weights. */
+            ok = ids.count && ids.count <= INT_MAX &&
+                 h3_text_encode_bf16(weight_directory, shader_source_path,
+                                     ids.values, ids.count, progress,
+                                     progress_opaque, output, error,
+                                     error_size);
+            if (!ok && (!error || !*error))
+                fail(error, error_size, "Ref2VA prompt is empty");
         } else {
             ok = encode_presentation(weight_directory, shader_source_path,
                 &ids, spans, visions, span_count, progress, progress_opaque,

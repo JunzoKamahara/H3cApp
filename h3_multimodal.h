@@ -34,11 +34,15 @@ int h3_multimodal_fl2va_token_count(const h3_tokenizer *tokenizer,
 typedef enum {
     H3_PRESENTATION_IMAGE = 1,
     H3_PRESENTATION_VIDEO = 2,
-    H3_PRESENTATION_AUDIO = 3
+    H3_PRESENTATION_AUDIO = 3,
+    /* A reference the DiT sees but Qwen does not (a RefMod): no label, no
+     * vision span, and the other kinds' ordinals are unaffected. */
+    H3_PRESENTATION_HIDDEN = 4
 } h3_presentation_kind;
 
 /* A video owns one Qwen vision output per sampled two-frame block and one
- * timestamp per block. Images own exactly one output; audio owns none. */
+ * timestamp per block. Images own exactly one output; audio and hidden
+ * references own none. */
 typedef struct {
     h3_presentation_kind kind;
     int has_audio;

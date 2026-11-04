@@ -10,6 +10,7 @@
 #include "h3_metal.h"
 #include "h3_multimodal.h"
 #include "h3_plan.h"
+#include "h3_refmod.h"
 #include "h3_safetensors.h"
 #include "h3_text_encoder.h"
 #include "h3_tokenizer.h"
@@ -445,6 +446,10 @@ static char *h3_conditioning_key(const char *prompt, const h3_params *params,
                            reference->include_embedded_audio) ||
             !h3_key_file(&key, "media", reference->path) ||
             !h3_key_file(&key, "audio", reference->audio_path)) goto failed;
+        if (reference->kind == H3_REFERENCE_REFMOD &&
+            !h3_key_append(&key, "|strength=%.6g|member=%d",
+                           (double)reference->strength, reference->member))
+            goto failed;
     }
     return key.text;
 failed:
@@ -1105,6 +1110,25 @@ static int h3_valid_params(h3_ctx *ctx, const h3_params *params) {
                 return 0;
             }
             break;
+        case H3_REFERENCE_REFMOD:
+            /* Counted against the image/video/audio limits once its file
+             * says what it holds (h3_refmod_reference); here it stands in
+             * for the visual Ref2VA needs. */
+            visual++;
+            if (!isfinite(reference->strength) || reference->strength <= 0.0f ||
+                reference->strength > 1.0f) {
+                h3_set_error(ctx,
+                    "RefMod %zu needs a strength above 0 and at most 1",
+                    index + 1);
+                return 0;
+            }
+            if (reference->member < -1 ||
+                reference->member >= H3_REFMOD_MAX_MEMBERS) {
+                h3_set_error(ctx, "RefMod %zu has an invalid member index",
+                             index + 1);
+                return 0;
+            }
+            break;
         default:
             h3_set_error(ctx, "reference %zu has an unknown type", index + 1);
             return 0;
@@ -1659,6 +1683,82 @@ static int h3_pooled_audio_encode(const char *audio_vae_path,
     return ok;
 }
 
+/* Resolves a RefMod reference to its layout entry from the file's header
+ * alone, for h3_generate and h3_plan_generation alike: the member's stored
+ * latent geometry is all the layout needs. An audio member's audio_t is
+ * left for the audio pass to fill. */
+static int h3_refmod_reference(const h3_reference *reference, size_t index,
+                               h3_layout_ref *layout, h3_refmod_member *member,
+                               char *error, size_t error_size) {
+    h3_refmod_info info;
+    char detail[512];
+    if (!h3_refmod_inspect(reference->path, &info, detail, sizeof(detail))) {
+        snprintf(error, error_size, "RefMod %zu: %s", index + 1, detail);
+        return 0;
+    }
+    int ok = 0;
+    if (info.bundle && reference->member < 0) {
+        snprintf(error, error_size,
+                 "RefMod %zu is a bundle of %zu members: choose one",
+                 index + 1, info.member_count);
+    } else if (reference->member >= (int)info.member_count) {
+        snprintf(error, error_size, "RefMod %zu has %zu member%s, not %d",
+                 index + 1, info.member_count,
+                 info.member_count == 1 ? "" : "s", reference->member + 1);
+    } else {
+        const h3_refmod_member *chosen =
+            &info.members[reference->member < 0 ? 0 : reference->member];
+        if (!chosen->supported) {
+            snprintf(error, error_size, "RefMod %zu member \"%s\" is not "
+                     "supported", index + 1, chosen->name);
+        } else {
+            if (chosen->kind == H3_REFMOD_AUDIO)
+                *layout = (h3_layout_ref){H3_LAYOUT_REF_AUDIO, 0, 0, 0, 0};
+            else
+                *layout = (h3_layout_ref){
+                    chosen->kind == H3_REFMOD_IMAGE ? H3_LAYOUT_REF_IMAGE :
+                                                      H3_LAYOUT_REF_VIDEO,
+                    chosen->latent_t, chosen->latent_h, chosen->latent_w, 0};
+            if (member) *member = *chosen;
+            ok = 1;
+        }
+    }
+    h3_refmod_info_free(&info);
+    return ok;
+}
+
+/* The 9 images / 3 videos / 3 audio inputs rule (h3_valid_params) once
+ * every RefMod's contents are known: a RefMod counts as what its member
+ * is, read from the layout entry h3_refmod_reference filled. */
+static int h3_reference_limits(const h3_params *params,
+                               const h3_layout_ref *layout_references,
+                               char *error, size_t error_size) {
+    size_t images = 0, videos = 0, audio_inputs = 0;
+    for (size_t index = 0; index < params->reference_count; index++) {
+        const h3_reference *reference = &params->references[index];
+        switch (reference->kind) {
+        case H3_REFERENCE_IMAGE: images++; break;
+        case H3_REFERENCE_VIDEO:
+            videos++;
+            if (reference->include_embedded_audio) audio_inputs++;
+            break;
+        case H3_REFERENCE_AUDIO: audio_inputs++; break;
+        case H3_REFERENCE_VIDEO_AUDIO: videos++; audio_inputs++; break;
+        case H3_REFERENCE_REFMOD:
+            if (layout_references[index].kind == H3_LAYOUT_REF_IMAGE) images++;
+            else if (layout_references[index].kind == H3_LAYOUT_REF_VIDEO) videos++;
+            else audio_inputs++;
+            break;
+        }
+    }
+    if (images > 9 || videos > 3 || audio_inputs > 3) {
+        snprintf(error, error_size,
+                 "Ref2VA limits are 9 images, 3 videos, and 3 audio inputs");
+        return 0;
+    }
+    return 1;
+}
+
 /* The canvas a visual Ref2VA reference is read at, for h3_generate and
  * h3_plan_generation alike. */
 static int h3_reference_canvas(const h3_ctx *ctx, const h3_params *params,
@@ -1757,7 +1857,21 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
             goto done;
         }
         int64_t samples = 0;
-        if (reference->kind == H3_REFERENCE_AUDIO) {
+        if (reference->kind == H3_REFERENCE_REFMOD) {
+            /* A saved latent: its geometry comes from the file, it costs no
+             * encoder or Qwen work, and Qwen gets no label for it. */
+            h3_refmod_member member;
+            if (!h3_refmod_reference(reference, index, &layout_references[index],
+                                     &member, detail, sizeof(detail))) {
+                snprintf(message, message_size, "%s", detail);
+                goto done;
+            }
+            presentations[index].kind = H3_PRESENTATION_HIDDEN;
+            if (member.kind == H3_REFMOD_AUDIO)
+                samples = (int64_t)member.latent_t * 800;
+            else
+                reference_rows += member.tokens;
+        } else if (reference->kind == H3_REFERENCE_AUDIO) {
             if (!h3_av_audio_sample_count(reference->path, &samples,
                                           detail, sizeof(detail))) {
                 snprintf(message, message_size, "%s", detail);
@@ -1863,6 +1977,9 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
             reference_rows += (size_t)layout_references[index].audio_t * 2;
         }
     }
+    if (reference_count &&
+        !h3_reference_limits(params, layout_references, message, message_size))
+        goto done;
 
     int keyframes[2 + 17] = {0};
     size_t keyframe_count = 0;
@@ -2200,6 +2317,18 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     if (ref2va) {
         for (size_t index = 0; index < params->reference_count; index++) {
             const h3_reference *reference = &params->references[index];
+            if (reference->kind == H3_REFERENCE_REFMOD) {
+                h3_refmod_member member;
+                if (!h3_refmod_reference(reference, index,
+                                         &layout_references[index], &member,
+                                         detail, sizeof(detail))) {
+                    h3_set_error(ctx, "%s", detail);
+                    goto cleanup;
+                }
+                presentations[index].kind = H3_PRESENTATION_HIDDEN;
+                (void)member;
+                continue;
+            }
             if (reference->kind == H3_REFERENCE_AUDIO) {
                 presentations[index].kind = H3_PRESENTATION_AUDIO;
                 layout_references[index] = (h3_layout_ref){
@@ -2282,12 +2411,62 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             visual_count++;
         }
 
+        if (!h3_reference_limits(params, layout_references,
+                                 detail, sizeof(detail))) {
+            h3_set_error(ctx, "%s", detail);
+            goto cleanup;
+        }
         size_t total_audio_samples = 0;
         for (size_t index = 0; index < params->reference_count; index++) {
             const h3_reference *reference = &params->references[index];
             const char *audio_path = NULL;
             int truncate = 0;
             int max_samples = 32000 * 15;
+            if (reference->kind == H3_REFERENCE_REFMOD) {
+                if (layout_references[index].kind != H3_LAYOUT_REF_AUDIO)
+                    continue;
+                /* An audio RefMod: the audio VAE's latent, already in the
+                 * normalized space the rows carry; packed exactly as an
+                 * encoded soundtrack is below. */
+                h3_refmod_latent refmod;
+                if (!h3_refmod_load(reference->path, reference->member,
+                                    reference->strength, &refmod, NULL,
+                                    detail, sizeof(detail))) {
+                    h3_set_error(ctx, "RefMod %zu: %s", index + 1, detail);
+                    goto cleanup;
+                }
+                size_t refmod_samples = (size_t)refmod.audio_t * 800;
+                size_t elements = (size_t)refmod.audio_t * 2 * 32;
+                if (refmod_samples > (size_t)32000 * 15 - total_audio_samples) {
+                    h3_refmod_latent_free(&refmod);
+                    h3_set_error(ctx,
+                        "ordered reference audio exceeds 15 seconds in total");
+                    goto cleanup;
+                }
+                float *grown = realloc(
+                    condition_audio_rows,
+                    (condition_audio_elements + elements) * sizeof(*grown));
+                if (!grown) {
+                    h3_refmod_latent_free(&refmod);
+                    h3_set_error(ctx,
+                        "out of memory packing reference audio conditions");
+                    goto cleanup;
+                }
+                condition_audio_rows = grown;
+                float *rows = condition_audio_rows + condition_audio_elements;
+                int length = refmod.audio_t;
+                for (int stereo = 0; stereo < 2; stereo++)
+                    for (int time = 0; time < length; time++)
+                        for (int channel = 0; channel < 32; channel++)
+                            rows[((size_t)stereo * length + time) * 32 + channel] =
+                                refmod.values[((size_t)channel * 2 + stereo) *
+                                              length + time];
+                condition_audio_elements += elements;
+                total_audio_samples += refmod_samples;
+                layout_references[index].audio_t = length;
+                h3_refmod_latent_free(&refmod);
+                continue;
+            }
             if (reference->kind == H3_REFERENCE_AUDIO) {
                 audio_path = reference->path;
             } else if (reference->kind == H3_REFERENCE_VIDEO_AUDIO) {
@@ -2429,15 +2608,26 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         }
     }
 
-    if (visual_count) {
-        for (size_t image = 0; image < visual_count; image++) {
-            int image_latent_w, image_latent_h;
-            h3_latent_canvas(condition_widths[image], condition_heights[image],
-                             &image_latent_w, &image_latent_h);
-            int image_latent_t = h3_video_encoder_latent_t(
-                condition_frames[image]);
-            size_t rows = (size_t)image_latent_t *
-                          (size_t)image_latent_h * (size_t)image_latent_w / 4;
+    if (visual_count || ref2va) {
+        /* Reference rows in request order: Ref2VA walks the references
+         * (the DiT consumes its reference segments in that order), FL2VA
+         * its frame anchors. */
+        size_t pass_count = ref2va ? params->reference_count : visual_count;
+        for (size_t pass = 0; pass < pass_count; pass++) {
+            size_t rows;
+            if (ref2va) {
+                const h3_layout_ref *reference = &layout_references[pass];
+                if (reference->kind == H3_LAYOUT_REF_AUDIO) continue;
+                rows = (size_t)reference->latent_t *
+                       (size_t)reference->latent_h *
+                       (size_t)reference->latent_w / 4;
+            } else {
+                int image_latent_w, image_latent_h;
+                h3_latent_canvas(condition_widths[pass], condition_heights[pass],
+                                 &image_latent_w, &image_latent_h);
+                rows = (size_t)h3_video_encoder_latent_t(condition_frames[pass]) *
+                       (size_t)image_latent_h * (size_t)image_latent_w / 4;
+            }
             if (rows > SIZE_MAX / 96 ||
                 condition_video_elements > SIZE_MAX - rows * 96) {
                 h3_set_error(ctx, "condition row count overflows");
@@ -2450,14 +2640,62 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             h3_set_error(ctx, "condition storage size overflows");
             goto cleanup;
         }
-        condition_video_rows = malloc(condition_video_elements *
-                                      sizeof(*condition_video_rows));
-        if (!condition_video_rows) {
-            h3_set_error(ctx, "out of memory allocating visual condition rows");
-            goto cleanup;
+        if (condition_video_elements) {
+            condition_video_rows = malloc(condition_video_elements *
+                                          sizeof(*condition_video_rows));
+            if (!condition_video_rows) {
+                h3_set_error(ctx,
+                    "out of memory allocating visual condition rows");
+                goto cleanup;
+            }
         }
         size_t condition_offset = 0;
-        for (size_t image = 0; image < visual_count; image++) {
+        for (size_t pass = 0; pass < pass_count; pass++) {
+            size_t image = pass;
+            if (ref2va) {
+                const h3_reference *reference = &params->references[pass];
+                const h3_layout_ref *entry = &layout_references[pass];
+                if (entry->kind == H3_LAYOUT_REF_AUDIO) continue;
+                if (reference->kind == H3_REFERENCE_REFMOD) {
+                    size_t row_elements = (size_t)entry->latent_t *
+                                          (size_t)entry->latent_h *
+                                          (size_t)entry->latent_w / 4 * 96;
+                    h3_refmod_latent refmod;
+                    if (!h3_refmod_load(reference->path, reference->member,
+                                        reference->strength, &refmod, NULL,
+                                        detail, sizeof(detail))) {
+                        h3_set_error(ctx, "RefMod %zu: %s", pass + 1, detail);
+                        goto cleanup;
+                    }
+                    if (refmod.kind == H3_REFMOD_AUDIO ||
+                        refmod.time != entry->latent_t ||
+                        refmod.height != entry->latent_h ||
+                        refmod.width != entry->latent_w) {
+                        h3_refmod_latent_free(&refmod);
+                        h3_set_error(ctx,
+                            "RefMod %zu changed between planning and loading",
+                            pass + 1);
+                        goto cleanup;
+                    }
+                    float *rows = condition_video_rows + condition_offset;
+                    if (!h3_dit_patchify_video(
+                            refmod.values, 24, refmod.time, refmod.height,
+                            refmod.width, rows, row_elements)) {
+                        h3_refmod_latent_free(&refmod);
+                        h3_set_error(ctx, "cannot patchify RefMod latent");
+                        goto cleanup;
+                    }
+                    h3_refmod_latent_free(&refmod);
+                    condition_offset += row_elements;
+                    continue;
+                }
+                image = reference_visual_indices[pass];
+                if (image == SIZE_MAX) {
+                    h3_set_error(ctx, "reference %zu has no decoded media",
+                                 pass + 1);
+                    goto cleanup;
+                }
+            }
             int image_latent_w, image_latent_h;
             h3_latent_canvas(condition_widths[image], condition_heights[image],
                              &image_latent_w, &image_latent_h);
