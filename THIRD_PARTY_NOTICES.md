@@ -214,3 +214,15 @@ app records facts and labels nothing "commercial".
 Base model notice, as the repository's `NOTICE` states it: "MiniMax H3 is
 licensed under the MiniMax H3 Community License Agreement, Copyright © 2026
 MiniMax. All Rights Reserved."
+
+## RefMod file format (ComfyUI-MiniMaxH3Mod)
+
+The RefMod files the app reads and writes (`h3_refmod.c`) follow the format
+of the ComfyUI node pack ComfyUI-MiniMaxH3Mod by Luisa (luisacaotica),
+MIT License, https://github.com/Luisacaotica/ComfyUI-MiniMaxH3Mod: the
+`refmod_meta` header metadata, the `latent`/`ref_N` tensors, and the
+strength, pooling and refinement arithmetic its nodes define. No code from
+that project is included; the format and arithmetic were reimplemented
+from its definitions so that files are interchangeable. The ready-made
+RefMods published for it (for example on Hugging Face) come under their
+own licenses, which the app does not check.

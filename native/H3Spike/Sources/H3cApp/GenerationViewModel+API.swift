@@ -334,6 +334,107 @@ extension GenerationViewModel {
             } catch {
                 return .error(500, error.localizedDescription)
             }
+        case ("GET", "/api/refmods"):
+            // The RefMod library (モデル管理 > RefMod): each file with what its
+            // header says, or "members": null while it is still being read.
+            library.syncRefModFolder()
+            return .json(200, library.refmods.map { entry -> [String: Any] in
+                var item: [String: Any] = ["id": entry.id.uuidString, "name": entry.name, "path": entry.path]
+                switch library.refmodInfo(for: entry) {
+                case .success(let info)?:
+                    item["format_version"] = info.formatVersion
+                    item["bundle"] = info.isBundle
+                    item["file_name"] = info.name
+                    item["members"] = info.members.map { member -> [String: Any] in
+                        ["index": member.id, "kind": refModKindName(member.kind),
+                         "mode": member.mode == .compressed ? "compressed" : "full",
+                         "latent_t": member.latentT, "latent_h": member.latentH, "latent_w": member.latentW,
+                         "tokens": member.tokens, "name": member.name, "source": member.source,
+                         "pool": member.pool, "optimize_steps": member.optimizeSteps,
+                         "supported": member.supported]
+                    }
+                case .failure(let error)?:
+                    item["members"] = NSNull()
+                    item["error"] = error.localizedDescription
+                case nil:
+                    item["members"] = NSNull()
+                }
+                return item
+            })
+        case ("POST", "/api/refmods/extract"):
+            // Makes a RefMod from a file: {"path", "name"?, "mode"?
+            // ("full"|"compressed"), "resolution_cap"?, "latent_frames"?,
+            // "pool_long_edge"?, "optimize_steps"?, "max_seconds"?}. Answers
+            // 202 with the output path; GET /api/status reports
+            // refmod_extracting and its phase while it runs, and the file is
+            // listed by GET /api/refmods once written.
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard let path = json["path"] as? String, FileManager.default.fileExists(atPath: path) else {
+                return .error(400, "\"path\" must name an existing image, video or audio file")
+            }
+            guard refModExtraction == nil else { return .error(409, "a RefMod is already being made") }
+            let sourceKind = referenceKind(forPath: path)
+            let kind: H3RefModKind
+            switch sourceKind {
+            case .video, .videoAudio: kind = .video
+            case .audio: kind = .audio
+            case .image: kind = .image
+            case .refmod: return .error(400, "\"path\" is already a RefMod file")
+            }
+            let stem = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+            let name = ((json["name"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            try? FileManager.default.createDirectory(atPath: defaultRefModDirectory, withIntermediateDirectories: true)
+            var extractRequest = H3RefModExtractRequest(
+                sourcePath: path,
+                outputPath: ModelLibrary.freePath(in: defaultRefModDirectory, stem: name.isEmpty ? stem : name,
+                                                  extension: "safetensors"),
+                kind: kind)
+            extractRequest.name = name.isEmpty ? stem : name
+            if let raw = json["mode"] {
+                switch raw as? String {
+                case "full": extractRequest.mode = .full
+                case "compressed":
+                    guard kind != .audio else { return .error(400, "audio RefMods have no compressed mode") }
+                    extractRequest.mode = .compressed
+                default: return .error(400, "\"mode\" must be full or compressed")
+                }
+            }
+            func integer(_ key: String, _ range: ClosedRange<Int>) -> Result<Int?, ReferenceParseError> {
+                guard let raw = json[key], !(raw is NSNull) else { return .success(nil) }
+                guard let value = jsonInteger(raw), range.contains(value) else {
+                    return .failure(ReferenceParseError(
+                        message: "\"\(key)\" must be an integer from \(range.lowerBound) to \(range.upperBound)"))
+                }
+                return .success(value)
+            }
+            let fields: [(String, ClosedRange<Int>, (Int) -> Void)] = [
+                ("resolution_cap", 320 ... 4096, { extractRequest.resolutionCap = $0 }),
+                ("latent_frames", 1 ... 362, { extractRequest.latentFrames = $0 }),
+                ("pool_long_edge", 2 ... 64, { extractRequest.poolLongEdge = $0 }),
+                ("optimize_steps", 0 ... 100_000, { extractRequest.optimizeSteps = $0 }),
+                ("max_seconds", 1 ... 15, { extractRequest.maxSeconds = $0 }),
+            ]
+            for (key, range, apply) in fields {
+                switch integer(key, range) {
+                case .success(let value): if let value { apply(value) }
+                case .failure(let error): return .error(400, error.message)
+                }
+            }
+            let finalRequest = extractRequest
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    _ = try await self.extractRefMod(finalRequest)
+                    self.projectMessage = String(localized: "RefMod「\(finalRequest.name)」を作りました")
+                } catch {
+                    self.projectMessage = String(localized: "RefModを作れませんでした: \(error.localizedDescription)")
+                }
+            }
+            return .json(202, ["ok": true, "output": finalRequest.outputPath])
+        case ("POST", "/api/refmods/extract/cancel"):
+            guard refModExtraction != nil else { return .error(409, "no RefMod is being made") }
+            cancelRefModExtraction()
+            return .json(200, ["ok": true])
         case ("GET", "/api/loras"):
             return .json(200, library.loras.map {
                 ["id": $0.id.uuidString, "name": $0.name, "path": $0.path,
@@ -502,6 +603,9 @@ extension GenerationViewModel {
             // window's last word on it (also in GET /api/project).
             "upscaling_video": isUpscalingVideo,
             "upscale_progress": upscaleProgress,
+            // A RefMod being made (POST /api/refmods/extract): its phase and
+            // the phase's own progress.
+            "refmod_extracting": refModExtraction != nil,
             "message": projectMessage as Any,
             "is_cancelling": isCancelling,
             "phase": phase,
@@ -510,6 +614,11 @@ extension GenerationViewModel {
             "stage_detail": stageDetail,
             "result_available": resultURL != nil,
         ]
+        if let state = refModExtraction {
+            body["refmod_extract_phase"] = state.phase
+            body["refmod_extract_progress"] = state.total > 0 ? Double(state.completed) / Double(state.total) : 0
+            body["refmod_extract_name"] = state.name
+        }
         if let estimatedRemainingSeconds { body["estimated_remaining_seconds"] = estimatedRemainingSeconds }
         if let progressBarFraction { body["progress_fraction"] = progressBarFraction }
         if let errorMessage { body["error_message"] = errorMessage }
@@ -1145,6 +1254,14 @@ private let defaultStepsForAPI = 20
 /// "member"?} objects for RefMods (a plain .safetensors path is a RefMod at
 /// strength 1, single-latent file). Absent or null means none.
 struct ReferenceParseError: Error { let message: String }
+
+func refModKindName(_ kind: H3RefModKind) -> String {
+    switch kind {
+    case .image: return "image"
+    case .video: return "video"
+    case .audio: return "audio"
+    }
+}
 
 func parseReferenceEntries(_ value: Any?) -> Result<[H3ReferenceInput], ReferenceParseError> {
     guard let value, !(value is NSNull) else { return .success([]) }

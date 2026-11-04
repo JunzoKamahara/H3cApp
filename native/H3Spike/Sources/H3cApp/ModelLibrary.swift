@@ -23,6 +23,29 @@ let defaultH3ModelDownloadPath = h3AppSupportDirectory + "/MiniMax-H3"
 /// outside the folders macOS asks permission for (protectedFolderName).
 let defaultLoRADirectory = h3AppSupportDirectory + "/LoRA"
 
+/// Where RefMod files (saved reference latents, H3RefModInfo) are kept:
+/// the ones made here are written there, and files put there by hand are
+/// picked up on the next look (ModelLibrary.syncRefModFolder).
+let defaultRefModDirectory = h3AppSupportDirectory + "/RefMods"
+
+/// A RefMod file the library knows: its name is the user's label here (the
+/// file's own metadata name is shown beside it).
+struct RefModEntry: Identifiable, Codable, Equatable {
+    let id: UUID
+    var name: String
+    var path: String
+
+    init(id: UUID = UUID(), name: String, path: String) {
+        self.id = id
+        self.name = name
+        self.path = path
+    }
+
+    var isInRefModFolder: Bool {
+        (path as NSString).deletingLastPathComponent == defaultRefModDirectory
+    }
+}
+
 /// The folder macOS guards a path with, for the message - Desktop,
 /// Documents, Downloads, iCloud Drive or another volume - or nil. An app
 /// reading a file there (outside the open panel that picked it) is asked
@@ -166,6 +189,10 @@ final class ModelLibrary: ObservableObject {
     @Published private(set) var models: [H3ModelEntry] = []
     @Published private(set) var activeModelID: UUID?
     @Published private(set) var loras: [LoRAEntry] = []
+    @Published private(set) var refmods: [RefModEntry] = []
+    /// RefMod headers, read in the background like LoRA headers.
+    @Published private var refmodInfoCache: [String: Result<H3RefModInfo, Error>] = [:]
+    private var refmodInfoTasks: [String: Task<Result<H3RefModInfo, Error>, Never>] = [:]
     /// h3_lora_inspect results by path (header reads only), filled on a
     /// background task: opening a file can wait indefinitely - e.g. on
     /// macOS's 書類-folder permission prompt - and must never hold up the
@@ -192,6 +219,7 @@ final class ModelLibrary: ObservableObject {
     private static let modelsKey = "H3ModelLibrary.models"
     private static let activeModelKey = "H3ModelLibrary.activeModelID"
     private static let lorasKey = "H3ModelLibrary.loras"
+    private static let refmodsKey = "H3ModelLibrary.refmods"
     /// Before stacking: the one selected LoRA. Read once to migrate.
     private static let legacyActiveLoRAKey = "H3ModelLibrary.activeLoRAID"
 
@@ -202,6 +230,8 @@ final class ModelLibrary: ObservableObject {
     init() {
         models = Self.decodeArray(H3ModelEntry.self, key: Self.modelsKey)
         loras = Self.decodeArray(LoRAEntry.self, key: Self.lorasKey)
+        refmods = Self.decodeArray(RefModEntry.self, key: Self.refmodsKey)
+        syncRefModFolder()
         activeModelID = UUID(uuidString: defaults.string(forKey: Self.activeModelKey) ?? "")
         listsObserver = NotificationCenter.default.addObserver(
             forName: Self.listsChanged, object: nil, queue: .main
@@ -405,20 +435,135 @@ final class ModelLibrary: ObservableObject {
     /// free name, and returns its new path. Off the main actor: a copy to
     /// another volume takes a while for a 1.4 GB file.
     nonisolated static func moveLoRAFileToFolder(_ path: String, copy: Bool) throws -> String {
+        try moveFileToFolder(path, directory: defaultLoRADirectory, copy: copy)
+    }
+
+    /// The same for a RefMod file and the RefMods folder.
+    nonisolated static func moveRefModFileToFolder(_ path: String, copy: Bool) throws -> String {
+        try moveFileToFolder(path, directory: defaultRefModDirectory, copy: copy)
+    }
+
+    /// A path in `directory` that no file has yet, for a file named after
+    /// `stem` (with "name 2", "name 3" when taken).
+    nonisolated static func freePath(in directory: String, stem: String, extension ext: String) -> String {
         let fm = FileManager.default
-        try fm.createDirectory(atPath: defaultLoRADirectory, withIntermediateDirectories: true)
-        let source = URL(fileURLWithPath: path)
-        let base = source.deletingPathExtension().lastPathComponent
-        let ext = source.pathExtension
-        var target = URL(fileURLWithPath: defaultLoRADirectory).appendingPathComponent(source.lastPathComponent)
+        var target = URL(fileURLWithPath: directory).appendingPathComponent(stem).appendingPathExtension(ext)
         var number = 2
         while fm.fileExists(atPath: target.path) {
-            target = URL(fileURLWithPath: defaultLoRADirectory)
-                .appendingPathComponent("\(base) \(number)").appendingPathExtension(ext)
+            target = URL(fileURLWithPath: directory).appendingPathComponent("\(stem) \(number)").appendingPathExtension(ext)
             number += 1
         }
+        return target.path
+    }
+
+    nonisolated private static func moveFileToFolder(_ path: String, directory: String, copy: Bool) throws -> String {
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        let source = URL(fileURLWithPath: path)
+        let target = URL(fileURLWithPath: freePath(in: directory, stem: source.deletingPathExtension().lastPathComponent,
+                                                   extension: source.pathExtension))
         if copy { try fm.copyItem(at: source, to: target) } else { try fm.moveItem(at: source, to: target) }
         return target.path
+    }
+
+    // MARK: RefMods
+
+    /// Registers a RefMod file (already where it should stay). The name
+    /// defaults to the file's stem; a path registered twice keeps its entry.
+    @discardableResult
+    func addRefMod(path: String, name: String? = nil) -> RefModEntry {
+        if let existing = refmods.first(where: { $0.path == path }) { return existing }
+        let entry = RefModEntry(name: name ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
+                                path: path)
+        refmods.append(entry)
+        persistRefMods()
+        requestRefModInfo(path: path)
+        return entry
+    }
+
+    func removeRefMod(id: UUID) {
+        refmods.removeAll { $0.id == id }
+        persistRefMods()
+    }
+
+    func renameRefMod(id: UUID, name: String) {
+        guard let index = refmods.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        refmods[index].name = trimmed
+        persistRefMods()
+    }
+
+    func moveRefMods(fromOffsets source: IndexSet, toOffset destination: Int) {
+        refmods.move(fromOffsets: source, toOffset: destination)
+        persistRefMods()
+    }
+
+    /// Registers .safetensors files in the RefMods folder that aren't
+    /// listed yet (made here, or put there by hand), and forgets entries
+    /// whose file in that folder is gone. Called when the lists load and
+    /// when モデル管理 opens.
+    func syncRefModFolder() {
+        let fm = FileManager.default
+        let names = (try? fm.contentsOfDirectory(atPath: defaultRefModDirectory)) ?? []
+        var changed = false
+        for name in names.sorted() where name.lowercased().hasSuffix(".safetensors") {
+            let path = defaultRefModDirectory + "/" + name
+            if refmods.contains(where: { $0.path == path }) { continue }
+            refmods.append(RefModEntry(name: URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
+                                       path: path))
+            requestRefModInfo(path: path)
+            changed = true
+        }
+        let before = refmods.count
+        refmods.removeAll { $0.isInRefModFolder && !fm.fileExists(atPath: $0.path) }
+        if changed || refmods.count != before { persistRefMods() }
+    }
+
+    /// The file's header, or nil while it is still being read (the read is
+    /// started here; views refresh when it lands).
+    func refmodInfo(path: String) -> Result<H3RefModInfo, Error>? {
+        if let cached = refmodInfoCache[path] { return cached }
+        requestRefModInfo(path: path)
+        return nil
+    }
+
+    func refmodInfo(for entry: RefModEntry) -> Result<H3RefModInfo, Error>? { refmodInfo(path: entry.path) }
+
+    /// Waits - without blocking the main thread - until this file's header
+    /// has been read.
+    func loadRefModInfo(path: String) async -> Result<H3RefModInfo, Error> {
+        if let cached = refmodInfoCache[path] { return cached }
+        let result = await requestRefModInfo(path: path).value
+        refmodInfoCache[path] = result
+        return result
+    }
+
+    func retryFailedRefModInfo() {
+        for (path, result) in refmodInfoCache {
+            if case .failure = result { refmodInfoCache[path] = nil }
+        }
+    }
+
+    /// Forgets a file's header (after it was rewritten in place).
+    func forgetRefModInfo(path: String) {
+        refmodInfoCache[path] = nil
+    }
+
+    @discardableResult
+    private func requestRefModInfo(path: String) -> Task<Result<H3RefModInfo, Error>, Never> {
+        if let running = refmodInfoTasks[path] { return running }
+        let task = Task.detached(priority: .userInitiated) {
+            Result { try H3RefModInfo.inspect(path: path) }
+        }
+        refmodInfoTasks[path] = task
+        Task { [weak self] in
+            let result = await task.value
+            guard let self else { return }
+            self.refmodInfoTasks[path] = nil
+            self.refmodInfoCache[path] = result
+        }
+        return task
     }
 
     func removeLoRA(id: UUID) {
@@ -524,9 +669,15 @@ final class ModelLibrary: ObservableObject {
         NotificationCenter.default.post(name: Self.listsChanged, object: self)
     }
 
+    private func persistRefMods() {
+        Self.encodeArray(refmods, key: Self.refmodsKey)
+        NotificationCenter.default.post(name: Self.listsChanged, object: self)
+    }
+
     private func reloadLists() {
         models = Self.decodeArray(H3ModelEntry.self, key: Self.modelsKey)
         loras = Self.decodeArray(LoRAEntry.self, key: Self.lorasKey)
+        refmods = Self.decodeArray(RefModEntry.self, key: Self.refmodsKey)
         // Each window keeps its own selection, unless it has none (or its
         // model was removed elsewhere): then it takes the one last chosen.
         if activeModel == nil {
@@ -550,4 +701,30 @@ final class ModelLibrary: ObservableObject {
         guard let data = try? JSONEncoder().encode(value) else { return }
         UserDefaults.standard.set(data, forKey: key)
     }
+}
+
+
+/// One line describing a RefMod member: "画像 32×32（256トークン、Full）",
+/// "動画 2.0秒 ..." or "音声 3.0秒（240トークン）", with its own name first
+/// inside a bundle.
+func refmodMemberSummary(_ member: H3RefModMember, inBundle: Bool) -> String {
+    let kind: String
+    switch member.kind {
+    case .image: kind = String(localized: "画像")
+    case .video: kind = String(localized: "動画")
+    case .audio: kind = String(localized: "音声")
+    }
+    var parts: [String] = []
+    if inBundle && !member.name.isEmpty { parts.append(member.name + ": ") }
+    parts.append(kind)
+    if member.kind == .audio {
+        parts.append(String(localized: " \(String(format: "%.1f", member.seconds ?? 0))秒"))
+    } else {
+        parts.append(" \(member.latentW)×\(member.latentH)")
+        if member.latentT > 1 { parts.append(String(localized: "×\(member.latentT)コマ")) }
+    }
+    let mode = member.kind == .audio ? "" :
+        (member.mode == .compressed ? String(localized: "、圧縮") : String(localized: "、Full"))
+    parts.append(String(localized: "（\(member.tokens)トークン\(mode)）"))
+    return parts.joined()
 }

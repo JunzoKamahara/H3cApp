@@ -1044,5 +1044,14 @@ func referenceNames(_ draft: ProjectDraft) -> [String] {
     if draft.imageInputMode == ImageInputMode.firstLastFrame.rawValue {
         return [draft.firstFrame, draft.lastFrame].compactMap { $0 }.map { URL(fileURLWithPath: $0).lastPathComponent }
     }
-    return draft.references.map { URL(fileURLWithPath: $0.path).lastPathComponent }
+    return draft.references.map { reference in
+        let name = URL(fileURLWithPath: reference.path).lastPathComponent
+        guard reference.kind == H3ReferenceKind.refmod.storedName else { return name }
+        var details: [String] = ["RefMod"]
+        if let member = reference.member { details.append(String(localized: "\(member + 1)番目")) }
+        if let strength = reference.strength, strength != 1 {
+            details.append(String(localized: "強さ \(String(format: "%.2f", strength))"))
+        }
+        return name + "（" + details.joined(separator: "、") + "）"
+    }
 }

@@ -12,7 +12,7 @@
 
 - **Text to video:** Describe a scene and generate video with synchronized sound.
 - **Image to video:** Choose a starting image, an ending image, or both.
-- **Reference-based video:** Guide the result using images, videos or audio (optional Ref2VA model required).
+- **Reference-based video:** Guide the result using images, videos or audio (optional Ref2VA model required), or RefMods: references encoded once and saved as small files, compatible with ComfyUI-MiniMaxH3Mod.
 - **Lip sync:** Create video matching a voice recording or song.
 - **Longer videos:** Continue previous clips and join them automatically.
 - **Other features:** Progress previews, project management, and compatible LoRAs.

@@ -46,6 +46,8 @@ struct CreationFormView: View {
     /// The input file shown in Quick Look (clicking its name).
     @State private var quickLookURL: URL?
     @State private var showingClipEditor = false
+    /// 「RefModとして保存…」 for this reference (RefModExtractSheet).
+    @State private var refModSource: H3ReferenceInput?
     @State private var promptSuggestion = randomPromptSuggestion()
 
     private var palette: H3Palette { H3Palette(colorScheme) }
@@ -89,6 +91,13 @@ struct CreationFormView: View {
         .quickLookPreview($quickLookURL)
         .sheet(isPresented: $showingClipEditor) {
             CustomClipsSheet(viewModel: viewModel, isPresented: $showingClipEditor)
+        }
+        .sheet(item: $refModSource) { source in
+            RefModExtractSheet(source: source, viewModel: viewModel, library: library, isPresented: Binding(
+                get: { refModSource != nil }, set: { if !$0 { refModSource = nil } }))
+        }
+        .sheet(item: $viewModel.pendingRefModBundle) { choice in
+            RefModMemberPickerSheet(choice: choice, viewModel: viewModel)
         }
     }
 
@@ -261,27 +270,47 @@ struct CreationFormView: View {
                 }
 
             case .referenceImage:
-                Text("画像・動画・音声の特徴を参考にして動画をつくります。最初のフレームが同じになるとは限りません。音声だけを参照にすることはできないので、画像か動画と組み合わせて追加してください。")
+                Text("画像・動画・音声の特徴を参考にして動画をつくります。最初のフレームが同じになるとは限りません。音声だけを参照にすることはできないので、画像か動画と組み合わせて追加してください。保存済みのRefMod（符号化した参照）も加えられます。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
                 HStack {
                     Text("参照画像・動画・音声").font(.caption).foregroundStyle(palette.textSecondary)
                     Spacer()
+                    Menu("RefModを追加…") {
+                        ForEach(library.refmods) { entry in
+                            Button(entry.name) { viewModel.addReference(path: entry.path) }
+                        }
+                        if !library.refmods.isEmpty { Divider() }
+                        Button("ファイルを選ぶ…") {
+                            if let path = chooseFile(allowedContentTypes: safetensorsTypes, startingIn: defaultRefModDirectory) {
+                                viewModel.addReference(path: path)
+                            }
+                        }
+                    }
+                    .fixedSize()
+                    .help("保存済みのRefMod（符号化した参照）を参照に加えます。モデル管理のRefModに一覧があります。")
                     Button("ファイルを選ぶ…") { viewModel.addReferenceImages() }
                 }
                 if !viewModel.referenceImages.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(Array(viewModel.referenceImages.enumerated()), id: \.element.id) { index, reference in
-                            HStack {
-                                Image(systemName: referenceIcon(for: reference.kind))
-                                    .foregroundStyle(palette.textSecondary)
-                                Text(verbatim: "\(index + 1).").font(.caption)
-                                FileLink(path: reference.path) { quickLookURL = $0 }
-                                Spacer()
-                                Button("取り除く") {
-                                    viewModel.removeReferenceImages(at: IndexSet(integer: index))
+                            if reference.kind == .refmod {
+                                refModReferenceRow(index: index, reference: reference)
+                            } else {
+                                HStack {
+                                    Image(systemName: referenceIcon(for: reference.kind))
+                                        .foregroundStyle(palette.textSecondary)
+                                    Text(verbatim: "\(index + 1).").font(.caption)
+                                    FileLink(path: reference.path) { quickLookURL = $0 }
+                                    Spacer()
+                                    Button("RefModとして保存…") { refModSource = reference }
+                                        .font(.caption)
+                                        .help("この参照を一度だけ符号化してRefModファイルに保存します。")
+                                    Button("取り除く") {
+                                        viewModel.removeReferenceImages(at: IndexSet(integer: index))
+                                    }
+                                    .font(.caption)
                                 }
-                                .font(.caption)
                             }
                         }
                     }
@@ -295,6 +324,46 @@ struct CreationFormView: View {
         .padding(H3Spacing.md)
         .background(palette.surfaceMuted)
         .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
+    }
+
+    /// A RefMod among the references: its name and contents, and its
+    /// strength (1 = the stored latent as it is; less mixes it toward a
+    /// blurred copy of itself, which weakens the reference).
+    private func refModReferenceRow(index: Int, reference: H3ReferenceInput) -> some View {
+        let entry = library.refmods.first { $0.path == reference.path }
+        let info = try? library.refmodInfo(path: reference.path)?.get()
+        let member = info.flatMap { info -> H3RefModMember? in
+            reference.member >= 0 ? info.members.first { $0.id == Int(reference.member) } : info.members.first
+        }
+        let title = entry?.name ?? URL(fileURLWithPath: reference.path).deletingPathExtension().lastPathComponent
+        return HStack(alignment: .center) {
+            Image(systemName: "cube")
+                .foregroundStyle(palette.textSecondary)
+            Text(verbatim: "\(index + 1).").font(.caption)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: title).font(.caption).lineLimit(1).truncationMode(.middle)
+                if let member {
+                    Text(refmodMemberSummary(member, inBundle: info?.isBundle ?? false))
+                        .font(.caption2).foregroundStyle(palette.textSecondary)
+                } else if case .failure(let error)? = library.refmodInfo(path: reference.path) {
+                    Text(error.localizedDescription).font(.caption2).foregroundStyle(palette.errorColor)
+                }
+            }
+            Spacer()
+            Text("強さ").font(.caption2).foregroundStyle(palette.textSecondary)
+            Slider(value: Binding(
+                get: { Double(reference.strength) },
+                set: { viewModel.setReferenceStrength(id: reference.id, Float($0)) }
+            ), in: 0.05 ... 1, step: 0.05)
+            .frame(width: 90)
+            .help("1はそのまま。小さくするほどぼかした参照に近づき、効きが弱まります（上流のApplyと同じ計算）。")
+            Text(verbatim: String(format: "%.2f", reference.strength)).font(.caption2).monospacedDigit()
+                .frame(width: 30, alignment: .trailing)
+            Button("取り除く") {
+                viewModel.removeReferenceImages(at: IndexSet(integer: index))
+            }
+            .font(.caption)
+        }
     }
 
     /// What the references add (h3_plan_generation), and whether it fits.

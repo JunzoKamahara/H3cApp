@@ -1,4 +1,5 @@
 import AppKit
+import H3Engine
 import SwiftUI
 
 /// The dialog behind the toolbar's "モデル管理" button and the engine-status
@@ -50,16 +51,21 @@ struct ModelManagerView: View {
     @State private var showingOpenH3Setup = false
 
     private enum Section: String, CaseIterable, Identifiable {
-        case models, loras, upscalers
+        case models, loras, refmods, upscalers
         var id: String { rawValue }
         var label: String {
             switch self {
             case .models: return String(localized: "H3モデル")
             case .loras: return "LoRA"
+            case .refmods: return "RefMod"
             case .upscalers: return String(localized: "拡大モデル")
             }
         }
     }
+
+    @State private var renamingRefModID: UUID?
+    @State private var refmodRenameText = ""
+    @State private var refmodMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -83,6 +89,7 @@ struct ModelManagerView: View {
             switch section {
             case .models: modelsSection
             case .loras: lorasSection
+            case .refmods: refmodsSection
             case .upscalers: upscalersSection
             }
         }
@@ -90,7 +97,11 @@ struct ModelManagerView: View {
         .background(palette.canvas)
         // A file put back, or the 書類-folder permission granted since,
         // shows up on the next look.
-        .onAppear { library.retryFailedLoRAInfo() }
+        .onAppear {
+            library.retryFailedLoRAInfo()
+            library.retryFailedRefModInfo()
+            library.syncRefModFolder()
+        }
     }
 
     // MARK: H3 models
@@ -537,6 +548,152 @@ struct ModelManagerView: View {
     private func openLoRAFolder() {
         try? FileManager.default.createDirectory(atPath: defaultLoRADirectory, withIntermediateDirectories: true)
         NSWorkspace.shared.open(URL(fileURLWithPath: defaultLoRADirectory, isDirectory: true))
+    }
+
+    // MARK: RefMods (saved reference latents, H3RefModInfo)
+
+    private var refmodsSection: some View {
+        VStack(spacing: 0) {
+            if library.refmods.isEmpty {
+                emptyState(String(localized: "RefModはありません。参照画像・動画・音声の行の「RefModとして保存…」で作るか、「追加…」でファイルを入れます。"))
+            } else {
+                List {
+                    ForEach(library.refmods) { entry in
+                        refmodRow(entry)
+                    }
+                    .onMove { library.moveRefMods(fromOffsets: $0, toOffset: $1) }
+                }
+                .listStyle(.inset)
+            }
+            HStack {
+                if let refmodMessage {
+                    Text(refmodMessage)
+                        .font(.caption)
+                        .foregroundStyle(palette.errorColor)
+                        .lineLimit(2)
+                } else {
+                    Text("参照の「RefModを追加…」から選べます。ComfyUI-MiniMaxH3Mod形式のファイルと互換です。")
+                        .font(.caption)
+                        .foregroundStyle(palette.textSecondary)
+                }
+                Spacer()
+                Button("フォルダを開く") { openRefModFolder() }
+                    .help("RefModフォルダ（\(defaultRefModDirectory)）をFinderで開きます。ここに入れたファイルは次に開いたときに一覧に載ります。")
+                Button("追加…") { addRefMod() }
+                    .help("RefModファイル（.safetensors）をRefModフォルダにコピーして登録します。")
+            }
+            .padding(H3Spacing.md)
+        }
+    }
+
+    private func refmodRow(_ entry: RefModEntry) -> some View {
+        HStack(alignment: .top, spacing: H3Spacing.sm) {
+            Image(systemName: refmodIcon(entry))
+                .foregroundStyle(palette.textSecondary)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                if renamingRefModID == entry.id {
+                    TextField("名前", text: $refmodRenameText, onCommit: {
+                        library.renameRefMod(id: entry.id, name: refmodRenameText)
+                        renamingRefModID = nil
+                    })
+                    .textFieldStyle(.roundedBorder)
+                } else {
+                    Text(entry.name).font(.body)
+                }
+                Text(entry.path)
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                refmodInfoText(entry)
+            }
+            Spacer()
+            Menu {
+                Button("名前を変更") {
+                    refmodRenameText = entry.name
+                    renamingRefModID = entry.id
+                }
+                Button("Finderで表示") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.path)])
+                }
+                Divider()
+                if entry.isInRefModFolder {
+                    Button("ファイルをゴミ箱に入れて削除", role: .destructive) { trashRefMod(entry) }
+                } else {
+                    Button("一覧から外す", role: .destructive) { library.removeRefMod(id: entry.id) }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 24)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func refmodIcon(_ entry: RefModEntry) -> String {
+        guard case .success(let info)? = library.refmodInfo(for: entry) else { return "cube" }
+        if info.isBundle { return "cube.box" }
+        switch info.members.first?.kind {
+        case .video?: return "video"
+        case .audio?: return "waveform"
+        default: return "photo"
+        }
+    }
+
+    /// What the file holds: kind, latent size, DiT tokens and mode per
+    /// member (a bundle lists each).
+    @ViewBuilder
+    private func refmodInfoText(_ entry: RefModEntry) -> some View {
+        switch library.refmodInfo(for: entry) {
+        case nil:
+            Text("ファイルを読んでいます…").font(.caption2).foregroundStyle(palette.textSecondary)
+        case .failure(let error)?:
+            Text(error.localizedDescription).font(.caption2).foregroundStyle(palette.errorColor)
+                .fixedSize(horizontal: false, vertical: true)
+        case .success(let info)?:
+            VStack(alignment: .leading, spacing: 1) {
+                if info.isBundle {
+                    Text("バンドル（\(info.members.count)件、形式v\(info.formatVersion)）")
+                        .font(.caption2).foregroundStyle(palette.textSecondary)
+                }
+                ForEach(info.members) { member in
+                    Text(refmodMemberSummary(member, inBundle: info.isBundle))
+                        .font(.caption2).foregroundStyle(palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func addRefMod() {
+        try? FileManager.default.createDirectory(atPath: defaultRefModDirectory, withIntermediateDirectories: true)
+        guard let path = chooseFile(allowedContentTypes: safetensorsTypes) else { return }
+        refmodMessage = nil
+        do {
+            let info = try H3RefModInfo.inspect(path: path)
+            let target = (path as NSString).deletingLastPathComponent == defaultRefModDirectory
+                ? path : try ModelLibrary.moveRefModFileToFolder(path, copy: true)
+            library.addRefMod(path: target, name: info.name.isEmpty ? nil : info.name)
+        } catch {
+            refmodMessage = String(localized: "RefModを追加できませんでした: \(error.localizedDescription)")
+        }
+    }
+
+    private func trashRefMod(_ entry: RefModEntry) {
+        refmodMessage = nil
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: entry.path), resultingItemURL: nil)
+            library.removeRefMod(id: entry.id)
+        } catch {
+            refmodMessage = String(localized: "RefModを削除できませんでした: \(error.localizedDescription)")
+        }
+    }
+
+    private func openRefModFolder() {
+        try? FileManager.default.createDirectory(atPath: defaultRefModDirectory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(URL(fileURLWithPath: defaultRefModDirectory, isDirectory: true))
     }
 
     // MARK: Upscalers (the models the 拡大 sheet's AI methods need)

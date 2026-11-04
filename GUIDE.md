@@ -184,6 +184,15 @@ Good to know:
 - **Make the same run again.** With Randomness set to Fixed, the first clip
   uses that seed and each later one the next seed up, so the same settings
   make the same run.
+- **RefMods.** A reference image, video or audio can be saved as a RefMod
+  ("Save as RefMod…" on its row): the file is encoded once and kept as a
+  small .safetensors in the RefMods folder (Model Manager > RefMod), and
+  "Add RefMod…" puts it into any generation without encoding it again or
+  showing it to the text encoder, so the prompt needs no <Picture n>.
+  Full keeps everything the ordinary reference would; Compressed pools it
+  to a small grid for fewer reference tokens, at a cost in detail. Files
+  made with ComfyUI-MiniMaxH3Mod load too, bundles included. Strength
+  below 1 blurs the reference rather than weighting it.
 - **First image, references and lip sync.** Reference images are used by
   every clip, so the people look the same when they come back after leaving
   the frame; in Custom Clips, “Use the same reference images” can be turned

@@ -274,6 +274,9 @@ final class GenerationViewModel: ObservableObject {
     /// A RefMod bundle just picked: the form asks which members to add
     /// (RefModMemberPickerSheet), then appends one row per member.
     @Published var pendingRefModBundle: RefModBundleChoice?
+    /// A RefMod being made (extractRefMod): shown in the sheet and GET
+    /// /api/status.
+    @Published private(set) var refModExtraction: RefModExtractionState?
     /// Lip sync (h3_params.forced_audio_path): this file's audio, from
     /// forcedAudioOffset seconds on, is the video's soundtrack, and only the
     /// picture is generated - to match it. Works with every creation method.
@@ -817,6 +820,49 @@ final class GenerationViewModel: ObservableObject {
 
     func removeReferenceImages(at offsets: IndexSet) {
         referenceImages.remove(atOffsets: offsets)
+    }
+
+    func setReferenceStrength(id: UUID, _ strength: Float) {
+        guard let index = referenceImages.firstIndex(where: { $0.id == id }) else { return }
+        referenceImages[index].strength = min(max(strength, 0.05), 1)
+    }
+
+    // MARK: RefMod extraction (RefModSheets.swift, POST /api/refmods/extract)
+
+    struct RefModExtractionState: Equatable {
+        var name: String
+        var kind: H3RefModKind
+        var phase = ""
+        var completed = 0
+        var total = 1
+    }
+
+    /// Makes a RefMod file with the engine (after any generation in
+    /// flight), registers it in the library and returns its path. One at a
+    /// time per window.
+    func extractRefMod(_ request: H3RefModExtractRequest) async throws -> String {
+        guard let engine else {
+            throw H3EngineError.refModExtractFailed(String(localized: "エンジンの準備ができていません"))
+        }
+        guard refModExtraction == nil else {
+            throw H3EngineError.refModExtractFailed(String(localized: "別のRefModを作成しています"))
+        }
+        refModExtraction = RefModExtractionState(name: request.name, kind: request.kind)
+        defer { refModExtraction = nil }
+        for try await event in engine.extractRefMod(request) {
+            if case .progress(let phase, let completed, let total) = event {
+                refModExtraction?.phase = phase
+                refModExtraction?.completed = completed
+                refModExtraction?.total = total
+            }
+        }
+        library.forgetRefModInfo(path: request.outputPath)
+        library.addRefMod(path: request.outputPath, name: request.name.isEmpty ? nil : request.name)
+        return request.outputPath
+    }
+
+    func cancelRefModExtraction() {
+        engine?.cancelCurrentRefModExtract()
     }
 
     func moveReferenceImages(from source: IndexSet, to destination: Int) {

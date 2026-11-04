@@ -24,6 +24,13 @@ Related documentation: [Local API](API.md) · [Building and testing](BUILD.md) �
   it needs at least one image or video reference alongside it. References
   appear to the model in order as `<Picture N>`/`<Video N>`. All reference
   reads and generated-video writes go through native AVFoundation/ImageIO.
+- **RefMods**: references saved as `.safetensors` files of already encoded
+  latents, in the format of the ComfyUI node pack ComfyUI-MiniMaxH3Mod
+  (image, video or audio; single files and bundles). They join the DiT's
+  references like the others but are not shown to Qwen, so the prompt
+  carries no `<Picture N>` for them. The app makes them from a reference
+  (Full, or compressed to a small grid) and keeps them in a RefMods folder;
+  see "RefMods: saved reference latents" below.
 - **Lip sync** (forced audio): choose a voice or song in the panel (Match
   a Voice or Song, with a start offset) and the picture is generated to
   match it - the audio is given to the model clean at every step and the
@@ -640,6 +647,69 @@ Generate button on that verdict; `H3SPIKE_PLAN=1` prints them from the CLI.
   two-frame blocks of a 243-frame reference. The vision, video VAE, audio
   VAE and text encoder calls in `h3_generate` now run in a pool each
   (`h3_autorelease_push`); three vision calls in a row stay at 1.2 GiB.
+
+### RefMods: saved reference latents
+
+A RefMod (`h3_refmod.h`) is a `.safetensors` file holding what the
+reference path would otherwise compute every time: the Ref2VA video VAE's
+normalized latent of an image or video as F16 `[1,24,T,H,W]`, or the audio
+VAE's as `[1,32,2,T]`, with a `refmod_meta` JSON string in the header
+(name, kind, mode, latent size, source, format version). The format is
+that of the ComfyUI node pack
+[ComfyUI-MiniMaxH3Mod](https://github.com/Luisacaotica/ComfyUI-MiniMaxH3Mod)
+(MIT): single files of formats 2-4 and format-5 bundles (`ref_0..ref_N-1`
+members) are read, and the files written here are format 4, so they load
+there too. Nothing of that code is copied; the arithmetic was reimplemented
+from its definitions and checked against PyTorch (`tests/test_refmod.c`,
+`tools/dump_refmod_fixture.py`).
+
+- **In the generation.** `H3_REFERENCE_REFMOD` is a reference kind with a
+  `strength` and a bundle `member`. The planner and `h3_generate` read the
+  file's header for its layout entry (`h3_refmod_reference`), count a
+  member against the 9 images / 3 videos / 3 audio inputs by what it holds,
+  and the reference rows are packed in request order with a RefMod's latent
+  loaded and patchified where an encoded one would go; an audio member goes
+  into the audio rows. The latent is exactly what this engine's own encoder
+  produces (`h3_real_refmod_test` checks a Full RefMod's rows against the
+  ordinary path to F16 rounding), so a Full RefMod of an image is that image
+  as a reference at the RefMod's own canvas, minus the encode and minus
+  Qwen's view of it. The canvas is the one difference: an ordinary image
+  reference is sized to the output area (or capped at 2048 px with the
+  "max" policy), a RefMod keeps the size it was made at (a 1024 px short
+  side by default), so it can add more reference tokens than the same
+  image would as an ordinary reference. Qwen gets a
+  hidden presentation (`H3_PRESENTATION_HIDDEN`), no label and no vision
+  span, and with no other visual the prompt alone is encoded on the Ref2VA
+  text encoder. A generation whose only references are RefMods still runs
+  the Ref2VA checkpoint. The same noise augmentation as for every Ref2VA
+  reference row applies.
+- **Strength.** 1 uses the stored latent. Below 1, as the upstream Apply
+  node does, the latent is mixed toward a blurred copy of itself:
+  `s*z + (1-s)*blur(z)`, where `blur` average-pools the latent to
+  `(t, max(1,h/8), max(1,w/8))` and interpolates it back trilinearly
+  (`align_corners=False`); an audio latent pools each series along time to
+  `max(1,t/8)`. It is a blur, not an attention weight, and is computed in
+  F32 here (upstream in F16).
+- **Making one** (`h3_refmod_extract`, the "Save as RefMod…" sheet,
+  `POST /api/refmods/extract`), with the upstream extractor's rules: the
+  source is shrunk, never enlarged, to a short side of at most 1024 px in
+  multiples of 32 (then up to a short side of at least 320), a video keeps
+  `min(F,16)` frames spread evenly and snapped down to 17k+5 of them (fewer
+  than 5: the first frame alone), and the Ref2VA VAE encodes it. **Full**
+  stores that latent. **Compressed** ("training" upstream) average-pools it
+  to an even grid with 16 cells on the longer side (fewer tokens: a 1024-px
+  image's 2048 become 256), rounds it to F16 and refines it with Adam (lr
+  0.02, 500 steps by default) so that its trilinear upsample matches the
+  full latent in mean squared error. That is the whole of the compression:
+  no model is trained, nothing is learned about a person, and detail and
+  motion are lost by it. Audio RefMods are always Full (up to 15 s, the
+  reference-audio limit). Differences from upstream: frames are picked
+  among the 24 fps frames the engine counts, and resizing is
+  AVFoundation's, not Lanczos.
+- **Not implemented:** the upstream `copies`, retention presets, per-step
+  strength curves, the experimental decode-and-show-Qwen path, and the
+  stacking, merging and masking of several sources into one file. A bundle
+  is read member by member; the app writes single files only.
 
 ## AI video super-resolution (SwiftVR)
 
