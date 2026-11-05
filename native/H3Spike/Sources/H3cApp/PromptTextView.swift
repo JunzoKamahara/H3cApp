@@ -7,20 +7,38 @@ import SwiftUI
 /// macOS 13. Return while an input method is composing (e.g. Japanese
 /// conversion) still just commits the conversion - the input method
 /// consumes that key before it becomes an insertNewline: command.
+///
+/// Without onSubmit it is a plain multi-line box (Return inserts a newline),
+/// used for カスタムクリップ's per-clip prompts.
+///
+/// onComposingChange reports text the input method has not committed yet.
+/// NSTextView posts no textDidChange for it (setMarkedText), so the bound
+/// text stays empty while the first word of a Japanese prompt is being
+/// converted, and a grey placeholder drawn over an empty prompt would sit
+/// on top of what is being typed.
 struct PromptTextView: NSViewRepresentable {
     @Binding var text: String
     var suggestion: String = ""
-    var onSubmit: () -> Void
+    var onSubmit: (() -> Void)? = nil
+    var onComposingChange: (Bool) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
+        let scrollView = NSScrollView()
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
-        guard let textView = scrollView.documentView as? NSTextView else { return scrollView }
+        let size = scrollView.contentSize
+        let textView = ComposingTextView(frame: NSRect(origin: .zero, size: size))
+        textView.minSize = NSSize(width: 0, height: size.height)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(width: size.width, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
         textView.delegate = context.coordinator
         textView.drawsBackground = false
         textView.isRichText = false
@@ -30,6 +48,10 @@ struct PromptTextView: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.string = text
+        textView.onMarkedTextChange = { [weak coordinator = context.coordinator] composing in
+            coordinator?.reportComposing(composing)
+        }
+        scrollView.documentView = textView
         return scrollView
     }
 
@@ -42,9 +64,38 @@ struct PromptTextView: NSViewRepresentable {
         }
     }
 
+    /// Reports when the input method's uncommitted text appears and goes.
+    final class ComposingTextView: NSTextView {
+        var onMarkedTextChange: ((Bool) -> Void)?
+
+        private var composing: Bool { hasMarkedText() && markedRange().length > 0 }
+
+        override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+            super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+            onMarkedTextChange?(composing)
+        }
+
+        override func unmarkText() {
+            super.unmarkText()
+            onMarkedTextChange?(composing)
+        }
+
+        override func insertText(_ string: Any, replacementRange: NSRange) {
+            super.insertText(string, replacementRange: replacementRange)
+            onMarkedTextChange?(composing)
+        }
+    }
+
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: PromptTextView
+        private var composing = false
         init(_ parent: PromptTextView) { self.parent = parent }
+
+        func reportComposing(_ value: Bool) {
+            guard value != composing else { return }
+            composing = value
+            parent.onComposingChange(value)
+        }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
@@ -59,11 +110,13 @@ struct PromptTextView: NSViewRepresentable {
                 parent.text = parent.suggestion
                 return true
             }
-            guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
+            guard selector == #selector(NSResponder.insertNewline(_:)), let onSubmit = parent.onSubmit else {
+                return false
+            }
             if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
                 textView.insertNewlineIgnoringFieldEditor(nil)
             } else {
-                parent.onSubmit()
+                onSubmit()
             }
             return true
         }

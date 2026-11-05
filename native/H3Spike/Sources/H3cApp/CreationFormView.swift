@@ -49,6 +49,9 @@ struct CreationFormView: View {
     /// 「RefModとして保存…」 for this reference (RefModExtractSheet).
     @State private var refModSource: H3ReferenceInput?
     @State private var promptSuggestion = randomPromptSuggestion()
+    /// The input method is converting text not yet in the prompt
+    /// (PromptTextView.onComposingChange): the suggestion is hidden.
+    @State private var promptComposing = false
 
     private var palette: H3Palette { H3Palette(colorScheme) }
 
@@ -488,16 +491,16 @@ struct CreationFormView: View {
             // prompt box. Return generates, Shift+Return starts a new line.
             VStack(spacing: 0) {
                 ZStack(alignment: .topLeading) {
-                    PromptTextView(text: $viewModel.prompt, suggestion: promptSuggestion) {
-                        viewModel.requestGenerate()
-                    }
+                    PromptTextView(text: $viewModel.prompt, suggestion: promptSuggestion,
+                                   onSubmit: { viewModel.requestGenerate() },
+                                   onComposingChange: { promptComposing = $0 })
                     .frame(height: 84)
                     .onChange(of: viewModel.prompt.isEmpty) { wasEmpty, isEmpty in
                         if isEmpty && !wasEmpty {
                             promptSuggestion = randomPromptSuggestion(excluding: promptSuggestion)
                         }
                     }
-                    if viewModel.prompt.isEmpty {
+                    if viewModel.prompt.isEmpty && !promptComposing {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(promptSuggestion)
                                 .font(.body)

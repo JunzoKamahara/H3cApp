@@ -414,25 +414,26 @@ private struct CustomClipRow: View {
     }
 }
 
-/// A short multi-line text box with a grey placeholder.
+/// A short multi-line text box with a grey placeholder. PromptTextView
+/// rather than TextEditor: it reports text an input method is still
+/// converting, which TextEditor's binding doesn't see, so the placeholder
+/// no longer sits over the first word of a Japanese prompt.
 struct ClipTextEditor: View {
     @Binding var text: String
     var placeholder: String
+    @State private var composing = false
     @Environment(\.colorScheme) private var colorScheme
     private var palette: H3Palette { H3Palette(colorScheme) }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            TextEditor(text: $text)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .padding(4)
-            if text.isEmpty && !placeholder.isEmpty {
+            PromptTextView(text: $text, onComposingChange: { composing = $0 })
+            if text.isEmpty && !composing && !placeholder.isEmpty {
                 Text(placeholder)
                     .font(.body)
                     .foregroundStyle(palette.textSecondary.opacity(0.75))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 8)
                     .allowsHitTesting(false)
             }
         }
