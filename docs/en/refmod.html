@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en" data-alt-href="../refmod.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="../assets/js/lang.js"></script>
+  <title>Using RefMods (saved references) — H3cApp</title>
+  <meta name="description" content="How to make and use RefMods in H3cApp. A reference image, video or audio file is encoded once and saved as a small file that any generation can take. Full and Compressed, strength, bundles, Model Manager, the format shared with ComfyUI.">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/refmod.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/refmod.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/refmod.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/refmod.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:locale:alternate" content="ja_JP">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="Using RefMods (saved references) — H3cApp">
+  <meta property="og:description" content="Encode a reference image, video or audio file once, save it as a small file, and put it into any generation.">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/refmod.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image-en.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="../assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="../assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="../assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="Site">
+        <ul>
+          <li><a href="./#examples">Examples</a></li>
+          <li><a href="./#requirements">Requirements</a></li>
+          <li><a href="getting-started.html">Getting started</a></li>
+          <li><a href="guide.html" aria-current="page">Guide</a></li>
+          <li><a href="gguf.html">GGUF</a></li>
+          <li><a href="faq.html">Troubleshooting</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="../refmod.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>Using RefMods (saved references)</h1>
+      <p class="lead">From H3cApp v0.7.7, a reference image, video or audio file can be encoded once and saved as a small file (.safetensors). This is called a RefMod. A saved RefMod can go into any generation as a reference and is never encoded again. The prompt needs no number such as <code>&lt;Picture 1&gt;</code> for it.</p>
+      <nav class="toc" aria-label="On this page">
+        <p>On this page</p>
+        <ol>
+          <li><a href="#about">RefMods and ordinary references</a></li>
+          <li><a href="#need">What you need</a></li>
+          <li><a href="#make">Making a RefMod</a></li>
+          <li><a href="#use">Using one in a generation</a></li>
+          <li><a href="#manage">Managing them in Model Manager</a></li>
+          <li><a href="#others">RefMods made in ComfyUI and elsewhere</a></li>
+          <li><a href="#projects">Projects, continuing and joining</a></li>
+          <li><a href="#limits">Limits and cautions</a></li>
+          <li><a href="#license">License</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="about" aria-labelledby="about-title">
+      <h2 id="about-title">RefMods and ordinary references</h2>
+      <p>An ordinary reference (a file in “<span class="ui">Reference images, videos and audio</span>”) goes through two steps in every generation.</p>
+      <ol>
+        <li>It is encoded with the video or audio VAE and handed to the part that draws the video (the DiT) as a reference.</li>
+        <li>Images and videos are also shown to the text part (the text encoder), so that <code>&lt;Picture 1&gt;</code> or <code>&lt;Video 1&gt;</code> in the prompt can point at them.</li>
+      </ol>
+      <p>A RefMod is the result of step 1 saved to a file. A generation skips step 1 and hands the saved contents straight to the DiT. Step 2 does not happen.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col"></th><th scope="col">Ordinary reference</th><th scope="col">RefMod</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Encoded at every generation</th><td>Yes</td><td>No (the saved contents are read)</td></tr>
+            <tr><th scope="row">Shown to the text part</th><td>Yes (numbered <code>&lt;Picture n&gt;</code> and so on)</td><td>No (no number)</td></tr>
+            <tr><th scope="row">File</th><td>The image, video or audio itself</td><td>.safetensors (a few KB to a few hundred KB)</td></tr>
+            <tr><th scope="row">Can be made smaller</th><td>No</td><td>Yes, when made “Compressed”</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>As the text part is not shown a RefMod, it does not suit pointing at “this person” or “this object” by number in the prompt. It brings the reference's look and feel into the generation together with the words of the prompt.</p>
+    </section>
+
+    <section class="section section-narrow" id="need" aria-labelledby="need-title">
+      <h2 id="need-title">What you need</h2>
+      <ul>
+        <li><strong>The Ref2VA model.</strong> Making and using RefMods both need Ref2VA, as generations with references do. If it is missing, add it with the model's “…” → “<span class="ui">Add Ref2VA…</span>” in “<span class="ui">Model Manager</span>” (<a href="getting-started.html">Getting started</a>).</li>
+        <li>In the M5's fast mode, the reference int8 cache is used, as for ordinary references.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="make" aria-labelledby="make-title">
+      <h2 id="make-title">Making a RefMod</h2>
+      <ol class="steps">
+        <li><strong>Put the source file in the references.</strong> In the panel, choose “<span class="ui">From images</span>” and then “<span class="ui">Reference images, videos and audio</span>”. Add the image, video or audio to start from with “<span class="ui">Choose Files…</span>”.</li>
+        <li><strong>Press “<span class="ui">Save as RefMod…</span>” on its row.</strong></li>
+        <li><strong>Set the name and the mode, and press “<span class="ui">Create</span>”.</strong> The fields are in the table below. Usually a name is all you need to set.</li>
+      </ol>
+      <p>The RefMod is saved in the RefMod folder (<code>~/Library/Application Support/H3cApp/RefMods/</code>) and listed under “<span class="ui">RefMod</span>” in “<span class="ui">Model Manager</span>”. With “<span class="ui">Add the new RefMod to the references</span>” on (the default), it also joins the references. The row of the original file stays; take it out with “<span class="ui">Remove</span>” if it isn't wanted.</p>
+      <p>Making a RefMod is GPU work like a generation. Pressed during one, it starts when that generation finishes. “<span class="ui">Cancel</span>” in the sheet stops it.</p>
+      <h3>The sheet</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Field</th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Name</th><td>The file's name</td><td>The name in the list, and the file name</td></tr>
+            <tr><th scope="row">Mode</th><td>Full (as encoded)</td><td>“<span class="ui">Full (as encoded)</span>” or “<span class="ui">Compressed (small grid)</span>”. Audio is always Full</td></tr>
+            <tr><th scope="row">Resolution cap</th><td>1024 px</td><td>An image or video whose short side is larger is shrunk before encoding. Nothing is enlarged (a short side under 320 px is widened to 320 px)</td></tr>
+            <tr><th scope="row">Frames to keep</th><td>16</td><td>Video only. Frames picked evenly across the whole video, rounded down to 5, 22, 39, … (16 gives 5). A video of fewer than 5 frames uses its first frame alone</td></tr>
+            <tr><th scope="row">Grid long side</th><td>16</td><td>Compressed only. The longer side is pooled into this many cells. Fewer cells mean fewer tokens and less detail</td></tr>
+            <tr><th scope="row">Refinement steps</th><td>500</td><td>Compressed only. How many times the pooled grid is adjusted toward the full encoding. 0 keeps the plain average</td></tr>
+            <tr><th scope="row">Max seconds</th><td>15</td><td>Audio only. Uses up to this many seconds from the start</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Full and Compressed</h3>
+      <ul>
+        <li><strong>Full</strong> saves the encoded contents as they are. They match an ordinary reference encoded at the same size.</li>
+        <li><strong>Compressed</strong> averages the encoded contents into a small grid, adjusts it toward the original and saves that. It has fewer reference tokens, so the generation computes less. Detail and motion are lost in exchange. It does not learn a person's face or body.</li>
+      </ul>
+      <p>Examples made on an Apple M5 with 24 GB from a 768×512 image and 3 seconds of audio. The times are first runs, loading the VAE included.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Made</th><th scope="col">Reference tokens</th><th scope="col">File</th><th scope="col">Time</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Image, Full</th><td>384</td><td>74 KB</td><td>6 s</td></tr>
+            <tr><th scope="row">Image, Compressed (long side 16, 500 steps)</th><td>40</td><td>8 KB</td><td>4 s</td></tr>
+            <tr><th scope="row">Audio, 3 s</th><td>240</td><td>16 KB</td><td>2 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">The same image as an ordinary reference in a Landscape, Small generation was 117 tokens. An ordinary reference is shrunk to suit the output size, while a RefMod is used at the size it was made. A Full RefMod can therefore have more tokens than the ordinary reference. To keep it light, make it with a lower resolution cap, or Compressed.</p>
+    </section>
+
+    <section class="section section-narrow" id="use" aria-labelledby="use-title">
+      <h2 id="use-title">Using one in a generation</h2>
+      <ol class="steps">
+        <li><strong>Open the references.</strong> Choose “<span class="ui">From images</span>” and then “<span class="ui">Reference images, videos and audio</span>”.</li>
+        <li><strong>Press “<span class="ui">Add RefMod…</span>” and pick a RefMod from the menu.</strong> A file not in the list can be picked with “<span class="ui">Choose Files…</span>” in the menu.</li>
+        <li><strong>Combine it with ordinary references if you like.</strong> The order is the list's order.</li>
+        <li><strong>Write the prompt and generate.</strong></li>
+      </ol>
+      <p>A RefMod row shows its name, its contents (kind, size, tokens, Full or Compressed) and a strength slider. The reference tokens and the memory estimate under the list include the RefMods.</p>
+      <h3>Strength</h3>
+      <p>Strength goes from 0.05 to 1, and the default is 1. At 1, the saved contents are used as they are. Below 1, they are mixed with a blurred copy of themselves, so the lower the value, the more of the reference's detail goes and the weaker it is.</p>
+      <p>It is an amount of blur, not a weight such as “reproduce it at so many percent”. At 0.3 the reference's shapes and colours remain, but its detail is quite blurred. The arithmetic is that of ComfyUI-MiniMaxH3Mod's Apply node.</p>
+      <h3>Bundles</h3>
+      <p>Picking a bundle, a file of several RefMods, opens “<span class="ui">Choose the bundle's members</span>”. Tick the members to use and press “<span class="ui">Add</span>”: each becomes a row of its own in the references, with its own strength.</p>
+      <h3>Audio RefMods</h3>
+      <p>RefMods made from audio work too. Unlike an ordinary audio reference, they put no <code>&lt;Audio 1&gt;</code> into the prompt. An ordinary audio reference needs an image or video reference beside it; an audio RefMod can be used alone.</p>
+      <h3>Writing the prompt</h3>
+      <p>RefMods get no number such as <code>&lt;Picture n&gt;</code>. Numbers go to ordinary references only, counted from 1 for each kind. For example, in the order “image, RefMod, image”, the two images are <code>&lt;Picture 1&gt;</code> and <code>&lt;Picture 2&gt;</code>. Describe what the RefMod holds in words, such as “a red ball…”.</p>
+    </section>
+
+    <section class="section section-narrow" id="manage" aria-labelledby="manage-title">
+      <h2 id="manage-title">Managing them in Model Manager</h2>
+      <p>Open “<span class="ui">Model Manager</span>” from the toolbar and choose “<span class="ui">RefMod</span>” for the list.</p>
+      <ul>
+        <li>Each row shows the name, where the file is and its contents (member by member for a bundle).</li>
+        <li>The row's “…” menu has “<span class="ui">Rename</span>”, “<span class="ui">Show in Finder</span>” and “<span class="ui">Move the file to the Trash and remove</span>”. For a file outside the RefMod folder it is “<span class="ui">Remove from the list</span>”, which leaves the file alone.</li>
+        <li>“<span class="ui">Open Folder</span>” opens the RefMod folder in the Finder. A .safetensors file put there is listed the next time this opens.</li>
+        <li>A file picked with “<span class="ui">Add…</span>” is copied into the RefMod folder and listed.</li>
+        <li>Drag rows to reorder them. The “<span class="ui">Add RefMod…</span>” menu follows this order.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="others" aria-labelledby="others-title">
+      <h2 id="others-title">RefMods made in ComfyUI and elsewhere</h2>
+      <p>The format is that of the RefMods of the ComfyUI node pack <a href="https://github.com/Luisacaotica/ComfyUI-MiniMaxH3Mod">ComfyUI-MiniMaxH3Mod</a>. Files made with its “Extract H3 RefMod”, and RefMods others publish, work as they are, without conversion. RefMods made in H3cApp load in ComfyUI too. Bring them in with “<span class="ui">Add…</span>” under “<span class="ui">RefMod</span>” in “<span class="ui">Model Manager</span>”, or put them in the RefMod folder.</p>
+      <ul>
+        <li><strong>Formats read:</strong> single files (formats 2 to 4) and bundles (format 5), with image, video or audio contents.</li>
+        <li><strong>Unusable files:</strong> a file that is damaged or has the wrong shape (an image with two frames, for example) shows the reason in the list and can't be used in a generation.</li>
+        <li><strong>Format made:</strong> H3cApp makes single files of format 4. It does not make bundles.</li>
+      </ul>
+      <div class="note">
+        <p>Published RefMods come with their own publisher's license and notes; check them before use. With a RefMod based on a real person, mind how their likeness and reputation are treated.</p>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="projects" aria-labelledby="projects-title">
+      <h2 id="projects-title">Projects, continuing and joining</h2>
+      <ul>
+        <li><strong>Projects:</strong> generating with a project open copies the RefMod files used into the project, as with other references. The strength and the bundle member are recorded too, and “<span class="ui">Restore Settings</span>” brings them back. Deleting the original RefMod does not break the settings of the project's videos.</li>
+        <li><strong>Continuing a video and joined generation:</strong> RefMods carry over like ordinary references.</li>
+        <li><strong>Custom Clips:</strong> a clip's own references can take a RefMod with “<span class="ui">Choose Files…</span>”. There the strength is fixed at 1. A bundle can't be used because its members can't be chosen; use a single-file RefMod.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="limits" aria-labelledby="limits-title">
+      <h2 id="limits-title">Limits and cautions</h2>
+      <ul>
+        <li>RefMods count toward the reference limits (9 images, 3 videos, 3 audio, 12 in all) by what they hold. Reference audio, RefMods included, is at most 15 seconds in total.</li>
+        <li>A video RefMod holds only the frames picked when it was made (5 by default). It does not remember the motion of a long video as a whole.</li>
+        <li>Compression loses detail and motion. To keep a person's face clear, make it Full.</li>
+        <li>A RefMod stays as it was saved. After editing the original image, make it again.</li>
+        <li>To tell several people apart by number, use ordinary references, which get numbers.</li>
+        <li>These ComfyUI-MiniMaxH3Mod features are not in H3cApp: stacking the same RefMod several times, curves that change the strength step by step, the experimental path that turns a RefMod back into an image for the text part, stacking, merging or masking several sources into one RefMod, and making bundles.</li>
+      </ul>
+      <p>The local API can list and make RefMods and generate with them as well. See <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/REFMOD.md#api">REFMOD.md</a> on GitHub for how.</p>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="license-title">
+      <h2 id="license-title">License</h2>
+      <ul>
+        <li>The RefMod format and arithmetic follow ComfyUI-MiniMaxH3Mod (MIT License), but none of its code is included.</li>
+        <li>A RefMod made in H3cApp is encoded by the VAE of the MiniMax H3 model, which is under the <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE">MiniMax H3 Community License Agreement</a>. The main points are in <a href="faq.html#license">Licenses and terms</a>.</li>
+        <li>The rights to the images, videos and audio a RefMod was made from stay with their owners. Which conditions apply when you share or use a RefMod is your judgement, based on the model's license and the rights to the source material.</li>
+      </ul>
+      <p class="small muted">For how it works and the API, see <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/REFMOD.md">REFMOD.md</a> on GitHub.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">Report a problem (Issues)</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md">README</a></li>
+        <li><a href="faq.html#license">License</a></li>
+        <li><a href="../refmod.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+      </ul>
+      <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). Videos are generated with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>, a video generation model by MiniMax, which comes under its own license, the MiniMax H3 Community License.</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -62,6 +62,7 @@
           <li><a href="#lora">Using add-on models (LoRA, optional)</a></li>
           <li><a href="#advanced">For advanced users</a></li>
           <li><a href="upscale.html">Enlarging videos explained (separate page)</a></li>
+          <li><a href="refmod.html">RefMods (saved references) explained (separate page)</a></li>
           <li><a href="settings.html">Advanced settings explained (separate page)</a></li>
         </ol>
       </nav>
@@ -88,7 +89,7 @@
       </ul>
       <p class="small">Click a file name in the prompt panel to see the image or video in use. A generated video can also be added as a reference with “<span class="ui">Use as Reference</span>” in the preview.</p>
       <h3>RefMods (saved references)</h3>
-      <p>“<span class="ui">Save as RefMod…</span>” on a reference row encodes that image, video or audio once and keeps it as a small file (.safetensors). Saved RefMods are listed under “<span class="ui">RefMod</span>” in “<span class="ui">Model Manager</span>”, and “<span class="ui">Add RefMod…</span>” in the references puts one into any generation. Nothing is encoded again, and the text encoder is not shown it, so the prompt needs no <code>&lt;Picture n&gt;</code>. “Full” holds what the ordinary reference would; “Compressed” pools it to a small grid for fewer reference tokens, with less detail. Files made with ComfyUI-MiniMaxH3Mod for ComfyUI load too.</p>
+      <p>“<span class="ui">Save as RefMod…</span>” on a reference row encodes that image, video or audio once and keeps it as a small file (.safetensors). Saved RefMods are listed under “<span class="ui">RefMod</span>” in “<span class="ui">Model Manager</span>”, and “<span class="ui">Add RefMod…</span>” in the references puts one into any generation. Nothing is encoded again, and the text encoder is not shown it, so the prompt needs no <code>&lt;Picture n&gt;</code>. “Full” holds what the ordinary reference would; “Compressed” pools it to a small grid for fewer reference tokens, with less detail. Files made with ComfyUI-MiniMaxH3Mod for ComfyUI load too. <a href="refmod.html">Using RefMods (saved references)</a> explains how to make and use them.</p>
     </section>
 
     <section class="section section-narrow" id="lipsync" aria-labelledby="lipsync-title">

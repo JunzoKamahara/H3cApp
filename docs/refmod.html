@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="ja" data-alt-href="en/refmod.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="assets/js/lang.js"></script>
+  <title>RefMod（保存した参照）を使う — H3cApp</title>
+  <meta name="description" content="H3cAppのRefModの作り方と使い方。参照の画像・動画・音声を一度だけ符号化して小さなファイルに保存し、どの生成にも入れられます。Fullと圧縮、強さ、バンドル、モデル管理、ComfyUIとの共通の形式。">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/refmod.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/refmod.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/refmod.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/refmod.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="RefMod（保存した参照）を使う — H3cApp">
+  <meta property="og:description" content="参照の画像・動画・音声を一度だけ符号化して小さなファイルに保存し、どの生成にも入れる方法。">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/refmod.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へ移動</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="サイト内">
+        <ul>
+          <li><a href="./#examples">生成例</a></li>
+          <li><a href="./#requirements">動作条件</a></li>
+          <li><a href="getting-started.html">はじめ方</a></li>
+          <li><a href="guide.html" aria-current="page">使い方</a></li>
+          <li><a href="gguf.html">GGUF</a></li>
+          <li><a href="faq.html">困ったとき</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="en/refmod.html?lang=en" hreflang="en" lang="en">English</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>RefMod（保存した参照）を使う</h1>
+      <p class="lead">H3cApp v0.7.7から、参照に使う画像・動画・音声を一度だけ符号化して、小さなファイル（.safetensors）に保存できます。これをRefModと呼びます。保存したRefModはどの生成にも参照として入れられ、毎回符号化し直すことはありません。プロンプトに <code>&lt;Picture 1&gt;</code> のような番号を書く必要もありません。</p>
+      <nav class="toc" aria-label="このページの内容">
+        <p>このページの内容</p>
+        <ol>
+          <li><a href="#about">RefModとふつうの参照の違い</a></li>
+          <li><a href="#need">必要なもの</a></li>
+          <li><a href="#make">RefModを作る</a></li>
+          <li><a href="#use">生成に使う</a></li>
+          <li><a href="#manage">モデル管理で管理する</a></li>
+          <li><a href="#others">ComfyUIなどで作ったRefModを使う</a></li>
+          <li><a href="#projects">プロジェクト・続き・つなげて生成</a></li>
+          <li><a href="#limits">上限と注意</a></li>
+          <li><a href="#license">ライセンス</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="about" aria-labelledby="about-title">
+      <h2 id="about-title">RefModとふつうの参照の違い</h2>
+      <p>ふつうの参照（「<span class="ui">参照画像・動画・音声</span>」に入れたファイル）は、生成のたびに2つの処理を受けます。</p>
+      <ol>
+        <li>映像・音声のVAEで符号化して、動画を描く本体（DiT）に参照として渡します。</li>
+        <li>画像と動画は文章の部分（テキストエンコーダー）にも見せて、プロンプトの <code>&lt;Picture 1&gt;</code> や <code>&lt;Video 1&gt;</code> がどの参照を指すかを分からせます。</li>
+      </ol>
+      <p>RefModは、1の結果をファイルに保存したものです。生成では1を省き、保存した中身をそのままDiTに渡します。2は行いません。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col"></th><th scope="col">ふつうの参照</th><th scope="col">RefMod</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">生成のたびの符号化</th><td>する</td><td>しない（保存した中身を読むだけ）</td></tr>
+            <tr><th scope="row">文章の部分に見せる</th><td>見せる（<code>&lt;Picture n&gt;</code> などの番号が付く）</td><td>見せない（番号は付かない）</td></tr>
+            <tr><th scope="row">ファイル</th><td>元の画像・動画・音声</td><td>.safetensors（数KB〜数百KB）</td></tr>
+            <tr><th scope="row">中身を小さくする</th><td>できない</td><td>「圧縮」で作ればできる</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>文章の部分に見せないので、RefModは「この人物」「この物」をプロンプトの番号で指す使い方には向きません。参照の見た目や雰囲気を、プロンプトの言葉と合わせて生成に効かせる使い方になります。</p>
+    </section>
+
+    <section class="section section-narrow" id="need" aria-labelledby="need-title">
+      <h2 id="need-title">必要なもの</h2>
+      <ul>
+        <li><strong>Ref2VAのモデル</strong>：RefModを作るのにも使うのにも、参照を使う生成と同じRef2VAが必要です。入っていなければ、「<span class="ui">モデル管理</span>」でそのモデルの「…」→「<span class="ui">Ref2VAを追加…</span>」で加えます（<a href="getting-started.html">はじめ方</a>）。</li>
+        <li>M5の高速モードで生成するときは、ふつうの参照と同じく参照画像用のint8キャッシュを使います。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="make" aria-labelledby="make-title">
+      <h2 id="make-title">RefModを作る</h2>
+      <ol class="steps">
+        <li><strong>参照に元のファイルを入れます。</strong>入力パネルで「<span class="ui">画像から</span>」を選び、「<span class="ui">参照画像・動画・音声</span>」にします。「<span class="ui">ファイルを選ぶ…</span>」で、元にする画像・動画・音声を追加します。</li>
+        <li><strong>その行の「<span class="ui">RefModとして保存…</span>」を押します。</strong></li>
+        <li><strong>名前とモードを決めて「<span class="ui">作成</span>」を押します。</strong>項目は下の表のとおりです。ふつうは名前だけ決めれば十分です。</li>
+      </ol>
+      <p>作ったRefModは、RefModフォルダ（<code>~/Library/Application Support/H3cApp/RefMods/</code>）に保存され、「<span class="ui">モデル管理</span>」の「<span class="ui">RefMod</span>」に並びます。「<span class="ui">作成したRefModを参照に追加する</span>」がオン（初期値）なら、参照の一覧にも加わります。元のファイルの行は残るので、要らなければ「<span class="ui">取り除く</span>」で外します。</p>
+      <p>作成は生成と同じGPUの処理です。生成中に押すと、その生成が終わってから始まります。シートの「<span class="ui">中止</span>」で止められます。</p>
+      <h3>シートの項目</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">項目</th><th scope="col">初期値</th><th scope="col">意味</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">名前</th><td>ファイル名</td><td>一覧に出る名前で、ファイル名にもなります</td></tr>
+            <tr><th scope="row">モード</th><td>Full（そのまま）</td><td>「<span class="ui">Full（そのまま）</span>」か「<span class="ui">圧縮（小さい格子に）</span>」。音声はFullだけです</td></tr>
+            <tr><th scope="row">解像度の上限</th><td>1024 px</td><td>短い辺がこれより大きい画像・動画は、縮めてから符号化します。拡大はしません（短い辺が320 px未満なら320 pxまで広げます）</td></tr>
+            <tr><th scope="row">使うコマ数</th><td>16</td><td>動画だけ。動画全体から均等に選ぶコマ数で、5、22、39…に切り下げます（16なら5コマ）。5コマ未満の動画は先頭の1コマだけ使います</td></tr>
+            <tr><th scope="row">格子の長辺</th><td>16</td><td>圧縮だけ。長い辺をこの数のマスにまとめます。小さいほどトークンも細部も減ります</td></tr>
+            <tr><th scope="row">調整ステップ</th><td>500</td><td>圧縮だけ。まとめた格子を元の符号化に近づける回数です。0は平均のままです</td></tr>
+            <tr><th scope="row">最大秒数</th><td>15</td><td>音声だけ。先頭からこの秒数までを使います</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Fullと圧縮</h3>
+      <ul>
+        <li><strong>Full</strong>：符号化した中身をそのまま保存します。同じ大きさで符号化したふつうの参照と、中身が一致します。</li>
+        <li><strong>圧縮</strong>：符号化した中身を小さな格子に平均してから、元に近づくよう調整して保存します。参照のトークンが減るので、生成の計算が軽くなります。そのかわり、細部や動きは失われます。人物の顔や体を覚えさせる仕組みではありません。</li>
+      </ul>
+      <p>Apple M5・24GBで、768×512の画像と3秒の音声から作った例です。時間はVAEの読み込みを含む1回目の値です。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">作ったもの</th><th scope="col">参照のトークン</th><th scope="col">ファイル</th><th scope="col">作成時間</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">画像・Full</th><td>384</td><td>74 KB</td><td>6秒</td></tr>
+            <tr><th scope="row">画像・圧縮（長辺16、500ステップ）</th><td>40</td><td>8 KB</td><td>4秒</td></tr>
+            <tr><th scope="row">音声3秒</th><td>240</td><td>16 KB</td><td>2秒</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">同じ画像を「横長・小」の生成でふつうの参照にすると117トークンでした。ふつうの参照は出力の大きさに合わせて縮められますが、RefModは作ったときの大きさのまま使われます。そのため、FullのRefModはふつうの参照よりトークンが多くなることがあります。軽くしたいときは、解像度の上限を下げて作るか、圧縮で作ります。</p>
+    </section>
+
+    <section class="section section-narrow" id="use" aria-labelledby="use-title">
+      <h2 id="use-title">生成に使う</h2>
+      <ol class="steps">
+        <li><strong>参照の欄を開きます。</strong>「<span class="ui">画像から</span>」→「<span class="ui">参照画像・動画・音声</span>」にします。</li>
+        <li><strong>「<span class="ui">RefModを追加…</span>」を押し、メニューからRefModを選びます。</strong>一覧にないファイルは、メニューの「<span class="ui">ファイルを選ぶ…</span>」で選べます。</li>
+        <li><strong>必要なら、ふつうの参照と組み合わせます。</strong>順番は一覧の順です。</li>
+        <li><strong>プロンプトを書いて生成します。</strong></li>
+      </ol>
+      <p>RefModの行には、名前、中身（種類・大きさ・トークン数・Fullか圧縮か）と、強さのスライダーが出ます。一覧の下の「参照で増えるトークン」と「必要なメモリの目安」には、RefModの分も含まれます。</p>
+      <h3>強さ</h3>
+      <p>強さは0.05〜1で、初期値は1です。1では保存した中身をそのまま使います。1より小さくすると、中身をぼかした自分自身と混ぜるので、値が小さいほど参照の細部が消え、効きが弱まります。</p>
+      <p>「再現度を何%にする」という重みではなく、ぼかしの量です。0.3まで下げると、参照の形や色は残りますが、細部はかなりぼやけます。計算はComfyUI-MiniMaxH3ModのApplyノードと同じです。</p>
+      <h3>バンドル</h3>
+      <p>複数のRefModを1つにまとめたファイル（バンドル）を選ぶと、「<span class="ui">バンドルの中身を選ぶ</span>」が開きます。使う中身にチェックを付けて「<span class="ui">追加</span>」を押すと、中身ごとに1行ずつ参照に加わります。強さは行ごとに変えられます。</p>
+      <h3>音声のRefMod</h3>
+      <p>音声から作ったRefModも使えます。ふつうの音声の参照と違い、プロンプトに <code>&lt;Audio 1&gt;</code> は付きません。ふつうの音声の参照は画像か動画の参照と組み合わせる必要がありますが、音声のRefModは単独でも使えます。</p>
+      <h3>プロンプトの書き方</h3>
+      <p>RefModには <code>&lt;Picture n&gt;</code> などの番号が付きません。番号はふつうの参照だけに、種類ごとに1から振られます。たとえば「画像、RefMod、画像」の順なら、2枚の画像が <code>&lt;Picture 1&gt;</code> と <code>&lt;Picture 2&gt;</code> になります。RefModの中身は「赤いボールが…」のように言葉で書きます。</p>
+    </section>
+
+    <section class="section section-narrow" id="manage" aria-labelledby="manage-title">
+      <h2 id="manage-title">モデル管理で管理する</h2>
+      <p>ツールバーの「<span class="ui">モデル管理</span>」を開き、「<span class="ui">RefMod</span>」を選ぶと一覧が出ます。</p>
+      <ul>
+        <li>各行に、名前、ファイルの場所、中身（バンドルなら中身ごと）が出ます。</li>
+        <li>行の「…」メニューで、「<span class="ui">名前を変更</span>」「<span class="ui">Finderで表示</span>」「<span class="ui">ファイルをゴミ箱に入れて削除</span>」ができます。RefModフォルダの外にあるファイルは「<span class="ui">一覧から外す</span>」になり、ファイルは消しません。</li>
+        <li>「<span class="ui">フォルダを開く</span>」で、RefModフォルダをFinderで開きます。ここに入れた.safetensorsは、次にこの画面を開いたときに一覧に載ります。</li>
+        <li>「<span class="ui">追加…</span>」で選んだファイルは、RefModフォルダにコピーしてから一覧に加えます。</li>
+        <li>ドラッグで並べ替えられます。「<span class="ui">RefModを追加…</span>」のメニューもこの順になります。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="others" aria-labelledby="others-title">
+      <h2 id="others-title">ComfyUIなどで作ったRefModを使う</h2>
+      <p>形式は、ComfyUIのノード集<a href="https://github.com/Luisacaotica/ComfyUI-MiniMaxH3Mod">ComfyUI-MiniMaxH3Mod</a>のRefModと同じです。その「Extract H3 RefMod」で作ったファイルや、配布されているRefModは、変換せずにそのまま使えます。H3cAppで作ったRefModも、ComfyUIで読めます。「<span class="ui">モデル管理</span>」の「<span class="ui">RefMod</span>」の「<span class="ui">追加…</span>」で取り込むか、RefModフォルダに入れます。</p>
+      <ul>
+        <li><strong>読める形式</strong>：中身が1つのファイル（形式2〜4）と、バンドル（形式5）。画像・動画・音声のどれも使えます。</li>
+        <li><strong>使えないファイル</strong>：中身が壊れている、形が合わない（画像なのに2コマあるなど）ファイルは、一覧に理由が出て、生成には使えません。</li>
+        <li><strong>作れる形式</strong>：H3cAppが作るのは形式4の単体のファイルです。バンドルは作れません。</li>
+      </ul>
+      <div class="note">
+        <p>配布されているRefModには、それぞれの配布元のライセンスや説明があります。使う前に確認してください。実在の人物をもとにしたRefModを使うときは、肖像や名誉の扱いにも注意してください。</p>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="projects" aria-labelledby="projects-title">
+      <h2 id="projects-title">プロジェクト・続き・つなげて生成</h2>
+      <ul>
+        <li><strong>プロジェクト</strong>：プロジェクトを開いて生成すると、使ったRefModのファイルも、ほかの参照と同じくプロジェクトにコピーされます。強さとバンドルの中身も記録され、「<span class="ui">設定を戻す</span>」で元どおりになります。元のRefModを消しても、プロジェクトの動画の設定は壊れません。</li>
+        <li><strong>動画の続き・つなげて生成</strong>：RefModも、ふつうの参照と同じく引き継がれます。</li>
+        <li><strong>カスタムクリップ</strong>：クリップごとの参照にも、「<span class="ui">ファイルを選ぶ…</span>」でRefModを入れられます。ここでは強さは1に固定です。バンドルは中身を選べないので使えません。単体のRefModを使ってください。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="limits" aria-labelledby="limits-title">
+      <h2 id="limits-title">上限と注意</h2>
+      <ul>
+        <li>参照の上限（画像9、動画3、音声3、合わせて12）に、RefModも中身の種類で数えます。参照の音声は、RefModの分も含めて合わせて15秒までです。</li>
+        <li>動画のRefModは、作るときに選んだコマ（初期値で5コマ）だけを持ちます。長い動画の動き全体を覚えているわけではありません。</li>
+        <li>圧縮すると細部と動きが失われます。人物の顔をはっきり残したいときはFullで作ります。</li>
+        <li>RefModは保存したときの中身のままです。元の画像を直したら、作り直します。</li>
+        <li>複数の人物を番号で描き分けたいときは、番号の付くふつうの参照を使います。</li>
+        <li>ComfyUI-MiniMaxH3Modにある次の機能はありません：同じRefModを何回も重ねる機能、ステップごとに強さを変える曲線、RefModを画像に戻して文章の部分に見せる実験的な経路、複数の元を1つのRefModに重ねる・混ぜる・マスクする機能、バンドルの作成。</li>
+      </ul>
+      <p>ローカルAPIからも、RefModの一覧・作成と、RefModを使う生成ができます。手順は、GitHubの<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/REFMOD.ja.md#api">REFMOD.ja.md</a>にあります。</p>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="license-title">
+      <h2 id="license-title">ライセンス</h2>
+      <ul>
+        <li>RefModの形式と計算はComfyUI-MiniMaxH3Mod（MIT License）に合わせていますが、そのコードは含んでいません。</li>
+        <li>H3cAppで作るRefModは、MiniMax H3のモデルのVAEで符号化したものです。モデルには<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE">MiniMax H3 Community License Agreement</a>が適用されます。要点は<a href="faq.html#license">ライセンスと利用条件</a>にあります。</li>
+        <li>元にした画像・動画・音声の権利は、元の持ち主にあります。作ったRefModを配るときや使うときにどの条件が当てはまるかは、モデルのライセンスと元の素材の権利をもとに、使う人が判断してください。</li>
+      </ul>
+      <p class="small muted">仕組みとAPIの詳細は、GitHubの<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/REFMOD.ja.md">REFMOD.ja.md</a>を参照してください。</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">不具合の報告（Issues）</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.ja.md">README</a></li>
+        <li><a href="faq.html#license">ライセンス</a></li>
+        <li><a href="en/refmod.html?lang=en" hreflang="en" lang="en">English</a></li>
+      </ul>
+      <p>H3cApp：大阪成蹊大学データサイエンス学部 鎌原淳三／Junzo Kamahara</p>
+      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画の生成にはMiniMaxの動画生成モデル<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>を使っています。モデルにはMiniMax H3独自のライセンス（MiniMax H3 Community License）が適用されます。</p>
+    </div>
+  </footer>
+</body>
+</html>

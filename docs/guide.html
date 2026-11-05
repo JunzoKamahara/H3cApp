@@ -63,6 +63,7 @@
           <li><a href="#lora">追加モデル（LoRA）を使う（任意）</a></li>
           <li><a href="#advanced">上級者向け</a></li>
           <li><a href="upscale.html">動画の拡大の解説（別ページ）</a></li>
+          <li><a href="refmod.html">RefMod（保存した参照）の解説（別ページ）</a></li>
           <li><a href="settings.html">詳細設定の解説（別ページ）</a></li>
         </ol>
       </nav>
@@ -89,7 +90,7 @@
       </ul>
       <p class="small">プロンプト欄のファイル名をクリックすると、使っている画像や動画の中身を確認できます。生成した動画も、プレビューの「<span class="ui">参照に使う</span>」で参照に追加できます。</p>
       <h3>RefMod（保存した参照）</h3>
-      <p>参照の行の「<span class="ui">RefModとして保存…</span>」で、その画像・動画・音声を一度だけ符号化して小さなファイル（.safetensors）に保存できます。保存したRefModは「<span class="ui">モデル管理</span>」の「<span class="ui">RefMod</span>」に並び、参照の「<span class="ui">RefModを追加…</span>」でどの生成にも入れられます。毎回符号化しないので速く、テキストエンコーダには見せないのでプロンプトに <code>&lt;Picture n&gt;</code> は要りません。「Full」は通常の参照と同じ中身、「圧縮」は小さな格子にまとめて参照のトークンを減らしたもの（細部は減ります）。ComfyUI の ComfyUI-MiniMaxH3Mod で作ったファイルも読めます。</p>
+      <p>参照の行の「<span class="ui">RefModとして保存…</span>」で、その画像・動画・音声を一度だけ符号化して小さなファイル（.safetensors）に保存できます。保存したRefModは「<span class="ui">モデル管理</span>」の「<span class="ui">RefMod</span>」に並び、参照の「<span class="ui">RefModを追加…</span>」でどの生成にも入れられます。毎回符号化しないので速く、テキストエンコーダには見せないのでプロンプトに <code>&lt;Picture n&gt;</code> は要りません。「Full」は通常の参照と同じ中身、「圧縮」は小さな格子にまとめて参照のトークンを減らしたもの（細部は減ります）。ComfyUI の ComfyUI-MiniMaxH3Mod で作ったファイルも読めます。作り方と使い方は<a href="refmod.html">RefMod（保存した参照）を使う</a>のページで詳しく説明しています。</p>
     </section>
 
     <section class="section section-narrow" id="lipsync" aria-labelledby="lipsync-title">
