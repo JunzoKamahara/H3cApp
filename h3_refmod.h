@@ -44,7 +44,9 @@ typedef struct {
     int supported;             /* always 1 today; 0 would name a member this engine cannot use */
     char name[128];
     char source[32];
-    char source_shape[64];
+    /* "TxHxW", or one per source joined by " +" for a stack or bundle
+     * built from many sources (upstream writes the whole list). */
+    char source_shape[1024];
     char pool[96];
     char concept_type[32];
     char description[256];

@@ -184,6 +184,32 @@ static void test_single_image(void) {
     h3_refmod_latent_free(&latent);
 }
 
+/* A stack built from many sources records every source's shape; the
+ * whole list survives inspection (it used to be cut at 63 characters). */
+static void test_long_source_shape(void) {
+    enum { COUNT = 24 * 2 * 2 * 2 };
+    float values[COUNT];
+    fill_pattern(values, COUNT, 1.0f);
+    char shapes[1024] = "";
+    for (int index = 0; index < 80; index++)
+        snprintf(shapes + strlen(shapes), sizeof(shapes) - strlen(shapes),
+                 "%s%dx32x32", index ? " +" : "", index % 2 ? 17 : 1);
+    CHECK(strlen(shapes) > 700 && strlen(shapes) < 1023);
+    char meta[1400];
+    snprintf(meta, sizeof(meta),
+             "{\"name\": \"many\", \"kind\": \"video\", \"latent_h\": 2, \"latent_w\": 2,"
+             " \"latent_t\": 2, \"mode\": \"encode\", \"source\": \"stack\","
+             " \"source_shape\": \"%s\", \"_format_version\": 4}", shapes);
+    write_single("many-sources.safetensors", meta, "refmod_meta", "[1,24,2,2,2]",
+                 values, COUNT);
+    h3_refmod_info info;
+    char error[512];
+    CHECK(h3_refmod_inspect(path_in_directory("many-sources.safetensors"), &info,
+                            error, sizeof(error)));
+    CHECK(info.member_count == 1 && !strcmp(info.members[0].source_shape, shapes));
+    h3_refmod_info_free(&info);
+}
+
 static void test_rejections(void) {
     float values[24 * 2 * 4 * 6];
     fill_pattern(values, sizeof(values) / sizeof(*values), 1.0f);
@@ -694,6 +720,7 @@ int main(int argc, char **argv) {
     test_strength();
     test_extraction_rules();
     test_write_round_trip();
+    test_long_source_shape();
     test_refine();
     test_fixture(argc > 2 ? argv[2] : "misc/fixtures/h3_refmod_fixture.safetensors");
     if (argc > 1 && *argv[1]) test_ref2va_labels(argv[1]);
