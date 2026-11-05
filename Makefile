@@ -149,6 +149,12 @@ h3_sdpa_tests: tests/test_sdpa.o $(LIB_OBJ)
 h3_seedvr2_tests: tests/test_seedvr2.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# Temporal SeedVR2 against the official reference dumps
+# (tools/seedvr2_temporal_fixtures.md); skips without them unless
+# H3_SEEDVR2_STRICT=1.
+h3_seedvr2_temporal_tests: tests/test_seedvr2_temporal.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 # The LoRA rank extraction (h3_lora_extract.c) on a synthetic file.
 h3_lora_extract_tests: tests/test_lora_extract.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
@@ -257,7 +263,7 @@ h3_vsr_run: tests/vsr_run.o $(LIB_OBJ)
 h3_semantic_vae_test: tests/test_semantic_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_lora_extract_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests h3_vsr_wan_tests h3_vsr_session_tests h3_vsr_tapconv_tests h3_real_vsr_test h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
+test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_extract_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests h3_vsr_wan_tests h3_vsr_session_tests h3_vsr_tapconv_tests h3_real_vsr_test h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
 	h3_audio_gpu_tests h3_determinism_tests h3_real_audio_vae_test \
 	h3_real_audio_encoder_test h3_real_video_encoder_test \
 	h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests h3_real_refmod_test \
@@ -268,6 +274,7 @@ test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_lora_extract_tests h3_vsr_tests
 	./h3_sdpa_tests
 	H3_NAX=0 ./h3_sdpa_tests
 	./h3_seedvr2_tests
+	./h3_seedvr2_temporal_tests
 	./h3_lora_extract_tests
 	./h3_vsr_tests
 	./h3_vsr_cache_tests
@@ -393,7 +400,7 @@ tests/%.o: tests/%.c
 
 clean:
 	rm -f h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests h3_real_refmod_test
-	rm -f h3_tests h3_sdpa_tests h3_seedvr2_tests h3_lora_extract_tests h3_seedvr2_cli h3_metal_tests h3_bf16_tests h3_renoise_tests h3_tokenizer_tests \
+	rm -f h3_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_extract_tests h3_seedvr2_cli h3_metal_tests h3_bf16_tests h3_renoise_tests h3_tokenizer_tests \
 		h3_text_tests h3_real_prompt_test h3_real_dit_block_test \
 		h3_audio_gpu_tests h3_determinism_tests h3_repro_check \
 		h3_real_audio_vae_test h3_real_audio_encoder_test \
