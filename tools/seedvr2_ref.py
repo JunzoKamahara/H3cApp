@@ -88,10 +88,44 @@ def _patch_rope():
     rope.NaMMRotaryEmbedding3d.get_freqs = get_freqs
 
 
+def _patch_conv3d():
+    """F.conv3d as one conv2d per temporal tap, summed: the CPU's conv3d
+    unfolds the whole clip (33 GB at 17 frames of 256x256); conv2d does not.
+    Equal up to the order of the float32 sums."""
+    import torch.nn.functional as F
+    if getattr(F.conv3d, "_sv2_taps", False):
+        return
+    original = F.conv3d
+
+    def conv3d(input, weight, bias=None, stride=1, padding=0, dilation=1, groups=1):
+        if isinstance(padding, str) or groups != 1 or input.dim() != 5:
+            return original(input, weight, bias, stride, padding, dilation, groups)
+        st, sh, sw = (stride,) * 3 if isinstance(stride, int) else tuple(stride)
+        pt, ph, pw = (padding,) * 3 if isinstance(padding, int) else tuple(padding)
+        dl = (dilation,) * 3 if isinstance(dilation, int) else tuple(dilation)
+        if dl != (1, 1, 1):
+            return original(input, weight, bias, stride, padding, dilation, groups)
+        if pt:
+            input = F.pad(input, (0, 0, 0, 0, pt, pt))
+        B, C, T, H, W = input.shape
+        kt = weight.shape[2]
+        frames = (T - kt) // st + 1
+        out = None
+        for tt in range(kt):
+            x = input[:, :, tt:tt + st * (frames - 1) + 1:st]                     # [B, C, frames, H, W]
+            x = x.permute(0, 2, 1, 3, 4).reshape(B * frames, C, H, W)
+            y = F.conv2d(x, weight[:, :, tt], bias if tt == 0 else None, (sh, sw), (ph, pw))
+            out = y if out is None else out.add_(y)
+        return out.reshape(B, frames, *out.shape[1:]).permute(0, 2, 1, 3, 4).contiguous()
+    conv3d._sv2_taps = True
+    F.conv3d = conv3d
+
+
 def load_models(model_dir, want_vae=True, want_dit=True):
     from models.video_vae_v3.modules.attn_video_vae import VideoAutoencoderKLWrapper
     from models.dit_v2.nadit import NaDiT
     _patch_rope()
+    _patch_conv3d()
     vae = None if not want_vae else VideoAutoencoderKLWrapper(
         act_fn="silu", block_out_channels=[128, 256, 512, 512],
         down_block_types=["DownEncoderBlock3D"] * 4, in_channels=3, latent_channels=16,

@@ -29,6 +29,10 @@ part of the app, which has no Python.
 - **RoPE patch:** `NaMMRotaryEmbedding3d.get_freqs` builds its table with
   `get_axial_freqs(l + f, h, w)` sliced to `[l : l + f]` instead of the full
   cache (same values, far less memory on the CPU).
+- **conv3d patch:** `F.conv3d` runs as one `conv2d` per temporal tap, summed
+  (the CPU's conv3d unfolds the clip: 33 GB at 17 frames of 256²). Equal up
+  to the order of the float32 sums (≤ 3e-5 on random tensors). Used for the
+  T = 17 files; T = 1, 5, 9 were written with PyTorch's own conv3d.
 
 ## Inputs
 
