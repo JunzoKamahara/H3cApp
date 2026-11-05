@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="assets/js/lang.js"></script>
   <title>RefMod（保存した参照）を使う — H3cApp</title>
-  <meta name="description" content="H3cAppのRefModの作り方と使い方。参照の画像・動画・音声を一度だけ符号化して小さなファイルに保存し、どの生成にも入れられます。Fullと圧縮、強さ、バンドル、モデル管理、ComfyUIとの共通の形式。">
+  <meta name="description" content="H3cAppのRefModの作り方と使い方。参照の画像・動画・音声を一度だけ符号化して小さなファイルに保存し、どの生成にも入れられます。画像のまとめ、強さ、バンドル、モデル管理、ComfyUIとの共通の形式。">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/refmod.html">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/refmod.html">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/refmod.html">
@@ -79,7 +79,6 @@
             <tr><th scope="row">生成のたびの符号化</th><td>する</td><td>しない（保存した中身を読むだけ）</td></tr>
             <tr><th scope="row">文章の部分に見せる</th><td>見せる（<code>&lt;Picture n&gt;</code> などの番号が付く）</td><td>見せない（番号は付かない）</td></tr>
             <tr><th scope="row">ファイル</th><td>元の画像・動画・音声</td><td>.safetensors（数KB〜数百KB）</td></tr>
-            <tr><th scope="row">中身を小さくする</th><td>できない</td><td>「圧縮」で作ればできる</td></tr>
           </tbody>
         </table>
       </div>
@@ -99,7 +98,7 @@
       <ol class="steps">
         <li><strong>参照に元のファイルを入れます。</strong>入力パネルで「<span class="ui">画像から</span>」を選び、「<span class="ui">参照画像・動画・音声</span>」にします。「<span class="ui">ファイルを選ぶ…</span>」で、元にする画像・動画・音声を追加します。</li>
         <li><strong>その行の「<span class="ui">RefModとして保存…</span>」を押します。</strong></li>
-        <li><strong>名前とモードを決めて「<span class="ui">作成</span>」を押します。</strong>項目は下の表のとおりです。ふつうは名前だけ決めれば十分です。</li>
+        <li><strong>名前を決めて「<span class="ui">作成</span>」を押します。</strong>項目は下の表のとおりです。ふつうは名前だけ決めれば十分です。</li>
       </ol>
       <p>作ったRefModは、RefModフォルダ（<code>~/Library/Application Support/H3cApp/RefMods/</code>）に保存され、「<span class="ui">モデル管理</span>」の「<span class="ui">RefMod</span>」に並びます。「<span class="ui">元の参照をRefModに置き換える</span>」がオン（初期値）なら、参照の一覧の元のファイルの行が、同じ位置のままそのRefModに入れ替わります。オフなら、元の行を残してRefModを最後に加えます。両方を残すと、同じ参照が二重に効きます。音声も使う動画の参照は、RefModが映像だけなので、元の行を残してRefModを最後に加えます。</p>
       <p>作成は生成と同じGPUの処理です。生成中に押すと、その生成が終わってから始まります。シートの「<span class="ui">中止</span>」で止められます。</p>
@@ -109,32 +108,26 @@
           <thead><tr><th scope="col">項目</th><th scope="col">初期値</th><th scope="col">意味</th></tr></thead>
           <tbody>
             <tr><th scope="row">名前</th><td>ファイル名</td><td>一覧に出る名前で、ファイル名にもなります</td></tr>
-            <tr><th scope="row">モード</th><td>Full（そのまま）</td><td>「<span class="ui">Full（そのまま）</span>」か「<span class="ui">圧縮（小さい格子に）</span>」。音声はFullだけです</td></tr>
             <tr><th scope="row">解像度の上限</th><td>1024 px</td><td>短い辺がこれより大きい画像・動画は、縮めてから符号化します。拡大はしません（短い辺が320 px未満なら320 pxまで広げます）</td></tr>
             <tr><th scope="row">使うコマ数</th><td>16</td><td>動画だけ。動画全体から均等に選ぶコマ数で、5、22、39…に切り下げます（16なら5コマ）。5コマ未満の動画は先頭の1コマだけ使います</td></tr>
-            <tr><th scope="row">格子の長辺</th><td>16</td><td>圧縮だけ。長い辺をこの数のマスにまとめます。小さいほどトークンも細部も減ります</td></tr>
-            <tr><th scope="row">調整ステップ</th><td>500</td><td>圧縮だけ。まとめた格子を元の符号化に近づける回数です。0は平均のままです</td></tr>
             <tr><th scope="row">最大秒数</th><td>15</td><td>音声だけ。先頭からこの秒数までを使います</td></tr>
           </tbody>
         </table>
       </div>
-      <h3>Fullと圧縮</h3>
-      <ul>
-        <li><strong>Full</strong>：符号化した中身をそのまま保存します。同じ大きさで符号化したふつうの参照と、中身が一致します。</li>
-        <li><strong>圧縮</strong>：符号化した中身を小さな格子に平均してから、元に近づくよう調整して保存します。参照のトークンが減るので、生成の計算が軽くなります。そのかわり、細部や動きは失われます。人物の顔や体を覚えさせる仕組みではありません。</li>
-      </ul>
+      <h3>圧縮のRefModについて</h3>
+      <p>H3cAppが作るRefModは、すべてFullです。符号化した中身をそのまま保存し、同じ大きさで符号化したふつうの参照と中身が一致します。</p>
+      <p>ComfyUI-MiniMaxH3Modには、中身を小さな格子に平均して保存する「圧縮」もあります。参照のトークンは減りますが、細部や動きが失われます。キャラクターデザインシートから作った圧縮のRefModでは大まかな色しか残らず、別人が描かれました。そのためH3cAppでは、圧縮のRefModを作る選択肢を外しました。ComfyUIなどで作った圧縮のRefModは、今までどおり読み込んで使えます。</p>
       <p>Apple M5・24GBで、768×512の画像と3秒の音声から作った例です。時間はVAEの読み込みを含む1回目の値です。</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th scope="col">作ったもの</th><th scope="col">参照のトークン</th><th scope="col">ファイル</th><th scope="col">作成時間</th></tr></thead>
           <tbody>
             <tr><th scope="row">画像・Full</th><td>384</td><td>74 KB</td><td>6秒</td></tr>
-            <tr><th scope="row">画像・圧縮（長辺16、500ステップ）</th><td>40</td><td>8 KB</td><td>4秒</td></tr>
             <tr><th scope="row">音声3秒</th><td>240</td><td>16 KB</td><td>2秒</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="small muted">同じ画像を「横長・小」の生成でふつうの参照にすると117トークンでした。ふつうの参照は出力の大きさに合わせて縮められますが、RefModは作ったときの大きさのまま使われます。そのため、FullのRefModはふつうの参照よりトークンが多くなることがあります。軽くしたいときは、解像度の上限を下げて作るか、圧縮で作ります。</p>
+      <p class="small muted">同じ画像を「横長・小」の生成でふつうの参照にすると117トークンでした。ふつうの参照は出力の大きさに合わせて縮められますが、RefModは作ったときの大きさのまま使われます。そのため、FullのRefModはふつうの参照よりトークンが多くなることがあります。軽くしたいときは、解像度の上限を下げて作ります。</p>
       <h3>画像をまとめて作る</h3>
       <p>同じキャラクターや物を写した画像が何枚かあるときは、1つのRefModにまとめられます。ComfyUI-MiniMaxH3Modの「stack」と同じ形で、配布されている人物のRefMod（512 pxの写真20〜22枚、Full）もこの形です。</p>
       <ol class="steps">
@@ -142,7 +135,7 @@
         <li><strong>一覧の下の「<span class="ui">画像をまとめてRefModに…</span>」を押します。</strong></li>
         <li><strong>まとめる画像にチェックを付けて「<span class="ui">作成</span>」を押します。</strong></li>
       </ol>
-      <p>画像は1枚ずつ符号化され、1枚1コマで並びます。Fullでは1枚目の画像が大きさを決め、ほかの画像ははみ出した部分を中央で切り取ります。解像度の上限の初期値は512 pxで、参照のトークンは枚数分増えます。一度にまとめられるのは32枚までで、動画はまとめられません。</p>
+      <p>画像は1枚ずつ符号化され、1枚1コマで並びます。1枚目の画像が大きさを決め、ほかの画像ははみ出した部分を中央で切り取ります。解像度の上限の初期値は512 pxで、参照のトークンは枚数分増えます。一度にまとめられるのは32枚までで、動画はまとめられません。</p>
       <p>デザインシートから正面・横・後ろ・顔を切り出した4枚をまとめると、1,728トークン・325 KBで、作成は20秒でした。生成すると髪や服はよく再現されましたが、切り出した画像の方眼・文字・横に並んだ姿まで写り、プロンプトに夜の屋外ステージと書いてもシートのような画面になりました。まとめる画像は、キャラクターだけが写ったもの（文字や枠がなく、背景が無地に近いもの）を選んでください。</p>
     </section>
 
@@ -205,7 +198,7 @@
       <ul>
         <li>参照の上限（画像9、動画3、音声3、合わせて12）に、RefModも中身の種類で数えます。参照の音声は、RefModの分も含めて合わせて15秒までです。</li>
         <li>動画のRefModは、作るときに選んだコマ（初期値で5コマ）だけを持ちます。長い動画の動き全体を覚えているわけではありません。</li>
-        <li>圧縮すると細部と動きが失われます。人物の顔をはっきり残したいときはFullで作ります。</li>
+        <li>ほかで作った圧縮のRefModは、細部と動きを失っています。人物やキャラクターには向きません。</li>
         <li>RefModは文章の部分に見せないので、画像の背景・文字・並べ方も、キャラクターと一緒に写りやすくなります。キャラクターを別の場面に出したいときは、キャラクターだけが写った画像から作るか、ふつうの参照を使います。</li>
         <li>RefModは保存したときの中身のままです。元の画像を直したら、作り直します。</li>
         <li>複数の人物を番号で描き分けたいときは、番号の付くふつうの参照を使います。</li>

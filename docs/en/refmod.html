@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="../assets/js/lang.js"></script>
   <title>Using RefMods (saved references) — H3cApp</title>
-  <meta name="description" content="How to make and use RefMods in H3cApp. A reference image, video or audio file is encoded once and saved as a small file that any generation can take. Full and Compressed, strength, bundles, Model Manager, the format shared with ComfyUI.">
+  <meta name="description" content="How to make and use RefMods in H3cApp. A reference image, video or audio file is encoded once and saved as a small file that any generation can take. stacking images, strength, bundles, Model Manager, the format shared with ComfyUI.">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/refmod.html">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/refmod.html">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/refmod.html">
@@ -79,7 +79,6 @@
             <tr><th scope="row">Encoded at every generation</th><td>Yes</td><td>No (the saved contents are read)</td></tr>
             <tr><th scope="row">Shown to the text part</th><td>Yes (numbered <code>&lt;Picture n&gt;</code> and so on)</td><td>No (no number)</td></tr>
             <tr><th scope="row">File</th><td>The image, video or audio itself</td><td>.safetensors (a few KB to a few hundred KB)</td></tr>
-            <tr><th scope="row">Can be made smaller</th><td>No</td><td>Yes, when made “Compressed”</td></tr>
           </tbody>
         </table>
       </div>
@@ -99,7 +98,7 @@
       <ol class="steps">
         <li><strong>Put the source file in the references.</strong> In the panel, choose “<span class="ui">From images</span>” and then “<span class="ui">Reference images, videos and audio</span>”. Add the image, video or audio to start from with “<span class="ui">Choose Files…</span>”.</li>
         <li><strong>Press “<span class="ui">Save as RefMod…</span>” on its row.</strong></li>
-        <li><strong>Set the name and the mode, and press “<span class="ui">Create</span>”.</strong> The fields are in the table below. Usually a name is all you need to set.</li>
+        <li><strong>Set the name and press “<span class="ui">Create</span>”.</strong> The fields are in the table below. Usually a name is all you need to set.</li>
       </ol>
       <p>The RefMod is saved in the RefMod folder (<code>~/Library/Application Support/H3cApp/RefMods/</code>) and listed under “<span class="ui">RefMod</span>” in “<span class="ui">Model Manager</span>”. With “<span class="ui">Replace the original reference with the RefMod</span>” on (the default), the RefMod takes the original file's row in the references, in the same place. Off, the original row stays and the RefMod is added at the end; keeping both makes the same reference count twice. A video reference that also uses its sound keeps its row and gets the RefMod at the end, as a RefMod holds the picture only.</p>
       <p>Making a RefMod is GPU work like a generation. Pressed during one, it starts when that generation finishes. “<span class="ui">Cancel</span>” in the sheet stops it.</p>
@@ -109,32 +108,26 @@
           <thead><tr><th scope="col">Field</th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead>
           <tbody>
             <tr><th scope="row">Name</th><td>The file's name</td><td>The name in the list, and the file name</td></tr>
-            <tr><th scope="row">Mode</th><td>Full (as encoded)</td><td>“<span class="ui">Full (as encoded)</span>” or “<span class="ui">Compressed (small grid)</span>”. Audio is always Full</td></tr>
             <tr><th scope="row">Resolution cap</th><td>1024 px</td><td>An image or video whose short side is larger is shrunk before encoding. Nothing is enlarged (a short side under 320 px is widened to 320 px)</td></tr>
             <tr><th scope="row">Frames to keep</th><td>16</td><td>Video only. Frames picked evenly across the whole video, rounded down to 5, 22, 39, … (16 gives 5). A video of fewer than 5 frames uses its first frame alone</td></tr>
-            <tr><th scope="row">Grid long side</th><td>16</td><td>Compressed only. The longer side is pooled into this many cells. Fewer cells mean fewer tokens and less detail</td></tr>
-            <tr><th scope="row">Refinement steps</th><td>500</td><td>Compressed only. How many times the pooled grid is adjusted toward the full encoding. 0 keeps the plain average</td></tr>
             <tr><th scope="row">Max seconds</th><td>15</td><td>Audio only. Uses up to this many seconds from the start</td></tr>
           </tbody>
         </table>
       </div>
-      <h3>Full and Compressed</h3>
-      <ul>
-        <li><strong>Full</strong> saves the encoded contents as they are. They match an ordinary reference encoded at the same size.</li>
-        <li><strong>Compressed</strong> averages the encoded contents into a small grid, adjusts it toward the original and saves that. It has fewer reference tokens, so the generation computes less. Detail and motion are lost in exchange. It does not learn a person's face or body.</li>
-      </ul>
+      <h3>About compressed RefMods</h3>
+      <p>Every RefMod H3cApp makes is Full. It saves the encoded contents as they are, which match an ordinary reference encoded at the same size.</p>
+      <p>ComfyUI-MiniMaxH3Mod also has “Compressed”, which averages the contents into a small grid. That has fewer reference tokens, but detail and motion are lost. A compressed RefMod made from a character design sheet kept only rough colours, and someone else was drawn. So H3cApp no longer offers to make compressed RefMods. Compressed RefMods made in ComfyUI or elsewhere still load and work.</p>
       <p>Examples made on an Apple M5 with 24 GB from a 768×512 image and 3 seconds of audio. The times are first runs, loading the VAE included.</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th scope="col">Made</th><th scope="col">Reference tokens</th><th scope="col">File</th><th scope="col">Time</th></tr></thead>
           <tbody>
             <tr><th scope="row">Image, Full</th><td>384</td><td>74 KB</td><td>6 s</td></tr>
-            <tr><th scope="row">Image, Compressed (long side 16, 500 steps)</th><td>40</td><td>8 KB</td><td>4 s</td></tr>
             <tr><th scope="row">Audio, 3 s</th><td>240</td><td>16 KB</td><td>2 s</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="small muted">The same image as an ordinary reference in a Landscape, Small generation was 117 tokens. An ordinary reference is shrunk to suit the output size, while a RefMod is used at the size it was made. A Full RefMod can therefore have more tokens than the ordinary reference. To keep it light, make it with a lower resolution cap, or Compressed.</p>
+      <p class="small muted">The same image as an ordinary reference in a Landscape, Small generation was 117 tokens. An ordinary reference is shrunk to suit the output size, while a RefMod is used at the size it was made. A Full RefMod can therefore have more tokens than the ordinary reference. To keep it light, make it with a lower resolution cap.</p>
       <h3>Stacking images into one RefMod</h3>
       <p>Several pictures of the same character or object can go into one RefMod. This is the “stack” form of ComfyUI-MiniMaxH3Mod, and the published RefMods of people (20 to 22 photos at 512 px, Full) are made this way.</p>
       <ol class="steps">
@@ -142,7 +135,7 @@
         <li><strong>Press “<span class="ui">Stack Images into a RefMod…</span>” under the list.</strong></li>
         <li><strong>Tick the images to stack and press “<span class="ui">Create</span>”.</strong></li>
       </ol>
-      <p>The images are encoded one by one and placed in order, one latent frame each. In Full the first image sets the size, and the others are cropped at the centre to fit it. The resolution cap starts at 512 px, and reference tokens grow with each image. Up to 32 images go in one stack, and videos can't be stacked.</p>
+      <p>The images are encoded one by one and placed in order, one latent frame each. The first image sets the size, and the others are cropped at the centre to fit it. The resolution cap starts at 512 px, and reference tokens grow with each image. Up to 32 images go in one stack, and videos can't be stacked.</p>
       <p>Four views cut from a design sheet (front, side, back and face) made a stack of 1,728 tokens and 325 KB in 20 seconds. The hair and clothes came out well, but the grid, labels and side-by-side figures of the crops came along too, and a prompt for a night-time outdoor stage still gave a sheet-like picture. Stack pictures that show only the character: no text or frames, and a background close to plain.</p>
     </section>
 
@@ -205,7 +198,7 @@
       <ul>
         <li>RefMods count toward the reference limits (9 images, 3 videos, 3 audio, 12 in all) by what they hold. Reference audio, RefMods included, is at most 15 seconds in total.</li>
         <li>A video RefMod holds only the frames picked when it was made (5 by default). It does not remember the motion of a long video as a whole.</li>
-        <li>Compression loses detail and motion. To keep a person's face clear, make it Full.</li>
+        <li>Compressed RefMods made elsewhere have lost detail and motion. They don't suit people or characters.</li>
         <li>As the text part is not shown a RefMod, an image's background, text and layout tend to come along with the character. To put the character in another scene, make the RefMod from pictures of the character alone, or use ordinary references.</li>
         <li>A RefMod stays as it was saved. After editing the original image, make it again.</li>
         <li>To tell several people apart by number, use ordinary references, which get numbers.</li>

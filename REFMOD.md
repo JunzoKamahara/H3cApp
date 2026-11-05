@@ -42,7 +42,6 @@ hands the saved contents straight to the DiT. Step 2 does not happen.
 | Encoded at every generation | Yes | No (the saved contents are read) |
 | Shown to Qwen | Yes (numbered `<Picture n>` and so on) | No (no number) |
 | File | The image, video or audio itself | `.safetensors` (a few KB to a few hundred KB) |
-| Can be made smaller | No | Yes, when made "Compressed" |
 
 As Qwen is not shown a RefMod, it does not suit pointing at "this person" or
 "this object" by number in the prompt. It brings the reference's look and feel
@@ -62,7 +61,7 @@ into the generation together with the words of the prompt.
    and audio**".
 2. Add the image, video or audio to start from with "**Choose Files…**".
 3. Press "**Save as RefMod…**" on its row.
-4. In the sheet, set the name and the mode, and press "**Create**".
+4. In the sheet, set the name and press "**Create**".
 
 The RefMod is saved in the RefMod folder
 (`~/Library/Application Support/H3cApp/RefMods/`) and listed under "RefMod" in
@@ -81,22 +80,21 @@ when that generation finishes. "Stop" in the sheet stops it.
 | Field | Default | Meaning |
 |---|---|---|
 | Name | The file's name | The name in the list, and the file name |
-| Mode | Full (as encoded) | "Full (as encoded)" or "Compressed (small grid)"; see the table below. Audio is always Full |
 | Resolution cap | 1024 px | An image or video whose short side is larger is shrunk before encoding. Nothing is enlarged (a short side under 320 px is widened to 320 px) |
 | Frames to keep | 16 | Video only. Frames picked evenly across the whole video, rounded down to 5, 22, 39, … (16 gives 5). A video of fewer than 5 frames uses its first frame alone |
-| Grid long side | 16 | Compressed only. The longer side is pooled into this many cells |
-| Refinement steps | 500 | Compressed only. How many times the pooled grid is adjusted toward the full encoding. 0 keeps the plain average |
 | Max seconds | 15 | Audio only. Uses up to this many seconds from the start |
 
-### Full and Compressed
+### About compressed RefMods
 
-- **Full** saves the encoded contents as they are. It holds what an ordinary
-  reference would (encoded at the same size, the contents match the ordinary
-  reference's).
-- **Compressed** averages the encoded contents into a small grid, adjusts it
-  toward the original and saves that. It has fewer reference tokens, so the
-  generation computes less. Detail and motion are lost in exchange. It does not
-  learn a person's face or body.
+Every RefMod H3cApp makes is Full. It saves the encoded contents as they are,
+which match an ordinary reference encoded at the same size.
+
+ComfyUI-MiniMaxH3Mod also has "Compressed", which averages the contents into a
+small grid. That has fewer reference tokens, but detail and motion are lost. A
+compressed RefMod made from a character design sheet kept only rough colours,
+and someone else was drawn. So H3cApp no longer offers to make compressed
+RefMods. Compressed RefMods made in ComfyUI or elsewhere still load and work,
+and the list shows them as "Compressed".
 
 Examples made on this Mac (M5, 24 GB) from a 768×512 image and 3 seconds of
 audio. The times are first runs, loading the VAE included.
@@ -104,15 +102,14 @@ audio. The times are first runs, loading the VAE included.
 | Made | Reference tokens | File | Time |
 |---|---|---|---|
 | Image, Full | 384 | 74 KB | 6 s |
-| Image, Compressed (long side 16, 500 steps) | 40 | 8 KB | 4 s |
 | Audio, 3 s | 240 | 16 KB | 2 s |
 
 For comparison, the same image as an ordinary reference in a Landscape, Small
 generation was 117 tokens. An ordinary reference is shrunk to suit the output
 size, while a RefMod is used at the size it was made (by default a short side of
 up to 1024 px). A Full RefMod can therefore have more tokens than the same image
-as an ordinary reference. To keep it light, make it with a lower resolution cap,
-or Compressed.
+as an ordinary reference. To keep it light, make it with a lower resolution
+cap.
 
 ### Stacking images into one RefMod
 
@@ -125,8 +122,8 @@ the "stack" form of ComfyUI-MiniMaxH3Mod, and the published RefMods of people
 3. In the sheet, tick the images to stack and press "**Create**".
 
 The images are encoded one by one and placed in order along time, one latent
-frame each. The list shows it as "4 images", for example. In Full, the first
-image sets the size: the others are scaled to cover it and cropped at the
+frame each. The list shows it as "4 images", for example. The first image sets
+the size: the others are scaled to cover it and cropped at the
 centre. The resolution cap defaults to 512 px. Reference tokens grow with each
 image. With "Replace the stacked references with the RefMod" on, the chosen
 image rows go and the RefMod takes the first one's place. Up to 32 images go in
@@ -235,8 +232,8 @@ reputation are treated.
   seconds in total.
 - A video RefMod holds only the frames picked when it was made (5 by default).
   It does not remember the motion of a long video as a whole.
-- Compression loses detail and motion. To keep a person's face clear, make it
-  Full.
+- Compressed RefMods made elsewhere have lost detail and motion. They don't
+  suit people or characters.
 - As Qwen is not shown a RefMod, an image's background, text and layout tend to
   come along with the character. To put the character in another scene, make the
   RefMod from pictures of the character alone, or use ordinary references.
@@ -260,7 +257,7 @@ The [local API](API.md) can do all of this (it needs `Authorization: Bearer
 TOKEN=$(cat "$HOME/Library/Application Support/H3cApp/api-token")
 curl -X POST http://127.0.0.1:8420/api/refmods/extract \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"path": "/Users/me/Pictures/cat.png", "name": "cat", "mode": "compressed"}'
+  -d '{"path": "/Users/me/Pictures/cat.png", "name": "cat"}'
 ```
 
 ```bash
@@ -279,9 +276,8 @@ curl -X POST http://127.0.0.1:8420/api/generate \
 A RefMod holds the normalized latent the Ref2VA video VAE (images, videos) or
 audio VAE (audio) produces, as it is. ComfyUI's VAEs produce the same values, so
 RefMods from either work without conversion. A generation puts this latent where
-an ordinary reference's would go and shows Qwen nothing. The strength blur and
-the compression's averaging and refinement follow the upstream definitions and
-were checked against PyTorch. See "RefMods: saved reference latents" in the
+an ordinary reference's would go and shows Qwen nothing. The strength blur
+follows the upstream definition and was checked against PyTorch. See "RefMods: saved reference latents" in the
 [technical reference](TECHNICAL.md) for the details.
 
 These ComfyUI-MiniMaxH3Mod features are not in H3cApp: `copies` (stacking the

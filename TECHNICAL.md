@@ -29,7 +29,7 @@ Related documentation: [Local API](API.md) Â· [Building and testing](BUILD.md) Â
   (image, video or audio; single files and bundles). They join the DiT's
   references like the others but are not shown to Qwen, so the prompt
   carries no `<Picture N>` for them. The app makes them from a reference
-  (Full, or compressed to a small grid) and keeps them in a RefMods folder;
+  (Full, one image or several stacked) and keeps them in a RefMods folder;
   see "RefMods: saved reference latents" below, and [REFMOD.md](REFMOD.md)
   for how to use them.
 - **Lip sync** (forced audio): choose a voice or song in the panel (Match
@@ -697,7 +697,11 @@ from its definitions and checked against PyTorch (`tests/test_refmod.c`,
   multiples of 32 (then up to a short side of at least 320), a video keeps
   `min(F,16)` frames spread evenly and snapped down to 17k+5 of them (fewer
   than 5: the first frame alone), and the Ref2VA VAE encodes it. **Full**
-  stores that latent. **Compressed** ("training" upstream) average-pools it
+  stores that latent. The app and the API make Full RefMods only: in the
+  tests of 2026-11-05 a compressed RefMod of a character kept only rough
+  colours, so the choice was taken out (compressed files made elsewhere
+  still load). The engine keeps upstream's compression, which the tests
+  use. **Compressed** ("training" upstream) average-pools it
   to an even grid with 16 cells on the longer side (fewer tokens: a 1024-px
   image's 2048 become 256), rounds it to F16 and refines it with Adam (lr
   0.02, 500 steps by default) so that its trilinear upsample matches the

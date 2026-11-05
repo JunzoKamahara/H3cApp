@@ -189,9 +189,10 @@ Good to know:
   small .safetensors in the RefMods folder (Model Manager > RefMod), and
   "Add RefMod…" puts it into any generation without encoding it again or
   showing it to the text encoder, so the prompt needs no <Picture n>.
-  Full keeps everything the ordinary reference would; Compressed pools it
-  to a small grid for fewer reference tokens, at a cost in detail. Files
-  made with ComfyUI-MiniMaxH3Mod load too, bundles included. Strength
+  The RefMods it makes are Full, keeping everything the ordinary reference
+  would, and several pictures of one character can be stacked into one.
+  Files made with ComfyUI-MiniMaxH3Mod load too, bundles and compressed
+  ones included. Strength
   below 1 blurs the reference rather than weighting it. See
   [REFMOD.md](REFMOD.md).
 - **First image, references and lip sync.** Reference images are used by

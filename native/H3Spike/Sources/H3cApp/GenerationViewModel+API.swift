@@ -362,9 +362,10 @@ extension GenerationViewModel {
                 return item
             })
         case ("POST", "/api/refmods/extract"):
-            // Makes a RefMod from a file: {"path", "name"?, "mode"?
-            // ("full"|"compressed"), "resolution_cap"?, "latent_frames"?,
-            // "pool_long_edge"?, "optimize_steps"?, "max_seconds"?}, or from
+            // Makes a Full RefMod from a file: {"path", "name"?, "mode"?
+            // ("full" only: compressed RefMods are no longer made here, as
+            // the sheet no longer offers them; ones made elsewhere still
+            // load), "resolution_cap"?, "latent_frames"?, "max_seconds"?}, or from
             // 2-32 still images stacked into one ("paths": [...] in place of
             // "path"; resolution_cap defaults to 512 then). Answers
             // 202 with the output path; GET /api/status reports
@@ -411,9 +412,9 @@ extension GenerationViewModel {
                 switch raw as? String {
                 case "full": extractRequest.mode = .full
                 case "compressed":
-                    guard kind != .audio else { return .error(400, "audio RefMods have no compressed mode") }
-                    extractRequest.mode = .compressed
-                default: return .error(400, "\"mode\" must be full or compressed")
+                    return .error(400, "compressed RefMods are no longer made by H3cApp (they kept only rough colours "
+                                  + "of a subject); make a Full one. Compressed files made elsewhere still load.")
+                default: return .error(400, "\"mode\" must be full")
                 }
             }
             func integer(_ key: String, _ range: ClosedRange<Int>) -> Result<Int?, ReferenceParseError> {
@@ -427,8 +428,6 @@ extension GenerationViewModel {
             let fields: [(String, ClosedRange<Int>, (Int) -> Void)] = [
                 ("resolution_cap", 320 ... 4096, { extractRequest.resolutionCap = $0 }),
                 ("latent_frames", 1 ... 362, { extractRequest.latentFrames = $0 }),
-                ("pool_long_edge", 2 ... 64, { extractRequest.poolLongEdge = $0 }),
-                ("optimize_steps", 0 ... 100_000, { extractRequest.optimizeSteps = $0 }),
                 ("max_seconds", 1 ... 15, { extractRequest.maxSeconds = $0 }),
             ]
             for (key, range, apply) in fields {

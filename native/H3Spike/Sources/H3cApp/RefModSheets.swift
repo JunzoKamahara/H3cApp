@@ -27,11 +27,8 @@ struct RefModExtractSheet: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var name: String
-    @State private var mode: H3RefModMode = .full
     @State private var resolutionCap = 1024
     @State private var latentFrames = 16
-    @State private var poolLongEdge = 16
-    @State private var optimizeSteps = 500
     @State private var maxSeconds = 15
     /// The new RefMod takes the source's row (same place in the list); off,
     /// the source stays and the RefMod is added at the end. Both would
@@ -84,7 +81,7 @@ struct RefModExtractSheet: View {
                 .foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             if stacking {
-                Text("選んだ画像を1枚ずつ符号化して、1つのRefModにまとめます（ComfyUI-MiniMaxH3Modの「stack」と同じ形）。同じキャラクターや物を、向きや表情を変えて1体ずつ写した画像を選ぶと効きます。Fullでは、ほかの画像を1枚目の画像の大きさに合わせ、はみ出す部分は中央で切り取ります。")
+                Text("選んだ画像を1枚ずつ符号化して、1つのRefModにまとめます（ComfyUI-MiniMaxH3Modの「stack」と同じ形）。同じキャラクターや物を、向きや表情を変えて1体ずつ写した画像を選ぶと効きます。ほかの画像は1枚目の画像の大きさに合わせ、はみ出す部分は中央で切り取ります。文字や枠、背景も一緒に写るので、キャラクターだけが写った画像を選んでください。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -119,16 +116,6 @@ struct RefModExtractSheet: View {
                 }
                 if kind != .audio {
                     GridRow {
-                        Text("モード")
-                        Picker("", selection: $mode) {
-                            Text("Full（そのまま）").tag(H3RefModMode.full)
-                            Text("圧縮（小さい格子に）").tag(H3RefModMode.compressed)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 260)
-                    }
-                    GridRow {
                         Text("解像度の上限")
                         Picker("", selection: $resolutionCap) {
                             Text("512 px").tag(512)
@@ -149,22 +136,6 @@ struct RefModExtractSheet: View {
                             .help("動画全体から均等に選んだコマ数。5、22、39…に切り下げられます。")
                         }
                     }
-                    if mode == .compressed {
-                        GridRow {
-                            Text("格子の長辺")
-                            Stepper(value: $poolLongEdge, in: 2 ... 64, step: 2) {
-                                Text("\(poolLongEdge)")
-                            }
-                            .help("長い辺をこの数のセルにまとめます。小さいほど参照のトークンが減り、細部も減ります。")
-                        }
-                        GridRow {
-                            Text("調整ステップ")
-                            Stepper(value: $optimizeSteps, in: 0 ... 5000, step: 50) {
-                                Text("\(optimizeSteps)")
-                            }
-                            .help("まとめた格子を、元の符号化に近づくよう調整する回数。0は平均のまま。")
-                        }
-                    }
                 } else {
                     GridRow {
                         Text("最大秒数")
@@ -182,12 +153,6 @@ struct RefModExtractSheet: View {
                       : String(localized: "オンなら、作成したRefModが元の参照の行と入れ替わります。オフなら、元の行を残してRefModを最後に加えます。"))
             if sourceCarriesAudio {
                 Text("この参照は動画の音声も使うので、元の行を残してRefModを最後に加えます（RefModは映像だけです）。")
-                    .font(.caption)
-                    .foregroundStyle(palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if mode == .compressed && kind != .audio {
-                Text("圧縮は上流（ComfyUI-MiniMaxH3Mod）と同じ計算です。人物の同一性を学習するものではなく、細部や動きは失われます。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -238,11 +203,12 @@ struct RefModExtractSheet: View {
             outputPath: ModelLibrary.freePath(in: defaultRefModDirectory, stem: trimmed, extension: "safetensors"),
             kind: kind)
         request.name = trimmed
-        request.mode = kind == .audio ? .full : mode
+        // Always Full: a compressed RefMod (pooled to a small grid) kept only
+        // rough colours of a character in the tests of 2026-11-05, so the
+        // app no longer offers it. Compressed files made elsewhere still load.
+        request.mode = .full
         request.resolutionCap = resolutionCap
         request.latentFrames = latentFrames
-        request.poolLongEdge = poolLongEdge
-        request.optimizeSteps = optimizeSteps
         request.maxSeconds = maxSeconds
         if stacking { request.imagePaths = picked.map(\.path) }
         running = true
@@ -281,7 +247,6 @@ func refModPhaseText(_ state: GenerationViewModel.RefModExtractionState) -> Stri
         return String(localized: "画像を符号化しています（\(state.image)/\(state.images)枚目）…")
     case "video VAE encoder": return String(localized: "映像を符号化しています（\(state.completed)/\(state.total)）…")
     case "audio VAE encoder": return String(localized: "音声を符号化しています…")
-    case "refmod refine": return String(localized: "圧縮した格子を調整しています（\(state.completed)/\(state.total)）…")
     case "refmod write": return String(localized: "書き出しています…")
     default: return String(localized: "準備しています…")
     }
