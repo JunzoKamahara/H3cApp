@@ -23,7 +23,7 @@ LIB_C := h3.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c \
 LIB_C += h3_video_vae.c h3_video_encoder.c h3_audio_vae.c \
 	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c h3_adaln_curve.c \
 	h3_quant.c h3_gguf.c h3_vsr_chunk.c h3_vsr_window.c h3_vsr_weights.c h3_vsr_reae.c h3_vsr_wan.c h3_vsr.c \
-	h3_latent_upscale.c h3_seedvr2.c h3_lora_extract.c h3_memory.c h3_plan.c h3_refmod.c
+	h3_latent_upscale.c h3_seedvr2.c h3_seedvr2_vae.c h3_lora_extract.c h3_memory.c h3_plan.c h3_refmod.c
 LIB_M := h3_metal.m h3_gpu.m h3_tokenizer.m h3_av_writer.m h3_av_reader.m
 LIB_OBJ := $(LIB_C:.c=.o) $(LIB_M:.m=.o)
 

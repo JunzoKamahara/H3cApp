@@ -2,210 +2,8 @@
  * mflux src/mflux/models/seedvr2 (MIT); weights: mlx-community/
  * SeedVR2-3B-mlx-int8 (MLX affine 8-bit export of ByteDance's Apache-2.0
  * checkpoint). Numbers and names below are the 3B configuration. */
-#include "h3_seedvr2.h"
-#include "h3_gpu.h"
-#include "h3_metal.h"
-#include "h3_safetensors.h"
+#include "h3_seedvr2_internal.h"
 
-#include <math.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-
-/* ---------------------------------------------------------------- */
-/* Configuration (mflux SeedVR2Transformer / SeedVR2VAE defaults) */
-
-#define SV2_DIM 2560
-#define SV2_HEADS 20
-#define SV2_HEAD_DIM 128
-#define SV2_LAYERS 32
-#define SV2_MM_LAYERS 10
-#define SV2_HIDDEN 6912
-#define SV2_TXT_TOKENS 58
-#define SV2_TXT_IN 5120
-#define SV2_VID_IN 33
-#define SV2_VID_OUT 16
-#define SV2_PATCH_IN (SV2_VID_IN * 4)      /* 132 */
-#define SV2_PATCH_OUT (SV2_VID_OUT * 4)    /* 64 */
-#define SV2_ROPE_FREQS 21                   /* rope_dim 128 / 3 axes / 2 */
-#define SV2_ROPE_PAIRS (3 * SV2_ROPE_FREQS) /* 63 pairs = 126 rotated dims */
-#define SV2_NORM_EPS 1e-5f
-#define SV2_VAE_EPS 1e-6f
-#define SV2_VAE_GROUPS 32
-#define SV2_LATENT 16
-#define SV2_SCALING 0.9152f
-#define SV2_TIMESTEP 1000.0f
-#define SV2_PIXEL_MULTIPLE 16
-#define SV2_QUANT_GROUP 64
-
-/* ---------------------------------------------------------------- */
-/* Small host helpers */
-
-static void fail(char *error, size_t error_size, const char *format, ...) {
-    if (!error || !error_size) return;
-    va_list arguments;
-    va_start(arguments, format);
-    vsnprintf(error, error_size, format, arguments);
-    va_end(arguments);
-}
-
-static double now_seconds(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
-}
-
-static int trace_enabled(void) {
-    static int cached = -1;
-    if (cached < 0) cached = getenv("H3_SV2_TRACE") != NULL;
-    return cached;
-}
-
-static void trace(double *mark, const char *label) {
-    if (!trace_enabled()) return;
-    double t = now_seconds();
-    fprintf(stderr, "sv2 %-24s %8.1f ms\n", label, (t - *mark) * 1000.0);
-    *mark = t;
-}
-
-/* H3_SV2_SYNC: the trace waits for the GPU first, so the stage times are
- * real (slower overall: the command buffer is split at every mark). */
-static void trace_sync(h3_gpu *gpu, double *mark, const char *label) {
-    if (!trace_enabled()) return;
-    if (getenv("H3_SV2_SYNC") && h3_gpu_command_open(gpu)) { h3_gpu_submit(gpu); h3_gpu_begin(gpu); }
-    trace(mark, label);
-}
-
-static float f16_to_f32(uint16_t h) {
-    uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
-    uint32_t exponent = (h >> 10) & 0x1fu;
-    uint32_t mantissa = h & 0x3ffu;
-    uint32_t bits;
-    if (exponent == 0) {
-        if (mantissa == 0) {
-            bits = sign;
-        } else {
-            exponent = 127 - 15 + 1;
-            while (!(mantissa & 0x400u)) { mantissa <<= 1; exponent--; }
-            mantissa &= 0x3ffu;
-            bits = sign | (exponent << 23) | (mantissa << 13);
-        }
-    } else if (exponent == 31) {
-        bits = sign | 0x7f800000u | (mantissa << 13);
-    } else {
-        bits = sign | ((exponent + 127 - 15) << 23) | (mantissa << 13);
-    }
-    float f;
-    memcpy(&f, &bits, sizeof(f));
-    return f;
-}
-
-static uint16_t f32_to_bf16(float f) {
-    uint32_t bits;
-    memcpy(&bits, &f, sizeof(bits));
-    bits += 0x7fffu + ((bits >> 16) & 1u);
-    return (uint16_t)(bits >> 16);
-}
-
-static int round_up(int value, int multiple) {
-    return (value + multiple - 1) / multiple * multiple;
-}
-
-/* ---------------------------------------------------------------- */
-/* Weights */
-
-typedef struct {
-    h3_gpu_tensor *w;      /* BF16 [out, in]; NULL once quantized */
-    h3_gpu_tensor *b;      /* F32 [out] or NULL */
-    h3_gpu_tensor *q;      /* int8 [out, in] with F32 `scales` [out] (tensor hardware) */
-    h3_gpu_tensor *scales;
-    uint32_t in, out;
-    int owned;             /* 0: shares another linear's tensors */
-} sv2_linear;
-
-typedef struct {
-    int shared, last;
-    sv2_linear qkv_vid, out_vid, qkv_txt, out_txt;
-    sv2_linear fc1_vid, fc2_vid, fc1_txt, fc2_txt;   /* fc1 = [gate; up] */
-    h3_gpu_tensor *nq_vid, *nk_vid, *nq_txt, *nk_txt;   /* F32 [128]; txt = vid when shared */
-    /* attn_shift, attn_scale, attn_gate, mlp_shift, mlp_scale, mlp_gate:
-     * emb + the block's parameters, F32 [dim]; txt NULL in the last block */
-    h3_gpu_tensor *mod_vid[6], *mod_txt[6];
-} sv2_block;
-
-typedef struct {
-    h3_gpu_tensor *w;      /* F32 [out, in, kh, kw] (OIHW); NULL on the TensorOps path */
-    h3_gpu_tensor *b;      /* F32 [out] */
-    int in, out, kernel;
-    /* TensorOps path: tap-major BF16 [taps * out_p, in_p] on channels padded
-     * to 64, and the bias padded to out_p (h3_gpu_vsr_tapconv_bf16) */
-    h3_gpu_tensor *nw, *nb;
-    int in_p, out_p;
-} sv2_conv;
-
-typedef struct {
-    h3_gpu_tensor *w, *b;  /* F32 [C] */
-} sv2_norm;
-
-typedef struct {
-    int in, out;
-    sv2_norm norm1, norm2;
-    sv2_conv conv1, conv2, shortcut;   /* shortcut.w NULL when in == out */
-} sv2_resnet;
-
-typedef struct {
-    sv2_norm norm;
-    h3_gpu_tensor *wq, *bq, *wk, *bk, *wv, *bv, *wo, *bo;   /* F32 [C, C], [C] */
-} sv2_attention;
-
-typedef struct {
-    sv2_conv conv_in;
-    sv2_resnet down[4][2];
-    sv2_conv downsample[3];            /* 3x3 stride 2 (temporal taps folded) */
-    sv2_resnet mid_a, mid_b;
-    sv2_attention mid_attn;
-    sv2_norm norm_out;
-    sv2_conv conv_out;                 /* 512 -> 32 */
-} sv2_encoder;
-
-typedef struct {
-    sv2_conv conv_in;                  /* 16 -> 512 */
-    sv2_resnet mid_a, mid_b;
-    sv2_attention mid_attn;
-    sv2_resnet up[4][3];
-    h3_gpu_tensor *up_w[3], *up_b[3];  /* upscale_conv 1x1: F32 [C * 4 * tf, C] */
-    sv2_conv up_nax[3];                /* the same as a 1-tap TensorOps conv */
-    int up_temporal[3];
-    sv2_conv up_conv[3];               /* the 3x3 after the shuffle */
-    sv2_norm norm_out;
-    sv2_conv conv_out;                 /* 128 -> 3 */
-} sv2_decoder;
-
-struct h3_seedvr2 {
-    h3_gpu *gpu;
-    h3_seedvr2_info info;
-    h3_seedvr2_open_params params;
-    char model_dir[1024];
-    int nax_vae;                       /* the VAE on the TensorOps grid (M5) */
-    int int8_dit;                      /* the transformer's linears per-row int8 (M5) */
-    /* transformer */
-    sv2_linear vid_in, vid_out;
-    h3_gpu_tensor *txt0;               /* BF16 [58, 2560]: txt_in(pos_emb) */
-    sv2_block blocks[SV2_LAYERS];
-    h3_gpu_tensor *out_scale, *out_shift;   /* F32 [dim]: norm weight * (scale_a + out_scale), shift_a + out_shift */
-    /* vae */
-    sv2_encoder enc;
-    sv2_decoder dec;
-    /* activation pool (F32 and BF16 buffers reused across frames) */
-    struct { h3_gpu_tensor *t; size_t bytes; int bf16; } pool[64];
-    int pool_count;
-    /* load-time temporaries freed after the next submit */
-    h3_gpu_tensor *deferred[256];
-    int deferred_count;
-    char error[512];
-};
 
 static void defer_free(h3_seedvr2 *m, h3_gpu_tensor *t) {
     if (!t) return;
@@ -279,7 +77,7 @@ static void *read_tensor(const h3_st_header *h, const char *name, h3_dtype dtype
 }
 
 /* F16 tensor -> host F32. */
-static float *read_f16_as_f32(const h3_st_header *h, const char *name, uint64_t expected,
+float *sv2_read_f16_as_f32(const h3_st_header *h, const char *name, uint64_t expected,
                               char *error, size_t error_size) {
     uint64_t n = 0;
     uint16_t *raw = read_tensor(h, name, H3_DTYPE_F16, &n, error, error_size);
@@ -297,7 +95,7 @@ static float *read_f16_as_f32(const h3_st_header *h, const char *name, uint64_t 
     return out;
 }
 
-static h3_gpu_tensor *upload_f32(h3_gpu *gpu, const float *values, size_t n) {
+h3_gpu_tensor *sv2_upload_f32(h3_gpu *gpu, const float *values, size_t n) {
     return h3_gpu_tensor_from_f32(gpu, values, n);
 }
 
@@ -311,14 +109,14 @@ static h3_gpu_tensor *upload_f32_as_bf16(h3_gpu *gpu, const float *values, size_
 }
 
 /* An F16 tensor straight to a GPU F32 tensor. */
-static h3_gpu_tensor *load_f16_f32(h3_gpu *gpu, const h3_st_header *h, const char *name,
+h3_gpu_tensor *sv2_load_f16_f32(h3_gpu *gpu, const h3_st_header *h, const char *name,
                                    uint64_t expected, char *error, size_t error_size) {
-    float *v = read_f16_as_f32(h, name, expected, error, error_size);
+    float *v = sv2_read_f16_as_f32(h, name, expected, error, error_size);
     if (!v) return NULL;
-    h3_gpu_tensor *t = upload_f32(gpu, v, expected ? expected : 0);
+    h3_gpu_tensor *t = sv2_upload_f32(gpu, v, expected ? expected : 0);
     if (!expected) { /* unknown size: recount */
         const h3_st_tensor *st = h3_st_find(h, name);
-        t = upload_f32(gpu, v, (size_t)h3_st_tensor_elements(st));
+        t = sv2_upload_f32(gpu, v, (size_t)h3_st_tensor_elements(st));
     }
     free(v);
     if (!t) fail(error, error_size, "SeedVR2: out of GPU memory for %s", name);
@@ -385,7 +183,7 @@ static int load_linear(h3_seedvr2 *m, const h3_st_header *h, const char *prefix,
             return 0;
         }
     } else {
-        float *w = read_f16_as_f32(h, name, (uint64_t)out * in, error, error_size);
+        float *w = sv2_read_f16_as_f32(h, name, (uint64_t)out * in, error, error_size);
         if (!w) return 0;
         uint16_t *bf = malloc((size_t)out * in * sizeof(uint16_t));
         if (!bf) { free(w); fail(error, error_size, "SeedVR2: out of memory"); return 0; }
@@ -397,7 +195,7 @@ static int load_linear(h3_seedvr2 *m, const h3_st_header *h, const char *prefix,
     }
     if (want_bias) {
         snprintf(name, sizeof(name), "%s.bias", prefix);
-        l->b = load_f16_f32(m->gpu, h, name, out, error, error_size);
+        l->b = sv2_load_f16_f32(m->gpu, h, name, out, error, error_size);
         if (!l->b) return 0;
     }
     return 1;
@@ -504,11 +302,11 @@ static float *compute_emb(const h3_st_header *h, char *error, size_t error_size)
         sinusoid[128 + i] = cosf(a);
     }
     float *w1 = dequant_host(h, "emb_in.proj_in", SV2_DIM, 256, error, error_size);
-    float *b1 = w1 ? read_f16_as_f32(h, "emb_in.proj_in.bias", SV2_DIM, error, error_size) : NULL;
+    float *b1 = w1 ? sv2_read_f16_as_f32(h, "emb_in.proj_in.bias", SV2_DIM, error, error_size) : NULL;
     float *w2 = b1 ? dequant_host(h, "emb_in.proj_hid", SV2_DIM, SV2_DIM, error, error_size) : NULL;
-    float *b2 = w2 ? read_f16_as_f32(h, "emb_in.proj_hid.bias", SV2_DIM, error, error_size) : NULL;
+    float *b2 = w2 ? sv2_read_f16_as_f32(h, "emb_in.proj_hid.bias", SV2_DIM, error, error_size) : NULL;
     float *w3 = b2 ? dequant_host(h, "emb_in.proj_out", 6 * SV2_DIM, SV2_DIM, error, error_size) : NULL;
-    float *b3 = w3 ? read_f16_as_f32(h, "emb_in.proj_out.bias", 6 * SV2_DIM, error, error_size) : NULL;
+    float *b3 = w3 ? sv2_read_f16_as_f32(h, "emb_in.proj_out.bias", 6 * SV2_DIM, error, error_size) : NULL;
     float *emb = NULL;
     if (b3) {
         float *h1 = malloc(SV2_DIM * sizeof(float)), *h2 = malloc(SV2_DIM * sizeof(float));
@@ -535,7 +333,7 @@ static h3_gpu_tensor *modulation_vector(h3_gpu *gpu, const float *emb, int layer
     float *v = malloc(SV2_DIM * sizeof(float));
     if (!v) return NULL;
     for (int c = 0; c < SV2_DIM; c++) v[c] = emb[c * 6 + layer * 3 + kind] + (params ? params[c] : 0.0f);
-    h3_gpu_tensor *t = upload_f32(gpu, v, SV2_DIM);
+    h3_gpu_tensor *t = sv2_upload_f32(gpu, v, SV2_DIM);
     free(v);
     return t;
 }
@@ -556,9 +354,9 @@ static int load_block(h3_seedvr2 *m, const h3_st_header *h, int b, const float *
     snprintf(p, sizeof(p), "blocks.%d.attn.proj_out_vid", b);
     if (!load_linear(m, h, p, SV2_DIM, SV2_DIM, 1, &k->out_vid, error, error_size)) return 0;
     snprintf(p, sizeof(p), "blocks.%d.attn.norm_q_vid.weight", b);
-    if (!(k->nq_vid = load_f16_f32(m->gpu, h, p, SV2_HEAD_DIM, error, error_size))) return 0;
+    if (!(k->nq_vid = sv2_load_f16_f32(m->gpu, h, p, SV2_HEAD_DIM, error, error_size))) return 0;
     snprintf(p, sizeof(p), "blocks.%d.attn.norm_k_vid.weight", b);
-    if (!(k->nk_vid = load_f16_f32(m->gpu, h, p, SV2_HEAD_DIM, error, error_size))) return 0;
+    if (!(k->nk_vid = sv2_load_f16_f32(m->gpu, h, p, SV2_HEAD_DIM, error, error_size))) return 0;
     if (k->shared) {
         k->qkv_txt = k->qkv_vid; k->qkv_txt.owned = 0;
         k->out_txt = k->out_vid; k->out_txt.owned = 0;
@@ -569,9 +367,9 @@ static int load_block(h3_seedvr2 *m, const h3_st_header *h, int b, const float *
         snprintf(p, sizeof(p), "blocks.%d.attn.proj_out_txt", b);
         if (!load_linear(m, h, p, SV2_DIM, SV2_DIM, 1, &k->out_txt, error, error_size)) return 0;
         snprintf(p, sizeof(p), "blocks.%d.attn.norm_q_txt.weight", b);
-        if (!(k->nq_txt = load_f16_f32(m->gpu, h, p, SV2_HEAD_DIM, error, error_size))) return 0;
+        if (!(k->nq_txt = sv2_load_f16_f32(m->gpu, h, p, SV2_HEAD_DIM, error, error_size))) return 0;
         snprintf(p, sizeof(p), "blocks.%d.attn.norm_k_txt.weight", b);
-        if (!(k->nk_txt = load_f16_f32(m->gpu, h, p, SV2_HEAD_DIM, error, error_size))) return 0;
+        if (!(k->nk_txt = sv2_load_f16_f32(m->gpu, h, p, SV2_HEAD_DIM, error, error_size))) return 0;
     }
     /* feed-forward */
     char gate[128], up[128];
@@ -616,7 +414,7 @@ static int load_block(h3_seedvr2 *m, const h3_st_header *h, int b, const float *
         for (int layer = 0; layer < 2; layer++) {
             for (int kind = 0; kind < 3; kind++) {
                 snprintf(p, sizeof(p), "blocks.%d.ada.params_%s.%s_%s", b, which, layers[layer], kinds[kind]);
-                float *params = read_f16_as_f32(h, p, SV2_DIM, error, error_size);
+                float *params = sv2_read_f16_as_f32(h, p, SV2_DIM, error, error_size);
                 if (!params) return 0;
                 h3_gpu_tensor *t = modulation_vector(m->gpu, emb, layer, kind, params);
                 free(params);
@@ -639,230 +437,12 @@ static void free_block(sv2_block *k) {
     memset(k, 0, sizeof(*k));
 }
 
-/* --- VAE weights: every causal 3D convolution on one frame is the sum of
- * its temporal taps (the frame is replicated into the causal padding), so
- * each is loaded as a 2D OIHW convolution. Weights are stored (O, kt, kh, kw, I). --- */
-
-static int round64(int value) { return (value + 63) / 64 * 64; }
-
-/* OIHW F32 -> the tap-major BF16 weights of h3_gpu_vsr_tapconv_bf16 on
- * channels padded to 64, tap t = ky * k + kx; the bias padded to out_p. */
-static int pack_nax_conv(h3_seedvr2 *m, sv2_conv *c, const float *w, char *error, size_t error_size) {
-    int k = c->kernel, taps = k * k;
-    c->in_p = round64(c->in); c->out_p = round64(c->out);
-    size_t n = (size_t)taps * c->out_p * c->in_p;
-    uint16_t *packed = calloc(n, sizeof(uint16_t));
-    float *bias = calloc((size_t)c->out_p, sizeof(float));
-    if (!packed || !bias) { free(packed); free(bias); fail(error, error_size, "SeedVR2: out of memory"); return 0; }
-    for (int ky = 0; ky < k; ky++)
-        for (int kx = 0; kx < k; kx++) {
-            int t = ky * k + kx;
-            for (int o = 0; o < c->out; o++)
-                for (int i = 0; i < c->in; i++)
-                    packed[((size_t)t * c->out_p + o) * c->in_p + i] =
-                        f32_to_bf16(w[(((size_t)o * c->in + i) * k + ky) * k + kx]);
-        }
-    if (c->b) h3_gpu_tensor_read_f32(c->b, bias, (size_t)c->out);
-    c->nw = h3_gpu_tensor_from_bf16(m->gpu, packed, n);
-    c->nb = h3_gpu_tensor_from_f32(m->gpu, bias, (size_t)c->out_p);
-    free(packed); free(bias);
-    if (!c->nw || !c->nb) { fail(error, error_size, "SeedVR2: out of GPU memory for the TensorOps weights"); return 0; }
-    return 1;
-}
-
-static int load_conv(h3_seedvr2 *m, const h3_st_header *h, const char *prefix, int out, int in,
-                     int kernel, sv2_conv *c, char *error, size_t error_size) {
-    char name[256];
-    snprintf(name, sizeof(name), "%s.weight", prefix);
-    const h3_st_tensor *t = h3_st_find(h, name);
-    if (!t || t->ndim != 5) { fail(error, error_size, "SeedVR2: %s is missing or not 5-D", name); return 0; }
-    int kt = (int)t->shape[1], kh = (int)t->shape[2], kw = (int)t->shape[3];
-    if ((int)t->shape[0] != out || (int)t->shape[4] != in || kh != kernel || kw != kernel) {
-        fail(error, error_size, "SeedVR2: %s has shape [%d,%d,%d,%d,%d], expected [%d,*,%d,%d,%d]",
-             name, (int)t->shape[0], kt, kh, kw, (int)t->shape[4], out, kernel, kernel, in);
-        return 0;
-    }
-    float *w5 = read_f16_as_f32(h, name, (uint64_t)out * kt * kh * kw * in, error, error_size);
-    if (!w5) return 0;
-    size_t n = (size_t)out * in * kh * kw;
-    float *w = calloc(n, sizeof(float));
-    if (!w) { free(w5); fail(error, error_size, "SeedVR2: out of memory"); return 0; }
-    for (int o = 0; o < out; o++)
-        for (int tt = 0; tt < kt; tt++)
-            for (int y = 0; y < kh; y++)
-                for (int x = 0; x < kw; x++) {
-                    const float *src = w5 + ((((size_t)o * kt + tt) * kh + y) * kw + x) * in;
-                    float *dst = w + (((size_t)o * in) * kh + y) * kw + x;
-                    for (int i = 0; i < in; i++) dst[(size_t)i * kh * kw] += src[i];
-                }
-    free(w5);
-    snprintf(name, sizeof(name), "%s.bias", prefix);
-    c->b = load_f16_f32(m->gpu, h, name, out, error, error_size);
-    c->in = in; c->out = out; c->kernel = kernel;
-    if (m->nax_vae) {
-        if (!pack_nax_conv(m, c, w, error, error_size)) { free(w); return 0; }
-    } else {
-        c->w = upload_f32(m->gpu, w, n);
-    }
-    free(w);
-    if ((!c->w && !c->nw) || !c->b) { fail(error, error_size, "SeedVR2: out of GPU memory for %s", prefix); return 0; }
-    return 1;
-}
-
-static int load_norm(h3_seedvr2 *m, const h3_st_header *h, const char *prefix, int channels,
-                     sv2_norm *n, char *error, size_t error_size) {
-    char name[256];
-    snprintf(name, sizeof(name), "%s.weight", prefix);
-    n->w = load_f16_f32(m->gpu, h, name, channels, error, error_size);
-    snprintf(name, sizeof(name), "%s.bias", prefix);
-    n->b = n->w ? load_f16_f32(m->gpu, h, name, channels, error, error_size) : NULL;
-    return n->w && n->b;
-}
-
-static int load_resnet(h3_seedvr2 *m, const h3_st_header *h, const char *prefix, int in, int out,
-                       sv2_resnet *r, char *error, size_t error_size) {
-    char p[256];
-    r->in = in; r->out = out;
-    snprintf(p, sizeof(p), "%s.norm1", prefix);
-    if (!load_norm(m, h, p, in, &r->norm1, error, error_size)) return 0;
-    snprintf(p, sizeof(p), "%s.norm2", prefix);
-    if (!load_norm(m, h, p, out, &r->norm2, error, error_size)) return 0;
-    snprintf(p, sizeof(p), "%s.conv1", prefix);
-    if (!load_conv(m, h, p, out, in, 3, &r->conv1, error, error_size)) return 0;
-    snprintf(p, sizeof(p), "%s.conv2", prefix);
-    if (!load_conv(m, h, p, out, out, 3, &r->conv2, error, error_size)) return 0;
-    if (in != out) {
-        snprintf(p, sizeof(p), "%s.conv_shortcut", prefix);
-        if (!load_conv(m, h, p, out, in, 1, &r->shortcut, error, error_size)) return 0;
-    }
-    return 1;
-}
-
-static int load_attention(h3_seedvr2 *m, const h3_st_header *h, const char *prefix, int channels,
-                          sv2_attention *a, char *error, size_t error_size) {
-    char p[256];
-    snprintf(p, sizeof(p), "%s.group_norm", prefix);
-    if (!load_norm(m, h, p, channels, &a->norm, error, error_size)) return 0;
-    struct { const char *name; h3_gpu_tensor **w, **b; } parts[4] = {
-        {"to_q", &a->wq, &a->bq}, {"to_k", &a->wk, &a->bk}, {"to_v", &a->wv, &a->bv}, {"to_out.0", &a->wo, &a->bo}};
-    for (int i = 0; i < 4; i++) {
-        snprintf(p, sizeof(p), "%s.%s.weight", prefix, parts[i].name);
-        *parts[i].w = load_f16_f32(m->gpu, h, p, (uint64_t)channels * channels, error, error_size);
-        snprintf(p, sizeof(p), "%s.%s.bias", prefix, parts[i].name);
-        *parts[i].b = *parts[i].w ? load_f16_f32(m->gpu, h, p, channels, error, error_size) : NULL;
-        if (!*parts[i].b) return 0;
-    }
-    return 1;
-}
-
-static int load_vae(h3_seedvr2 *m, const h3_st_header *h, char *error, size_t error_size) {
-    static const int channels[4] = {128, 256, 512, 512};
-    sv2_encoder *e = &m->enc;
-    sv2_decoder *d = &m->dec;
-    char p[256];
-    if (!load_conv(m, h, "encoder.conv_in", 128, 3, 3, &e->conv_in, error, error_size)) return 0;
-    int c_in = 128;
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 2; j++) {
-            snprintf(p, sizeof(p), "encoder.down_blocks.%d.resnets.%d", i, j);
-            if (!load_resnet(m, h, p, j == 0 ? c_in : channels[i], channels[i], &e->down[i][j], error, error_size)) return 0;
-        }
-        c_in = channels[i];
-        if (i < 3) {
-            snprintf(p, sizeof(p), "encoder.down_blocks.%d.downsamplers.0.conv", i);
-            if (!load_conv(m, h, p, channels[i], channels[i], 3, &e->downsample[i], error, error_size)) return 0;
-        }
-    }
-    if (!load_resnet(m, h, "encoder.mid_block.resnets.0", 512, 512, &e->mid_a, error, error_size) ||
-        !load_attention(m, h, "encoder.mid_block.attentions.0", 512, &e->mid_attn, error, error_size) ||
-        !load_resnet(m, h, "encoder.mid_block.resnets.1", 512, 512, &e->mid_b, error, error_size) ||
-        !load_norm(m, h, "encoder.conv_norm_out", 512, &e->norm_out, error, error_size) ||
-        !load_conv(m, h, "encoder.conv_out", 2 * SV2_LATENT, 512, 3, &e->conv_out, error, error_size))
-        return 0;
-    /* decoder: reversed channels (512, 512, 256, 128), 3 resnets each */
-    static const int rev[4] = {512, 512, 256, 128};
-    if (!load_conv(m, h, "decoder.conv_in", 512, SV2_LATENT, 3, &d->conv_in, error, error_size) ||
-        !load_resnet(m, h, "decoder.mid_block.resnets.0", 512, 512, &d->mid_a, error, error_size) ||
-        !load_attention(m, h, "decoder.mid_block.attentions.0", 512, &d->mid_attn, error, error_size) ||
-        !load_resnet(m, h, "decoder.mid_block.resnets.1", 512, 512, &d->mid_b, error, error_size))
-        return 0;
-    c_in = 512;
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 3; j++) {
-            snprintf(p, sizeof(p), "decoder.up_blocks.%d.resnets.%d", i, j);
-            if (!load_resnet(m, h, p, j == 0 ? c_in : rev[i], rev[i], &d->up[i][j], error, error_size)) return 0;
-        }
-        c_in = rev[i];
-        if (i < 3) {
-            int tf = i < 2 ? 2 : 1;
-            d->up_temporal[i] = tf;
-            snprintf(p, sizeof(p), "decoder.up_blocks.%d.upsamplers.0.upscale_conv", i);
-            /* 1x1x1 conv (O, 1, 1, 1, I) == linear [O, I] */
-            char name[300];
-            snprintf(name, sizeof(name), "%s.weight", p);
-            d->up_w[i] = load_f16_f32(m->gpu, h, name, (uint64_t)rev[i] * 4 * tf * rev[i], error, error_size);
-            snprintf(name, sizeof(name), "%s.bias", p);
-            d->up_b[i] = d->up_w[i] ? load_f16_f32(m->gpu, h, name, (uint64_t)rev[i] * 4 * tf, error, error_size) : NULL;
-            if (!d->up_b[i]) return 0;
-            if (m->nax_vae) {
-                sv2_conv *u = &d->up_nax[i];
-                u->in = rev[i]; u->out = rev[i] * 4 * tf; u->kernel = 1; u->b = d->up_b[i];
-                float *wu = malloc((size_t)u->out * u->in * sizeof(float));
-                if (!wu || !h3_gpu_tensor_read_f32(d->up_w[i], wu, (size_t)u->out * u->in) ||
-                    !pack_nax_conv(m, u, wu, error, error_size)) { free(wu); return 0; }
-                free(wu);
-                u->b = NULL;   /* owned by up_b */
-            }
-            snprintf(p, sizeof(p), "decoder.up_blocks.%d.upsamplers.0.conv", i);
-            if (!load_conv(m, h, p, rev[i], rev[i], 3, &d->up_conv[i], error, error_size)) return 0;
-        }
-    }
-    if (!load_norm(m, h, "decoder.conv_norm_out", 128, &d->norm_out, error, error_size) ||
-        !load_conv(m, h, "decoder.conv_out", 3, 128, 3, &d->conv_out, error, error_size))
-        return 0;
-    return 1;
-}
-
-static void free_conv(sv2_conv *c) {
-    h3_gpu_tensor_free(c->w); h3_gpu_tensor_free(c->b);
-    h3_gpu_tensor_free(c->nw); h3_gpu_tensor_free(c->nb);
-    memset(c, 0, sizeof(*c));
-}
-static void free_norm(sv2_norm *n) { h3_gpu_tensor_free(n->w); h3_gpu_tensor_free(n->b); memset(n, 0, sizeof(*n)); }
-static void free_resnet(sv2_resnet *r) {
-    free_norm(&r->norm1); free_norm(&r->norm2);
-    free_conv(&r->conv1); free_conv(&r->conv2); free_conv(&r->shortcut);
-}
-static void free_attention(sv2_attention *a) {
-    free_norm(&a->norm);
-    h3_gpu_tensor *t[8] = {a->wq, a->bq, a->wk, a->bk, a->wv, a->bv, a->wo, a->bo};
-    for (int i = 0; i < 8; i++) h3_gpu_tensor_free(t[i]);
-    memset(a, 0, sizeof(*a));
-}
-
-static void free_vae(h3_seedvr2 *m) {
-    sv2_encoder *e = &m->enc;
-    sv2_decoder *d = &m->dec;
-    free_conv(&e->conv_in);
-    for (int i = 0; i < 4; i++) for (int j = 0; j < 2; j++) free_resnet(&e->down[i][j]);
-    for (int i = 0; i < 3; i++) free_conv(&e->downsample[i]);
-    free_resnet(&e->mid_a); free_resnet(&e->mid_b); free_attention(&e->mid_attn);
-    free_norm(&e->norm_out); free_conv(&e->conv_out);
-    free_conv(&d->conv_in);
-    free_resnet(&d->mid_a); free_resnet(&d->mid_b); free_attention(&d->mid_attn);
-    for (int i = 0; i < 4; i++) for (int j = 0; j < 3; j++) free_resnet(&d->up[i][j]);
-    for (int i = 0; i < 3; i++) {
-        h3_gpu_tensor_free(d->up_w[i]); h3_gpu_tensor_free(d->up_b[i]);
-        free_conv(&d->up_conv[i]); free_conv(&d->up_nax[i]);
-    }
-    free_norm(&d->norm_out); free_conv(&d->conv_out);
-}
 
 /* --- activation pool --- */
 
 /* Best fit: the smallest pooled buffer of the dtype that holds `elements`
  * (a larger one is fine: every kernel takes explicit sizes). */
-static h3_gpu_tensor *pool_take(h3_seedvr2 *m, size_t elements, int bf16) {
+h3_gpu_tensor *sv2_pool_take(h3_seedvr2 *m, size_t elements, int bf16) {
     size_t bytes = elements * (bf16 ? 2 : 4);
     int best = -1;
     for (int i = 0; i < m->pool_count; i++) {
@@ -877,7 +457,7 @@ static h3_gpu_tensor *pool_take(h3_seedvr2 *m, size_t elements, int bf16) {
     return bf16 ? h3_gpu_tensor_new_bf16(m->gpu, elements) : h3_gpu_tensor_new_f32(m->gpu, elements);
 }
 
-static void pool_give(h3_seedvr2 *m, h3_gpu_tensor *t) {
+void sv2_pool_give(h3_seedvr2 *m, h3_gpu_tensor *t) {
     if (!t) return;
     int bf16 = h3_gpu_tensor_dtype(t) == H3_GPU_BF16;
     size_t bytes = h3_gpu_tensor_elements(t) * (bf16 ? 2 : 4);
@@ -987,7 +567,7 @@ void h3_seedvr2_close(h3_seedvr2 *m) {
         h3_gpu_tensor_free(m->txt0);
         for (int b = 0; b < SV2_LAYERS; b++) free_block(&m->blocks[b]);
         h3_gpu_tensor_free(m->out_scale); h3_gpu_tensor_free(m->out_shift);
-        free_vae(m);
+        sv2_free_vae(m);
         pool_drain(m);
         for (int i = 0; i < m->deferred_count; i++) h3_gpu_tensor_free(m->deferred[i]);
         h3_gpu_free(m->gpu);
@@ -1029,7 +609,7 @@ h3_seedvr2 *h3_seedvr2_open(const char *model_dir, const h3_seedvr2_open_params 
     {
         h3_gpu_begin(m->gpu);
         sv2_linear txt_in;
-        float *pos = read_f16_as_f32(&f.pos, "embedding", (uint64_t)SV2_TXT_TOKENS * SV2_TXT_IN, error, error_size);
+        float *pos = sv2_read_f16_as_f32(&f.pos, "embedding", (uint64_t)SV2_TXT_TOKENS * SV2_TXT_IN, error, error_size);
         if (!pos) goto done;
         h3_gpu_tensor *pos_t = upload_f32_as_bf16(m->gpu, pos, (size_t)SV2_TXT_TOKENS * SV2_TXT_IN);
         free(pos);
@@ -1048,16 +628,16 @@ h3_seedvr2 *h3_seedvr2_open(const char *model_dir, const h3_seedvr2_open_params 
             !load_linear(m, &f.transformer, "vid_out.proj", SV2_PATCH_OUT, SV2_DIM, 1, &m->vid_out, error, error_size))
             goto done;
         /* output modulation: norm weight * (scale_a + out_scale), shift_a + out_shift */
-        float *nw = read_f16_as_f32(&f.transformer, "vid_out_norm.weight", SV2_DIM, error, error_size);
-        float *osc = nw ? read_f16_as_f32(&f.transformer, "out_scale", SV2_DIM, error, error_size) : NULL;
-        float *osh = osc ? read_f16_as_f32(&f.transformer, "out_shift", SV2_DIM, error, error_size) : NULL;
+        float *nw = sv2_read_f16_as_f32(&f.transformer, "vid_out_norm.weight", SV2_DIM, error, error_size);
+        float *osc = nw ? sv2_read_f16_as_f32(&f.transformer, "out_scale", SV2_DIM, error, error_size) : NULL;
+        float *osh = osc ? sv2_read_f16_as_f32(&f.transformer, "out_shift", SV2_DIM, error, error_size) : NULL;
         if (osh) {
             for (int c = 0; c < SV2_DIM; c++) {
                 osc[c] = nw[c] * (emb[c * 6 + 0 * 3 + 1] + osc[c]);
                 osh[c] = emb[c * 6 + 0 * 3 + 0] + osh[c];
             }
-            m->out_scale = upload_f32(m->gpu, osc, SV2_DIM);
-            m->out_shift = upload_f32(m->gpu, osh, SV2_DIM);
+            m->out_scale = sv2_upload_f32(m->gpu, osc, SV2_DIM);
+            m->out_shift = sv2_upload_f32(m->gpu, osh, SV2_DIM);
         }
         free(nw); free(osc); free(osh);
         if (!m->out_scale || !m->out_shift) { fail(error, error_size, "SeedVR2: output modulation"); goto done; }
@@ -1078,7 +658,7 @@ h3_seedvr2 *h3_seedvr2_open(const char *model_dir, const h3_seedvr2_open_params 
         fail(error, error_size, "vsr cancelled");
         goto done;
     }
-    if (!load_vae(m, &f.vae, error, error_size)) goto done;
+    if (!sv2_load_vae(m, &f.vae, error, error_size)) goto done;
     trace(&mark, "vae");
     if (on_progress) on_progress("seedvr2 load", SV2_LAYERS + 4, SV2_LAYERS + 4, opaque);
     if (trace_enabled()) {
@@ -1104,402 +684,6 @@ int h3_seedvr2_get_stats(const h3_seedvr2 *m, double *gpu_seconds, uint64_t *pea
     return 1;
 }
 
-/* ---------------------------------------------------------------- */
-/* VAE on one frame: F32 channels-last [H, W, C] planes */
-
-typedef struct { h3_gpu_tensor *t; int h, w, c; } act;
-
-#define GPU_OP(call) do { if (!(call)) { fail(error, error_size, "SeedVR2 VAE: %s", h3_gpu_error(m->gpu)); return 0; } } while (0)
-
-static int act_new(h3_seedvr2 *m, act *a, int h, int w, int c) {
-    a->h = h; a->w = w; a->c = c;
-    a->t = pool_take(m, (size_t)h * w * c, 0);
-    return a->t != NULL;
-}
-
-static void act_free(h3_seedvr2 *m, act *a) {
-    pool_give(m, a->t);
-    a->t = NULL;
-}
-
-/* 3x3 convolution with symmetric zero padding 1 (stride 1), or stride 2
- * with padding (0, 1) right/bottom (the downsampler); the padding is
- * applied inside the convolution graph. */
-static int conv3x3(h3_seedvr2 *m, const act *x, const sv2_conv *c, int stride, act *y,
-                   char *error, size_t error_size) {
-    uint32_t top = stride == 2 ? 0 : 1, left = stride == 2 ? 0 : 1;
-    int ph = x->h + (int)top + 1, pw = x->w + (int)left + 1;
-    int oh = (ph - 3) / stride + 1, ow = (pw - 3) / stride + 1;
-    if (!act_new(m, y, oh, ow, c->out)) { fail(error, error_size, "SeedVR2 VAE: out of memory"); return 0; }
-    if (!h3_gpu_conv2d_padded_f32(m->gpu, y->t, x->t, c->w, c->b, (uint32_t)x->h, (uint32_t)x->w,
-                                  (uint32_t)c->in, (uint32_t)c->out, 3, 3, (uint32_t)stride, (uint32_t)stride,
-                                  top, 1, left, 1)) {
-        fail(error, error_size, "SeedVR2 VAE conv: %s", h3_gpu_error(m->gpu));
-        return 0;
-    }
-    return 1;
-}
-
-/* 1x1 convolution = linear over the pixels. */
-static int conv1x1(h3_seedvr2 *m, const act *x, const h3_gpu_tensor *w, const h3_gpu_tensor *b,
-                   int out, act *y, char *error, size_t error_size) {
-    if (!act_new(m, y, x->h, x->w, out)) { fail(error, error_size, "SeedVR2 VAE: out of memory"); return 0; }
-    GPU_OP(h3_gpu_linear_f32(m->gpu, y->t, x->t, w, b, (uint32_t)(x->h * x->w), (uint32_t)x->c, (uint32_t)out));
-    return 1;
-}
-
-/* in_place: y reuses x's buffer (the kernel reads every element before it
- * writes it; x must not be needed afterwards). */
-static int group_norm_silu(h3_seedvr2 *m, const act *x, const sv2_norm *n, act *y, int in_place,
-                           char *error, size_t error_size) {
-    if (in_place) *y = *x;
-    else if (!act_new(m, y, x->h, x->w, x->c)) { fail(error, error_size, "SeedVR2 VAE: out of memory"); return 0; }
-    GPU_OP(h3_gpu_vae_encoder_group_norm_silu_chunked_f32(m->gpu, y->t, x->t, n->w, n->b, 1, 1,
-                                                          (uint32_t)x->h, (uint32_t)x->w, (uint32_t)x->c,
-                                                          SV2_VAE_GROUPS, SV2_VAE_EPS));
-    return 1;
-}
-
-static int resnet(h3_seedvr2 *m, const act *x, const sv2_resnet *r, act *y, char *error, size_t error_size) {
-    act h1, c1, h2, c2, sc;
-    if (!group_norm_silu(m, x, &r->norm1, &h1, 0, error, error_size)) return 0;
-    int ok = conv3x3(m, &h1, &r->conv1, 1, &c1, error, error_size);
-    act_free(m, &h1);
-    if (!ok) return 0;
-    ok = group_norm_silu(m, &c1, &r->norm2, &h2, 1, error, error_size);   /* in place */
-    if (!ok) { act_free(m, &c1); return 0; }
-    ok = conv3x3(m, &h2, &r->conv2, 1, &c2, error, error_size);
-    act_free(m, &h2);
-    if (!ok) return 0;
-    const act *residual = x;
-    if (r->shortcut.w) {
-        if (!conv1x1(m, x, r->shortcut.w, r->shortcut.b, r->out, &sc, error, error_size)) { act_free(m, &c2); return 0; }
-        residual = &sc;
-    }
-    *y = c2;   /* in place: y = c2 + residual */
-    ok = h3_gpu_add_scaled_f32(m->gpu, y->t, c2.t, residual->t, 1.0f, 1.0f, (uint32_t)((size_t)y->h * y->w * y->c));
-    if (r->shortcut.w) act_free(m, &sc);
-    if (!ok) { fail(error, error_size, "SeedVR2 VAE: %s", h3_gpu_error(m->gpu)); return 0; }
-    return 1;
-}
-
-static int attention(h3_seedvr2 *m, const act *x, const sv2_attention *a, act *y,
-                     char *error, size_t error_size) {
-    int C = x->c;
-    uint32_t n = (uint32_t)(x->h * x->w);
-    act g, q, k, v, o, p;
-    if (!act_new(m, &g, x->h, x->w, C)) { fail(error, error_size, "SeedVR2 VAE: out of memory"); return 0; }
-    GPU_OP(h3_gpu_sv2_group_norm_f32(m->gpu, g.t, x->t, a->norm.w, a->norm.b, 1, (uint32_t)x->h, (uint32_t)x->w,
-                                     (uint32_t)C, SV2_VAE_GROUPS, SV2_VAE_EPS));
-    int ok = conv1x1(m, &g, a->wq, a->bq, C, &q, error, error_size) &&
-             conv1x1(m, &g, a->wk, a->bk, C, &k, error, error_size) &&
-             conv1x1(m, &g, a->wv, a->bv, C, &v, error, error_size);
-    act_free(m, &g);
-    if (!ok) return 0;
-    if (!act_new(m, &o, x->h, x->w, C)) { fail(error, error_size, "SeedVR2 VAE: out of memory"); return 0; }
-    ok = h3_gpu_sdpa_f32(m->gpu, o.t, q.t, k.t, v.t, n, 1, (uint32_t)C, 1.0f / sqrtf((float)C));
-    act_free(m, &q); act_free(m, &k); act_free(m, &v);
-    if (!ok) { fail(error, error_size, "SeedVR2 VAE attention: %s", h3_gpu_error(m->gpu)); act_free(m, &o); return 0; }
-    ok = conv1x1(m, &o, a->wo, a->bo, C, &p, error, error_size);
-    act_free(m, &o);
-    if (!ok) return 0;
-    *y = p;
-    GPU_OP(h3_gpu_add_scaled_f32(m->gpu, y->t, p.t, x->t, 1.0f, 1.0f, (uint32_t)((size_t)n * C)));
-    return 1;
-}
-
-/* Encoder: RGB [H, W, 3] in [-1, 1] (multiples of 16) -> latent [h, w, 32]
- * (mean in the first 16 channels, unscaled). */
-/* ---- The same VAE on the TensorOps grid (M5): BF16 rows [guard | (H+2) x
- * (W+2) | tail] with channels padded to 64; every convolution is one
- * h3_gpu_vsr_tapconv_bf16 (3x3: 9 taps over the padded frame, 1x1: 1 tap),
- * the residual added inside it; GroupNorm + SiLU in three chunked passes
- * on the grid; the attention block goes through the F32 path. ---- */
-
-typedef struct { h3_gpu_tensor *t; int h, w, c, cp; uint32_t rows, guard, x_rows; } gact;
-
-static int gact_new(h3_seedvr2 *m, gact *a, int h, int w, int c) {
-    memset(a, 0, sizeof(*a));
-    a->h = h; a->w = w; a->c = c; a->cp = round64(c);
-    uint32_t wp = (uint32_t)w + 2;
-    a->rows = (uint32_t)(h + 2) * wp;
-    a->guard = (wp + 3 + 127) / 128 * 128;
-    a->x_rows = a->guard + a->rows + a->guard + 128;
-    a->t = pool_take(m, (size_t)a->x_rows * a->cp, 1);
-    if (!a->t) return 0;
-    return h3_gpu_vsr_zero_rows_bf16(m->gpu, a->t, 0, a->guard, (uint32_t)a->cp) &&
-           h3_gpu_vsr_zero_rows_bf16(m->gpu, a->t, a->guard + a->rows, a->x_rows - a->guard - a->rows, (uint32_t)a->cp);
-}
-
-static void gact_free(h3_seedvr2 *m, gact *a) { pool_give(m, a->t); a->t = NULL; }
-
-static void gact_offsets(const gact *a, int k, int32_t *offsets) {
-    for (int dy = 0; dy < k; dy++)
-        for (int dx = 0; dx < k; dx++)
-            offsets[dy * k + dx] = (dy - k / 2) * (a->w + 2) + (dx - k / 2);
-}
-
-#define GRID_OP(call) do { if (!(call)) { fail(error, error_size, "SeedVR2 VAE (grid): %s", h3_gpu_error(m->gpu)); return 0; } } while (0)
-
-/* out = conv(x) + bias (+ residual), same geometry. */
-static int gconv(h3_seedvr2 *m, const gact *x, const sv2_conv *c, const gact *residual, gact *y,
-                 char *error, size_t error_size) {
-    if (x->cp != c->in_p) { fail(error, error_size, "SeedVR2 VAE (grid): %d padded channels, the conv wants %d", x->cp, c->in_p); return 0; }
-    if (!gact_new(m, y, x->h, x->w, c->out)) { fail(error, error_size, "SeedVR2 VAE (grid): out of memory"); return 0; }
-    int32_t offsets[9];
-    gact_offsets(x, c->kernel, offsets);
-    GRID_OP(h3_gpu_vsr_tapconv_bf16(m->gpu, y->t, x->t, NULL, c->nw, NULL, c->nb, residual ? residual->t : NULL,
-                                    x->rows, x->x_rows, x->guard, (uint32_t)x->cp, (uint32_t)y->cp,
-                                    (uint32_t)(c->kernel * c->kernel), offsets, 0));
-    GRID_OP(h3_gpu_vsr_zero_border_bf16(m->gpu, y->t, 1, (uint32_t)y->h, (uint32_t)y->w, (uint32_t)y->cp, y->guard, y->x_rows));
-    return 1;
-}
-
-/* The stride-2 3x3 convolution with padding (0, 1): the stride-1 result,
- * then its odd interior positions. */
-static int gconv_s2(h3_seedvr2 *m, const gact *x, const sv2_conv *c, gact *y, char *error, size_t error_size) {
-    gact full;
-    if (!gconv(m, x, c, NULL, &full, error, error_size)) return 0;
-    if (!gact_new(m, y, x->h / 2, x->w / 2, c->out)) { gact_free(m, &full); fail(error, error_size, "SeedVR2 VAE (grid): out of memory"); return 0; }
-    int ok = h3_gpu_sv2_grid_select_bf16(m->gpu, y->t, (uint32_t)y->h, (uint32_t)y->w, y->guard, full.t,
-                                         (uint32_t)full.h, (uint32_t)full.w, full.guard, (uint32_t)y->cp, 1, 1);
-    gact_free(m, &full);
-    if (!ok) { fail(error, error_size, "SeedVR2 VAE (grid): %s", h3_gpu_error(m->gpu)); return 0; }
-    return 1;
-}
-
-static int ggn(h3_seedvr2 *m, const gact *x, const sv2_norm *n, gact *y, int in_place, int silu,
-               char *error, size_t error_size) {
-    if (in_place) *y = *x;
-    else if (!gact_new(m, y, x->h, x->w, x->c)) { fail(error, error_size, "SeedVR2 VAE (grid): out of memory"); return 0; }
-    GRID_OP(h3_gpu_sv2_grid_group_norm_bf16(m->gpu, y->t, x->t, n->w, n->b, (uint32_t)x->h, (uint32_t)x->w,
-                                            (uint32_t)x->c, (uint32_t)x->cp, x->guard, x->x_rows,
-                                            SV2_VAE_GROUPS, SV2_VAE_EPS, silu));
-    /* the norm writes the interior only: a pooled buffer's border rows must
-     * be zero before the next convolution's taps read them */
-    if (!in_place)
-        GRID_OP(h3_gpu_vsr_zero_border_bf16(m->gpu, y->t, 1, (uint32_t)y->h, (uint32_t)y->w, (uint32_t)y->cp, y->guard, y->x_rows));
-    return 1;
-}
-
-static int gresnet(h3_seedvr2 *m, const gact *x, const sv2_resnet *r, gact *y, char *error, size_t error_size) {
-    gact h1, c1, c2, sc;
-    if (!ggn(m, x, &r->norm1, &h1, 0, 1, error, error_size)) return 0;
-    int ok = gconv(m, &h1, &r->conv1, NULL, &c1, error, error_size);
-    gact_free(m, &h1);
-    if (!ok) return 0;
-    gact h2;
-    if (!ggn(m, &c1, &r->norm2, &h2, 1, 1, error, error_size)) { gact_free(m, &c1); return 0; }
-    const gact *residual = x;
-    if (r->shortcut.nw) {
-        if (!gconv(m, x, &r->shortcut, NULL, &sc, error, error_size)) { gact_free(m, &c1); return 0; }
-        residual = &sc;
-    }
-    ok = gconv(m, &h2, &r->conv2, residual, &c2, error, error_size);
-    gact_free(m, &c1);
-    if (r->shortcut.nw) gact_free(m, &sc);
-    if (!ok) return 0;
-    *y = c2;
-    return 1;
-}
-
-/* F32 [h, w, c] <-> grid. */
-static int gact_pack(h3_seedvr2 *m, const act *x, gact *g, char *error, size_t error_size) {
-    if (!gact_new(m, g, x->h, x->w, x->c)) { fail(error, error_size, "SeedVR2 VAE (grid): out of memory"); return 0; }
-    GRID_OP(h3_gpu_vsr_pack_grid_bf16(m->gpu, g->t, x->t, 1, (uint32_t)x->h, (uint32_t)x->w, (uint32_t)x->c,
-                                      (uint32_t)g->cp, g->guard, g->x_rows, 0));
-    return 1;
-}
-
-static int gact_unpack(h3_seedvr2 *m, const gact *g, act *x, char *error, size_t error_size) {
-    if (!act_new(m, x, g->h, g->w, g->c)) { fail(error, error_size, "SeedVR2 VAE (grid): out of memory"); return 0; }
-    GRID_OP(h3_gpu_vsr_unpack_grid_f32(m->gpu, x->t, g->t, 1, (uint32_t)g->h, (uint32_t)g->w, (uint32_t)g->c,
-                                       (uint32_t)g->cp, g->guard, g->x_rows));
-    return 1;
-}
-
-/* The mid block's attention through the F32 path (small: latent size). */
-static int gattention(h3_seedvr2 *m, const gact *x, const sv2_attention *a, gact *y, char *error, size_t error_size) {
-    act f, o;
-    if (!gact_unpack(m, x, &f, error, error_size)) return 0;
-    int ok = attention(m, &f, a, &o, error, error_size);
-    act_free(m, &f);
-    if (!ok) return 0;
-    ok = gact_pack(m, &o, y, error, error_size);
-    act_free(m, &o);
-    return ok;
-}
-
-static int vae_encode_grid(h3_seedvr2 *m, const act *rgb, act *out, int stop, char *error, size_t error_size) {
-    sv2_encoder *e = &m->enc;
-    gact in, x, y;
-    double mark = now_seconds();
-    if (!gact_pack(m, rgb, &in, error, error_size)) return 0;
-    int ok = gconv(m, &in, &e->conv_in, NULL, &x, error, error_size);
-    gact_free(m, &in);
-    if (!ok) return 0;
-    if (stop == 0) { ok = gact_unpack(m, &x, out, error, error_size); gact_free(m, &x); return ok; }
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 2; j++) {
-            if (!gresnet(m, &x, &e->down[i][j], &y, error, error_size)) { gact_free(m, &x); return 0; }
-            gact_free(m, &x); x = y;
-        }
-        if (i < 3) {
-            if (!gconv_s2(m, &x, &e->downsample[i], &y, error, error_size)) { gact_free(m, &x); return 0; }
-            gact_free(m, &x); x = y;
-        }
-        if (stop == i + 1) { ok = gact_unpack(m, &x, out, error, error_size); gact_free(m, &x); return ok; }
-    }
-    trace_sync(m->gpu, &mark, "enc down (grid)");
-    if (!gresnet(m, &x, &e->mid_a, &y, error, error_size)) { gact_free(m, &x); return 0; }
-    gact_free(m, &x); x = y;
-    if (!gattention(m, &x, &e->mid_attn, &y, error, error_size)) { gact_free(m, &x); return 0; }
-    gact_free(m, &x); x = y;
-    if (!gresnet(m, &x, &e->mid_b, &y, error, error_size)) { gact_free(m, &x); return 0; }
-    gact_free(m, &x); x = y;
-    if (stop == 5) { ok = gact_unpack(m, &x, out, error, error_size); gact_free(m, &x); return ok; }
-    if (!ggn(m, &x, &e->norm_out, &y, 1, 1, error, error_size)) { gact_free(m, &x); return 0; }
-    x = y;
-    if (!gconv(m, &x, &e->conv_out, NULL, &y, error, error_size)) { gact_free(m, &x); return 0; }
-    gact_free(m, &x);
-    ok = gact_unpack(m, &y, out, error, error_size);
-    gact_free(m, &y);
-    trace_sync(m->gpu, &mark, "enc mid/out (grid)");
-    return ok;
-}
-
-static int vae_decode_grid(h3_seedvr2 *m, const act *z, act *out, char *error, size_t error_size) {
-    sv2_decoder *d = &m->dec;
-    gact in, x, y;
-    double mark = now_seconds();
-    if (!gact_pack(m, z, &in, error, error_size)) return 0;
-    int ok = gconv(m, &in, &d->conv_in, NULL, &x, error, error_size);
-    gact_free(m, &in);
-    if (!ok) return 0;
-    if (!gresnet(m, &x, &d->mid_a, &y, error, error_size)) { gact_free(m, &x); return 0; }
-    gact_free(m, &x); x = y;
-    if (!gattention(m, &x, &d->mid_attn, &y, error, error_size)) { gact_free(m, &x); return 0; }
-    gact_free(m, &x); x = y;
-    if (!gresnet(m, &x, &d->mid_b, &y, error, error_size)) { gact_free(m, &x); return 0; }
-    gact_free(m, &x); x = y;
-    trace_sync(m->gpu, &mark, "dec mid (grid)");
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 3; j++) {
-            if (!gresnet(m, &x, &d->up[i][j], &y, error, error_size)) { gact_free(m, &x); return 0; }
-            gact_free(m, &x); x = y;
-        }
-        if (i < 3) {
-            int C = x.c, tf = d->up_temporal[i];
-            gact u, s;
-            if (!gconv(m, &x, &d->up_nax[i], NULL, &u, error, error_size)) { gact_free(m, &x); return 0; }
-            gact_free(m, &x);
-            if (!gact_new(m, &s, 2 * u.h, 2 * u.w, C)) { gact_free(m, &u); fail(error, error_size, "SeedVR2 VAE (grid): out of memory"); return 0; }
-            ok = h3_gpu_sv2_grid_shuffle_bf16(m->gpu, s.t, (uint32_t)s.cp, s.guard, u.t, (uint32_t)u.h, (uint32_t)u.w,
-                                              (uint32_t)u.cp, u.guard, (uint32_t)C, (uint32_t)tf);
-            gact_free(m, &u);
-            if (!ok) { gact_free(m, &s); fail(error, error_size, "SeedVR2 VAE (grid): %s", h3_gpu_error(m->gpu)); return 0; }
-            if (!gconv(m, &s, &d->up_conv[i], NULL, &x, error, error_size)) { gact_free(m, &s); return 0; }
-            gact_free(m, &s);
-            if (!h3_gpu_continue(m->gpu)) { gact_free(m, &x); fail(error, error_size, "SeedVR2 VAE (grid): %s", h3_gpu_error(m->gpu)); return 0; }
-        }
-        char label[32];
-        snprintf(label, sizeof(label), "dec up%d (grid)", i);
-        trace_sync(m->gpu, &mark, label);
-    }
-    if (!ggn(m, &x, &d->norm_out, &y, 1, 1, error, error_size)) { gact_free(m, &x); return 0; }
-    x = y;
-    if (!gconv(m, &x, &d->conv_out, NULL, &y, error, error_size)) { gact_free(m, &x); return 0; }
-    gact_free(m, &x);
-    ok = gact_unpack(m, &y, out, error, error_size);
-    gact_free(m, &y);
-    trace_sync(m->gpu, &mark, "dec out (grid)");
-    return ok;
-}
-
-/* stop: 0 after conv_in, 1..4 after down block i-1, 5 after the mid block,
- * 6 (or more) the latent. */
-static int vae_encode_stage(h3_seedvr2 *m, const act *rgb, act *out, int stop, char *error, size_t error_size) {
-    if (m->nax_vae) return vae_encode_grid(m, rgb, out, stop, error, error_size);
-    sv2_encoder *e = &m->enc;
-    act x, y;
-    double mark = now_seconds();
-    if (!conv3x3(m, rgb, &e->conv_in, 1, &x, error, error_size)) return 0;
-    if (stop == 0) { *out = x; return 1; }
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 2; j++) {
-            if (!resnet(m, &x, &e->down[i][j], &y, error, error_size)) { act_free(m, &x); return 0; }
-            act_free(m, &x); x = y;
-        }
-        if (i < 3) {
-            if (!conv3x3(m, &x, &e->downsample[i], 2, &y, error, error_size)) { act_free(m, &x); return 0; }
-            act_free(m, &x); x = y;
-        }
-        if (stop == i + 1) { *out = x; return 1; }
-    }
-    trace_sync(m->gpu, &mark, "enc down");
-    if (!resnet(m, &x, &e->mid_a, &y, error, error_size)) { act_free(m, &x); return 0; }
-    act_free(m, &x); x = y;
-    if (!attention(m, &x, &e->mid_attn, &y, error, error_size)) { act_free(m, &x); return 0; }
-    act_free(m, &x); x = y;
-    if (!resnet(m, &x, &e->mid_b, &y, error, error_size)) { act_free(m, &x); return 0; }
-    act_free(m, &x); x = y;
-    if (stop == 5) { *out = x; return 1; }
-    if (!group_norm_silu(m, &x, &e->norm_out, &y, 1, error, error_size)) { act_free(m, &x); return 0; }
-    x = y;   /* in place: the same buffer */
-    if (!conv3x3(m, &x, &e->conv_out, 1, out, error, error_size)) { act_free(m, &x); return 0; }
-    act_free(m, &x);
-    trace_sync(m->gpu, &mark, "enc mid/out");
-    return 1;
-}
-
-static int vae_encode(h3_seedvr2 *m, const act *rgb, act *out, char *error, size_t error_size) {
-    return vae_encode_stage(m, rgb, out, 99, error, error_size);
-}
-
-/* Decoder: latent [h, w, 16] (already divided by the scaling factor) ->
- * RGB [8h, 8w, 3] in about [-1, 1]. */
-static int vae_decode(h3_seedvr2 *m, const act *z, act *out, char *error, size_t error_size) {
-    if (m->nax_vae) return vae_decode_grid(m, z, out, error, error_size);
-    sv2_decoder *d = &m->dec;
-    act x, y;
-    double mark = now_seconds();
-    if (!conv3x3(m, z, &d->conv_in, 1, &x, error, error_size)) return 0;
-    if (!resnet(m, &x, &d->mid_a, &y, error, error_size)) { act_free(m, &x); return 0; }
-    act_free(m, &x); x = y;
-    if (!attention(m, &x, &d->mid_attn, &y, error, error_size)) { act_free(m, &x); return 0; }
-    act_free(m, &x); x = y;
-    if (!resnet(m, &x, &d->mid_b, &y, error, error_size)) { act_free(m, &x); return 0; }
-    act_free(m, &x); x = y;
-    trace_sync(m->gpu, &mark, "dec mid");
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 3; j++) {
-            if (!resnet(m, &x, &d->up[i][j], &y, error, error_size)) { act_free(m, &x); return 0; }
-            act_free(m, &x); x = y;
-        }
-        if (i < 3) {
-            int C = x.c, tf = d->up_temporal[i];
-            act u, s;
-            if (!conv1x1(m, &x, d->up_w[i], d->up_b[i], C * 4 * tf, &u, error, error_size)) { act_free(m, &x); return 0; }
-            act_free(m, &x);
-            if (!act_new(m, &s, 2 * u.h, 2 * u.w, C)) { act_free(m, &u); fail(error, error_size, "SeedVR2 VAE: out of memory"); return 0; }
-            int ok = h3_gpu_sv2_shuffle_f32(m->gpu, s.t, u.t, (uint32_t)u.h, (uint32_t)u.w, (uint32_t)C, (uint32_t)tf);
-            act_free(m, &u);
-            if (!ok) { act_free(m, &s); fail(error, error_size, "SeedVR2 VAE: %s", h3_gpu_error(m->gpu)); return 0; }
-            if (!conv3x3(m, &s, &d->up_conv[i], 1, &x, error, error_size)) { act_free(m, &s); return 0; }
-            act_free(m, &s);
-            if (!h3_gpu_continue(m->gpu)) { act_free(m, &x); fail(error, error_size, "SeedVR2 VAE: %s", h3_gpu_error(m->gpu)); return 0; }
-        }
-        char label[32];
-        snprintf(label, sizeof(label), "dec up%d", i);
-        trace_sync(m->gpu, &mark, label);
-    }
-    if (!group_norm_silu(m, &x, &d->norm_out, &y, 1, error, error_size)) { act_free(m, &x); return 0; }
-    x = y;   /* in place: the same buffer */
-    if (!conv3x3(m, &x, &d->conv_out, 1, out, error, error_size)) { act_free(m, &x); return 0; }
-    act_free(m, &x);
-    trace_sync(m->gpu, &mark, "dec out");
-    return 1;
-}
 
 /* ---------------------------------------------------------------- */
 /* Transformer: window layout and the 32-block forward on one frame */
@@ -1713,16 +897,16 @@ static int dit_forward(h3_seedvr2 *m, sv2_layout *layouts, const h3_gpu_tensor *
     const float scale = 1.0f / sqrtf((float)SV2_HEAD_DIM);
     uint32_t att_rows = N + (uint32_t)(layouts[0].windows > layouts[1].windows ? layouts[0].windows : layouts[1].windows) * T;
     if (att_rows < NP) att_rows = NP;
-    h3_gpu_tensor *x_v = pool_take(m, (size_t)NP * D, 1), *h_v = pool_take(m, (size_t)NP * D, 1);
-    h3_gpu_tensor *o_v = pool_take(m, (size_t)NP * D, 1), *qkv_v = pool_take(m, (size_t)NP * 3 * D, 1);
-    h3_gpu_tensor *x_t = pool_take(m, (size_t)TR * D, 1), *h_t = pool_take(m, (size_t)TR * D, 1);
-    h3_gpu_tensor *o_t = pool_take(m, (size_t)TR * D, 1), *qkv_t = pool_take(m, (size_t)TR * 3 * D, 1);
-    h3_gpu_tensor *tm = pool_take(m, (size_t)TR * D, 1);
-    h3_gpu_tensor *att = pool_take(m, (size_t)att_rows * D, 1);
-    h3_gpu_tensor *f_v = direct ? pool_take(m, (size_t)NP * 2 * SV2_HIDDEN, 1) : NULL;
-    h3_gpu_tensor *g_v = direct ? pool_take(m, (size_t)NP * SV2_HIDDEN, 1) : NULL;
-    h3_gpu_tensor *f_t = direct ? pool_take(m, (size_t)TR * 2 * SV2_HIDDEN, 1) : NULL;
-    h3_gpu_tensor *g_t = direct ? pool_take(m, (size_t)TR * SV2_HIDDEN, 1) : NULL;
+    h3_gpu_tensor *x_v = sv2_pool_take(m, (size_t)NP * D, 1), *h_v = sv2_pool_take(m, (size_t)NP * D, 1);
+    h3_gpu_tensor *o_v = sv2_pool_take(m, (size_t)NP * D, 1), *qkv_v = sv2_pool_take(m, (size_t)NP * 3 * D, 1);
+    h3_gpu_tensor *x_t = sv2_pool_take(m, (size_t)TR * D, 1), *h_t = sv2_pool_take(m, (size_t)TR * D, 1);
+    h3_gpu_tensor *o_t = sv2_pool_take(m, (size_t)TR * D, 1), *qkv_t = sv2_pool_take(m, (size_t)TR * 3 * D, 1);
+    h3_gpu_tensor *tm = sv2_pool_take(m, (size_t)TR * D, 1);
+    h3_gpu_tensor *att = sv2_pool_take(m, (size_t)att_rows * D, 1);
+    h3_gpu_tensor *f_v = direct ? sv2_pool_take(m, (size_t)NP * 2 * SV2_HIDDEN, 1) : NULL;
+    h3_gpu_tensor *g_v = direct ? sv2_pool_take(m, (size_t)NP * SV2_HIDDEN, 1) : NULL;
+    h3_gpu_tensor *f_t = direct ? sv2_pool_take(m, (size_t)TR * 2 * SV2_HIDDEN, 1) : NULL;
+    h3_gpu_tensor *g_t = direct ? sv2_pool_take(m, (size_t)TR * SV2_HIDDEN, 1) : NULL;
     /* the int8 kernels' per-row quantised activations and scales */
     h3_gpu_tensor *q_in = m->int8_dit ? h3_gpu_tensor_new_i8(m->gpu, (size_t)NP * SV2_HIDDEN) : NULL;
     h3_gpu_tensor *q_scales = m->int8_dit ? h3_gpu_tensor_new_f32(m->gpu, NP) : NULL;
@@ -1824,17 +1008,17 @@ static int dit_forward(h3_seedvr2 *m, sv2_layout *layouts, const h3_gpu_tensor *
     DIT_OP(h3_gpu_vsr_bias_gate_add_bf16(m->gpu, pred, pred, m->vid_out.b, NULL, NULL, N, SV2_PATCH_OUT));
     DIT_OP(h3_gpu_submit(m->gpu));
     trace(&mark, "dit submitted + done");
-    pool_give(m, x_v); pool_give(m, h_v); pool_give(m, o_v); pool_give(m, qkv_v);
-    pool_give(m, x_t); pool_give(m, h_t); pool_give(m, o_t); pool_give(m, qkv_t);
-    pool_give(m, tm); pool_give(m, att);
-    pool_give(m, f_v); pool_give(m, g_v); pool_give(m, f_t); pool_give(m, g_t);
+    sv2_pool_give(m, x_v); sv2_pool_give(m, h_v); sv2_pool_give(m, o_v); sv2_pool_give(m, qkv_v);
+    sv2_pool_give(m, x_t); sv2_pool_give(m, h_t); sv2_pool_give(m, o_t); sv2_pool_give(m, qkv_t);
+    sv2_pool_give(m, tm); sv2_pool_give(m, att);
+    sv2_pool_give(m, f_v); sv2_pool_give(m, g_v); sv2_pool_give(m, f_t); sv2_pool_give(m, g_t);
     h3_gpu_tensor_free(q_in); h3_gpu_tensor_free(q_scales);
     return 1;
 failed:
-    pool_give(m, x_v); pool_give(m, h_v); pool_give(m, o_v); pool_give(m, qkv_v);
-    pool_give(m, x_t); pool_give(m, h_t); pool_give(m, o_t); pool_give(m, qkv_t);
-    pool_give(m, tm); pool_give(m, att);
-    pool_give(m, f_v); pool_give(m, g_v); pool_give(m, f_t); pool_give(m, g_t);
+    sv2_pool_give(m, x_v); sv2_pool_give(m, h_v); sv2_pool_give(m, o_v); sv2_pool_give(m, qkv_v);
+    sv2_pool_give(m, x_t); sv2_pool_give(m, h_t); sv2_pool_give(m, o_t); sv2_pool_give(m, qkv_t);
+    sv2_pool_give(m, tm); sv2_pool_give(m, att);
+    sv2_pool_give(m, f_v); sv2_pool_give(m, g_v); sv2_pool_give(m, f_t); sv2_pool_give(m, g_t);
     h3_gpu_tensor_free(q_in); h3_gpu_tensor_free(q_scales);
     return 0;
 }
@@ -1919,8 +1103,8 @@ static int color_transfer(h3_seedvr2 *m, h3_gpu_tensor *out, const h3_gpu_tensor
                           const h3_gpu_tensor *style, int width, int height,
                           char *error, size_t error_size) {
     size_t n = (size_t)width * height * 3, pixels = (size_t)width * height;
-    h3_gpu_tensor *high = pool_take(m, n, 0), *cur = pool_take(m, n, 0), *low = pool_take(m, n, 0);
-    h3_gpu_tensor *slow = pool_take(m, n, 0), *lab_c = pool_take(m, n, 0), *lab_s = pool_take(m, n, 0);
+    h3_gpu_tensor *high = sv2_pool_take(m, n, 0), *cur = sv2_pool_take(m, n, 0), *low = sv2_pool_take(m, n, 0);
+    h3_gpu_tensor *slow = sv2_pool_take(m, n, 0), *lab_c = sv2_pool_take(m, n, 0), *lab_s = sv2_pool_take(m, n, 0);
     h3_gpu_tensor *luts = NULL;
     float *hc = NULL, *hsy = NULL, *lut = NULL;
     int ok = 0;
@@ -1986,8 +1170,8 @@ static int color_transfer(h3_seedvr2 *m, h3_gpu_tensor *out, const h3_gpu_tensor
 done:
     free(hc); free(hsy); free(lut);
     h3_gpu_tensor_free(luts);
-    pool_give(m, high); pool_give(m, cur); pool_give(m, low);
-    pool_give(m, slow); pool_give(m, lab_c); pool_give(m, lab_s);
+    sv2_pool_give(m, high); sv2_pool_give(m, cur); sv2_pool_give(m, low);
+    sv2_pool_give(m, slow); sv2_pool_give(m, lab_c); sv2_pool_give(m, lab_s);
     return ok;
 }
 
@@ -2141,12 +1325,12 @@ static int restore_frame(h3_seedvr2_session *s, const h3_gpu_tensor *rgb_in, h3_
         if (on_progress && on_progress("vsr encode", 0, 1, opaque)) { fail(error, error_size, "vsr cancelled"); return 0; }
         act in = {(h3_gpu_tensor *)rgb_in, s->full_h, s->full_w, 3}, enc;
         if (!h3_gpu_begin(m->gpu)) { fail(error, error_size, "SeedVR2: %s", h3_gpu_error(m->gpu)); return 0; }
-        if (!vae_encode(m, &in, &enc, error, error_size)) { h3_gpu_submit(m->gpu); return 0; }
-        if (!h3_gpu_submit(m->gpu)) { act_free(m, &enc); fail(error, error_size, "SeedVR2 encode: %s", h3_gpu_error(m->gpu)); return 0; }
+        if (!sv2_vae_encode(m, &in, &enc, error, error_size)) { h3_gpu_submit(m->gpu); return 0; }
+        if (!h3_gpu_submit(m->gpu)) { sv2_act_free(m, &enc); fail(error, error_size, "SeedVR2 encode: %s", h3_gpu_error(m->gpu)); return 0; }
         /* [lh, lw, 32] -> cond [16, lh, lw] * scaling */
         float *enc_host = malloc((size_t)lw * lh * 2 * SV2_LATENT * sizeof(float));
         int ok = enc_host && h3_gpu_tensor_read_f32(enc.t, enc_host, (size_t)lw * lh * 2 * SV2_LATENT);
-        act_free(m, &enc);
+        sv2_act_free(m, &enc);
         if (!ok) { free(enc_host); fail(error, error_size, "SeedVR2: cannot read the latent"); return 0; }
         for (int y = 0; y < lh; y++)
             for (int x = 0; x < lw; x++)
@@ -2163,12 +1347,12 @@ static int restore_frame(h3_seedvr2_session *s, const h3_gpu_tensor *rgb_in, h3_
     /* transformer */
     pack_tokens(noise, s->cond_host, lw, lh, s->tokens_host);
     h3_gpu_tensor *tokens = h3_gpu_tensor_from_bf16(m->gpu, s->tokens_host, (size_t)N * SV2_PATCH_IN);
-    h3_gpu_tensor *pred = pool_take(m, (size_t)N * SV2_PATCH_OUT, 1);
-    if (!tokens || !pred) { h3_gpu_tensor_free(tokens); pool_give(m, pred); fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
+    h3_gpu_tensor *pred = sv2_pool_take(m, (size_t)N * SV2_PATCH_OUT, 1);
+    if (!tokens || !pred) { h3_gpu_tensor_free(tokens); sv2_pool_give(m, pred); fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
     int ok = dit_forward(m, s->layouts, tokens, pred, dump_block, on_progress, opaque, cancel_requested, error, error_size);
     h3_gpu_tensor_free(tokens);
     if (ok) ok = h3_gpu_tensor_read_bf16(pred, s->pred_bf16, (size_t)N * SV2_PATCH_OUT);
-    pool_give(m, pred);
+    sv2_pool_give(m, pred);
     if (!ok) { if (error && !error[0]) fail(error, error_size, "SeedVR2: cannot read the prediction"); return 0; }
     unpack_pred(s->pred_bf16, lw, lh, s->pred_host);
     trace(&mark, "dit");
@@ -2188,11 +1372,11 @@ static int restore_frame(h3_seedvr2_session *s, const h3_gpu_tensor *rgb_in, h3_
     free(z);
     if (!zt.t) { fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
     if (!h3_gpu_begin(m->gpu)) { h3_gpu_tensor_free(zt.t); fail(error, error_size, "SeedVR2: %s", h3_gpu_error(m->gpu)); return 0; }
-    ok = vae_decode(m, &zt, &dec, error, error_size);
+    ok = sv2_vae_decode(m, &zt, &dec, error, error_size);
     if (!ok) { h3_gpu_submit(m->gpu); h3_gpu_tensor_free(zt.t); return 0; }
     ok = h3_gpu_copy_f32(m->gpu, rgb_out, 0, dec.t, 0, (size_t)s->full_w * s->full_h * 3) && h3_gpu_submit(m->gpu);
     h3_gpu_tensor_free(zt.t);
-    act_free(m, &dec);
+    sv2_act_free(m, &dec);
     if (!ok) { fail(error, error_size, "SeedVR2 decode: %s", h3_gpu_error(m->gpu)); return 0; }
     trace(&mark, "decode");
     if (on_progress && on_progress("vsr decode", 1, 1, opaque)) { fail(error, error_size, "vsr cancelled"); return 0; }
@@ -2223,7 +1407,7 @@ int h3_seedvr2_session_process(h3_seedvr2_session *s, const h3_vsr_image *in, h3
         s->pixels_out_bytes = out_bytes;
     }
     size_t n = (size_t)s->full_w * s->full_h * 3;
-    h3_gpu_tensor *rgb_in = pool_take(m, n, 0), *rgb_out = pool_take(m, n, 0);
+    h3_gpu_tensor *rgb_in = sv2_pool_take(m, n, 0), *rgb_out = sv2_pool_take(m, n, 0);
     int ok = 0;
     if (!s->pixels_in || !s->pixels_out || !rgb_in || !rgb_out) { fail(error, error_size, "SeedVR2: out of GPU memory"); goto done; }
     double mark = now_seconds();
@@ -2258,7 +1442,7 @@ int h3_seedvr2_session_process(h3_seedvr2_session *s, const h3_vsr_image *in, h3
     trace(&mark, "output");
     ok = 1;
 done:
-    pool_give(m, rgb_in); pool_give(m, rgb_out);
+    sv2_pool_give(m, rgb_in); sv2_pool_give(m, rgb_out);
     return ok;
 }
 
@@ -2293,14 +1477,14 @@ int h3_seedvr2_debug_encode(h3_seedvr2 *m, const float *rgb, int width, int heig
     if (width % 16 || height % 16) { fail(error, error_size, "SeedVR2: sides must be multiples of 16"); return 0; }
     act in = {upload_chw(m->gpu, rgb, 3, width, height), height, width, 3}, enc;
     if (!in.t) { fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
-    int ok = h3_gpu_begin(m->gpu) && vae_encode(m, &in, &enc, error, error_size);
+    int ok = h3_gpu_begin(m->gpu) && sv2_vae_encode(m, &in, &enc, error, error_size);
     if (!ok) { h3_gpu_submit(m->gpu); h3_gpu_tensor_free(in.t); return 0; }
     ok = h3_gpu_submit(m->gpu);
     h3_gpu_tensor_free(in.t);
     int lw = width / 8, lh = height / 8;
     float *full = malloc((size_t)lw * lh * 2 * SV2_LATENT * sizeof(float));
     if (ok && full) ok = download_chw(enc.t, full, 2 * SV2_LATENT, lw, lh);
-    act_free(m, &enc);
+    sv2_act_free(m, &enc);
     if (!ok || !full) { free(full); fail(error, error_size, "SeedVR2 encode: %s", h3_gpu_error(m->gpu)); return 0; }
     for (size_t i = 0; i < (size_t)SV2_LATENT * lw * lh; i++) latent[i] = full[i] * SV2_SCALING;
     free(full);
@@ -2317,13 +1501,13 @@ int h3_seedvr2_debug_dit(h3_seedvr2 *m, const float *dit_in, int lw, int lh, flo
     int N = (lw / 2) * (lh / 2);
     pack_tokens(dit_in, dit_in + 16 * plane, lw, lh, s->tokens_host);
     h3_gpu_tensor *tokens = h3_gpu_tensor_from_bf16(m->gpu, s->tokens_host, (size_t)N * SV2_PATCH_IN);
-    h3_gpu_tensor *out = pool_take(m, (size_t)N * SV2_PATCH_OUT, 1);
+    h3_gpu_tensor *out = sv2_pool_take(m, (size_t)N * SV2_PATCH_OUT, 1);
     int ok = tokens && out &&
              dit_forward(m, s->layouts, tokens, out, dump_block, NULL, NULL, NULL, error, error_size) &&
              h3_gpu_tensor_read_bf16(out, s->pred_bf16, (size_t)N * SV2_PATCH_OUT);
     if (ok) unpack_pred(s->pred_bf16, lw, lh, pred);
     h3_gpu_tensor_free(tokens);
-    pool_give(m, out);
+    sv2_pool_give(m, out);
     h3_seedvr2_session_close(s);
     return ok;
 }
@@ -2338,12 +1522,12 @@ int h3_seedvr2_debug_decode(h3_seedvr2 *m, const float *latent, int lw, int lh, 
     act z = {upload_chw(m->gpu, scaled, SV2_LATENT, lw, lh), lh, lw, SV2_LATENT}, dec;
     free(scaled);
     if (!z.t) { fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
-    int ok = h3_gpu_begin(m->gpu) && vae_decode(m, &z, &dec, error, error_size);
+    int ok = h3_gpu_begin(m->gpu) && sv2_vae_decode(m, &z, &dec, error, error_size);
     if (!ok) { h3_gpu_submit(m->gpu); h3_gpu_tensor_free(z.t); return 0; }
     ok = h3_gpu_submit(m->gpu);
     h3_gpu_tensor_free(z.t);
     if (ok) ok = download_chw(dec.t, rgb, 3, lw * 8, lh * 8);
-    act_free(m, &dec);
+    sv2_act_free(m, &dec);
     if (!ok) fail(error, error_size, "SeedVR2 decode: %s", h3_gpu_error(m->gpu));
     return ok;
 }
@@ -2376,13 +1560,13 @@ int h3_seedvr2_debug_encode_stage(h3_seedvr2 *m, const float *rgb, int width, in
     if (error && error_size) error[0] = '\0';
     act in = {upload_chw(m->gpu, rgb, 3, width, height), height, width, 3}, y;
     if (!in.t) { fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
-    int ok = h3_gpu_begin(m->gpu) && vae_encode_stage(m, &in, &y, stage, error, error_size);
+    int ok = h3_gpu_begin(m->gpu) && sv2_vae_encode_stage(m, &in, &y, stage, error, error_size);
     if (!ok) { h3_gpu_submit(m->gpu); h3_gpu_tensor_free(in.t); return 0; }
     ok = h3_gpu_submit(m->gpu);   /* the input must outlive the command buffer */
     h3_gpu_tensor_free(in.t);
     *out_w = y.w; *out_h = y.h; *out_c = y.c;
     if (ok && (size_t)y.w * y.h * y.c <= capacity) ok = download_chw(y.t, out, y.c, y.w, y.h);
     else if (ok) { fail(error, error_size, "SeedVR2: stage output needs %d values", y.w * y.h * y.c); ok = 0; }
-    act_free(m, &y);
+    sv2_act_free(m, &y);
     return ok;
 }
