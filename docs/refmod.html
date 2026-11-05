@@ -101,7 +101,7 @@
         <li><strong>その行の「<span class="ui">RefModとして保存…</span>」を押します。</strong></li>
         <li><strong>名前とモードを決めて「<span class="ui">作成</span>」を押します。</strong>項目は下の表のとおりです。ふつうは名前だけ決めれば十分です。</li>
       </ol>
-      <p>作ったRefModは、RefModフォルダ（<code>~/Library/Application Support/H3cApp/RefMods/</code>）に保存され、「<span class="ui">モデル管理</span>」の「<span class="ui">RefMod</span>」に並びます。「<span class="ui">作成したRefModを参照に追加する</span>」がオン（初期値）なら、参照の一覧にも加わります。元のファイルの行は残るので、要らなければ「<span class="ui">取り除く</span>」で外します。</p>
+      <p>作ったRefModは、RefModフォルダ（<code>~/Library/Application Support/H3cApp/RefMods/</code>）に保存され、「<span class="ui">モデル管理</span>」の「<span class="ui">RefMod</span>」に並びます。「<span class="ui">元の参照をRefModに置き換える</span>」がオン（初期値）なら、参照の一覧の元のファイルの行が、同じ位置のままそのRefModに入れ替わります。オフなら、元の行を残してRefModを最後に加えます。両方を残すと、同じ参照が二重に効きます。音声も使う動画の参照は、RefModが映像だけなので、元の行を残してRefModを最後に加えます。</p>
       <p>作成は生成と同じGPUの処理です。生成中に押すと、その生成が終わってから始まります。シートの「<span class="ui">中止</span>」で止められます。</p>
       <h3>シートの項目</h3>
       <div class="table-wrap">

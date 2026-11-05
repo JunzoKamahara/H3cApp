@@ -66,9 +66,12 @@ into the generation together with the words of the prompt.
 
 The RefMod is saved in the RefMod folder
 (`~/Library/Application Support/H3cApp/RefMods/`) and listed under "RefMod" in
-Model Manager. With "Add the new RefMod to the references" on (the default), it
-also joins the references. The row of the original file stays; take it out with
-"Remove" if it isn't wanted.
+Model Manager. With "Replace the original reference with the RefMod" on (the
+default), the RefMod takes the original file's row in the references, in the
+same place. Off, the original row stays and the RefMod is added at the end
+(keeping both makes the same reference count twice). A video reference that
+also uses its sound keeps its row and gets the RefMod at the end, as a RefMod
+holds the picture only.
 
 Making a RefMod is GPU work like a generation, so pressed during one it starts
 when that generation finishes. "Stop" in the sheet stops it.

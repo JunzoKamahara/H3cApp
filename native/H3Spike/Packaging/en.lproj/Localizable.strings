@@ -1170,7 +1170,9 @@
 "参照を一度だけVAEで符号化して、小さなファイル（.safetensors）に保存します。保存したRefModは、参照の「RefModを追加…」からどの生成でも使えます。Qwenには見せないので、プロンプトの<Picture n>は要りません。" = "Encodes the reference with the VAE once and saves it as a small file (.safetensors). A saved RefMod can be used in any generation from \"Add RefMod…\" in the references. Qwen is not shown it, so the prompt needs no <Picture n>.";
 "圧縮は上流（ComfyUI-MiniMaxH3Mod）と同じ計算です。人物の同一性を学習するものではなく、細部や動きは失われます。" = "Compression is the same arithmetic as upstream (ComfyUI-MiniMaxH3Mod). It does not learn a person's identity; detail and motion are lost.";
 "生成が終わってから始まります。" = "Starts once the generation finishes.";
-"作成したRefModを参照に追加する" = "Add the new RefMod to the references";
+"元の参照をRefModに置き換える" = "Replace the original reference with the RefMod";
+"オンなら、作成したRefModが元の参照の行と入れ替わります。オフなら、元の行を残してRefModを最後に加えます。" = "On, the new RefMod takes the original reference's row. Off, the original stays and the RefMod is added at the end.";
+"この参照は動画の音声も使うので、元の行を残してRefModを最後に加えます（RefModは映像だけです）。" = "This reference also uses the video's sound, so the original stays and the RefMod is added at the end (a RefMod holds the picture only).";
 "モード" = "Mode";
 "Full（そのまま）" = "Full (as encoded)";
 "圧縮（小さい格子に）" = "Compressed (small grid)";

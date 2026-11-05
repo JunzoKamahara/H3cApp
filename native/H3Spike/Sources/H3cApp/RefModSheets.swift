@@ -24,7 +24,10 @@ struct RefModExtractSheet: View {
     @State private var poolLongEdge = 16
     @State private var optimizeSteps = 500
     @State private var maxSeconds = 15
-    @State private var addToReferences = true
+    /// The new RefMod takes the source's row (same place in the list); off,
+    /// the source stays and the RefMod is added at the end. Both would
+    /// otherwise reach the generation as two copies of one reference.
+    @State private var replaceSource = true
     @State private var running = false
     @State private var errorMessage: String?
 
@@ -36,6 +39,12 @@ struct RefModExtractSheet: View {
         self.library = library
         _isPresented = isPresented
         _name = State(initialValue: URL(fileURLWithPath: source.path).deletingPathExtension().lastPathComponent)
+    }
+
+    /// A video row that also brings its sound: the RefMod holds the picture
+    /// only, so replacing the row would drop the sound.
+    private var sourceCarriesAudio: Bool {
+        source.kind == .videoAudio || source.audioPath != nil || source.includeEmbeddedAudio
     }
 
     private var kind: H3RefModKind {
@@ -120,7 +129,15 @@ struct RefModExtractSheet: View {
                     }
                 }
             }
-            Toggle("作成したRefModを参照に追加する", isOn: $addToReferences)
+            Toggle("元の参照をRefModに置き換える", isOn: $replaceSource)
+                .disabled(sourceCarriesAudio)
+                .help("オンなら、作成したRefModが元の参照の行と入れ替わります。オフなら、元の行を残してRefModを最後に加えます。")
+            if sourceCarriesAudio {
+                Text("この参照は動画の音声も使うので、元の行を残してRefModを最後に加えます（RefModは映像だけです）。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if mode == .compressed && kind != .audio {
                 Text("圧縮は上流（ComfyUI-MiniMaxH3Mod）と同じ計算です。人物の同一性を学習するものではなく、細部や動きは失われます。")
                     .font(.caption)
@@ -181,8 +198,12 @@ struct RefModExtractSheet: View {
         Task {
             do {
                 let path = try await viewModel.extractRefMod(request)
-                if addToReferences {
-                    viewModel.referenceImages.append(H3ReferenceInput(kind: .refmod, path: path))
+                let refmod = H3ReferenceInput(kind: .refmod, path: path)
+                if replaceSource, !sourceCarriesAudio,
+                   let index = viewModel.referenceImages.firstIndex(where: { $0.id == source.id }) {
+                    viewModel.referenceImages[index] = refmod
+                } else {
+                    viewModel.referenceImages.append(refmod)
                 }
                 isPresented = false
             } catch H3EngineError.cancelled {
