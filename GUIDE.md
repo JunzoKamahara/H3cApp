@@ -158,8 +158,13 @@ Good to know:
     long (UPSCALE_PLAN.md appendix A.8). The
     size stays within H3's limit (1344×768 pixels) and the factor is
     rounded into it (a 960×544 video becomes 1344×768 at every factor).
+    The factor applies to the size the clip was generated at (its latent
+    grid), so a video made at a "×2" size starts from the size before the
+    doubling (a 1920×1088 video is redrawn from 960×544, up to 1344×768).
     Only videos this app generated, with their latent file, qualify (not
     imported videos; a joined video through the clips it was joined from).
+    The video shown in the preview after generating with no project open
+    qualifies too; you choose where to save the result then.
     The time is a generation's: about 12 minutes for 5 seconds at 1344×768
     on an M5, with a generation's memory (about 15 GB). The weights are not
     bundled: "モデルを準備…" shows the license notice and then downloads

@@ -1064,9 +1064,15 @@ extension GenerationViewModel {
     struct PendingUpscale: Identifiable {
         let id = UUID()
         let url: URL
+        /// The video with its record, when it has one: a project video, or
+        /// the preview's temporary result (generated with no project open),
+        /// whose record and latent let Open-H3 regenerate it.
         let projectVideo: ProjectVideo?
         let width: Int
         let height: Int
+        /// Whether the enlarged copy joins the open project (else it goes
+        /// to a file chosen next).
+        var inProject = false
     }
 
     /// Whether `video` can be enlarged by `factor` (within the 4096-pixel
@@ -1087,7 +1093,8 @@ extension GenerationViewModel {
     func upscaleRequest(for video: ProjectVideo) async -> PendingUpscale? {
         do {
             let size = try await VideoUpscale.frameSize(of: video.url)
-            return PendingUpscale(url: video.url, projectVideo: video, width: size.width, height: size.height)
+            return PendingUpscale(url: video.url, projectVideo: video, width: size.width, height: size.height,
+                                  inProject: true)
         } catch {
             projectMessage = String(localized: "動画を拡大できませんでした（詳細: \(error.localizedDescription)）")
             return nil
@@ -1098,7 +1105,7 @@ extension GenerationViewModel {
     /// file chosen now.
     func startUpscale(_ pending: PendingUpscale, upscaler: VideoUpscaler, factor: UpscaleFactor,
                       strength: OpenH3Strength = .standard) {
-        if let video = pending.projectVideo {
+        if let video = pending.projectVideo, pending.inProject {
             Task { await upscaleProjectVideo(video, upscaler: upscaler, factor: factor, strength: strength) }
             return
         }
@@ -1111,7 +1118,10 @@ extension GenerationViewModel {
         panel.nameFieldStringValue = Self.freeName(for: pending.url, in: folder, factor: factor)
         panel.allowedContentTypes = [.mpeg4Movie]
         guard panel.runModal() == .OK, let destination = panel.url else { return }
-        Task { await upscaleVideoFile(pending.url, to: destination, upscaler: upscaler, factor: factor) }
+        Task {
+            await upscaleVideoFile(pending.url, to: destination, upscaler: upscaler, factor: factor,
+                                   strength: strength, video: pending.projectVideo)
+        }
     }
 
     /// 動画ファイルを拡大…: picks any video and asks which upscaler.
@@ -1121,15 +1131,19 @@ extension GenerationViewModel {
     }
 
     /// 表示中の動画を拡大…: the video in the preview - a project video
-    /// (with its record) into the project, any other into a file.
+    /// (with its record) into the project, the temporary result of a
+    /// generation with no project open (with its record, so Open-H3 can
+    /// regenerate it too) or any other video into a file.
     func upscaleDisplayedVideo() {
         guard canUpscaleDisplayedVideo, let resultURL else { return }
-        askForUpscale(resultURL, projectVideo: displayedProjectVideoWithRecord)
+        let projectVideo = displayedProjectVideoWithRecord
+        askForUpscale(resultURL, projectVideo: projectVideo ?? displayedTemporaryVideo,
+                      inProject: projectVideo != nil)
     }
 
     var canUpscaleDisplayedVideo: Bool {
         guard !isUpscalingVideo, resultURL != nil else { return false }
-        if let video = displayedProjectVideoWithRecord { return canUpscale(video) }
+        if let video = displayedProjectVideoWithRecord ?? displayedTemporaryVideo { return canUpscale(video) }
         return true
     }
 
@@ -1137,13 +1151,19 @@ extension GenerationViewModel {
         projectVideos.first { $0.url == resultURL && $0.record != nil }
     }
 
+    /// The preview's temporary result with its record: its latent lies
+    /// beside it in the temp folder until the next generation replaces it.
+    private var displayedTemporaryVideo: ProjectVideo? {
+        savableTemporaryResult.map { ProjectVideo(url: $0.url, record: $0.record) }
+    }
+
     /// Opens the upscaler sheet for `url`.
-    private func askForUpscale(_ url: URL, projectVideo: ProjectVideo?) {
+    private func askForUpscale(_ url: URL, projectVideo: ProjectVideo?, inProject: Bool = false) {
         Task {
             do {
                 let size = try await VideoUpscale.frameSize(of: url)
                 pendingUpscale = PendingUpscale(url: url, projectVideo: projectVideo,
-                                                width: size.width, height: size.height)
+                                                width: size.width, height: size.height, inProject: inProject)
             } catch {
                 projectMessage = String(localized: "動画を拡大できませんでした（詳細: \(error.localizedDescription)）")
             }
@@ -1305,29 +1325,56 @@ extension GenerationViewModel {
     }
 
     /// 動画ファイルを拡大: `source` enlarged by `factor` into `destination`.
+    /// Open-H3 needs `video`, the source with its record and latent (the
+    /// preview's temporary result); the file it makes carries that record
+    /// as its label, the way an enlarged project copy's .json does.
     @discardableResult
     func upscaleVideoFile(_ source: URL, to destination: URL, upscaler: VideoUpscaler = .standard,
-                          factor: UpscaleFactor = .two) async -> Bool {
+                          factor: UpscaleFactor = .two, strength: OpenH3Strength = .standard,
+                          video: ProjectVideo? = nil) async -> Bool {
         guard !isUpscalingVideo else { return false }
-        if upscaler.regeneratesFromLatent {
-            projectMessage = String(localized: "Open-H3 再生成は、プロジェクトの動画（潜在ファイルのあるもの）にだけ使えます。")
+        let regenerated = upscaler.regeneratesFromLatent ? video : nil
+        if upscaler.regeneratesFromLatent, regenerated?.record == nil {
+            projectMessage = String(localized: "Open-H3 再生成は、このアプリで生成した動画（記録と潜在ファイルのあるもの）にだけ使えます。")
             return false
         }
         if let reason = upscaleBlockedReason(upscaler) {
             projectMessage = reason
             return false
         }
+        if let regenerated, let reason = openH3Reason(for: regenerated, factor: factor) {
+            projectMessage = reason
+            return false
+        }
         let started = Date()
+        var made: String?
         do {
-            try await runUpscale(source, to: destination, upscaler: upscaler, factor: factor)
+            if let regenerated, var record = regenerated.record {
+                let size = try await runOpenH3Regeneration(regenerated, to: destination, factor: factor, strength: strength)
+                made = "\(size.width)×\(size.height)"
+                record.upscaleFactor = factor.rawValue
+                record.video = destination.lastPathComponent
+                record.completedAt = Date()
+                record.upscaledFrom = source.lastPathComponent
+                record.upscaler = upscaler.rawValue
+                record.upscaleStrength = strength.rawValue
+                record.upscaledSize = [size.width, size.height]
+                GenerationMetadata.tag(destination, record: record)
+            } else {
+                try await runUpscale(source, to: destination, upscaler: upscaler, factor: factor)
+            }
         } catch {
+            if regenerated != nil { try? FileManager.default.removeItem(at: destination) }
             reportUpscaleFailure(error, source: source)
             return false
         }
         if let project, destination.deletingLastPathComponent().standardizedFileURL == project.url.standardizedFileURL {
             reloadProjectVideos()
         }
-        projectMessage = String(localized: "\(source.lastPathComponent)を\(factor.label)に拡大して、\(destination.lastPathComponent)に保存しました（\(upscaler.label)、\(formatElapsed(Date().timeIntervalSince(started)))）")
+        let elapsed = formatElapsed(Date().timeIntervalSince(started))
+        projectMessage = made.map { made in
+            String(localized: "\(source.lastPathComponent)を\(made)に再生成して、\(destination.lastPathComponent)に保存しました（\(upscaler.label)、\(elapsed)）")
+        } ?? String(localized: "\(source.lastPathComponent)を\(factor.label)に拡大して、\(destination.lastPathComponent)に保存しました（\(upscaler.label)、\(elapsed)）")
         projectMessageFile = destination
         return true
     }

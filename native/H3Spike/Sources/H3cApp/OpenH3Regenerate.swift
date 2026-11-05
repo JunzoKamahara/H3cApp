@@ -91,12 +91,21 @@ struct OpenH3Plan: Equatable {
 }
 
 extension GenerationViewModel {
+    /// The size Open-H3 starts from for `video`, which its factor applies
+    /// to: the latent's own pixel size, the canvas the clip was generated
+    /// on (half of a ×2 size's video, and an enlarged copy's original's).
+    /// Nil without a readable latent.
+    func openH3Base(for video: ProjectVideo) -> (width: Int, height: Int)? {
+        guard let latentURL = continuationLatent(of: video),
+              let info = try? H3LatentFileInfo.read(path: latentURL.path) else { return nil }
+        return (info.pixelWidth, info.pixelHeight)
+    }
+
     /// Why `video` can't be regenerated with Open-H3 (nil when it can): it
     /// needs the clip's own latent at the clip's full length (a joined
     /// video keeps only its last clip's), the H3 model loaded, and a size
     /// below the canvas.
-    func openH3Reason(for video: ProjectVideo, size: (width: Int, height: Int)? = nil,
-                      factor: UpscaleFactor) -> String? {
+    func openH3Reason(for video: ProjectVideo, factor: UpscaleFactor) -> String? {
         guard let record = video.record else {
             return String(localized: "Open-H3 再生成は、このアプリで生成した動画（記録と潜在ファイルのあるもの）にだけ使えます。")
         }
@@ -112,12 +121,13 @@ extension GenerationViewModel {
         if info.frames != record.actualFrameCount {
             return String(localized: "潜在ファイルの長さ（\(info.frames)フレーム）が動画（\(record.actualFrameCount)フレーム）と違います。つないだ動画は、つなぐ前の各クリップを再生成してください。")
         }
-        // The factor applies to the video as seen (a ×2 size's video is
-        // twice its latent); the latent is upscaled onto whatever grid that
-        // makes.
-        let size = size ?? recordedSize(of: record) ?? (info.pixelWidth, info.pixelHeight)
-        guard OpenH3Plan.plan(width: size.width, height: size.height, factor: factor) != nil else {
-            return String(localized: "この動画（\("\(size.width)×\(size.height)")）は、Open-H3の上限（1344×768ピクセル）までもう大きくできません。")
+        // The factor applies to the latent's own size, the canvas the clip
+        // was generated on: a ×2 size's video is twice its latent, and the
+        // latent still fits the canvas when the video no longer does
+        // (1920×1088 from 960×544), so it can be redrawn up to 1344×768.
+        let base = (width: info.pixelWidth, height: info.pixelHeight)
+        guard OpenH3Plan.plan(width: base.width, height: base.height, factor: factor) != nil else {
+            return String(localized: "この動画の生成時の大きさ（\("\(base.width)×\(base.height)")）は、Open-H3の上限（1344×768ピクセル）までもう大きくできません。")
         }
         guard engine != nil, case .ready = engineState else {
             return String(localized: "H3のモデルが読み込まれていません。Open-H3 再生成はH3本体で描き直します。")
@@ -137,11 +147,11 @@ extension GenerationViewModel {
     /// then a short generation from it at `strength`. Returns the size made.
     func runOpenH3Regeneration(_ video: ProjectVideo, to destination: URL, factor: UpscaleFactor,
                                strength: OpenH3Strength) async throws -> (width: Int, height: Int) {
-        let size = try await VideoUpscale.frameSize(of: video.url)
         guard let engine, let record = video.record, let latentURL = continuationLatent(of: video),
               let latentInfo = try? H3LatentFileInfo.read(path: latentURL.path),
-              let plan = OpenH3Plan.plan(width: size.width, height: size.height, factor: factor) else {
-            throw VideoUpscale.UpscaleError.unavailable(openH3Reason(for: video, size: size, factor: factor) ?? "Open-H3")
+              let plan = OpenH3Plan.plan(width: latentInfo.pixelWidth, height: latentInfo.pixelHeight,
+                                         factor: factor) else {
+            throw VideoUpscale.UpscaleError.unavailable(openH3Reason(for: video, factor: factor) ?? "Open-H3")
         }
         guard OpenH3Model.ready, let turboPath = OpenH3Model.turboPath else {
             throw VideoUpscale.UpscaleError.unavailable(VideoUpscaler.openH3.unavailableReason ?? "Open-H3")

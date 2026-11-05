@@ -1093,13 +1093,11 @@
 "精緻化LoRAを取り出しています（%lld / %lld テンソル）…" = "Extracting the refiner LoRA (%1$lld / %2$lld tensors)…";
 "潜在ファイルの長さ（%lldフレーム）が動画（%lldフレーム）と違います。つないだ動画は、つなぐ前の各クリップを再生成してください。" = "The latent file’s length (%1$lld frames) differs from the video’s (%2$lld frames). Regenerate a joined video through the clips it was joined from.";
 "H3のモデルが読み込まれていません。Open-H3 再生成はH3本体で描き直します。" = "The H3 model is not loaded. Open-H3 regeneration redraws with H3 itself.";
-"この動画（%@）は、Open-H3の上限（1344×768ピクセル）までもう大きくできません。" = "This video (%@) cannot grow any further within Open-H3’s limit (1344×768 pixels).";
 "潜在ファイルを読めませんでした。" = "The latent file could not be read.";
 "この動画の潜在ファイル（.h3lt）がありません。Open-H3 再生成は、生成したときの潜在を描き直すので、潜在のない動画には使えません。" = "This video has no latent file (.h3lt). Open-H3 regeneration redraws the latents of the generation, so it cannot work without them.";
 "拡大した動画は、その元の動画から再生成してください。" = "Regenerate an enlarged video from its original.";
 "Open-H3 再生成は、このアプリで生成した動画（記録と潜在ファイルのあるもの）にだけ使えます。" = "Open-H3 regeneration works only on videos this app generated (with a record and a latent file).";
 "拡大できません" = "cannot enlarge";
-"Open-H3 再生成は、プロジェクトの動画（潜在ファイルのあるもの）にだけ使えます。" = "Open-H3 regeneration works only on project videos (with a latent file).";
 "見込み：%@・%lldフレームで、M5で約%@（生成の設定による）。" = "Estimate: %1$@, %2$lld frames, about %3$@ on an M5 (depends on the generation settings).";
 "Open-H3 再生成（H3で描き直し・最大1344×768、非常に遅い・試験的）" = "Open-H3 regeneration (redrawn by H3, up to 1344×768; very slow, experimental)";
 "LightX2V Turbo v1.2のファイルがありません。「モデルを準備…」でダウンロードすると選べます。" = "The LightX2V Turbo v1.2 file is missing. Download it with “Set up model…” to choose this.";
@@ -1196,3 +1194,6 @@
 "画像をまとめてRefModにする" = "Stack Images into a RefMod";
 "まとめた参照をRefModに置き換える" = "Replace the stacked references with the RefMod";
 "画像を符号化しています（%lld/%lld枚目）…" = "Encoding image %lld of %lld…";
+"この動画の生成時の大きさ（%@）は、Open-H3の上限（1344×768ピクセル）までもう大きくできません。" = "This video’s generated size (%@) cannot grow any further within Open-H3’s limit (1344×768 pixels).";
+"Open-H3は、生成したときの大きさ（%@、潜在の格子）を基準に描き直します。倍率はその大きさに対するものです。" = "Open-H3 redraws from the size the clip was generated at (%@, its latent grid); the factor applies to that size.";
+"%@を%@に再生成して、%@に保存しました（%@、%@）" = "Regenerated %1$@ at %2$@ and saved it as %3$@ (%4$@, %5$@)";

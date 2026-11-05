@@ -21,6 +21,10 @@ struct UpscaleSheet: View {
     /// setup finishing changes nothing else the sheet holds for Open-H3, so
     /// this is what redraws it.
     @State private var modelReady = true
+    /// What Open-H3's factor applies to: the latent's own size, the canvas
+    /// the clip was generated on (GenerationViewModel.openH3Base) - half of
+    /// a ×2 size's video. Nil when the video has no latent.
+    private let latentBase: (width: Int, height: Int)?
     @ObservedObject private var swiftVRSetup = SwiftVRSetup.shared
     @ObservedObject private var seedVR2Setup = SeedVR2Setup.shared
     @ObservedObject private var openH3Setup = OpenH3Setup.shared
@@ -36,6 +40,7 @@ struct UpscaleSheet: View {
         self.viewModel = viewModel
         self.pending = pending
         self.close = close
+        latentBase = pending.projectVideo.flatMap { viewModel.openH3Base(for: $0) }
         let choices = UpscaleChoices(upscaler: .standard, width: pending.width, height: pending.height)
         _choices = State(initialValue: choices)
         // 2x when it fits, else the largest that does.
@@ -72,7 +77,10 @@ struct UpscaleSheet: View {
     private func updateChoices() {
         let old = factor
         modelReady = upscaler.isAvailable
-        choices = UpscaleChoices(upscaler: upscaler, width: pending.width, height: pending.height)
+        // Open-H3 enlarges the latent, so its factors are of the latent's size.
+        let own = (width: pending.width, height: pending.height)
+        let base = upscaler.regeneratesFromLatent ? latentBase ?? own : own
+        choices = UpscaleChoices(upscaler: upscaler, width: base.width, height: base.height)
         switch selection {
         case .usual(let chosen):
             if !choices.usual.contains(chosen) {
@@ -96,9 +104,16 @@ struct UpscaleSheet: View {
     private var openH3Reason: String? {
         guard upscaler.regeneratesFromLatent else { return nil }
         guard let video = pending.projectVideo else {
-            return String(localized: "Open-H3 再生成は、プロジェクトの動画（潜在ファイルのあるもの）にだけ使えます。")
+            return String(localized: "Open-H3 再生成は、このアプリで生成した動画（記録と潜在ファイルのあるもの）にだけ使えます。")
         }
-        return viewModel.openH3Reason(for: video, size: (pending.width, pending.height), factor: factor ?? .same)
+        return viewModel.openH3Reason(for: video, factor: factor ?? .same)
+    }
+
+    /// Whether Open-H3 starts from another size than the video's (a ×2
+    /// size's video is twice its latent), which the sheet then says.
+    private var regeneratesFromOtherSize: Bool {
+        guard upscaler.regeneratesFromLatent, let latentBase else { return false }
+        return latentBase.width != pending.width || latentBase.height != pending.height
     }
 
     var body: some View {
@@ -162,7 +177,9 @@ struct UpscaleSheet: View {
                 Text(reason).foregroundStyle(.orange)
             } else if let reason = viewModel.upscaleBlockedReason(upscaler) {
                 Text(reason).foregroundStyle(.orange)
-            } else if let reason = openH3Reason {
+            }
+            // About the video itself, so said even while the model is missing.
+            if let reason = openH3Reason {
                 Text(reason).foregroundStyle(.orange)
             }
             if upscaler.isSwiftVR {
@@ -238,13 +255,14 @@ struct UpscaleSheet: View {
             }
         }
         VStack(alignment: .leading, spacing: 4) {
+            if regeneratesFromOtherSize, let latentBase {
+                Text("Open-H3は、生成したときの大きさ（\("\(latentBase.width)×\(latentBase.height)")、潜在の格子）を基準に描き直します。倍率はその大きさに対するものです。")
+            }
             if choices.range == nil {
-                if openH3Reason == nil {
-                    Text("この動画は、この方法では拡大できません。").foregroundStyle(.orange)
-                }
+                Text("この動画は、この方法では拡大できません。").foregroundStyle(.orange)
             } else {
                 Text(choices.limitText)
-                if factor == .same {
+                if factor == .same, !regeneratesFromOtherSize {
                     Text("等倍では大きさを変えず、細部を描き直します。")
                 }
                 if selection == .custom, factor == nil, let range = choices.range {
@@ -253,12 +271,12 @@ struct UpscaleSheet: View {
                 }
             }
             if upscaler.regeneratesFromLatent, openH3Reason == nil, let factor,
-               let plan = OpenH3Plan.plan(width: pending.width, height: pending.height, factor: factor),
+               let plan = OpenH3Plan.plan(width: choices.width, height: choices.height, factor: factor),
                let frames = pending.projectVideo?.record?.actualFrameCount {
                 Text(strength.detail)
                 Text("見込み：\("\(plan.width)×\(plan.height)")・\(frames)フレームで、M5で約\(formatElapsed(plan.estimatedSeconds(frames: frames, strength: strength)))（生成の設定による）。")
             }
-            if pending.projectVideo == nil {
+            if !pending.inProject {
                 Text("拡大した動画の保存先は、次に選びます。音声とファイルの情報は、そのままです。")
             } else if let factor {
                 Text("拡大した動画は、プロジェクトに新しく加わります（名前の最後に「_\(factor.suffix)」）。音声とAIで生成したという記録は、そのままです。")

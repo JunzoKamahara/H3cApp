@@ -765,7 +765,9 @@ extension GenerationViewModel {
                 }
                 strength = chosen
             }
-            if let record = video.record, let size = recordedSize(of: record) {
+            // Open-H3's factor applies to the latent's own size (openH3Base).
+            if let record = video.record,
+               let size = upscaler.regeneratesFromLatent ? openH3Base(for: video) : recordedSize(of: record) {
                 let choices = UpscaleChoices(upscaler: upscaler, width: size.width, height: size.height)
                 guard choices.allows(factor) else {
                     return .error(400, upscaleScaleError(video.url.lastPathComponent, factor, choices))
