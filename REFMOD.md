@@ -114,6 +114,32 @@ up to 1024 px). A Full RefMod can therefore have more tokens than the same image
 as an ordinary reference. To keep it light, make it with a lower resolution cap,
 or Compressed.
 
+### Stacking images into one RefMod
+
+Several pictures of the same character or object can go into one RefMod. This is
+the "stack" form of ComfyUI-MiniMaxH3Mod, and the published RefMods of people
+(20 to 22 photos at 512 px, Full) are made this way.
+
+1. Put two or more images in the references.
+2. Press "**Stack Images into a RefMod…**" under the list.
+3. In the sheet, tick the images to stack and press "**Create**".
+
+The images are encoded one by one and placed in order along time, one latent
+frame each. The list shows it as "4 images", for example. In Full, the first
+image sets the size: the others are scaled to cover it and cropped at the
+centre. The resolution cap defaults to 512 px. Reference tokens grow with each
+image. With "Replace the stacked references with the RefMod" on, the chosen
+image rows go and the RefMod takes the first one's place. Up to 32 images go in
+one stack, and videos can't be stacked.
+
+Four views cut from a character design sheet (front, side, back and face, at
+512×864) made a stack of 1,728 tokens and 325 KB in 20 seconds. Generated with
+the same prompt and seed, the hair and clothes came out well. But the grid,
+labels and side-by-side figures of the crops came along too, and a prompt for a
+night-time outdoor stage still gave a sheet-like picture. The same four images
+as ordinary references did the same. Stack pictures that show only the
+character: no text or frames, and a background close to plain.
+
 ## Using one in a generation
 
 1. Choose "**From images**" and then "**Reference images, videos and audio**".
@@ -211,6 +237,9 @@ reputation are treated.
   It does not remember the motion of a long video as a whole.
 - Compression loses detail and motion. To keep a person's face clear, make it
   Full.
+- As Qwen is not shown a RefMod, an image's background, text and layout tend to
+  come along with the character. To put the character in another scene, make the
+  RefMod from pictures of the character alone, or use ordinary references.
 - A RefMod stays as it was saved. After editing the original image, make it
   again.
 - RefMods get no `<Picture n>`, so to tell several people apart by number, use
@@ -258,8 +287,8 @@ were checked against PyTorch. See "RefMods: saved reference latents" in the
 These ComfyUI-MiniMaxH3Mod features are not in H3cApp: `copies` (stacking the
 same RefMod several times), retention presets, curves that change the strength
 step by step, the experimental path that turns a RefMod back into an image to
-show Qwen, stacking, merging or masking several sources into one RefMod, and
-making bundles.
+show Qwen, stacking videos, merging or masking several sources into one RefMod,
+and making bundles.
 
 ## License
 

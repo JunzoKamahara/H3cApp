@@ -47,7 +47,7 @@ struct CreationFormView: View {
     @State private var quickLookURL: URL?
     @State private var showingClipEditor = false
     /// 「RefModとして保存…」 for this reference (RefModExtractSheet).
-    @State private var refModSource: H3ReferenceInput?
+    @State private var refModSources: RefModSources?
     @State private var promptSuggestion = randomPromptSuggestion()
     /// The input method is converting text not yet in the prompt
     /// (PromptTextView.onComposingChange): the suggestion is hidden.
@@ -95,9 +95,9 @@ struct CreationFormView: View {
         .sheet(isPresented: $showingClipEditor) {
             CustomClipsSheet(viewModel: viewModel, library: library, isPresented: $showingClipEditor)
         }
-        .sheet(item: $refModSource) { source in
-            RefModExtractSheet(source: source, viewModel: viewModel, library: library, isPresented: Binding(
-                get: { refModSource != nil }, set: { if !$0 { refModSource = nil } }))
+        .sheet(item: $refModSources) { sources in
+            RefModExtractSheet(sources: sources.references, viewModel: viewModel, library: library, isPresented: Binding(
+                get: { refModSources != nil }, set: { if !$0 { refModSources = nil } }))
         }
         .sheet(item: $viewModel.pendingRefModBundle) { choice in
             RefModMemberPickerSheet(choice: choice, onCancel: { viewModel.pendingRefModBundle = nil }) { members in
@@ -318,7 +318,7 @@ struct CreationFormView: View {
                                     Text(verbatim: "\(index + 1).").font(.caption)
                                     FileLink(path: reference.path) { quickLookURL = $0 }
                                     Spacer()
-                                    Button("RefModとして保存…") { refModSource = reference }
+                                    Button("RefModとして保存…") { refModSources = RefModSources(references: [reference]) }
                                         .font(.caption)
                                         .help("この参照を一度だけ符号化してRefModファイルに保存します。")
                                     Button("取り除く") {
@@ -328,6 +328,12 @@ struct CreationFormView: View {
                                 }
                             }
                         }
+                    }
+                    let images = viewModel.referenceImages.filter { $0.kind == .image }
+                    if images.count > 1 {
+                        Button("画像をまとめてRefModに…") { refModSources = RefModSources(references: images) }
+                            .font(.caption)
+                            .help("参照の画像を1つのRefModにまとめます（1枚ずつ符号化して並べる、ComfyUI-MiniMaxH3Modの「stack」と同じ形）。同じキャラクターを何枚か写した画像に向きます。")
                     }
                     if let plan = viewModel.currentGenerationPlan {
                         referencePlanView(plan)

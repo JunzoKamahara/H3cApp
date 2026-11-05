@@ -1018,12 +1018,163 @@ cancelled:
     return 0;
 }
 
+/* Upstream's stacked extraction (nodes.py MiniMaxH3RefModExtract with
+ * several image slots): every image encoded on its own, joined along the
+ * latent time axis. */
+static int extract_stack(const h3_refmod_extract_params *params,
+                         extract_progress *progress, const char *name,
+                         char *error, size_t error_size) {
+    size_t count = params->image_count;
+    int compressed = params->mode == H3_REFMOD_COMPRESSED;
+    char detail[512];
+    char vae_path[2048];
+    snprintf(vae_path, sizeof(vae_path), "%s/Ref2VA/video_vae/source",
+             params->model_dir);
+    int canvas_w = 0, canvas_h = 0, gh = 0, gw = 0;
+    int long_edge = params->pool_long_edge > 0 ? params->pool_long_edge : 16;
+    int cap = params->resolution_cap > 0 ? params->resolution_cap : 1024;
+    float *joined = NULL;           /* [24, count, H, W] once H, W are known */
+    int frame_h = 0, frame_w = 0;
+    char *shapes = calloc(count, 24);
+    if (!shapes) { fail(error, error_size, "out of memory"); return 0; }
+    size_t shapes_used = 0;
+    for (size_t index = 0; index < count; index++) {
+        const char *path = params->image_paths[index];
+        if (!extract_emit(progress, "refmod stack", (int)index, (int)count)) goto cancelled;
+        int source_w, source_h, width, height;
+        if (!path || !*path ||
+            !h3_av_visual_size(path, &source_w, &source_h, detail, sizeof(detail)) ||
+            !h3_refmod_extract_canvas(source_w, source_h, cap, &width, &height)) {
+            fail(error, error_size, "image %zu: %s", index + 1,
+                 *detail ? detail : "cannot size it");
+            goto failed;
+        }
+        h3_image_fit fit = H3_IMAGE_FIT_STRETCH;
+        if (!compressed) {
+            /* Full: one canvas for all, set by the first image. */
+            if (index == 0) { canvas_w = width; canvas_h = height; }
+            width = canvas_w;
+            height = canvas_h;
+            fit = H3_IMAGE_FIT_COVER;
+        }
+        float *pixels = NULL;
+        if (!h3_av_read_image_f32(path, width, height, fit, &pixels,
+                                  detail, sizeof(detail))) {
+            fail(error, error_size, "image %zu: %s", index + 1, detail);
+            goto failed;
+        }
+        h3_video_latent latent;
+        memset(&latent, 0, sizeof(latent));
+        void *pool = h3_autorelease_push();
+        int ok = h3_video_vae_encode(vae_path, "h3_shaders.metal", pixels, 1,
+                                     height, width, video_encoder_bridge, progress,
+                                     &latent, detail, sizeof(detail));
+        h3_autorelease_pop(pool);
+        free(pixels);
+        if (!ok || latent.time != 1 || latent.height != height / 16 ||
+            latent.width != width / 16) {
+            h3_video_latent_free(&latent);
+            fail(error, error_size, "image %zu: %s", index + 1,
+                 ok ? "video encoder produced unexpected geometry" : detail);
+            goto failed;
+        }
+        if (progress->cancelled) { h3_video_latent_free(&latent); goto cancelled; }
+        shapes_used += (size_t)snprintf(shapes + shapes_used, count * 24 - shapes_used,
+                                        "%s1x%dx%d", index ? " +" : "",
+                                        latent.height, latent.width);
+        const float *frame = latent.values;
+        float *small = NULL;
+        if (compressed) {
+            /* The grid follows the first image's aspect (upstream's
+             * pool_grid), so every image pools to the same H x W. */
+            if (index == 0)
+                h3_refmod_aspect_grid(long_edge, latent.height, latent.width, &gh, &gw);
+            small = malloc((size_t)24 * gh * gw * sizeof(*small));
+            if (!small || !h3_refmod_pool3d(latent.values, 24, 1, latent.height,
+                                            latent.width, 1, gh, gw, small)) {
+                free(small);
+                h3_video_latent_free(&latent);
+                fail(error, error_size, "cannot pool the RefMod latent");
+                goto failed;
+            }
+            for (size_t i = 0; i < (size_t)24 * gh * gw; i++)
+                small[i] = h3_half_to_float(h3_float_to_half(small[i]));
+            if (!h3_refmod_refine(small, 24, 1, gh, gw, latent.values, 1,
+                                  latent.height, latent.width,
+                                  params->optimize_steps, 0.02f,
+                                  progress->on_progress, progress->opaque,
+                                  params->cancel_requested, error, error_size)) {
+                free(small);
+                h3_video_latent_free(&latent);
+                goto failed;
+            }
+            frame = small;
+        }
+        int fh = compressed ? gh : latent.height, fw = compressed ? gw : latent.width;
+        if (index == 0) {
+            frame_h = fh;
+            frame_w = fw;
+            joined = malloc((size_t)24 * count * fh * fw * sizeof(*joined));
+            if (!joined) {
+                free(small);
+                h3_video_latent_free(&latent);
+                fail(error, error_size, "out of memory");
+                goto failed;
+            }
+        } else if (fh != frame_h || fw != frame_w) {
+            free(small);
+            h3_video_latent_free(&latent);
+            fail(error, error_size, "image %zu does not fit the stack's grid", index + 1);
+            goto failed;
+        }
+        size_t plane = (size_t)fh * fw;
+        for (int c = 0; c < 24; c++)
+            memcpy(joined + ((size_t)c * count + index) * plane,
+                   frame + (size_t)c * plane, plane * sizeof(*joined));
+        free(small);
+        h3_video_latent_free(&latent);
+    }
+    if (!extract_emit(progress, "refmod stack", (int)count, (int)count)) goto cancelled;
+    if (!extract_emit(progress, "refmod write", 0, 1)) goto cancelled;
+    char pool_text[96], tag[32];
+    if (compressed)
+        snprintf(pool_text, sizeof(pool_text), "%zux%dx%d", count, gh, gw);
+    else
+        snprintf(pool_text, sizeof(pool_text), "full-res %dx%dpx (short-edge cap %dpx)",
+                 canvas_w, canvas_h, cap);
+    snprintf(tag, sizeof(tag), "%zu img, 0 vid", count);
+    const char *tags[] = {tag};
+    h3_refmod_latent output = {H3_REFMOD_VIDEO, (int)count, frame_h, frame_w, 0, joined};
+    h3_refmod_meta meta = {H3_REFMOD_VIDEO, compressed ? H3_REFMOD_COMPRESSED : H3_REFMOD_FULL,
+                           compressed ? params->optimize_steps : 0, name, "stack",
+                           shapes, pool_text, params->description, "generic", tags, 1};
+    int ok = h3_refmod_write(params->output_path, &output, &meta, error, error_size);
+    free(joined);
+    free(shapes);
+    if (ok) extract_emit(progress, "refmod write", 1, 1);
+    return ok;
+cancelled:
+    fail(error, error_size, "RefMod extraction cancelled");
+failed:
+    free(joined);
+    free(shapes);
+    return 0;
+}
+
 int h3_refmod_extract(const h3_refmod_extract_params *params,
                       h3_progress_callback on_progress, void *opaque,
                       char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
+    int stacked = params && params->image_count > 1;
+    if (stacked && (!params->image_paths || !params->image_paths[0] ||
+                    params->image_count > H3_REFMOD_MAX_STACK ||
+                    params->kind != H3_REFMOD_IMAGE)) {
+        fail(error, error_size, "a stacked RefMod takes 2 to %d still images",
+             H3_REFMOD_MAX_STACK);
+        return 0;
+    }
     if (!params || !params->model_dir || !*params->model_dir ||
-        !params->source_path || !*params->source_path ||
+        (!stacked && (!params->source_path || !*params->source_path)) ||
         !params->output_path || !*params->output_path ||
         (params->kind != H3_REFMOD_IMAGE && params->kind != H3_REFMOD_VIDEO &&
          params->kind != H3_REFMOD_AUDIO) ||
@@ -1035,7 +1186,10 @@ int h3_refmod_extract(const h3_refmod_extract_params *params,
     extract_progress progress = {on_progress, opaque, params->cancel_requested, 0};
     char stem[256];
     const char *name = params->name && *params->name ? params->name :
-        file_stem(params->source_path, stem, sizeof(stem));
+        file_stem(stacked ? params->image_paths[0] : params->source_path,
+                  stem, sizeof(stem));
+    if (stacked)
+        return extract_stack(params, &progress, name, error, error_size);
     if (params->kind == H3_REFMOD_AUDIO)
         return extract_audio(params, &progress, name, error, error_size);
 

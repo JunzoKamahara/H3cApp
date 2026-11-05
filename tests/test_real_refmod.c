@@ -33,21 +33,24 @@ static int checks;
 } while (0)
 
 /* The same neutral 512x512 image tests/repro_check.c draws. */
-static int write_reference_png(const char *path, int size) {
+/* A width x height test picture: a disc on a gradient; variant moves the
+ * disc and changes its colour, so stacked images differ. */
+static int write_image_png(const char *path, int width, int height, int variant) {
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     CGContextRef bitmap = CGBitmapContextCreate(
-        NULL, (size_t)size, (size_t)size, 8, (size_t)size * 4, space,
+        NULL, (size_t)width, (size_t)height, 8, (size_t)width * 4, space,
         (CGBitmapInfo)kCGImageAlphaNoneSkipLast);
     if (!bitmap) { CGColorSpaceRelease(space); return 0; }
     uint8_t *pixels = CGBitmapContextGetData(bitmap);
-    for (int y = 0; y < size; y++)
-        for (int x = 0; x < size; x++) {
-            uint8_t *p = pixels + ((size_t)y * size + x) * 4;
-            int dx = x - size / 2, dy = y - size * 2 / 5;
+    int size = width < height ? width : height;
+    for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++) {
+            uint8_t *p = pixels + ((size_t)y * width + x) * 4;
+            int dx = x - width / 2 + variant * size / 6, dy = y - height * 2 / 5;
             int disc = dx * dx + dy * dy < (size / 5) * (size / 5);
-            p[0] = (uint8_t)(disc ? 230 : 60 + x * 120 / size);
-            p[1] = (uint8_t)(disc ? 150 : 90 + y * 100 / size);
-            p[2] = (uint8_t)(disc ? 60 : 160 - y * 80 / size);
+            p[0] = (uint8_t)(disc ? 230 - variant * 120 : 60 + x * 120 / width);
+            p[1] = (uint8_t)(disc ? 150 + variant * 60 : 90 + y * 100 / height);
+            p[2] = (uint8_t)(disc ? 60 + variant * 100 : 160 - y * 80 / height);
             p[3] = 255;
         }
     CGImageRef image = CGBitmapContextCreateImage(bitmap);
@@ -67,6 +70,10 @@ static int write_reference_png(const char *path, int size) {
     CGContextRelease(bitmap);
     CGColorSpaceRelease(space);
     return ok;
+}
+
+static int write_reference_png(const char *path, int size) {
+    return write_image_png(path, size, size, 0);
 }
 
 /* A 3-second stereo WAV (two tones) at 32 kHz. */
@@ -165,7 +172,7 @@ int main(int argc, char **argv) {
     /* (b) A Full RefMod from the same image. */
     h3_refmod_extract_params params = {model_root, image_path, full_path, "probe",
                                        H3_REFMOD_IMAGE, H3_REFMOD_FULL, 1024, 16,
-                                       16, 0, 0, NULL, NULL};
+                                       16, 0, 0, NULL, NULL, NULL, 0};
     fprintf(stderr, "extracting a Full RefMod\n");
     CHECK(h3_refmod_extract(&params, progress, NULL, error, sizeof(error)));
     h3_refmod_info info;
@@ -244,7 +251,7 @@ int main(int argc, char **argv) {
         CHECK(audio.channels == 32 && audio.stereo == 2 && audio.length == 120);
         h3_refmod_extract_params audio_params = {model_root, wav_path, audio_path,
                                                  "tone", H3_REFMOD_AUDIO, H3_REFMOD_FULL,
-                                                 0, 0, 0, 0, 15, NULL, NULL};
+                                                 0, 0, 0, 0, 15, NULL, NULL, NULL, 0};
         fprintf(stderr, "extracting an audio RefMod\n");
         CHECK(h3_refmod_extract(&audio_params, progress, NULL, error, sizeof(error)));
         CHECK(h3_refmod_load(audio_path, -1, 1.0f, &loaded, NULL, error, sizeof(error)));
@@ -260,6 +267,82 @@ int main(int argc, char **argv) {
     } else {
         printf("skip: released Ref2VA audio VAE is not installed at %s\n", audio_vae_path);
     }
+    /* (e) Stacked images (upstream's "stack" source): each image its own
+     * latent frame, in order. Frame 0 is the image above, so it matches
+     * the single Full RefMod; frame 1 matches a single Full RefMod of the
+     * second image; the third (768x512) is cover-cropped to the first
+     * image's 512x512 canvas. */
+    {
+        char second[1200], third[1200], second_full[1200], stack_full[1200],
+            stack_small[1200];
+        snprintf(second, sizeof(second), "%s/second.png", directory);
+        snprintf(third, sizeof(third), "%s/third.png", directory);
+        snprintf(second_full, sizeof(second_full), "%s/second.safetensors", directory);
+        snprintf(stack_full, sizeof(stack_full), "%s/stack.safetensors", directory);
+        snprintf(stack_small, sizeof(stack_small), "%s/stack-small.safetensors", directory);
+        CHECK(write_image_png(second, 512, 512, 1));
+        CHECK(write_image_png(third, 768, 512, 2));
+        h3_refmod_extract_params single = {model_root, second, second_full, "second",
+                                           H3_REFMOD_IMAGE, H3_REFMOD_FULL, 1024, 16,
+                                           16, 0, 0, NULL, NULL, NULL, 0};
+        fprintf(stderr, "extracting the second image alone\n");
+        CHECK(h3_refmod_extract(&single, progress, NULL, error, sizeof(error)));
+        const char *images[] = {image_path, second, third};
+        h3_refmod_extract_params stack = {model_root, NULL, stack_full, "stack",
+                                          H3_REFMOD_IMAGE, H3_REFMOD_FULL, 1024, 16,
+                                          16, 0, 0, NULL, NULL, images, 3};
+        fprintf(stderr, "extracting a stack of three images\n");
+        CHECK(h3_refmod_extract(&stack, progress, NULL, error, sizeof(error)));
+        CHECK(h3_refmod_inspect(stack_full, &info, error, sizeof(error)));
+        CHECK(info.member_count == 1 && info.members[0].kind == H3_REFMOD_VIDEO &&
+              info.members[0].mode == H3_REFMOD_FULL && info.members[0].latent_t == 3 &&
+              info.members[0].latent_h == 32 && info.members[0].latent_w == 32 &&
+              info.members[0].tokens == 768 && !strcmp(info.members[0].source, "stack"));
+        h3_refmod_info_free(&info);
+        h3_refmod_latent stacked, one, two;
+        CHECK(h3_refmod_load(stack_full, -1, 1.0f, &stacked, NULL, error, sizeof(error)));
+        CHECK(h3_refmod_load(full_path, -1, 1.0f, &one, NULL, error, sizeof(error)));
+        CHECK(h3_refmod_load(second_full, -1, 1.0f, &two, NULL, error, sizeof(error)));
+        CHECK(stacked.kind == H3_REFMOD_VIDEO && stacked.time == 3);
+        size_t plane = 32 * 32;
+        float worst_stack = 0;
+        for (int c = 0; c < 24; c++)
+            for (size_t i = 0; i < plane; i++) {
+                float a0 = stacked.values[((size_t)c * 3 + 0) * plane + i] - one.values[(size_t)c * plane + i];
+                float a1 = stacked.values[((size_t)c * 3 + 1) * plane + i] - two.values[(size_t)c * plane + i];
+                if (fabsf(a0) > worst_stack) worst_stack = fabsf(a0);
+                if (fabsf(a1) > worst_stack) worst_stack = fabsf(a1);
+            }
+        printf("stacked frames vs single RefMods: max |diff| %.5f\n", worst_stack);
+        CHECK(worst_stack <= tolerance);
+        h3_refmod_latent_free(&stacked);
+        h3_refmod_latent_free(&one);
+        h3_refmod_latent_free(&two);
+
+        stack.output_path = stack_small;
+        stack.mode = H3_REFMOD_COMPRESSED;
+        stack.pool_long_edge = 8;
+        stack.optimize_steps = 10;
+        stack.image_count = 2;
+        fprintf(stderr, "extracting a compressed stack of two images\n");
+        CHECK(h3_refmod_extract(&stack, progress, NULL, error, sizeof(error)));
+        CHECK(h3_refmod_inspect(stack_small, &info, error, sizeof(error)));
+        CHECK(info.members[0].kind == H3_REFMOD_VIDEO &&
+              info.members[0].mode == H3_REFMOD_COMPRESSED &&
+              info.members[0].latent_t == 2 && info.members[0].latent_h == 8 &&
+              info.members[0].latent_w == 8 && info.members[0].tokens == 32 &&
+              !strcmp(info.members[0].pool, "2x8x8"));
+        h3_refmod_info_free(&info);
+
+        /* A stack takes still images only, and at most H3_REFMOD_MAX_STACK. */
+        stack.kind = H3_REFMOD_VIDEO;
+        CHECK(!h3_refmod_extract(&stack, progress, NULL, error, sizeof(error)));
+        CHECK(strstr(error, "still images") != NULL);
+        stack.kind = H3_REFMOD_IMAGE;
+        stack.image_count = H3_REFMOD_MAX_STACK + 1;
+        CHECK(!h3_refmod_extract(&stack, progress, NULL, error, sizeof(error)));
+    }
+
     char command[1200];
     snprintf(command, sizeof(command), "rm -rf '%s'", directory);
     (void)system(command);

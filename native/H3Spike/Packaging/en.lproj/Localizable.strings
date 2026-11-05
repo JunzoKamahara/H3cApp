@@ -1196,3 +1196,12 @@
 "準備しています…" = "Preparing…";
 "中止しました" = "Cancelled";
 "バンドルの中身を選ぶ" = "Choose the bundle's members";
+"画像をまとめてRefModに…" = "Stack Images into a RefMod…";
+"参照の画像を1つのRefModにまとめます（1枚ずつ符号化して並べる、ComfyUI-MiniMaxH3Modの「stack」と同じ形）。同じキャラクターを何枚か写した画像に向きます。" = "Stacks the reference images into one RefMod (each encoded on its own and placed in order, the \"stack\" form of ComfyUI-MiniMaxH3Mod). Suited to several pictures of the same character.";
+"画像%lld枚" = "%lld images";
+"選んだ画像を1枚ずつ符号化して、1つのRefModにまとめます（ComfyUI-MiniMaxH3Modの「stack」と同じ形）。同じキャラクターや物を、向きや表情を変えて1体ずつ写した画像を選ぶと効きます。Fullでは、ほかの画像を1枚目の画像の大きさに合わせ、はみ出す部分は中央で切り取ります。" = "Encodes the chosen images one by one and stacks them into one RefMod (the \"stack\" form of ComfyUI-MiniMaxH3Mod). It works best with pictures of one character or object at a time, in different poses or expressions. In Full, the other images are fitted to the first image's size and cropped at the centre.";
+"参照のトークンは画像の枚数分増えます（解像度の上限512 pxなら1枚あたり約256）。" = "Reference tokens grow with each image (about 256 per image at a 512 px resolution cap).";
+"オンなら、選んだ画像の行を外し、最初の行の位置に作成したRefModを入れます。オフなら、元の行を残してRefModを最後に加えます。" = "On, the chosen image rows are removed and the new RefMod takes the first one's place. Off, the original rows stay and the RefMod is added at the end.";
+"画像をまとめてRefModにする" = "Stack Images into a RefMod";
+"まとめた参照をRefModに置き換える" = "Replace the stacked references with the RefMod";
+"画像を符号化しています（%lld/%lld枚目）…" = "Encoding image %lld of %lld…";

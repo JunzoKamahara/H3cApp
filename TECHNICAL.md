@@ -707,9 +707,20 @@ from its definitions and checked against PyTorch (`tests/test_refmod.c`,
   reference-audio limit). Differences from upstream: frames are picked
   among the 24 fps frames the engine counts, and resizing is
   AVFoundation's, not Lanczos.
+- **Stacking images** ("Stack Images into a RefMod…", `image_paths` in
+  `h3_refmod_extract_params`, `"paths"` in the API) follows upstream's
+  "stack" source, the form of the published identity RefMods (20-22 photos
+  at 512 px, Full): 2 to 32 stills, each encoded on its own and joined
+  along latent time, one frame per image, so the file is kind "video" with
+  `latent_t` = the image count and source "stack". In Full the first image
+  sets the canvas (short edge at most the cap, 512 by default here) and the
+  others are scaled to cover it and cropped at the centre; compressed pools
+  each image to the first image's grid and refines it against its own
+  encoding. The real test checks that each stacked frame equals the single
+  RefMod of that image.
 - **Not implemented:** the upstream `copies`, retention presets, per-step
-  strength curves, the experimental decode-and-show-Qwen path, and the
-  stacking, merging and masking of several sources into one file. A bundle
+  strength curves, the experimental decode-and-show-Qwen path, stacking
+  videos, and merging and masking several sources into one file. A bundle
   is read member by member; the app writes single files only.
 
 ## AI video super-resolution (SwiftVR)

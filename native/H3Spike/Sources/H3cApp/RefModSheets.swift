@@ -6,12 +6,21 @@ import SwiftUI
 // (RefModMemberPickerSheet). The files themselves are listed in モデル管理
 // (ModelManagerView) and kept in defaultRefModDirectory.
 
+/// What RefModExtractSheet makes a RefMod from: one reference row, or (「画像を
+/// まとめてRefModに…」) several image rows stacked into one RefMod.
+struct RefModSources: Identifiable {
+    let id = UUID()
+    let references: [H3ReferenceInput]
+}
+
 /// 「RefModとして保存…」: encodes one of the form's references with the
 /// Ref2VA VAE and writes a RefMod file into the RefMods folder
-/// (GenerationViewModel.extractRefMod). Runs on the engine's queue, so it
+/// (GenerationViewModel.extractRefMod). With several image rows it stacks
+/// them (upstream's "stack": one latent frame per image, the way the
+/// published identity RefMods are made). Runs on the engine's queue, so it
 /// waits for a generation in flight.
 struct RefModExtractSheet: View {
-    let source: H3ReferenceInput
+    let sources: [H3ReferenceInput]
     @ObservedObject var viewModel: GenerationViewModel
     @ObservedObject var library: ModelLibrary
     @Binding var isPresented: Bool
@@ -28,26 +37,38 @@ struct RefModExtractSheet: View {
     /// the source stays and the RefMod is added at the end. Both would
     /// otherwise reach the generation as two copies of one reference.
     @State private var replaceSource = true
+    /// A stack: the rows that go in (all at first), in the list's order.
+    @State private var chosen: Set<UUID>
     @State private var running = false
     @State private var errorMessage: String?
 
     private var palette: H3Palette { H3Palette(colorScheme) }
 
-    init(source: H3ReferenceInput, viewModel: GenerationViewModel, library: ModelLibrary, isPresented: Binding<Bool>) {
-        self.source = source
+    init(sources: [H3ReferenceInput], viewModel: GenerationViewModel, library: ModelLibrary, isPresented: Binding<Bool>) {
+        self.sources = sources
         self.viewModel = viewModel
         self.library = library
         _isPresented = isPresented
-        _name = State(initialValue: URL(fileURLWithPath: source.path).deletingPathExtension().lastPathComponent)
+        _name = State(initialValue: sources.first.map {
+            URL(fileURLWithPath: $0.path).deletingPathExtension().lastPathComponent } ?? "")
+        _chosen = State(initialValue: Set(sources.map(\.id)))
+        // A stack holds one latent frame per image: 512 px keeps each near
+        // 256 tokens, as in the published identity RefMods.
+        _resolutionCap = State(initialValue: sources.count > 1 ? 512 : 1024)
     }
+
+    private var source: H3ReferenceInput { sources[0] }
+    private var stacking: Bool { sources.count > 1 }
+    private var chosenSources: [H3ReferenceInput] { sources.filter { chosen.contains($0.id) } }
 
     /// A video row that also brings its sound: the RefMod holds the picture
     /// only, so replacing the row would drop the sound.
     private var sourceCarriesAudio: Bool {
-        source.kind == .videoAudio || source.audioPath != nil || source.includeEmbeddedAudio
+        !stacking && (source.kind == .videoAudio || source.audioPath != nil || source.includeEmbeddedAudio)
     }
 
     private var kind: H3RefModKind {
+        if stacking { return .image }
         switch source.kind {
         case .video, .videoAudio: return .video
         case .audio: return .audio
@@ -57,15 +78,40 @@ struct RefModExtractSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: H3Spacing.md) {
-            Text("RefModとして保存").font(.system(size: 16, weight: .semibold))
+            Text(stacking ? "画像をまとめてRefModにする" : "RefModとして保存").font(.system(size: 16, weight: .semibold))
             Text("参照を一度だけVAEで符号化して、小さなファイル（.safetensors）に保存します。保存したRefModは、参照の「RefModを追加…」からどの生成でも使えます。Qwenには見せないので、プロンプトの<Picture n>は要りません。")
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(verbatim: URL(fileURLWithPath: source.path).lastPathComponent)
-                .font(.caption)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            if stacking {
+                Text("選んだ画像を1枚ずつ符号化して、1つのRefModにまとめます（ComfyUI-MiniMaxH3Modの「stack」と同じ形）。同じキャラクターや物を、向きや表情を変えて1体ずつ写した画像を選ぶと効きます。Fullでは、ほかの画像を1枚目の画像の大きさに合わせ、はみ出す部分は中央で切り取ります。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(sources) { reference in
+                        Toggle(isOn: Binding(
+                            get: { chosen.contains(reference.id) },
+                            set: { if $0 { chosen.insert(reference.id) } else { chosen.remove(reference.id) } }
+                        )) {
+                            Text(verbatim: URL(fileURLWithPath: reference.path).lastPathComponent)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+                Text("参照のトークンは画像の枚数分増えます（解像度の上限512 pxなら1枚あたり約256）。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(verbatim: URL(fileURLWithPath: source.path).lastPathComponent)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
             Grid(alignment: .leading, horizontalSpacing: H3Spacing.md, verticalSpacing: H3Spacing.sm) {
                 GridRow {
                     Text("名前")
@@ -129,9 +175,11 @@ struct RefModExtractSheet: View {
                     }
                 }
             }
-            Toggle("元の参照をRefModに置き換える", isOn: $replaceSource)
+            Toggle(stacking ? "まとめた参照をRefModに置き換える" : "元の参照をRefModに置き換える", isOn: $replaceSource)
                 .disabled(sourceCarriesAudio)
-                .help("オンなら、作成したRefModが元の参照の行と入れ替わります。オフなら、元の行を残してRefModを最後に加えます。")
+                .help(stacking
+                      ? String(localized: "オンなら、選んだ画像の行を外し、最初の行の位置に作成したRefModを入れます。オフなら、元の行を残してRefModを最後に加えます。")
+                      : String(localized: "オンなら、作成したRefModが元の参照の行と入れ替わります。オフなら、元の行を残してRefModを最後に加えます。"))
             if sourceCarriesAudio {
                 Text("この参照は動画の音声も使うので、元の行を残してRefModを最後に加えます（RefModは映像だけです）。")
                     .font(.caption)
@@ -170,7 +218,8 @@ struct RefModExtractSheet: View {
                     Button("キャンセル") { isPresented = false }
                     Button("作成") { start() }
                         .keyboardShortcut(.defaultAction)
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty
+                                  || (stacking && chosenSources.count < 2))
                 }
             }
         }
@@ -182,8 +231,10 @@ struct RefModExtractSheet: View {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         try? FileManager.default.createDirectory(atPath: defaultRefModDirectory, withIntermediateDirectories: true)
+        let picked = stacking ? chosenSources : [source]
+        guard !stacking || picked.count >= 2 else { return }
         var request = H3RefModExtractRequest(
-            sourcePath: source.path,
+            sourcePath: picked[0].path,
             outputPath: ModelLibrary.freePath(in: defaultRefModDirectory, stem: trimmed, extension: "safetensors"),
             kind: kind)
         request.name = trimmed
@@ -193,15 +244,19 @@ struct RefModExtractSheet: View {
         request.poolLongEdge = poolLongEdge
         request.optimizeSteps = optimizeSteps
         request.maxSeconds = maxSeconds
+        if stacking { request.imagePaths = picked.map(\.path) }
         running = true
         errorMessage = nil
         Task {
             do {
                 let path = try await viewModel.extractRefMod(request)
                 let refmod = H3ReferenceInput(kind: .refmod, path: path)
+                let ids = Set(picked.map(\.id))
                 if replaceSource, !sourceCarriesAudio,
-                   let index = viewModel.referenceImages.firstIndex(where: { $0.id == source.id }) {
+                   let index = viewModel.referenceImages.firstIndex(where: { ids.contains($0.id) }) {
+                    // The first picked row's place; the other picked rows go.
                     viewModel.referenceImages[index] = refmod
+                    viewModel.referenceImages.removeAll { ids.contains($0.id) }
                 } else {
                     viewModel.referenceImages.append(refmod)
                 }
@@ -220,6 +275,10 @@ struct RefModExtractSheet: View {
 func refModPhaseText(_ state: GenerationViewModel.RefModExtractionState) -> String {
     switch state.phase {
     case "refmod read": return String(localized: "ファイルを読んでいます…")
+    case "refmod stack":
+        return String(localized: "画像を符号化しています（\(state.image)/\(state.images)枚目）…")
+    case "video VAE encoder" where state.images > 1:
+        return String(localized: "画像を符号化しています（\(state.image)/\(state.images)枚目）…")
     case "video VAE encoder": return String(localized: "映像を符号化しています（\(state.completed)/\(state.total)）…")
     case "audio VAE encoder": return String(localized: "音声を符号化しています…")
     case "refmod refine": return String(localized: "圧縮した格子を調整しています（\(state.completed)/\(state.total)）…")

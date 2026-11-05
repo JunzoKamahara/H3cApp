@@ -798,7 +798,8 @@ public final class H3Engine: @unchecked Sendable {
     /// Ref2VA VAE (h3_refmod_extract): on the engine's queue, after any
     /// generation in flight. The stream carries the engine's progress
     /// phases ("refmod read", "video VAE encoder" / "audio VAE encoder",
-    /// "refmod refine", "refmod write") and ends when the file is written;
+    /// "refmod refine", "refmod write"; "refmod stack" between the images
+    /// of a stack) and ends when the file is written;
     /// cancelCurrentRefModExtract() stops it with H3EngineError.cancelled.
     public func extractRefMod(_ request: H3RefModExtractRequest) -> AsyncThrowingStream<H3GenerationEvent, Error> {
         return AsyncThrowingStream { continuation in
@@ -815,6 +816,10 @@ public final class H3Engine: @unchecked Sendable {
                 defer { ProcessInfo.processInfo.endActivity(activity) }
 
                 var errorBuffer = [CChar](repeating: 0, count: 512)
+                // A stack's paths as C strings, alive until the call returns.
+                let imagePaths: [UnsafePointer<CChar>?] = request.imagePaths.count > 1
+                    ? request.imagePaths.map { UnsafePointer(strdup($0)) } : []
+                defer { imagePaths.forEach { free(UnsafeMutablePointer(mutating: $0)) } }
                 let ok = modelDirectory.withCString { modelC in
                     request.sourcePath.withCString { sourceC in
                         request.outputPath.withCString { outputC in
@@ -835,9 +840,13 @@ public final class H3Engine: @unchecked Sendable {
                                         params.max_seconds = Int32(request.maxSeconds)
                                         params.description = request.description.isEmpty ? nil : descriptionC
                                         params.cancel_requested = UnsafePointer(cancelFlag.engineFlag)
-                                        return h3_refmod_extract(&params, h3ProgressTrampoline,
-                                                                 bridgeHandle.toOpaque(),
-                                                                 errorBuf.baseAddress, errorBuf.count)
+                                        return imagePaths.withUnsafeBufferPointer { paths in
+                                            params.image_paths = paths.baseAddress
+                                            params.image_count = paths.count
+                                            return h3_refmod_extract(&params, h3ProgressTrampoline,
+                                                                     bridgeHandle.toOpaque(),
+                                                                     errorBuf.baseAddress, errorBuf.count)
+                                        }
                                     }
                                 }
                             }

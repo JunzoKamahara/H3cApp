@@ -835,6 +835,10 @@ final class GenerationViewModel: ObservableObject {
         var phase = ""
         var completed = 0
         var total = 1
+        /// A stack: the image being encoded (1-based) and how many there
+        /// are, kept while the encoder reports its own progress.
+        var image = 0
+        var images = 0
     }
 
     /// Makes a RefMod file with the engine (after any generation in
@@ -854,6 +858,10 @@ final class GenerationViewModel: ObservableObject {
                 refModExtraction?.phase = phase
                 refModExtraction?.completed = completed
                 refModExtraction?.total = total
+                if phase == "refmod stack" {
+                    refModExtraction?.image = min(completed + 1, total)
+                    refModExtraction?.images = total
+                }
             }
         }
         library.forgetRefModInfo(path: request.outputPath)

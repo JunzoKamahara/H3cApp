@@ -716,6 +716,14 @@ func refmodMemberSummary(_ member: H3RefModMember, inBundle: Bool) -> String {
     }
     var parts: [String] = []
     if inBundle && !member.name.isEmpty { parts.append(member.name + ": ") }
+    if member.isStack {
+        // Still images stacked one per latent frame, not a clip.
+        parts.append(String(localized: "画像\(member.latentT)枚"))
+        parts.append(" \(member.latentW)×\(member.latentH)")
+        let mode = member.mode == .compressed ? String(localized: "、圧縮") : String(localized: "、Full")
+        parts.append(String(localized: "（\(member.tokens)トークン\(mode)）"))
+        return parts.joined()
+    }
     parts.append(kind)
     if member.kind == .audio {
         parts.append(String(localized: " \(String(format: "%.1f", member.seconds ?? 0))秒"))

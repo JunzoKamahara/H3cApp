@@ -364,12 +364,25 @@ extension GenerationViewModel {
         case ("POST", "/api/refmods/extract"):
             // Makes a RefMod from a file: {"path", "name"?, "mode"?
             // ("full"|"compressed"), "resolution_cap"?, "latent_frames"?,
-            // "pool_long_edge"?, "optimize_steps"?, "max_seconds"?}. Answers
+            // "pool_long_edge"?, "optimize_steps"?, "max_seconds"?}, or from
+            // 2-32 still images stacked into one ("paths": [...] in place of
+            // "path"; resolution_cap defaults to 512 then). Answers
             // 202 with the output path; GET /api/status reports
             // refmod_extracting and its phase while it runs, and the file is
             // listed by GET /api/refmods once written.
             let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
-            guard let path = json["path"] as? String, FileManager.default.fileExists(atPath: path) else {
+            var stackPaths: [String] = []
+            if let raw = json["paths"] {
+                guard let list = raw as? [String], (2 ... H3RefModExtractRequest.maxStackImages).contains(list.count) else {
+                    return .error(400, "\"paths\" must list 2 to \(H3RefModExtractRequest.maxStackImages) image files")
+                }
+                for item in list where !FileManager.default.fileExists(atPath: item) || referenceKind(forPath: item) != .image {
+                    return .error(400, "\"paths\" must list existing still images: \(item)")
+                }
+                stackPaths = list
+            }
+            guard let path = stackPaths.first ?? (json["path"] as? String),
+                  FileManager.default.fileExists(atPath: path) else {
                 return .error(400, "\"path\" must name an existing image, video or audio file")
             }
             guard refModExtraction == nil else { return .error(409, "a RefMod is already being made") }
@@ -390,6 +403,10 @@ extension GenerationViewModel {
                                                   extension: "safetensors"),
                 kind: kind)
             extractRequest.name = name.isEmpty ? stem : name
+            if !stackPaths.isEmpty {
+                extractRequest.imagePaths = stackPaths
+                extractRequest.resolutionCap = 512
+            }
             if let raw = json["mode"] {
                 switch raw as? String {
                 case "full": extractRequest.mode = .full

@@ -135,6 +135,15 @@
         </table>
       </div>
       <p class="small muted">The same image as an ordinary reference in a Landscape, Small generation was 117 tokens. An ordinary reference is shrunk to suit the output size, while a RefMod is used at the size it was made. A Full RefMod can therefore have more tokens than the ordinary reference. To keep it light, make it with a lower resolution cap, or Compressed.</p>
+      <h3>Stacking images into one RefMod</h3>
+      <p>Several pictures of the same character or object can go into one RefMod. This is the “stack” form of ComfyUI-MiniMaxH3Mod, and the published RefMods of people (20 to 22 photos at 512 px, Full) are made this way.</p>
+      <ol class="steps">
+        <li><strong>Put two or more images in the references.</strong></li>
+        <li><strong>Press “<span class="ui">Stack Images into a RefMod…</span>” under the list.</strong></li>
+        <li><strong>Tick the images to stack and press “<span class="ui">Create</span>”.</strong></li>
+      </ol>
+      <p>The images are encoded one by one and placed in order, one latent frame each. In Full the first image sets the size, and the others are cropped at the centre to fit it. The resolution cap starts at 512 px, and reference tokens grow with each image. Up to 32 images go in one stack, and videos can't be stacked.</p>
+      <p>Four views cut from a design sheet (front, side, back and face) made a stack of 1,728 tokens and 325 KB in 20 seconds. The hair and clothes came out well, but the grid, labels and side-by-side figures of the crops came along too, and a prompt for a night-time outdoor stage still gave a sheet-like picture. Stack pictures that show only the character: no text or frames, and a background close to plain.</p>
     </section>
 
     <section class="section section-narrow" id="use" aria-labelledby="use-title">
@@ -197,9 +206,10 @@
         <li>RefMods count toward the reference limits (9 images, 3 videos, 3 audio, 12 in all) by what they hold. Reference audio, RefMods included, is at most 15 seconds in total.</li>
         <li>A video RefMod holds only the frames picked when it was made (5 by default). It does not remember the motion of a long video as a whole.</li>
         <li>Compression loses detail and motion. To keep a person's face clear, make it Full.</li>
+        <li>As the text part is not shown a RefMod, an image's background, text and layout tend to come along with the character. To put the character in another scene, make the RefMod from pictures of the character alone, or use ordinary references.</li>
         <li>A RefMod stays as it was saved. After editing the original image, make it again.</li>
         <li>To tell several people apart by number, use ordinary references, which get numbers.</li>
-        <li>These ComfyUI-MiniMaxH3Mod features are not in H3cApp: stacking the same RefMod several times, curves that change the strength step by step, the experimental path that turns a RefMod back into an image for the text part, stacking, merging or masking several sources into one RefMod, and making bundles.</li>
+        <li>These ComfyUI-MiniMaxH3Mod features are not in H3cApp: stacking the same RefMod several times, curves that change the strength step by step, the experimental path that turns a RefMod back into an image for the text part, stacking videos, merging or masking several sources into one RefMod, and making bundles.</li>
       </ul>
       <p>The local API can list and make RefMods and generate with them as well. See <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/REFMOD.md#api">REFMOD.md</a> on GitHub for how.</p>
     </section>

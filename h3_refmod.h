@@ -160,10 +160,24 @@ typedef struct {
     int max_seconds;           /* audio: 0 = 15 */
     const char *description;   /* optional */
     const volatile int *cancel_requested;   /* optional */
+    /* Two or more still images stacked into one RefMod, as upstream's
+     * "stack" source: each is encoded on its own and the latents are
+     * joined along time (one latent frame per image), so the file is
+     * kind "video" with latent_t = image_count. Full: the first image sets
+     * a shared canvas (short edge <= resolution_cap) and the others are
+     * scaled to cover it and cropped at the centre. Compressed: each image
+     * is encoded at its own size and pooled to the first image's grid,
+     * then refined against its own encoding. kind must be
+     * H3_REFMOD_IMAGE; source_path is ignored. 0 or 1 = a single source. */
+    const char *const *image_paths;
+    size_t image_count;
 } h3_refmod_extract_params;
+/* The most images one stacked RefMod takes. */
+#define H3_REFMOD_MAX_STACK 32
 /* Encodes the source with the Ref2VA VAE and writes the RefMod. Progress
  * phases: "refmod read", "video VAE encoder" / "audio VAE encoder",
- * "refmod refine" (compressed), "refmod write". */
+ * "refmod refine" (compressed), "refmod write"; a stack also reports
+ * "refmod stack" (images done / images) before each image. */
 int h3_refmod_extract(const h3_refmod_extract_params *params,
                       h3_progress_callback on_progress, void *opaque,
                       char *error, size_t error_size);

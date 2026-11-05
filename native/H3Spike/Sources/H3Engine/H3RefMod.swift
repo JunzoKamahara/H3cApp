@@ -59,12 +59,17 @@ public struct H3RefModMember: Sendable, Equatable, Identifiable {
     public let description: String
     public let supported: Bool
 
+    /// Still images stacked along time (upstream's "stack" source): a
+    /// video-kind member whose latent frames are separate pictures, one per
+    /// frame, not a clip.
+    public var isStack: Bool { source == "stack" }
+
     /// For a video or audio member: the seconds it spans (5 latent frames
     /// per 17 video frames at 24 fps; 40 latent frames per second of audio).
     public var seconds: Double? {
         switch kind {
         case .image: return nil
-        case .video: return latentT <= 2 ? nil : Double((latentT - 2) / 5 * 17 + 5) / 24
+        case .video: return isStack || latentT <= 2 ? nil : Double((latentT - 2) / 5 * 17 + 5) / 24
         case .audio: return Double(latentT) / 40
         }
     }
@@ -123,6 +128,11 @@ public struct H3RefModExtractRequest: Sendable, Equatable {
     public var optimizeSteps: Int = 500
     /// Audio: seconds kept from the start.
     public var maxSeconds: Int = 15
+    /// Two or more still images to stack into one RefMod (one latent frame
+    /// each, in order; kind must be .image). Empty = sourcePath alone.
+    public var imagePaths: [String] = []
+    /// The most images one stack takes (H3_REFMOD_MAX_STACK).
+    public static let maxStackImages = Int(H3_REFMOD_MAX_STACK)
     public var description: String = ""
 
     public init(sourcePath: String, outputPath: String, kind: H3RefModKind) {
