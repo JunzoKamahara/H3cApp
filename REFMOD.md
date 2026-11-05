@@ -194,9 +194,10 @@ reputation are treated.
   Deleting the original RefMod does not break the project's videos' settings.
 - **Continuing a video and joined generation.** RefMods carry over like ordinary
   references.
-- **Custom Clips.** A clip's own references can take a RefMod with "Choose
-  Files…". There the strength is 1, and a bundle can't be used because its
-  members can't be chosen (use a single-file RefMod).
+- **Custom Clips.** A clip with "Use the same reference images" off can take
+  RefMods with "Add RefMod…" in its references. As in the panel, each row has
+  its own strength, and a bundle asks which members to add. Exporting the clips
+  to a file records the strength and the bundle members too.
 
 ## Limits and cautions
 

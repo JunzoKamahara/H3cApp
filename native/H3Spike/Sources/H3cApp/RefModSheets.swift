@@ -208,18 +208,22 @@ func refModPhaseText(_ state: GenerationViewModel.RefModExtractionState) -> Stri
 }
 
 /// A bundle holds several references: which of them join the generation
-/// (one row each, in the bundle's order).
+/// (one row each, in the bundle's order). onAdd gets the chosen members'
+/// indices; the form appends them to its references, カスタムクリップ to the
+/// clip's.
 struct RefModMemberPickerSheet: View {
     let choice: RefModBundleChoice
-    @ObservedObject var viewModel: GenerationViewModel
+    var onCancel: () -> Void
+    var onAdd: ([Int]) -> Void
     @Environment(\.colorScheme) private var colorScheme
     @State private var selected: Set<Int>
 
     private var palette: H3Palette { H3Palette(colorScheme) }
 
-    init(choice: RefModBundleChoice, viewModel: GenerationViewModel) {
+    init(choice: RefModBundleChoice, onCancel: @escaping () -> Void, onAdd: @escaping ([Int]) -> Void) {
         self.choice = choice
-        self.viewModel = viewModel
+        self.onCancel = onCancel
+        self.onAdd = onAdd
         _selected = State(initialValue: Set(choice.info.members.filter(\.supported).map(\.id)))
     }
 
@@ -243,13 +247,9 @@ struct RefModMemberPickerSheet: View {
             .frame(minHeight: 160, maxHeight: 280)
             HStack {
                 Spacer()
-                Button("キャンセル") { viewModel.pendingRefModBundle = nil }
+                Button("キャンセル") { onCancel() }
                 Button("追加") {
-                    for member in choice.info.members where selected.contains(member.id) {
-                        viewModel.referenceImages.append(
-                            H3ReferenceInput(kind: .refmod, path: choice.path, member: Int32(member.id)))
-                    }
-                    viewModel.pendingRefModBundle = nil
+                    onAdd(choice.info.members.map(\.id).filter { selected.contains($0) })
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(selected.isEmpty)
@@ -257,5 +257,58 @@ struct RefModMemberPickerSheet: View {
         }
         .padding(H3Spacing.lg)
         .frame(width: 440)
+    }
+}
+
+/// A RefMod among the references (the form's or a カスタムクリップ clip's):
+/// its name and contents, and its strength (1 = the stored latent as it
+/// is; less mixes it toward a blurred copy of itself, which weakens the
+/// reference).
+struct RefModReferenceRow: View {
+    @ObservedObject var library: ModelLibrary
+    let path: String
+    let member: Int32
+    @Binding var strength: Float
+    /// The row's number in the form's list; nil for a clip's list.
+    var number: Int? = nil
+    var onRemove: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    private var palette: H3Palette { H3Palette(colorScheme) }
+
+    var body: some View {
+        let entry = library.refmods.first { $0.path == path }
+        let info = try? library.refmodInfo(path: path)?.get()
+        let shown = info.flatMap { info -> H3RefModMember? in
+            member >= 0 ? info.members.first { $0.id == Int(member) } : info.members.first
+        }
+        let title = entry?.name ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        HStack(alignment: .center) {
+            Image(systemName: "cube")
+                .foregroundStyle(palette.textSecondary)
+            if let number {
+                Text(verbatim: "\(number).").font(.caption)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: title).font(.caption).lineLimit(1).truncationMode(.middle)
+                if let shown {
+                    Text(refmodMemberSummary(shown, inBundle: info?.isBundle ?? false))
+                        .font(.caption2).foregroundStyle(palette.textSecondary)
+                } else if case .failure(let error)? = library.refmodInfo(path: path) {
+                    Text(error.localizedDescription).font(.caption2).foregroundStyle(palette.errorColor)
+                }
+            }
+            Spacer()
+            Text("強さ").font(.caption2).foregroundStyle(palette.textSecondary)
+            Slider(value: Binding(
+                get: { Double(strength) },
+                set: { strength = min(max(Float($0), 0.05), 1) }
+            ), in: 0.05 ... 1, step: 0.05)
+            .frame(width: 90)
+            .help("1はそのまま。小さくするほどぼかした参照に近づき、効きが弱まります（上流のApplyと同じ計算）。")
+            Text(verbatim: String(format: "%.2f", strength)).font(.caption2).monospacedDigit()
+                .frame(width: 30, alignment: .trailing)
+            Button("取り除く") { onRemove() }
+                .font(.caption)
+        }
     }
 }

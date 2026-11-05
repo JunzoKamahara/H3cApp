@@ -232,7 +232,7 @@ extension GenerationViewModel {
                 return String(localized: "\(number)本目のファイルが見つかりません: \(name)")
             }
             if clip.images == .references, !clip.references.isEmpty,
-               !clip.references.contains(where: { $0.kind == "image" || $0.kind == "video" }) {
+               !clip.references.contains(where: { ["image", "video", "refmod"].contains($0.kind) }) {
                 return String(localized: "\(number)本目：音声だけの参照はできません。画像か動画の参照も追加してください")
             }
             if clip.audio == .file && clip.audioPath == nil {

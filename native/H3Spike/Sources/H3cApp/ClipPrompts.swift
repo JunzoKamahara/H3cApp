@@ -22,6 +22,10 @@ struct StoryboardFile: Codable {
         var references: Bool? = nil
         var images: ChainClipSpec.Images? = nil
         var referencePaths: [String]? = nil
+        /// The same references with a RefMod's strength and bundle member,
+        /// written only when one has them (referencePaths alone would lose
+        /// them); preferred over referencePaths when reading.
+        var referenceItems: [ProjectDraft.Reference]? = nil
         var firstFrame: String? = nil
         var lastFrame: String? = nil
         var audio: ChainClipSpec.Audio? = nil
@@ -56,6 +60,14 @@ struct StoryboardFile: Codable {
                     }
                     clip.references = ((object["referencePaths"] as? [String]) ?? []).map { path in
                         .init(kind: referenceKind(forPath: path).storedName, path: path)
+                    }
+                    if let items = object["referenceItems"] as? [[String: Any]] {
+                        clip.references = items.compactMap { item in
+                            guard let path = item["path"] as? String else { return nil }
+                            let kind = (item["kind"] as? String) ?? referenceKind(forPath: path).storedName
+                            let strength = (item["strength"] as? Double).map { Float(min(max($0, 0.05), 1)) }
+                            return .init(kind: kind, path: path, strength: strength, member: item["member"] as? Int)
+                        }
                     }
                     clip.firstFrame = object["firstFrame"] as? String
                     clip.lastFrame = object["lastFrame"] as? String
@@ -118,6 +130,7 @@ struct ClipPromptsSection: View {
 
 struct CustomClipsSheet: View {
     @ObservedObject var viewModel: GenerationViewModel
+    @ObservedObject var library: ModelLibrary
     @Binding var isPresented: Bool
     @State private var message: String?
     @Environment(\.colorScheme) private var colorScheme
@@ -140,7 +153,7 @@ struct CustomClipsSheet: View {
                     }
                     ForEach($viewModel.customClips) { $clip in
                         let index = viewModel.customClips.firstIndex { $0.id == clip.id } ?? 0
-                        CustomClipRow(viewModel: viewModel, clip: $clip, index: index,
+                        CustomClipRow(viewModel: viewModel, library: library, clip: $clip, index: index,
                                       start: index < starts.count ? starts[index] : 0,
                                       plan: index < plans.count ? plans[index] : nil)
                         Divider()
@@ -218,6 +231,9 @@ struct CustomClipsSheet: View {
                     prompt: clip.prompt,
                     images: index > 0 ? clip.images : nil,
                     referencePaths: index > 0 && clip.images == .references ? clip.references.map(\.path) : nil,
+                    referenceItems: index > 0 && clip.images == .references
+                        && clip.references.contains(where: { $0.strength != nil || $0.member != nil })
+                        ? clip.references : nil,
                     firstFrame: index > 0 && clip.images == .frames ? clip.firstFrame : nil,
                     lastFrame: index > 0 && clip.images == .frames ? clip.lastFrame : nil,
                     audio: index > 0 ? clip.audio : nil,
@@ -237,7 +253,10 @@ struct CustomClipsSheet: View {
 /// One clip in カスタムクリップ's editor.
 private struct CustomClipRow: View {
     @ObservedObject var viewModel: GenerationViewModel
+    @ObservedObject var library: ModelLibrary
     @Binding var clip: ChainClipSpec
+    /// A RefMod bundle just picked for this clip: which members to add.
+    @State private var bundleChoice: RefModBundleChoice?
     let index: Int
     let start: Int
     let plan: ChainClipPlan?
@@ -282,6 +301,15 @@ private struct CustomClipRow: View {
             }
             ClipTextEditor(text: $clip.prompt, placeholder: String(localized: "（共通の指示だけでつくります）"))
         }
+        .sheet(item: $bundleChoice) { choice in
+            RefModMemberPickerSheet(choice: choice, onCancel: { bundleChoice = nil }) { members in
+                for member in members
+                where !clip.references.contains(where: { $0.path == choice.path && $0.member == member }) {
+                    clip.references.append(.init(kind: "refmod", path: choice.path, member: member))
+                }
+                bundleChoice = nil
+            }
+        }
     }
 
     // MARK: Images
@@ -305,24 +333,48 @@ private struct CustomClipRow: View {
                 .frame(width: 280)
                 if clip.images == .references {
                     ForEach(Array(clip.references.enumerated()), id: \.offset) { offset, reference in
-                        HStack {
-                            Image(systemName: reference.kind == "audio" ? "waveform"
-                                  : reference.kind == "video" ? "video"
-                                  : reference.kind == "refmod" ? "cube" : "photo")
-                                .foregroundStyle(palette.textSecondary)
-                            Text(URL(fileURLWithPath: reference.path).lastPathComponent).font(.caption)
-                            Spacer()
-                            Button("取り除く") { clip.references.remove(at: offset) }.font(.caption)
+                        if reference.kind == "refmod" {
+                            RefModReferenceRow(
+                                library: library, path: reference.path, member: Int32(reference.member ?? -1),
+                                strength: Binding(
+                                    get: { offset < clip.references.count ? clip.references[offset].strength ?? 1 : 1 },
+                                    set: { value in
+                                        guard offset < clip.references.count else { return }
+                                        clip.references[offset].strength = value == 1 ? nil : value
+                                    }),
+                                onRemove: { clip.references.remove(at: offset) })
+                        } else {
+                            HStack {
+                                Image(systemName: reference.kind == "audio" ? "waveform"
+                                      : reference.kind == "video" ? "video" : "photo")
+                                    .foregroundStyle(palette.textSecondary)
+                                Text(URL(fileURLWithPath: reference.path).lastPathComponent).font(.caption)
+                                Spacer()
+                                Button("取り除く") { clip.references.remove(at: offset) }.font(.caption)
+                            }
                         }
                     }
                     HStack {
                         Button("ファイルを選ぶ…") {
-                            for path in chooseFiles(allowedContentTypes: referenceMediaTypes)
-                            where !clip.references.contains(where: { $0.path == path }) {
-                                clip.references.append(.init(kind: referenceKind(forPath: path).storedName, path: path))
+                            for path in chooseFiles(allowedContentTypes: referenceMediaTypes) {
+                                addReference(path: path)
                             }
                         }
                         .font(.caption)
+                        Menu("RefModを追加…") {
+                            ForEach(library.refmods) { entry in
+                                Button(entry.name) { addReference(path: entry.path) }
+                            }
+                            if !library.refmods.isEmpty { Divider() }
+                            Button("ファイルを選ぶ…") {
+                                if let path = chooseFile(allowedContentTypes: safetensorsTypes, startingIn: defaultRefModDirectory) {
+                                    addReference(path: path)
+                                }
+                            }
+                        }
+                        .font(.caption)
+                        .fixedSize()
+                        .help("保存済みのRefMod（符号化した参照）をこのクリップの参照に加えます。モデル管理のRefModに一覧があります。")
                         if clip.references.isEmpty {
                             Text("選ばなければ、画像なしで前の動画の続きをつくります")
                                 .font(.caption).foregroundStyle(palette.textSecondary)
@@ -341,6 +393,19 @@ private struct CustomClipRow: View {
             }
             .padding(.leading, H3Spacing.lg)
         }
+    }
+
+    /// Adds one picked file to this clip's references: a RefMod bundle asks
+    /// which members to use (one row each), anything else is one row. A
+    /// file (or bundle member) already there is not added twice.
+    private func addReference(path: String) {
+        let kind = referenceKind(forPath: path)
+        if kind == .refmod, let info = try? H3RefModInfo.inspect(path: path), info.isBundle {
+            bundleChoice = RefModBundleChoice(path: path, info: info)
+            return
+        }
+        guard !clip.references.contains(where: { $0.path == path && $0.member == nil }) else { return }
+        clip.references.append(.init(kind: kind.storedName, path: path))
     }
 
     private func frameRow(label: String, path: Binding<String?>) -> some View {

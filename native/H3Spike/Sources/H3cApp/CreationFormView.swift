@@ -93,14 +93,20 @@ struct CreationFormView: View {
         .onChange(of: bounds) { _, _ in offset = clamped(offset) }
         .quickLookPreview($quickLookURL)
         .sheet(isPresented: $showingClipEditor) {
-            CustomClipsSheet(viewModel: viewModel, isPresented: $showingClipEditor)
+            CustomClipsSheet(viewModel: viewModel, library: library, isPresented: $showingClipEditor)
         }
         .sheet(item: $refModSource) { source in
             RefModExtractSheet(source: source, viewModel: viewModel, library: library, isPresented: Binding(
                 get: { refModSource != nil }, set: { if !$0 { refModSource = nil } }))
         }
         .sheet(item: $viewModel.pendingRefModBundle) { choice in
-            RefModMemberPickerSheet(choice: choice, viewModel: viewModel)
+            RefModMemberPickerSheet(choice: choice, onCancel: { viewModel.pendingRefModBundle = nil }) { members in
+                for member in members {
+                    viewModel.referenceImages.append(
+                        H3ReferenceInput(kind: .refmod, path: choice.path, member: Int32(member)))
+                }
+                viewModel.pendingRefModBundle = nil
+            }
         }
     }
 
@@ -298,7 +304,13 @@ struct CreationFormView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(Array(viewModel.referenceImages.enumerated()), id: \.element.id) { index, reference in
                             if reference.kind == .refmod {
-                                refModReferenceRow(index: index, reference: reference)
+                                RefModReferenceRow(
+                                    library: library, path: reference.path, member: reference.member,
+                                    strength: Binding(
+                                        get: { reference.strength },
+                                        set: { viewModel.setReferenceStrength(id: reference.id, $0) }),
+                                    number: index + 1,
+                                    onRemove: { viewModel.removeReferenceImages(at: IndexSet(integer: index)) })
                             } else {
                                 HStack {
                                     Image(systemName: referenceIcon(for: reference.kind))
@@ -327,46 +339,6 @@ struct CreationFormView: View {
         .padding(H3Spacing.md)
         .background(palette.surfaceMuted)
         .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
-    }
-
-    /// A RefMod among the references: its name and contents, and its
-    /// strength (1 = the stored latent as it is; less mixes it toward a
-    /// blurred copy of itself, which weakens the reference).
-    private func refModReferenceRow(index: Int, reference: H3ReferenceInput) -> some View {
-        let entry = library.refmods.first { $0.path == reference.path }
-        let info = try? library.refmodInfo(path: reference.path)?.get()
-        let member = info.flatMap { info -> H3RefModMember? in
-            reference.member >= 0 ? info.members.first { $0.id == Int(reference.member) } : info.members.first
-        }
-        let title = entry?.name ?? URL(fileURLWithPath: reference.path).deletingPathExtension().lastPathComponent
-        return HStack(alignment: .center) {
-            Image(systemName: "cube")
-                .foregroundStyle(palette.textSecondary)
-            Text(verbatim: "\(index + 1).").font(.caption)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(verbatim: title).font(.caption).lineLimit(1).truncationMode(.middle)
-                if let member {
-                    Text(refmodMemberSummary(member, inBundle: info?.isBundle ?? false))
-                        .font(.caption2).foregroundStyle(palette.textSecondary)
-                } else if case .failure(let error)? = library.refmodInfo(path: reference.path) {
-                    Text(error.localizedDescription).font(.caption2).foregroundStyle(palette.errorColor)
-                }
-            }
-            Spacer()
-            Text("強さ").font(.caption2).foregroundStyle(palette.textSecondary)
-            Slider(value: Binding(
-                get: { Double(reference.strength) },
-                set: { viewModel.setReferenceStrength(id: reference.id, Float($0)) }
-            ), in: 0.05 ... 1, step: 0.05)
-            .frame(width: 90)
-            .help("1はそのまま。小さくするほどぼかした参照に近づき、効きが弱まります（上流のApplyと同じ計算）。")
-            Text(verbatim: String(format: "%.2f", reference.strength)).font(.caption2).monospacedDigit()
-                .frame(width: 30, alignment: .trailing)
-            Button("取り除く") {
-                viewModel.removeReferenceImages(at: IndexSet(integer: index))
-            }
-            .font(.caption)
-        }
     }
 
     /// What the references add (h3_plan_generation), and whether it fits.

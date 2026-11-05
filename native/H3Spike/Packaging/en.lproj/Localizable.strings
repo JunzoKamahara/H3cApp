@@ -1140,6 +1140,7 @@
 "画像・動画・音声の特徴を参考にして動画をつくります。最初のフレームが同じになるとは限りません。音声だけを参照にすることはできないので、画像か動画と組み合わせて追加してください。保存済みのRefMod（符号化した参照）も加えられます。" = "Makes a video guided by the look, motion or sound of the files. The first frame is not necessarily the same. Audio alone cannot be a reference: add it with an image or a video. Saved RefMods (encoded references) can be added too.";
 "RefModを追加…" = "Add RefMod…";
 "保存済みのRefMod（符号化した参照）を参照に加えます。モデル管理のRefModに一覧があります。" = "Adds a saved RefMod (an encoded reference) to the references. Model Manager > RefMod lists them.";
+"保存済みのRefMod（符号化した参照）をこのクリップの参照に加えます。モデル管理のRefModに一覧があります。" = "Adds a saved RefMod (an encoded reference) to this clip's references. Model Manager > RefMod lists them.";
 "RefModとして保存…" = "Save as RefMod…";
 "この参照を一度だけ符号化してRefModファイルに保存します。" = "Encodes this reference once and saves it as a RefMod file.";
 "1はそのまま。小さくするほどぼかした参照に近づき、効きが弱まります（上流のApplyと同じ計算）。" = "1 is the stored latent as it is. Lower values move it toward a blurred copy of itself, which weakens the reference (the same arithmetic as the upstream Apply node).";
