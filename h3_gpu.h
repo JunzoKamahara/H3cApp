@@ -414,6 +414,7 @@ int h3_gpu_vsr_clamp_tanh_f32(h3_gpu *gpu, h3_gpu_tensor *output,
 /* ReAE convolutions on M5 TensorOps: a "padded grid" of BF16 rows
  * [guard | T x (H+2) x (W+2) | guard] with channels padded to a multiple of
  * 64 (x_rows physical rows, guard >= W+3, trailing room >= guard + 128).
+ * Up to 27 taps (3x3x3: a temporal tap is an offset of whole frames).
  * tapconv: out[r] = sum over taps of x[r + offset] . W_tap^T (x1/w1: a
  * second input accumulated the same way) + bias (+ residual) (ReLU). The
  * weights are [taps * out_ch, in_ch] BF16 row-major, tap-major. */
@@ -1121,6 +1122,22 @@ int h3_gpu_sv2_pad_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *
 int h3_gpu_sv2_shuffle_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
                            uint32_t height, uint32_t width, uint32_t channels,
                            uint32_t temporal);
+/* The temporal Upsample3D: in [T, H, W, C*4*tf] -> out [T', 2H, 2W, C],
+ * frame f*tf+z from slice z (b (x y z c) f h w -> b c (f z) (h x) (w y));
+ * drop_head (a clip's first slice) leaves out frame 1 when tf > 1.
+ * T' = h3_gpu_sv2_shuffle_frames(T, tf, drop_head). */
+uint32_t h3_gpu_sv2_shuffle_frames(uint32_t frames, uint32_t temporal, int drop_head);
+int h3_gpu_sv2_shuffle3d_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                             uint32_t frames, uint32_t height, uint32_t width, uint32_t channels,
+                             uint32_t temporal, int drop_head);
+/* The causal convolution's input: front frames then F32 [T, H, W, C]
+ * zero-padded in space -> [front + T, H+top+bottom, W+left+right, C]. The
+ * front frames are the last `front` of `previous` ([prev_frames, H, W, C],
+ * the previous slice's state) or, when it is NULL, copies of frame 0. */
+int h3_gpu_sv2_pad3d_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                         const h3_gpu_tensor *previous, uint32_t prev_frames,
+                         uint32_t frames, uint32_t height, uint32_t width, uint32_t channels,
+                         uint32_t front, uint32_t top, uint32_t bottom, uint32_t left, uint32_t right);
 /* GroupNorm (no SiLU) on F32 [frames, H, W, C]. */
 int h3_gpu_sv2_group_norm_f32(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
                               const h3_gpu_tensor *weight, const h3_gpu_tensor *bias,
@@ -1162,6 +1179,18 @@ int h3_gpu_sv2_grid_select_bf16(h3_gpu *gpu, h3_gpu_tensor *output, uint32_t out
                                 uint32_t out_width, uint32_t out_guard, const h3_gpu_tensor *input,
                                 uint32_t in_height, uint32_t in_width, uint32_t in_guard,
                                 uint32_t padded, uint32_t phase_y, uint32_t phase_x);
+/* The same on frames that follow each other from the guard: the temporal
+ * shuffle (h3_gpu_sv2_shuffle3d_f32's rule) and out(t, y, x) =
+ * in(t*stride_t + phase_t, 2y + phase_y, 2x + phase_x). */
+int h3_gpu_sv2_grid_shuffle3d_bf16(h3_gpu *gpu, h3_gpu_tensor *output, uint32_t out_padded,
+                                   uint32_t out_guard, const h3_gpu_tensor *input, uint32_t in_frames,
+                                   uint32_t in_height, uint32_t in_width, uint32_t in_padded,
+                                   uint32_t in_guard, uint32_t channels, uint32_t temporal, int drop_head);
+int h3_gpu_sv2_grid_select3d_bf16(h3_gpu *gpu, h3_gpu_tensor *output, uint32_t out_frames,
+                                  uint32_t out_height, uint32_t out_width, uint32_t out_guard,
+                                  const h3_gpu_tensor *input, uint32_t in_frames, uint32_t in_height,
+                                  uint32_t in_width, uint32_t in_guard, uint32_t padded,
+                                  uint32_t stride_t, uint32_t phase_t, uint32_t phase_y, uint32_t phase_x);
 
 #ifdef __cplusplus
 } // extern "C"

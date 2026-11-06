@@ -9,7 +9,10 @@
  *                     (default ~/Documents/work/h3c/seedvr2-temporal/fixtures)
  * H3_SEEDVR2_STRICT=1 a missing model or fixture fails instead of skipping,
  *                     so "make test" passing is not mistaken for "verified".
- * H3_SV2_TEST_VAE_F32=1 forces the F32 (MPSGraph, M1-M4) VAE path. */
+ * H3_SV2_TEST_VAE_F32=1 forces the F32 (MPSGraph, M1-M4) VAE path (the
+ *                     480x352 clip only with H3_SV2_TEST_LARGE=1: memory).
+ * Arguments: --clips-only skips T=1; a second argument picks clips by name.
+ * Run it alone: the T=17 clips peak at 18-20 GB. */
 #include "h3_seedvr2.h"
 #include "h3_safetensors.h"
 
@@ -147,7 +150,98 @@ static void test_single_frame(h3_seedvr2 *m, const char *path) {
     h3_st_free_header(&h);
 }
 
-int main(void) {
+/* A clip: every encoder and decoder stage of the whole clip against the
+ * reference, the reference's sliced passes, and the engine's own sliced
+ * passes against its whole-clip ones. */
+static void test_clip(h3_seedvr2 *m, const char *path) {
+    h3_st_header h;
+    char error[512];
+    CHECK(h3_st_read_header(path, &h, error, sizeof(error)) || (fprintf(stderr, "%s\n", error), 0));
+    const h3_st_tensor *xt = h3_st_find(&h, "x");
+    CHECK(xt && xt->ndim == 4 && xt->shape[0] == 3);
+    int T = (int)xt->shape[1], H = (int)xt->shape[2], W = (int)xt->shape[3];
+    const h3_st_tensor *lt = h3_st_find(&h, "latent");
+    CHECK(lt && lt->ndim == 4);
+    int L = (int)lt->shape[1], lh = (int)lt->shape[2], lw = (int)lt->shape[3];
+    CHECK(L == (T - 1) / 4 + 1 && lh == H / 8 && lw == W / 8);
+    size_t lsize = (size_t)16 * L * lh * lw, rgb = (size_t)3 * T * H * W;
+    printf("clip %s: %d frames %dx%d, latent %d x %dx%d\n", path, T, W, H, L, lw, lh);
+    float *x = load_tensor(&h, "x", rgb);
+    int of, ow, oh, oc;
+
+    static const char *enc_names[7] = {"enc_conv_in", "enc_down0", "enc_down1", "enc_down2", "enc_down3", "enc_mid", "enc_h"};
+    for (int stage = 0; stage <= 6; stage++) {
+        const h3_st_tensor *t = h3_st_find(&h, enc_names[stage]);
+        if (!t) continue;
+        size_t n = (size_t)h3_st_tensor_elements(t);
+        float *ref = load_tensor(&h, enc_names[stage], n), *ours = malloc(n * sizeof(float));
+        CHECK(h3_seedvr2_debug_encode_video(m, x, T, W, H, 0, stage, ours, &of, &ow, &oh, &oc, n, error, sizeof(error)) ||
+              (fprintf(stderr, "%s\n", error), 0));
+        CHECK(oc == (int)t->shape[0] && of == (int)t->shape[1] && oh == (int)t->shape[2] && ow == (int)t->shape[3]);
+        report(enc_names[stage], compare(ours, ref, n, 1.0), stage < 6 ? 0.2 : 0.05);
+        free(ref); free(ours);
+    }
+    /* the latent, whole and sliced (split 4) */
+    float *latent_ref = load_tensor(&h, "latent", lsize);
+    float *enc = malloc(2 * lsize * sizeof(float)), *enc_sliced = malloc(2 * lsize * sizeof(float));
+    CHECK(h3_seedvr2_debug_encode_video(m, x, T, W, H, 0, 99, enc, &of, &ow, &oh, &oc, 2 * lsize, error, sizeof(error)) ||
+          (fprintf(stderr, "%s\n", error), 0));
+    CHECK(of == L && oc == 32);
+    float *ours = malloc(lsize * sizeof(float));
+    for (size_t i = 0; i < lsize; i++) ours[i] = enc[i] * 0.9152f;   /* the mean: channels 0..15 */
+    report("encode latent", compare(ours, latent_ref, lsize, 1.0), 0.05);
+    CHECK(h3_seedvr2_debug_encode_video(m, x, T, W, H, 4, 99, enc_sliced, &of, &ow, &oh, &oc, 2 * lsize, error, sizeof(error)) ||
+          (fprintf(stderr, "%s\n", error), 0));
+    CHECK(of == L && oc == 32);
+    report("encode sliced = whole", compare(enc_sliced, enc, 2 * lsize, 1.0), 1e-3);
+    float *mean_sliced_ref = load_tensor(&h, "enc_mean_sliced", lsize);
+    report("encode sliced vs ref", compare(enc_sliced, mean_sliced_ref, lsize, 1.0), 0.05);
+    free(mean_sliced_ref); free(enc); free(enc_sliced); free(ours);
+
+    static const char *dec_names[7] = {"dec_conv_in", "dec_mid", "dec_up0", "dec_up1", "dec_up2", "dec_up3", "decoded"};
+    for (int stage = 0; stage <= 6; stage++) {
+        const h3_st_tensor *t = h3_st_find(&h, dec_names[stage]);
+        if (!t) continue;
+        size_t n = (size_t)h3_st_tensor_elements(t);
+        float *ref = load_tensor(&h, dec_names[stage], n), *dec = malloc(n * sizeof(float));
+        CHECK(h3_seedvr2_debug_decode_video(m, latent_ref, L, lw, lh, 0, stage, dec, &of, &ow, &oh, &oc, n, error, sizeof(error)) ||
+              (fprintf(stderr, "%s\n", error), 0));
+        CHECK(oc == (int)t->shape[0] && of == (int)t->shape[1] && oh == (int)t->shape[2] && ow == (int)t->shape[3]);
+        report(dec_names[stage], compare(dec, ref, n, stage == 6 ? 2.0 : 1.0), stage == 6 ? 0.05 : 0.2);
+        free(ref); free(dec);
+    }
+    float *decoded_ref = load_tensor(&h, "decoded", rgb), *decoded_sliced_ref = load_tensor(&h, "decoded_sliced", rgb);
+    float *dec = malloc(rgb * sizeof(float)), *dec_sliced = malloc(rgb * sizeof(float));
+    CHECK(h3_seedvr2_debug_decode_video(m, latent_ref, L, lw, lh, 0, 99, dec, &of, &ow, &oh, &oc, rgb, error, sizeof(error)) ||
+          (fprintf(stderr, "%s\n", error), 0));
+    CHECK(of == T && oc == 3 && oh == H && ow == W);
+    CHECK(h3_seedvr2_debug_decode_video(m, latent_ref, L, lw, lh, 4, 99, dec_sliced, &of, &ow, &oh, &oc, rgb, error, sizeof(error)) ||
+          (fprintf(stderr, "%s\n", error), 0));
+    CHECK(of == T && oc == 3);
+    report("decode sliced = whole", compare(dec_sliced, dec, rgb, 2.0), 1e-3);
+    report("decode sliced vs ref", compare(dec_sliced, decoded_sliced_ref, rgb, 2.0), 0.05);
+    report("ref sliced vs ref whole", compare(decoded_sliced_ref, decoded_ref, rgb, 2.0), 0.05);
+    /* per frame: the worst frame of the sliced decode (a seam would show here) */
+    size_t plane = (size_t)H * W;
+    double worst = 0; int worst_t = 0;
+    for (int t = 0; t < T; t++) {
+        double se = 0, sr = 0;
+        for (int c = 0; c < 3; c++)
+            for (size_t i = 0; i < plane; i++) {
+                size_t at = ((size_t)c * T + t) * plane + i;
+                double e = (double)dec_sliced[at] - decoded_ref[at];
+                se += e * e; sr += (double)decoded_ref[at] * decoded_ref[at];
+            }
+        double rel = sr > 0 ? sqrt(se / sr) : 0;
+        if (rel > worst) { worst = rel; worst_t = t; }
+    }
+    printf("  worst sliced frame vs ref: %d (rel %.4f)\n", worst_t, worst);
+    CHECK(worst < 0.05);
+    free(dec); free(dec_sliced); free(decoded_ref); free(decoded_sliced_ref); free(latent_ref); free(x);
+    h3_st_free_header(&h);
+}
+
+int main(int argc, char **argv) {
     char mbuf[1024], fbuf[1024], cfg[1200], path[1200];
     const char *dir = model_dir(mbuf, sizeof(mbuf));
     const char *fixtures = fixture_dir(fbuf, sizeof(fbuf));
@@ -160,7 +254,21 @@ int main(void) {
     h3_seedvr2_open_params params = {"h3_shaders.metal", 1, 42, -1, getenv("H3_SV2_TEST_VAE_F32") != NULL, -1};
     h3_seedvr2 *m = h3_seedvr2_open(dir, &params, NULL, NULL, error, sizeof(error));
     if (!m) { fprintf(stderr, "open: %s\n", error); return 1; }
-    test_single_frame(m, path);
+    if (!(argc > 1 && strcmp(argv[1], "--clips-only") == 0)) test_single_frame(m, path);
+    static const char *clips[] = {"sv2t_T5_256.safetensors", "sv2t_T9_256.safetensors", "sv2t_T17_256.safetensors",
+                                  "sv2t_T17_480x352_vae.safetensors"};
+    for (size_t i = 0; i < sizeof(clips) / sizeof(*clips); i++) {
+        snprintf(path, sizeof(path), "%s/%s", fixtures, clips[i]);
+        if (!exists(path)) { skip(path); continue; }
+        if (argc > 2 && !strstr(clips[i], argv[2])) continue;
+        /* the whole 17-frame 480x352 clip peaks at 18 GiB on the grid; the F32
+         * path keeps twice that and would swap a 24 GB Mac (phase 3 slices it) */
+        if (strstr(clips[i], "480x352") && getenv("H3_SV2_TEST_VAE_F32") && !getenv("H3_SV2_TEST_LARGE")) {
+            printf("skip: %s on the F32 path (H3_SV2_TEST_LARGE=1 runs it)\n", clips[i]);
+            continue;
+        }
+        test_clip(m, path);
+    }
 
     double gpu_seconds; uint64_t peak;
     h3_seedvr2_get_stats(m, &gpu_seconds, &peak);

@@ -55,7 +55,7 @@ the app's resize.
 | `sv2t_T5_256.safetensors` | 5 | 256×256 | yes |
 | `sv2t_T9_256.safetensors` | 9 | 256×256 | yes |
 | `sv2t_T17_256.safetensors` | 17 | 256×256 | yes |
-| `sv2t_T17_480x352_vae.safetensors` | 17 | 480×352 | no (`--no-dit`) |
+| `sv2t_T17_480x352_vae.safetensors` | 17 | 480×352 | no (`--no-dit --no-stages`: latents and decodes only) |
 
 Tensors are float32 in the reference's `[C, T, H, W]` layout:
 
@@ -87,6 +87,11 @@ latent / prediction / decode < 0.05, decode of the engine's own z < 0.1
 (sliced vs whole in the engine itself) are tested separately.
 
 ## Regenerating
+
+**Run a dump on its own.** The CPU reference takes 15-20 GB (about 30 GB
+for 480×352 with the stage tensors, hence `--no-stages` there); on a 24 GB
+Mac a dump next to a GPU test ran out of swap and the machine hit a
+watchdog panic (2026-11-05).
 
 Needs Python 3.12 with torch, diffusers, einops, omegaconf,
 rotary-embedding-torch, safetensors and Pillow, the SeedVR checkout and

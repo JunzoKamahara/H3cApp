@@ -517,7 +517,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_vae_encoder_norm_chunk_square_f32",
             @"h3_vae_encoder_norm_chunk_apply_silu_f32",
             @"h3_sv2_dequant_q8_bf16", @"h3_sv2_rms_mod_bf16", @"h3_sv2_qkv_window_bf16",
-            @"h3_sv2_txt_mean_bf16", @"h3_sv2_pad_f32", @"h3_sv2_shuffle_f32",
+            @"h3_sv2_txt_mean_bf16", @"h3_sv2_pad_f32", @"h3_sv2_pad3d_f32", @"h3_sv2_shuffle_f32",
             @"h3_sv2_group_norm_f32", @"h3_sv2_bicubic_pixels_f32", @"h3_sv2_f32_to_pixels",
             @"h3_sv2_wavelet_blur_f32", @"h3_sv2_rgb_to_lab_f32", @"h3_sv2_lab_match_to_rgb_f32",
             @"h3_sv2_grid_gn_sum_bf16", @"h3_sv2_grid_gn_sq_bf16", @"h3_sv2_grid_gn_apply_bf16",
@@ -6934,7 +6934,7 @@ int h3_gpu_silu_mul_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
 
 typedef struct {
     uint32_t rows, x_rows, guard, in_ch, out_ch, taps, inputs, relu, has_bias, has_residual;
-    int32_t offsets[9];
+    int32_t offsets[27];
 } vsr_tapconv_args;
 typedef struct { uint32_t frames, height, width, channels, padded_channels, guard; } vsr_grid_args;
 
@@ -6953,7 +6953,7 @@ int h3_gpu_vsr_tapconv_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
                             const int32_t *offsets, int relu) {
     H3GPU *gpu = GPU(opaque);
     if (!gpu.tensorOpsEnabled) { h3_gpu_set_error(gpu, @"VSR tapconv needs TensorOps"); return 0; }
-    if (!rows || !taps || taps > 9 || in_ch % 64 || out_ch % 64 || !offsets ||
+    if (!rows || !taps || taps > 27 || in_ch % 64 || out_ch % 64 || !offsets ||
         guard + rows + 128 > x_rows) {
         h3_gpu_set_error(gpu, @"VSR tapconv: bad arguments");
         return 0;
@@ -7442,7 +7442,8 @@ typedef struct { uint32_t rows, width, has_scale, has_shift; float epsilon; } sv
 typedef struct { uint32_t rows, heads, head_dim, dim, pairs; float epsilon; } sv2_window_args;
 typedef struct { uint32_t windows, txt_rows, width; } sv2_txt_mean_args;
 typedef struct { uint32_t height, width, channels, top, bottom, left, right; } sv2_pad_args;
-typedef struct { uint32_t height, width, channels, temporal; } sv2_shuffle_args;
+typedef struct { uint32_t height, width, channels, temporal, frames, out_frames, drop_head; } sv2_shuffle_args;
+typedef struct { uint32_t frames, height, width, channels, front, prev_frames, has_previous, top, bottom, left, right; } sv2_pad3d_args;
 typedef struct { uint32_t in_w, in_h, in_stride, bgra, out_w, out_h, full_w, full_h;
                  float scale_x, scale_y, pad_value; } sv2_bicubic_args;
 typedef struct { uint32_t full_w, full_h, crop_w, crop_h, out_stride, bgra; } sv2_pixels_out_args;
@@ -7585,18 +7586,54 @@ int h3_gpu_sv2_pad_f32(h3_gpu *opaque, h3_gpu_tensor *output, const h3_gpu_tenso
         });
 }
 
+uint32_t h3_gpu_sv2_shuffle_frames(uint32_t frames, uint32_t temporal, int drop_head) {
+    if (temporal <= 1) return frames;
+    return drop_head && frames ? temporal * frames - 1 : temporal * frames;
+}
+
 int h3_gpu_sv2_shuffle_f32(h3_gpu *opaque, h3_gpu_tensor *output, const h3_gpu_tensor *input,
                            uint32_t height, uint32_t width, uint32_t channels,
                            uint32_t temporal) {
+    return h3_gpu_sv2_shuffle3d_f32(opaque, output, input, 1, height, width, channels, temporal, 1);
+}
+
+int h3_gpu_sv2_shuffle3d_f32(h3_gpu *opaque, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                             uint32_t frames, uint32_t height, uint32_t width, uint32_t channels,
+                             uint32_t temporal, int drop_head) {
     H3GPU *gpu = GPU(opaque);
-    if (!sv2_check_f32(gpu, input, (size_t)height * width * channels * 4 * temporal, @"sv2 shuffle input") ||
-        !sv2_check_f32(gpu, output, (size_t)height * width * 4 * channels, @"sv2 shuffle output")) return 0;
-    sv2_shuffle_args args = {height, width, channels, temporal};
-    return h3_gpu_dispatch_3d(gpu, @"h3_sv2_shuffle_f32", MTLSizeMake(channels, 2 * width, 2 * height),
+    uint32_t out_frames = h3_gpu_sv2_shuffle_frames(frames, temporal, drop_head);
+    if (!frames || !temporal) { h3_gpu_set_error(gpu, @"sv2 shuffle: no frames"); return 0; }
+    if (!sv2_check_f32(gpu, input, (size_t)frames * height * width * channels * 4 * temporal, @"sv2 shuffle input") ||
+        !sv2_check_f32(gpu, output, (size_t)out_frames * height * width * 4 * channels, @"sv2 shuffle output")) return 0;
+    sv2_shuffle_args args = {height, width, channels, temporal, frames, out_frames, drop_head != 0};
+    return h3_gpu_dispatch_3d(gpu, @"h3_sv2_shuffle_f32", MTLSizeMake(channels, 2 * width, 2 * height * out_frames),
         ^(id<MTLComputeCommandEncoder> encoder) {
             [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
             [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
             [encoder setBytes:&args length:sizeof(args) atIndex:2];
+        });
+}
+
+int h3_gpu_sv2_pad3d_f32(h3_gpu *opaque, h3_gpu_tensor *output, const h3_gpu_tensor *input,
+                         const h3_gpu_tensor *previous, uint32_t prev_frames,
+                         uint32_t frames, uint32_t height, uint32_t width, uint32_t channels,
+                         uint32_t front, uint32_t top, uint32_t bottom, uint32_t left, uint32_t right) {
+    H3GPU *gpu = GPU(opaque);
+    uint32_t out_w = width + left + right, out_h = height + top + bottom;
+    size_t plane = (size_t)height * width * channels;
+    if (!frames || (previous && prev_frames < front)) { h3_gpu_set_error(gpu, @"sv2 pad3d: bad frames"); return 0; }
+    if (!sv2_check_f32(gpu, input, (size_t)frames * plane, @"sv2 pad3d input") ||
+        (previous && !sv2_check_f32(gpu, previous, (size_t)prev_frames * plane, @"sv2 pad3d previous")) ||
+        !sv2_check_f32(gpu, output, (size_t)(front + frames) * out_h * out_w * channels, @"sv2 pad3d output")) return 0;
+    sv2_pad3d_args args = {frames, height, width, channels, front, previous ? prev_frames : 0, previous != NULL,
+                           top, bottom, left, right};
+    const h3_gpu_tensor *prev = previous ? previous : input;
+    return h3_gpu_dispatch_3d(gpu, @"h3_sv2_pad3d_f32", MTLSizeMake(channels, out_w, (size_t)out_h * (front + frames)),
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(prev).buffer offset:0 atIndex:1];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:2];
+            [encoder setBytes:&args length:sizeof(args) atIndex:3];
         });
 }
 
@@ -7715,8 +7752,8 @@ int h3_gpu_sv2_lab_match_to_rgb_f32(h3_gpu *opaque, h3_gpu_tensor *output, const
 /* --- SeedVR2 VAE grid kernels --- */
 
 typedef struct { uint32_t height, width, channels, padded, groups, guard, chunks, chunk_pixels, silu; float epsilon; } sv2_ggn_args;
-typedef struct { uint32_t height, width, channels, padded, in_padded, temporal, guard, in_guard; } sv2_gshuffle_args;
-typedef struct { uint32_t height, width, padded, guard, in_width, in_guard, phase_y, phase_x; } sv2_gselect_args;
+typedef struct { uint32_t height, width, channels, padded, in_padded, temporal, guard, in_guard, out_frames, drop_head; } sv2_gshuffle_args;
+typedef struct { uint32_t height, width, padded, guard, in_width, in_guard, phase_y, phase_x, frames, in_height, stride_t, phase_t; } sv2_gselect_args;
 
 int h3_gpu_sv2_grid_group_norm_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_gpu_tensor *input,
                                     const h3_gpu_tensor *weight, const h3_gpu_tensor *bias,
@@ -7786,16 +7823,26 @@ int h3_gpu_sv2_grid_shuffle_bf16(h3_gpu *opaque, h3_gpu_tensor *output, uint32_t
                                  uint32_t out_guard, const h3_gpu_tensor *input, uint32_t in_height,
                                  uint32_t in_width, uint32_t in_padded, uint32_t in_guard,
                                  uint32_t channels, uint32_t temporal) {
+    return h3_gpu_sv2_grid_shuffle3d_bf16(opaque, output, out_padded, out_guard, input, 1, in_height, in_width,
+                                          in_padded, in_guard, channels, temporal, 1);
+}
+
+int h3_gpu_sv2_grid_shuffle3d_bf16(h3_gpu *opaque, h3_gpu_tensor *output, uint32_t out_padded,
+                                   uint32_t out_guard, const h3_gpu_tensor *input, uint32_t in_frames,
+                                   uint32_t in_height, uint32_t in_width, uint32_t in_padded,
+                                   uint32_t in_guard, uint32_t channels, uint32_t temporal, int drop_head) {
     H3GPU *gpu = GPU(opaque);
-    if (channels > out_padded || channels * 4 * temporal > in_padded) {
-        h3_gpu_set_error(gpu, @"sv2 grid shuffle: bad channels");
+    if (!in_frames || !temporal || channels > out_padded || channels * 4 * temporal > in_padded) {
+        h3_gpu_set_error(gpu, @"sv2 grid shuffle: bad channels or frames");
         return 0;
     }
+    uint32_t out_frames = h3_gpu_sv2_shuffle_frames(in_frames, temporal, drop_head);
     uint32_t hp = 2 * in_height + 2, wp = 2 * in_width + 2;
-    if (!h3_gpu_require_bf16(gpu, input, ((size_t)in_guard + (size_t)(in_height + 2) * (in_width + 2)) * in_padded, @"sv2 grid shuffle input") ||
-        !h3_gpu_require_bf16(gpu, output, ((size_t)out_guard + (size_t)hp * wp) * out_padded, @"sv2 grid shuffle output")) return 0;
-    sv2_gshuffle_args args = {in_height, in_width, channels, out_padded, in_padded, temporal, out_guard, in_guard};
-    return h3_gpu_dispatch_3d(gpu, @"h3_sv2_grid_shuffle_bf16", MTLSizeMake(out_padded, wp, hp),
+    if (!h3_gpu_require_bf16(gpu, input, ((size_t)in_guard + (size_t)in_frames * (in_height + 2) * (in_width + 2)) * in_padded, @"sv2 grid shuffle input") ||
+        !h3_gpu_require_bf16(gpu, output, ((size_t)out_guard + (size_t)out_frames * hp * wp) * out_padded, @"sv2 grid shuffle output")) return 0;
+    sv2_gshuffle_args args = {in_height, in_width, channels, out_padded, in_padded, temporal, out_guard, in_guard,
+                              out_frames, drop_head != 0};
+    return h3_gpu_dispatch_3d(gpu, @"h3_sv2_grid_shuffle_bf16", MTLSizeMake(out_padded, wp, (size_t)hp * out_frames),
         ^(id<MTLComputeCommandEncoder> encoder) {
             [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
             [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
@@ -7807,16 +7854,27 @@ int h3_gpu_sv2_grid_select_bf16(h3_gpu *opaque, h3_gpu_tensor *output, uint32_t 
                                 uint32_t out_width, uint32_t out_guard, const h3_gpu_tensor *input,
                                 uint32_t in_height, uint32_t in_width, uint32_t in_guard,
                                 uint32_t padded, uint32_t phase_y, uint32_t phase_x) {
+    return h3_gpu_sv2_grid_select3d_bf16(opaque, output, 1, out_height, out_width, out_guard, input, 1,
+                                         in_height, in_width, in_guard, padded, 1, 0, phase_y, phase_x);
+}
+
+int h3_gpu_sv2_grid_select3d_bf16(h3_gpu *opaque, h3_gpu_tensor *output, uint32_t out_frames,
+                                  uint32_t out_height, uint32_t out_width, uint32_t out_guard,
+                                  const h3_gpu_tensor *input, uint32_t in_frames, uint32_t in_height,
+                                  uint32_t in_width, uint32_t in_guard, uint32_t padded,
+                                  uint32_t stride_t, uint32_t phase_t, uint32_t phase_y, uint32_t phase_x) {
     H3GPU *gpu = GPU(opaque);
-    if (2 * (out_height - 1) + phase_y >= in_height || 2 * (out_width - 1) + phase_x >= in_width) {
+    if (!out_frames || !stride_t || (out_frames - 1) * stride_t + phase_t >= in_frames ||
+        2 * (out_height - 1) + phase_y >= in_height || 2 * (out_width - 1) + phase_x >= in_width) {
         h3_gpu_set_error(gpu, @"sv2 grid select: the output reads outside the input");
         return 0;
     }
     uint32_t hp = out_height + 2, wp = out_width + 2;
-    if (!h3_gpu_require_bf16(gpu, input, ((size_t)in_guard + (size_t)(in_height + 2) * (in_width + 2)) * padded, @"sv2 grid select input") ||
-        !h3_gpu_require_bf16(gpu, output, ((size_t)out_guard + (size_t)hp * wp) * padded, @"sv2 grid select output")) return 0;
-    sv2_gselect_args args = {out_height, out_width, padded, out_guard, in_width, in_guard, phase_y, phase_x};
-    return h3_gpu_dispatch_3d(gpu, @"h3_sv2_grid_select_bf16", MTLSizeMake(padded, wp, hp),
+    if (!h3_gpu_require_bf16(gpu, input, ((size_t)in_guard + (size_t)in_frames * (in_height + 2) * (in_width + 2)) * padded, @"sv2 grid select input") ||
+        !h3_gpu_require_bf16(gpu, output, ((size_t)out_guard + (size_t)out_frames * hp * wp) * padded, @"sv2 grid select output")) return 0;
+    sv2_gselect_args args = {out_height, out_width, padded, out_guard, in_width, in_guard, phase_y, phase_x,
+                             out_frames, in_height, stride_t, phase_t};
+    return h3_gpu_dispatch_3d(gpu, @"h3_sv2_grid_select_bf16", MTLSizeMake(padded, wp, (size_t)hp * out_frames),
         ^(id<MTLComputeCommandEncoder> encoder) {
             [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
             [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];

@@ -113,6 +113,22 @@ int h3_seedvr2_debug_decode(h3_seedvr2 *model, const float *latent /* [16, h, w]
 int h3_seedvr2_debug_windows(int tokens_w, int tokens_h, int shifted, int *windows, int capacity);
 int h3_seedvr2_debug_color(h3_seedvr2 *model, const float *content, const float *style,
                            int width, int height, float *out, char *error, size_t error_size);
+/* The temporal (video) VAE on host F32 tensors in the reference's
+ * [C, T, H, W] layout. The VAE weights switch to their temporal form (the
+ * still-image entry points switch them back). split 0 runs the whole clip
+ * at once, > 0 the reference's causal slicing (encode 1 + split frames,
+ * then split; decode 1 + split/4 latent frames, then split/4) with the
+ * state carried, for the final output only. Encoder stages as
+ * h3_seedvr2_debug_encode_stage (6 or more: the 32 channels, unscaled);
+ * decoder stages 0 conv_in, 1 mid block, 2..5 up block 0..3, 6 or more RGB.
+ * The latent in is scaled (mean * 0.9152). */
+int h3_seedvr2_debug_encode_video(h3_seedvr2 *model, const float *rgb, int frames, int width, int height,
+                                  int split, int stage, float *out, int *out_frames, int *out_w,
+                                  int *out_h, int *out_c, size_t capacity, char *error, size_t error_size);
+int h3_seedvr2_debug_decode_video(h3_seedvr2 *model, const float *latent, int latent_frames,
+                                  int latent_w, int latent_h, int split, int stage, float *out,
+                                  int *out_frames, int *out_w, int *out_h, int *out_c, size_t capacity,
+                                  char *error, size_t error_size);
 
 #ifdef __cplusplus
 }

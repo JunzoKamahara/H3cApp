@@ -5835,7 +5835,7 @@ struct vsr_tapconv_args {
     uint x_rows;      /* physical rows of each input and of the output */
     uint guard;       /* leading guard rows */
     uint in_ch, out_ch, taps, inputs, relu, has_bias, has_residual;
-    int offsets[9];
+    int offsets[27];  /* 3x3 spatial, or 3x3x3 with the temporal taps a frame apart */
 };
 
 /* Metal 4 tensor API: compiled only with H3_METAL_HAS_TENSOR, like the other
@@ -6301,23 +6301,67 @@ kernel void h3_sv2_pad_f32(device const float *input [[buffer(0)]],
     output[((size_t)oy * out_w + ox) * args.channels + c] = v;
 }
 
-struct sv2_shuffle_args { uint height, width, channels, temporal; };
+struct sv2_shuffle_args { uint height, width, channels, temporal, frames, out_frames, drop_head; };
 
-/* SeedVR2's Upsample3D on one frame: in [H, W, C * 4 * temporal] ->
- * out [2H, 2W, C]; out[2y+sh, 2x+sw, c] = in[y, x, ((sh*2+sw)*temporal)*C + c]
- * (the reshape (sf, sf, tf, C) with the first temporal slice kept).
- * Grid (C, 2W, 2H). */
+/* Output frame o of SeedVR2's temporal upsample: frame f*tf + z of the full
+ * rearrange, or past the dropped frame 1 when drop_head (remove_head on a
+ * clip's first slice) and tf > 1. */
+static inline uint sv2_shuffle_source(uint o, uint temporal, uint drop_head) {
+    return (drop_head && temporal > 1 && o > 0) ? o + 1 : o;
+}
+
+/* SeedVR2's Upsample3D: in [T, H, W, C * 4 * tf] -> out [T', 2H, 2W, C]
+ * with the rearrange b (x y z c) f h w -> b c (f z) (h x) (w y):
+ * out[f*tf+z, 2y+sh, 2x+sw, c] = in[f, y, x, ((sh*2+sw)*tf + z)*C + c],
+ * T' = tf*T, or tf*T - 1 without frame 1 when drop_head (T = 1 keeps the
+ * first temporal slice only). Grid (C, 2W, 2H * T'). */
 kernel void h3_sv2_shuffle_f32(device const float *input [[buffer(0)]],
                                device float *output [[buffer(1)]],
                                constant sv2_shuffle_args &args [[buffer(2)]],
                                uint3 gid [[thread_position_in_grid]]) {
-    uint c = gid.x, ox = gid.y, oy = gid.z;
-    if (c >= args.channels || ox >= 2 * args.width || oy >= 2 * args.height) return;
+    uint c = gid.x, ox = gid.y, oz = gid.z, oh = 2 * args.height;
+    if (c >= args.channels || ox >= 2 * args.width || oz >= oh * args.out_frames) return;
+    uint o = oz / oh, oy = oz - o * oh;
+    uint full = sv2_shuffle_source(o, args.temporal, args.drop_head);
+    uint f = full / args.temporal, z = full % args.temporal;
     uint x = ox / 2, sw = ox % 2, y = oy / 2, sh = oy % 2;
     uint in_channels = args.channels * 4 * args.temporal;
-    uint channel = ((sh * 2 + sw) * args.temporal) * args.channels + c;
-    output[((size_t)oy * 2 * args.width + ox) * args.channels + c] =
-        input[((size_t)y * args.width + x) * in_channels + channel];
+    uint channel = ((sh * 2 + sw) * args.temporal + z) * args.channels + c;
+    output[(((size_t)o * oh + oy) * 2 * args.width + ox) * args.channels + c] =
+        input[(((size_t)f * args.height + y) * args.width + x) * in_channels + channel];
+}
+
+struct sv2_pad3d_args {
+    uint frames, height, width, channels;
+    uint front, prev_frames, has_previous;
+    uint top, bottom, left, right;
+};
+
+/* The causal convolution's input: `front` frames, then the clip [T, H, W, C]
+ * zero-padded in space by (top, bottom, left, right). The front frames are
+ * the last `front` of `previous` ([prev_frames, H, W, C], the state of the
+ * clip's previous slice) or, without it, copies of frame 0 (extend_head).
+ * Grid (C, out_w, out_h * (front + T)). */
+kernel void h3_sv2_pad3d_f32(device const float *input [[buffer(0)]],
+                             device const float *previous [[buffer(1)]],
+                             device float *output [[buffer(2)]],
+                             constant sv2_pad3d_args &args [[buffer(3)]],
+                             uint3 gid [[thread_position_in_grid]]) {
+    uint c = gid.x, ox = gid.y, oz = gid.z;
+    uint out_w = args.width + args.left + args.right;
+    uint out_h = args.height + args.top + args.bottom;
+    if (c >= args.channels || ox >= out_w || oz >= out_h * (args.front + args.frames)) return;
+    uint t = oz / out_h, oy = oz - t * out_h;
+    int x = int(ox) - int(args.left), y = int(oy) - int(args.top);
+    float v = 0.0f;
+    if (x >= 0 && y >= 0 && x < int(args.width) && y < int(args.height)) {
+        size_t pixel = ((size_t)y * args.width + x) * args.channels + c;
+        size_t plane = (size_t)args.height * args.width * args.channels;
+        if (t >= args.front) v = input[(size_t)(t - args.front) * plane + pixel];
+        else if (args.has_previous) v = previous[(size_t)(args.prev_frames - args.front + t) * plane + pixel];
+        else v = input[pixel];
+    }
+    output[(((size_t)t * out_h + oy) * out_w + ox) * args.channels + c] = v;
 }
 
 /* GroupNorm without the SiLU (the VAE's attention input): the one-pass
@@ -6681,49 +6725,61 @@ struct sv2_gshuffle_args {
     uint height, width;          /* the input grid's interior */
     uint channels, padded;       /* output channels C and its padding */
     uint in_padded, temporal, guard, in_guard;
+    uint out_frames, drop_head;
 };
 
-/* The Upsample3D on the grid: in [h, w, C*4*tf] -> out [2h, 2w, C],
- * out(2y+sh, 2x+sw, c) = in(y, x, ((sh*2+sw)*tf)*C + c) (temporal slice 0).
- * Grid (padded, 2w+2, 2h+2); borders and padded channels zero. */
+/* The Upsample3D on the grid (h3_sv2_shuffle_f32's frame rule): in
+ * [T, h, w, C*4*tf] -> out [T', 2h, 2w, C], out(f*tf+z, 2y+sh, 2x+sw, c) =
+ * in(f, y, x, ((sh*2+sw)*tf + z)*C + c). Frames follow each other from the
+ * guard. Grid (padded, 2w+2, (2h+2) * T'); borders and padded channels zero. */
 kernel void h3_sv2_grid_shuffle_bf16(device const ushort *input [[buffer(0)]],
                                      device ushort *output [[buffer(1)]],
                                      constant sv2_gshuffle_args &args [[buffer(2)]],
                                      uint3 gid [[thread_position_in_grid]]) {
-    uint c = gid.x, x = gid.y, y = gid.z;
+    uint c = gid.x, x = gid.y, gz = gid.z;
     uint oh = 2 * args.height, ow = 2 * args.width;
     uint hp = oh + 2, wp = ow + 2;
-    if (c >= args.padded || x >= wp || y >= hp) return;
+    if (c >= args.padded || x >= wp || gz >= hp * args.out_frames) return;
+    uint o = gz / hp, y = gz - o * hp;
     ushort v = 0;
     if (c < args.channels && y >= 1 && y <= oh && x >= 1 && x <= ow) {
+        uint full = sv2_shuffle_source(o, args.temporal, args.drop_head);
+        uint f = full / args.temporal, z = full % args.temporal;
         uint iy = (y - 1) / 2, sh = (y - 1) % 2, ix = (x - 1) / 2, sw = (x - 1) % 2;
-        uint channel = ((sh * 2 + sw) * args.temporal) * args.channels + c;
-        size_t row = (size_t)args.in_guard + (size_t)(iy + 1) * (args.width + 2) + ix + 1;
+        uint channel = ((sh * 2 + sw) * args.temporal + z) * args.channels + c;
+        size_t row = (size_t)args.in_guard + (size_t)f * (args.height + 2) * (args.width + 2) +
+                     (size_t)(iy + 1) * (args.width + 2) + ix + 1;
         v = input[row * args.in_padded + channel];
     }
-    output[((size_t)args.guard + (size_t)y * wp + x) * args.padded + c] = v;
+    output[((size_t)args.guard + (size_t)o * hp * wp + (size_t)y * wp + x) * args.padded + c] = v;
 }
 
 struct sv2_gselect_args {
     uint height, width;          /* the output grid's interior */
     uint padded, guard, in_width, in_guard, phase_y, phase_x;
+    uint frames, in_height, stride_t, phase_t;
 };
 
-/* out(y, x) = in(2y + phase_y, 2x + phase_x) over interior coordinates: the
- * stride-2 convolution's output from the stride-1 one (PyTorch's padding
- * (0, 1) means the odd phase). Same channels. Grid (padded, w+2, h+2). */
+/* out(t, y, x) = in(t*stride_t + phase_t, 2y + phase_y, 2x + phase_x) over
+ * interior coordinates: the stride-2 convolution's output from the stride-1
+ * one (PyTorch's padding (0, 1) means the odd phase; in time, the frames
+ * whose window starts on the stride). Same channels. Grid (padded, w+2,
+ * (h+2) * frames). */
 kernel void h3_sv2_grid_select_bf16(device const ushort *input [[buffer(0)]],
                                     device ushort *output [[buffer(1)]],
                                     constant sv2_gselect_args &args [[buffer(2)]],
                                     uint3 gid [[thread_position_in_grid]]) {
-    uint c = gid.x, x = gid.y, y = gid.z;
+    uint c = gid.x, x = gid.y, gz = gid.z;
     uint hp = args.height + 2, wp = args.width + 2;
-    if (c >= args.padded || x >= wp || y >= hp) return;
+    if (c >= args.padded || x >= wp || gz >= hp * args.frames) return;
+    uint t = gz / hp, y = gz - t * hp;
     ushort v = 0;
     if (y >= 1 && y <= args.height && x >= 1 && x <= args.width) {
+        uint it = t * args.stride_t + args.phase_t;
         uint iy = 2 * (y - 1) + args.phase_y, ix = 2 * (x - 1) + args.phase_x;
-        size_t row = (size_t)args.in_guard + (size_t)(iy + 1) * (args.in_width + 2) + ix + 1;
+        size_t row = (size_t)args.in_guard + (size_t)it * (args.in_height + 2) * (args.in_width + 2) +
+                     (size_t)(iy + 1) * (args.in_width + 2) + ix + 1;
         v = input[row * args.padded + c];
     }
-    output[((size_t)args.guard + (size_t)y * wp + x) * args.padded + c] = v;
+    output[((size_t)args.guard + (size_t)t * hp * wp + (size_t)y * wp + x) * args.padded + c] = v;
 }

@@ -140,9 +140,11 @@ typedef struct {
 } sv2_block;
 
 typedef struct {
-    h3_gpu_tensor *w;      /* F32 [out, in, kh, kw] (OIHW); NULL on the TensorOps path */
+    h3_gpu_tensor *w;      /* F32 [out, in, kt, kh, kw] (OIDHW; kt = 1: OIHW); NULL on the TensorOps path */
     h3_gpu_tensor *b;      /* F32 [out] */
     int in, out, kernel;
+    int kt;                /* temporal taps as loaded: 1 (folded, or 1x1x1 / 1x3x3) or 3 */
+    int slot;              /* index of the causal state (sv2_causal.mem) */
     /* TensorOps path: tap-major BF16 [taps * out_p, in_p] on channels padded
      * to 64, and the bias padded to out_p (h3_gpu_vsr_tapconv_bf16) */
     h3_gpu_tensor *nw, *nb;
@@ -193,6 +195,8 @@ struct h3_seedvr2 {
     h3_seedvr2_open_params params;
     char model_dir[1024];
     int nax_vae;                       /* the VAE on the TensorOps grid (M5) */
+    int vae_temporal;                  /* VAE weights with their temporal taps (video) or folded (image) */
+    int conv_slots;                    /* causal convolutions numbered at load */
     int int8_dit;                      /* the transformer's linears per-row int8 (M5) */
     /* transformer */
     sv2_linear vid_in, vid_out;
@@ -214,7 +218,21 @@ struct h3_seedvr2 {
 #define GPU_OP(call) do { if (!(call)) { fail(error, error_size, "SeedVR2 VAE: %s", h3_gpu_error(m->gpu)); return 0; } } while (0)
 
 /* VAE activation: F32 channels-last [h, w, c]. */
-typedef struct { h3_gpu_tensor *t; int h, w, c; } act;
+typedef struct { h3_gpu_tensor *t; int h, w, c, f; } act;   /* F32 [f, h, w, c]; f 0 means 1 */
+static inline int act_frames(const act *a) { return a->f > 0 ? a->f : 1; }
+
+/* The causal state of a clip processed in temporal slices (the reference's
+ * MemoryState): DISABLED is the whole clip at once (the head extended by
+ * copies of frame 0), INIT the first slice (the same, keeping each causal
+ * convolution's last kt - stride input frames), ACTIVE a later slice (those
+ * frames in place of the copies; the temporal upsample keeps frame 1). */
+enum { SV2_CAUSAL_DISABLED = 0, SV2_CAUSAL_INIT = 1, SV2_CAUSAL_ACTIVE = 2 };
+#define SV2_MAX_CONVS 96
+typedef struct {
+    int mode;
+    h3_gpu_tensor *mem[SV2_MAX_CONVS];  /* F32 [k, h, w, c] or grid rows of k frames (BF16) */
+    int mem_frames[SV2_MAX_CONVS];
+} sv2_causal;
 
 /* h3_seedvr2.c */
 float *sv2_read_f16_as_f32(const h3_st_header *h, const char *name, uint64_t expected,
@@ -236,5 +254,22 @@ int sv2_vae_encode_stage(h3_seedvr2 *m, const act *rgb, act *out, int stop, char
 int sv2_vae_encode(h3_seedvr2 *m, const act *rgb, act *out, char *error, size_t error_size);
 /* latent [h, w, 16] (already divided by the scaling factor) -> RGB [8h, 8w, 3]. */
 int sv2_vae_decode(h3_seedvr2 *m, const act *z, act *out, char *error, size_t error_size);
+
+/* Temporal VAE (video): the weights must be in temporal form
+ * (sv2_vae_set_temporal). ctx carries the mode and the per-convolution
+ * state across slices; *_stage stops early (encoder as above; decoder 0
+ * after conv_in, 1 after the mid block, 2..5 after up block i-2, 6 or more
+ * the RGB frames). */
+int sv2_vae_set_temporal(h3_seedvr2 *m, int temporal, char *error, size_t error_size);
+void sv2_causal_reset(sv2_causal *ctx);
+int sv2_vae_encode_clip(h3_seedvr2 *m, const act *rgb, act *out, int stop, sv2_causal *ctx,
+                        char *error, size_t error_size);
+int sv2_vae_decode_clip(h3_seedvr2 *m, const act *z, act *out, int stop, sv2_causal *ctx,
+                        char *error, size_t error_size);
+/* The whole clip in slices of `split` frames after the first 1 + split
+ * (encode), or of max(1, split / 4) latent frames after the first 1 + that
+ * (decode), the state carried; split 0 (or a clip that short) is one pass. */
+int sv2_vae_encode_video(h3_seedvr2 *m, const act *rgb, act *out, int split, char *error, size_t error_size);
+int sv2_vae_decode_video(h3_seedvr2 *m, const act *z, act *out, int split, char *error, size_t error_size);
 
 #endif

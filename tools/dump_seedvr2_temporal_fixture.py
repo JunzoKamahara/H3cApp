@@ -66,6 +66,8 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--no-dit", action="store_true")
+    parser.add_argument("--no-stages", action="store_true",
+                        help="skip the per-stage tensors (large clips: only the latents and decodes)")
     args = parser.parse_args()
     torch.set_grad_enabled(False)
     torch.manual_seed(args.seed)
@@ -86,6 +88,8 @@ def main():
 
     def hook(name):
         def f(_module, _inputs, output):
+            if args.no_stages and name != "block0_vid":
+                return
             captured[name] = (output[0] if isinstance(output, (tuple, list)) else output).detach().clone()
         return f
     hooks = [vae.encoder.conv_in.register_forward_hook(hook("enc_conv_in"))]

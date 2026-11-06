@@ -1224,6 +1224,7 @@ h3_seedvr2_session *h3_seedvr2_session_open(h3_seedvr2 *m, int in_w, int in_h, i
                                             char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
     if (!m || in_w < 1 || in_h < 1 || out_w < 16 || out_h < 16) { fail(error, error_size, "SeedVR2: bad sizes"); return NULL; }
+    if (!sv2_vae_set_temporal(m, 0, error, error_size)) return NULL;   /* still images: folded taps */
     h3_seedvr2_session *s = calloc(1, sizeof(*s));
     if (!s) return NULL;
     s->m = m;
@@ -1323,7 +1324,7 @@ static int restore_frame(h3_seedvr2_session *s, const h3_gpu_tensor *rgb_in, h3_
     /* encode */
     if (!cond_override) {
         if (on_progress && on_progress("vsr encode", 0, 1, opaque)) { fail(error, error_size, "vsr cancelled"); return 0; }
-        act in = {(h3_gpu_tensor *)rgb_in, s->full_h, s->full_w, 3}, enc;
+        act in = {(h3_gpu_tensor *)rgb_in, s->full_h, s->full_w, 3, 1}, enc;
         if (!h3_gpu_begin(m->gpu)) { fail(error, error_size, "SeedVR2: %s", h3_gpu_error(m->gpu)); return 0; }
         if (!sv2_vae_encode(m, &in, &enc, error, error_size)) { h3_gpu_submit(m->gpu); return 0; }
         if (!h3_gpu_submit(m->gpu)) { sv2_act_free(m, &enc); fail(error, error_size, "SeedVR2 encode: %s", h3_gpu_error(m->gpu)); return 0; }
@@ -1368,7 +1369,7 @@ static int restore_frame(h3_seedvr2_session *s, const h3_gpu_tensor *rgb_in, h3_
             }
     /* decode */
     if (on_progress && on_progress("vsr decode", 0, 1, opaque)) { free(z); fail(error, error_size, "vsr cancelled"); return 0; }
-    act zt = {h3_gpu_tensor_from_f32(m->gpu, z, (size_t)lw * lh * SV2_LATENT), lh, lw, SV2_LATENT}, dec;
+    act zt = {h3_gpu_tensor_from_f32(m->gpu, z, (size_t)lw * lh * SV2_LATENT), lh, lw, SV2_LATENT, 1}, dec;
     free(z);
     if (!zt.t) { fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
     if (!h3_gpu_begin(m->gpu)) { h3_gpu_tensor_free(zt.t); fail(error, error_size, "SeedVR2: %s", h3_gpu_error(m->gpu)); return 0; }
@@ -1475,7 +1476,8 @@ int h3_seedvr2_debug_encode(h3_seedvr2 *m, const float *rgb, int width, int heig
                             char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
     if (width % 16 || height % 16) { fail(error, error_size, "SeedVR2: sides must be multiples of 16"); return 0; }
-    act in = {upload_chw(m->gpu, rgb, 3, width, height), height, width, 3}, enc;
+    if (!sv2_vae_set_temporal(m, 0, error, error_size)) return 0;
+    act in = {upload_chw(m->gpu, rgb, 3, width, height), height, width, 3, 1}, enc;
     if (!in.t) { fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
     int ok = h3_gpu_begin(m->gpu) && sv2_vae_encode(m, &in, &enc, error, error_size);
     if (!ok) { h3_gpu_submit(m->gpu); h3_gpu_tensor_free(in.t); return 0; }
@@ -1515,11 +1517,12 @@ int h3_seedvr2_debug_dit(h3_seedvr2 *m, const float *dit_in, int lw, int lh, flo
 int h3_seedvr2_debug_decode(h3_seedvr2 *m, const float *latent, int lw, int lh, float *rgb,
                             char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
+    if (!sv2_vae_set_temporal(m, 0, error, error_size)) return 0;
     size_t plane = (size_t)lw * lh;
     float *scaled = malloc(plane * SV2_LATENT * sizeof(float));
     if (!scaled) return 0;
     for (size_t i = 0; i < plane * SV2_LATENT; i++) scaled[i] = latent[i] / SV2_SCALING;
-    act z = {upload_chw(m->gpu, scaled, SV2_LATENT, lw, lh), lh, lw, SV2_LATENT}, dec;
+    act z = {upload_chw(m->gpu, scaled, SV2_LATENT, lw, lh), lh, lw, SV2_LATENT, 1}, dec;
     free(scaled);
     if (!z.t) { fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
     int ok = h3_gpu_begin(m->gpu) && sv2_vae_decode(m, &z, &dec, error, error_size);
@@ -1558,7 +1561,8 @@ int h3_seedvr2_debug_encode_stage(h3_seedvr2 *m, const float *rgb, int width, in
                                   float *out, int *out_w, int *out_h, int *out_c, size_t capacity,
                                   char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
-    act in = {upload_chw(m->gpu, rgb, 3, width, height), height, width, 3}, y;
+    if (!sv2_vae_set_temporal(m, 0, error, error_size)) return 0;
+    act in = {upload_chw(m->gpu, rgb, 3, width, height), height, width, 3, 1}, y;
     if (!in.t) { fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
     int ok = h3_gpu_begin(m->gpu) && sv2_vae_encode_stage(m, &in, &y, stage, error, error_size);
     if (!ok) { h3_gpu_submit(m->gpu); h3_gpu_tensor_free(in.t); return 0; }
@@ -1569,4 +1573,73 @@ int h3_seedvr2_debug_encode_stage(h3_seedvr2 *m, const float *rgb, int width, in
     else if (ok) { fail(error, error_size, "SeedVR2: stage output needs %d values", y.w * y.h * y.c); ok = 0; }
     sv2_act_free(m, &y);
     return ok;
+}
+
+/* ---- temporal VAE checks (tests/test_seedvr2_temporal.c) ---- */
+
+static int finish_video_debug(h3_seedvr2 *m, act *y, int channels, float *out, int *out_frames, int *out_w,
+                              int *out_h, int *out_c, size_t capacity, char *error, size_t error_size) {
+    int f = act_frames(y);
+    size_t n = (size_t)f * y->h * y->w * y->c;
+    if (y->c != channels && channels) { sv2_act_free(m, y); fail(error, error_size, "SeedVR2: %d channels, %d expected", y->c, channels); return 0; }
+    if (n > capacity) { sv2_act_free(m, y); fail(error, error_size, "SeedVR2: the output needs %zu values, room for %zu", n, capacity); return 0; }
+    int ok = download_chw(y->t, out, y->c, y->w, y->h * f);
+    if (out_frames) *out_frames = f;
+    if (out_w) *out_w = y->w;
+    if (out_h) *out_h = y->h;
+    if (out_c) *out_c = y->c;
+    sv2_act_free(m, y);
+    if (!ok) fail(error, error_size, "SeedVR2: cannot read the result");
+    return ok;
+}
+
+int h3_seedvr2_debug_encode_video(h3_seedvr2 *m, const float *rgb, int frames, int width, int height, int split,
+                                  int stage, float *out, int *out_frames, int *out_w, int *out_h, int *out_c,
+                                  size_t capacity, char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (width % 16 || height % 16 || frames < 1) { fail(error, error_size, "SeedVR2: sides must be multiples of 16"); return 0; }
+    if (split > 0 && stage < 6) { fail(error, error_size, "SeedVR2: stages are for the whole clip"); return 0; }
+    if (!sv2_vae_set_temporal(m, 1, error, error_size)) return 0;
+    act in = {upload_chw(m->gpu, rgb, 3, width, height * frames), height, width, 3, frames}, y = {0};
+    if (!in.t) { fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
+    int ok = h3_gpu_begin(m->gpu);
+    if (ok && split > 0) {
+        ok = sv2_vae_encode_video(m, &in, &y, split, error, error_size);
+    } else if (ok) {
+        sv2_causal *ctx = calloc(1, sizeof(*ctx));
+        ok = ctx && sv2_vae_encode_clip(m, &in, &y, stage, ctx, error, error_size);
+        if (ctx) { sv2_causal_reset(ctx); free(ctx); }
+    }
+    ok = h3_gpu_submit(m->gpu) && ok;
+    h3_gpu_tensor_free(in.t);
+    if (!ok) { if (y.t) sv2_act_free(m, &y); if (error && !error[0]) fail(error, error_size, "SeedVR2: %s", h3_gpu_error(m->gpu)); return 0; }
+    return finish_video_debug(m, &y, 0, out, out_frames, out_w, out_h, out_c, capacity, error, error_size);
+}
+
+int h3_seedvr2_debug_decode_video(h3_seedvr2 *m, const float *latent, int latent_frames, int lw, int lh, int split,
+                                  int stage, float *out, int *out_frames, int *out_w, int *out_h, int *out_c,
+                                  size_t capacity, char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (latent_frames < 1 || lw < 1 || lh < 1) { fail(error, error_size, "SeedVR2: bad latent shape"); return 0; }
+    if (split > 0 && stage < 6) { fail(error, error_size, "SeedVR2: stages are for the whole clip"); return 0; }
+    if (!sv2_vae_set_temporal(m, 1, error, error_size)) return 0;
+    size_t n = (size_t)SV2_LATENT * latent_frames * lw * lh;
+    float *scaled = malloc(n * sizeof(float));
+    if (!scaled) { fail(error, error_size, "SeedVR2: out of memory"); return 0; }
+    for (size_t i = 0; i < n; i++) scaled[i] = latent[i] / SV2_SCALING;
+    act z = {upload_chw(m->gpu, scaled, SV2_LATENT, lw, lh * latent_frames), lh, lw, SV2_LATENT, latent_frames}, y = {0};
+    free(scaled);
+    if (!z.t) { fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
+    int ok = h3_gpu_begin(m->gpu);
+    if (ok && split > 0) {
+        ok = sv2_vae_decode_video(m, &z, &y, split, error, error_size);
+    } else if (ok) {
+        sv2_causal *ctx = calloc(1, sizeof(*ctx));
+        ok = ctx && sv2_vae_decode_clip(m, &z, &y, stage, ctx, error, error_size);
+        if (ctx) { sv2_causal_reset(ctx); free(ctx); }
+    }
+    ok = h3_gpu_submit(m->gpu) && ok;
+    h3_gpu_tensor_free(z.t);
+    if (!ok) { if (y.t) sv2_act_free(m, &y); if (error && !error[0]) fail(error, error_size, "SeedVR2: %s", h3_gpu_error(m->gpu)); return 0; }
+    return finish_video_debug(m, &y, 0, out, out_frames, out_w, out_h, out_c, capacity, error, error_size);
 }
