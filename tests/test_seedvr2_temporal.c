@@ -129,23 +129,23 @@ static void test_noise(void) {
 
 /* The memory model against the measured points (within 5 %), and its shape. */
 static void test_memory_model(void) {
-    const uint64_t R = 7015000000ull;   /* the model's resident bytes */
+    const uint64_t R = 7015000000ull, DIT = 6668000000ull;   /* the model's resident bytes, its transformer blocks */
     struct { int nax, w, h, T, split; double measured_gb; } pts[] = {
-        {1, 1344, 768, 5, 0, 16.98}, {1, 896, 512, 5, 0, 11.56}, {1, 960, 544, 17, 4, 17.02}, {1, 896, 512, 17, 4, 15.84},
-        {0, 960, 544, 5, 0, 18.09}, {0, 896, 512, 5, 0, 16.84}, {0, 768, 432, 17, 4, 17.28}};
+        {1, 1344, 768, 5, 0, 9.89}, {1, 1344, 768, 17, 4, 16.72}, {1, 960, 544, 17, 4, 8.74},
+        {0, 960, 544, 5, 0, 11.21}, {0, 960, 544, 17, 4, 13.03}, {0, 768, 432, 17, 4, 8.64}};
     for (size_t i = 0; i < sizeof(pts) / sizeof(*pts); i++) {
-        double est = (double)sv2_video_peak_bytes(R, pts[i].nax, pts[i].w, pts[i].h, pts[i].T, pts[i].split) / 1e9;
+        double est = (double)sv2_video_peak_bytes(R, DIT, pts[i].nax, pts[i].w, pts[i].h, pts[i].T, pts[i].split, 1) / 1e9;
         double rel = fabs(est - pts[i].measured_gb) / pts[i].measured_gb;
         if (rel > 0.05) fprintf(stderr, "memory model: %dx%d T=%d split %d nax %d: %.2f GB, measured %.2f\n",
                                 pts[i].w, pts[i].h, pts[i].T, pts[i].split, pts[i].nax, est, pts[i].measured_gb);
         CHECK(rel <= 0.05);
     }
-    /* sliced memory does not grow with T; the whole window does */
-    CHECK(sv2_video_peak_bytes(R, 1, 1344, 768, 17, 4) == sv2_video_peak_bytes(R, 1, 1344, 768, 29, 4) ||
-          sv2_video_peak_bytes(R, 1, 1344, 768, 29, 4) - sv2_video_peak_bytes(R, 1, 1344, 768, 17, 4) < 2000000000ull);
-    CHECK(sv2_video_peak_bytes(R, 1, 1344, 768, 9, 0) > sv2_video_peak_bytes(R, 1, 1344, 768, 5, 0));
-    /* 17 frames at 1344x768 need more than a 24 GB Mac's working set (about 17.8 GiB) either way */
-    CHECK(sv2_video_peak_bytes(R, 1, 1344, 768, 17, 4) > 19100000000ull && sv2_video_peak_bytes(R, 1, 1344, 768, 17, 0) > 19100000000ull);
+    /* sliced memory does not grow with T; the whole window does; the transformer resident costs more */
+    CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 29, 4, 1) - sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 17, 4, 1) < 1000000000ull);
+    CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 9, 0, 1) > sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 5, 0, 1));
+    CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 5, 0, 0) > sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 5, 0, 1) + 6000000000ull);
+    /* 17 frames at 1344x768 fit a 24 GB Mac (working set about 17.8 GiB = 19.1 GB, the engine keeps 90 %) */
+    CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 17, 4, 1) < 17160000000ull);
     printf("ok: video memory model (%zu measured points)\n", sizeof(pts) / sizeof(*pts));
 }
 

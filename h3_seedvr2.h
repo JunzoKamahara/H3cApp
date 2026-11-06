@@ -157,7 +157,8 @@ int h3_seedvr2_debug_windows3(int frames, int tokens_w, int tokens_h, int shifte
  * [16, frames, h, w]: the same values for the same absolute frame whatever
  * the window; frame 0 equals a still image's noise for that seed. */
 /* The memory model behind h3_seedvr2_video_check_requirements (tests). */
-uint64_t sv2_video_peak_bytes(uint64_t resident_bytes, int nax_vae, int full_w, int full_h, int frames, int vae_split);
+uint64_t sv2_video_peak_bytes(uint64_t resident_bytes, uint64_t dit_bytes, int nax_vae, int full_w, int full_h,
+                              int frames, int vae_split, int unload_dit);
 int h3_seedvr2_debug_noise(uint64_t seed, int first_frame, int frames, int latent_w, int latent_h, float *out);
 int h3_seedvr2_debug_dit_video(h3_seedvr2 *model, const float *dit_in, int frames, int latent_w, int latent_h,
                                float *pred, int dump_block, char *error, size_t error_size);

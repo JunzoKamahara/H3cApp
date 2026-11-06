@@ -197,6 +197,8 @@ struct h3_seedvr2 {
     int nax_vae;                       /* the VAE on the TensorOps grid (M5) */
     int vae_temporal;                  /* VAE weights with their temporal taps (video) or folded (image) */
     int conv_slots;                    /* causal convolutions numbered at load */
+    int dit_loaded;                    /* the 32 transformer blocks are resident */
+    uint64_t dit_bytes;                /* what they take */
     int int8_dit;                      /* the transformer's linears per-row int8 (M5) */
     /* transformer */
     sv2_linear vid_in, vid_out;
@@ -254,6 +256,8 @@ typedef struct {
 
 /* h3_seedvr2.c */
 void sv2_pool_drain(h3_seedvr2 *m);
+void sv2_dit_unload(h3_seedvr2 *m);
+int sv2_dit_ensure(h3_seedvr2 *m, char *error, size_t error_size);   /* loads again when unloaded */
 int sv2_layout_build(h3_seedvr2 *m, sv2_layout *L, int tokens_w, int tokens_h, int tokens_t, int shifted,
                      char *error, size_t error_size);
 void sv2_layout_free(h3_seedvr2 *m, sv2_layout *L);

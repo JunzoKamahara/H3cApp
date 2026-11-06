@@ -86,6 +86,15 @@ latent / prediction / decode < 0.05, decode of the engine's own z < 0.1
 (the same limits as `tests/test_seedvr2.c` against mflux). Exact equalities
 (sliced vs whole in the engine itself) are tested separately.
 
+## Memory measurements of the clip pipeline
+
+`seedvr2_cli --video-frames` with `H3_SV2_TRACE=1` prints each phase's peak
+live GPU bytes; `/usr/bin/time -l` the process footprint. The table that
+`h3_seedvr2_video_check_requirements` is fitted to is in
+`h3_seedvr2_video.c` (M5, 24 GB, 2026-11-06). Run one configuration at a
+time and only ones the estimate allows: before the memory policy a
+17-frame 1344x768 clip reached 36 GiB and swapped.
+
 ## Regenerating
 
 **Run a dump on its own.** The CPU reference takes 15-20 GB (about 30 GB

@@ -582,6 +582,45 @@ void h3_seedvr2_close(h3_seedvr2 *m) {
     free(m);
 }
 
+static int load_blocks(h3_seedvr2 *m, const h3_st_header *h, const float *emb, h3_progress_callback on_progress,
+                       void *opaque, char *error, size_t error_size) {
+    for (int b = 0; b < SV2_LAYERS; b++) {
+        if (on_progress && on_progress("seedvr2 load", b, SV2_LAYERS + 4, opaque)) {
+            fail(error, error_size, "vsr cancelled");
+            return 0;
+        }
+        h3_gpu_begin(m->gpu);
+        if (!load_block(m, h, b, emb, error, error_size)) return 0;
+        if (!flush_loads(m, error, error_size)) return 0;
+    }
+    m->dit_loaded = 1;
+    return 1;
+}
+
+/* The 32 transformer blocks (6 GB) are not needed while the VAE runs: a
+ * clip frees them around its VAE phases and loads them again before the
+ * transformer (1.8 s on an M5). */
+void sv2_dit_unload(h3_seedvr2 *m) {
+    if (!m->dit_loaded) return;
+    for (int b = 0; b < SV2_LAYERS; b++) free_block(&m->blocks[b]);
+    m->dit_loaded = 0;
+}
+
+int sv2_dit_ensure(h3_seedvr2 *m, char *error, size_t error_size) {
+    if (m->dit_loaded) return 1;
+    if (h3_gpu_command_open(m->gpu) && !h3_gpu_submit(m->gpu)) { fail(error, error_size, "SeedVR2: %s", h3_gpu_error(m->gpu)); return 0; }
+    double mark = now_seconds();
+    sv2_files f;
+    if (!files_open(&f, m->model_dir, error, error_size)) return 0;
+    float *emb = compute_emb(&f.transformer, error, error_size);
+    int ok = emb && load_blocks(m, &f.transformer, emb, NULL, NULL, error, error_size);
+    free(emb);
+    files_close(&f);
+    if (!ok) for (int b = 0; b < SV2_LAYERS; b++) free_block(&m->blocks[b]);
+    trace(&mark, "transformer blocks (reload)");
+    return ok;
+}
+
 h3_seedvr2 *h3_seedvr2_open(const char *model_dir, const h3_seedvr2_open_params *params,
                             h3_progress_callback on_progress, void *opaque,
                             char *error, size_t error_size) {
@@ -651,14 +690,12 @@ h3_seedvr2 *h3_seedvr2_open(const char *model_dir, const h3_seedvr2_open_params 
         if (!flush_loads(m, error, error_size)) goto done;
     }
     trace(&mark, "txt_in / vid_in / out");
-    for (int b = 0; b < SV2_LAYERS; b++) {
-        if (on_progress && on_progress("seedvr2 load", b, SV2_LAYERS + 4, opaque)) {
-            fail(error, error_size, "vsr cancelled");
-            goto done;
-        }
-        h3_gpu_begin(m->gpu);
-        if (!load_block(m, &f.transformer, b, emb, error, error_size)) goto done;
-        if (!flush_loads(m, error, error_size)) goto done;
+    {
+        h3_gpu_stats before, after;
+        h3_gpu_get_stats(m->gpu, &before);
+        if (!load_blocks(m, &f.transformer, emb, on_progress, opaque, error, error_size)) goto done;
+        h3_gpu_get_stats(m->gpu, &after);
+        m->dit_bytes = after.live_bytes - before.live_bytes;
     }
     trace(&mark, "transformer blocks");
     if (on_progress && on_progress("seedvr2 load", SV2_LAYERS, SV2_LAYERS + 4, opaque)) {
@@ -901,6 +938,7 @@ int sv2_dit_forward(h3_seedvr2 *m, sv2_layout *layouts, const h3_gpu_tensor *tok
                        h3_gpu_tensor *pred, int dump_block,
                        h3_progress_callback on_progress, void *opaque,
                        const volatile int *cancel_requested, char *error, size_t error_size) {
+    if (!sv2_dit_ensure(m, error, error_size)) return 0;
     const uint32_t N = (uint32_t)layouts[0].N, D = SV2_DIM, T = SV2_TXT_TOKENS;
     /* The text stream's linears run on 128 rows (the last 70 zero) so the
      * TensorOps kernel takes them instead of an MPSGraph launch; the MLP is

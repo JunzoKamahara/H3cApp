@@ -14,8 +14,9 @@ static void trace_peak(h3_seedvr2 *m, double *mark, const char *label) {
     if (!trace_enabled()) return;
     h3_gpu_stats st;
     if (h3_gpu_get_stats(m->gpu, &st))
-        fprintf(stderr, "sv2 %-24s %8.1f ms  live %.2f GiB, peak %.2f GiB\n", label, (now_seconds() - *mark) * 1000.0,
-                (double)st.live_bytes / 1073741824.0, (double)st.peak_live_bytes / 1073741824.0);
+        fprintf(stderr, "sv2 %-24s %8.1f ms  live %.2f GiB, peak %.2f GiB (dit %.2f GiB, %s)\n", label, (now_seconds() - *mark) * 1000.0,
+                (double)st.live_bytes / 1073741824.0, (double)st.peak_live_bytes / 1073741824.0,
+                (double)m->dit_bytes / 1073741824.0, m->dit_loaded ? "loaded" : "unloaded");
     *mark = now_seconds();
 }
 
@@ -27,38 +28,43 @@ static int clip_progress(h3_progress_callback on_progress, void *opaque, const v
 }
 
 /* Peak live GPU memory of one window, from measurements on an M5 (24 GB,
- * 2026-11-06, the clip pipeline below with every large buffer freed as
- * soon as the GPU is done with it; peak live GiB -> GB):
+ * 2026-11-06; the clip pipeline below, every large buffer freed as soon as
+ * the GPU is done with it, the transformer's blocks freed around the VAE
+ * phases, blocks 2-3 of a sliced decode streamed frame by frame; peak live
+ * GiB -> GB, process footprint in brackets):
  *
- *   path  size      T  VAE     peak    base after load+encode
- *   grid  1344x768  5  whole   16.98   7.69    (footprint 19.3 GB)
- *   grid  896x512   5  whole   11.56   7.42
- *   grid  960x544  17  sliced  17.02   7.80    (footprint 18.5 GB)
- *   grid  896x512  17  sliced  15.84   7.73
- *   F32   960x544   5  whole   18.09   7.92    (footprint 19.6 GB)
- *   F32   896x512   5  whole   16.84   7.89
- *   F32   768x432  17  sliced  17.28   8.06    (footprint 19.0 GB)
+ *   path  size      T  VAE     peak            phase that sets it
+ *   grid  1344x768  5  whole    9.89 (12.6)    decode: block 3, T+2 frame slots
+ *   grid  1344x768 17  sliced  16.72 (18.2)    decode: every conv's state + one frame
+ *   grid  960x544  17  sliced   8.74 (12.9)
+ *   F32   960x544   5  whole   11.21 (12.8)
+ *   F32   960x544  17  sliced  13.03 (15.5)
+ *   F32   768x432  17  sliced   8.64 (13.1)
  *
- * The decoder's last block sets the peak: whole window, (T + 2) frame slots
- * at full resolution: 1.29 GB (grid) / 2.79 GB (F32) per slot and
- * megapixel; sliced, the causal state of every convolution plus one
- * slice's activations: 17.7 GB (grid) / 27.8 GB (F32) per megapixel,
- * whatever T. The whole window is cheaper up to T = 9 (grid) / T = 5
- * (F32). The first 1-frame runs (T=17 at 1344x768 before this policy) hit
- * 36 GiB and swapped: never run an unmeasured configuration without the
- * estimate. */
-static uint64_t video_peak_bytes(uint64_t resident, int nax_vae, int full_w, int full_h, int frames, int split) {
+ * Per megapixel of output: decode whole 1.29 (grid) / 2.9 (F32) GB per
+ * frame slot (T + 2), sliced 15.5 / 24 GB whatever T; encode whole 0.92 /
+ * 1.93 per slot, sliced 12 / 20. The transformer phase is the resident
+ * weights plus 113 KB per token. Before this policy a 17-frame 1344x768
+ * run reached 36 GiB and swapped: never run an unmeasured configuration
+ * without the estimate. */
+static uint64_t phase_max(uint64_t a, uint64_t b) { return a > b ? a : b; }
+
+static uint64_t video_peak_bytes(uint64_t resident, uint64_t dit_bytes, int nax_vae, int full_w, int full_h,
+                                 int frames, int split, int unload_dit) {
     double mp = (double)full_w * full_h / 1e6;
     int L = (frames - 1) / 4 + 1;
     double tokens = (double)L * (full_w / 16) * (full_h / 16);
-    double layouts = tokens * 41e3, dit = tokens * 72e3, rgb = 24e6 * frames * mp;
-    double act = split > 0 ? (nax_vae ? 17.7e9 : 27.8e9) * mp
-                           : (nax_vae ? 1.29e9 : 2.79e9) * (frames + 2) * mp;
-    return (uint64_t)((double)resident + 0.3e9 + layouts + rgb + (act > dit ? act : dit));
+    double rgb = 24e6 * frames * mp, common = 0.1e9 + rgb;
+    double vae_base = (unload_dit ? (double)(resident - (dit_bytes < resident ? dit_bytes : 0)) : (double)resident) + common;
+    double enc = split > 0 ? (nax_vae ? 12.0e9 : 20.0e9) * mp : (nax_vae ? 0.92e9 : 1.93e9) * (frames + 2) * mp;
+    double dec = split > 0 ? (nax_vae ? 15.5e9 : 24.0e9) * mp : (nax_vae ? 1.29e9 : 2.9e9) * (frames + 2) * mp;
+    double dit = (double)resident + common + tokens * 113e3;
+    return phase_max(phase_max((uint64_t)(vae_base + enc), (uint64_t)(vae_base + dec)), (uint64_t)dit);
 }
 
-uint64_t sv2_video_peak_bytes(uint64_t resident, int nax_vae, int full_w, int full_h, int frames, int split) {
-    return video_peak_bytes(resident, nax_vae, full_w, full_h, frames, split);
+uint64_t sv2_video_peak_bytes(uint64_t resident, uint64_t dit_bytes, int nax_vae, int full_w, int full_h,
+                              int frames, int vae_split, int unload_dit) {
+    return video_peak_bytes(resident, dit_bytes, nax_vae, full_w, full_h, frames, vae_split, unload_dit);
 }
 
 /* 90 % of the GPU's working set (the device's memory when it names none). */
@@ -85,8 +91,8 @@ int h3_seedvr2_video_check_requirements(const h3_seedvr2 *m, int in_w, int in_h,
     int full_w = round_up(out_w, SV2_PIXEL_MULTIPLE), full_h = round_up(out_h, SV2_PIXEL_MULTIPLE);
     out->latent_frames = (window_frames - 1) / 4 + 1;
     out->tokens = (full_w / 16) * (full_h / 16) * out->latent_frames;
-    uint64_t whole = video_peak_bytes(m->info.resident_bytes, m->nax_vae, full_w, full_h, window_frames, 0);
-    uint64_t sliced = video_peak_bytes(m->info.resident_bytes, m->nax_vae, full_w, full_h, window_frames, 4);
+    uint64_t whole = video_peak_bytes(m->info.resident_bytes, m->dit_bytes, m->nax_vae, full_w, full_h, window_frames, 0, 1);
+    uint64_t sliced = video_peak_bytes(m->info.resident_bytes, m->dit_bytes, m->nax_vae, full_w, full_h, window_frames, 4, 1);
     uint64_t budget = video_budget();
     /* the cheaper form that fits; both give the same output */
     int split = whole <= sliced ? 0 : 4;
@@ -123,8 +129,8 @@ int h3_seedvr2_restore_clip(h3_seedvr2 *m, const h3_vsr_image *in, int frames, i
     if (params) p = *params;
     int full_w = round_up(out_w, SV2_PIXEL_MULTIPLE), full_h = round_up(out_h, SV2_PIXEL_MULTIPLE);
     if (p.vae_split < 0) {   /* the cheaper form (the same output either way) */
-        uint64_t whole = video_peak_bytes(m->info.resident_bytes, m->nax_vae, full_w, full_h, frames, 0);
-        uint64_t sliced = video_peak_bytes(m->info.resident_bytes, m->nax_vae, full_w, full_h, frames, 4);
+        uint64_t whole = video_peak_bytes(m->info.resident_bytes, m->dit_bytes, m->nax_vae, full_w, full_h, frames, 0, 1);
+        uint64_t sliced = video_peak_bytes(m->info.resident_bytes, m->dit_bytes, m->nax_vae, full_w, full_h, frames, 4, 1);
         p.vae_split = whole <= sliced ? 0 : 4;
     }
     uint64_t seed = p.seed ? p.seed : m->params.seed;
@@ -142,6 +148,12 @@ int h3_seedvr2_restore_clip(h3_seedvr2 *m, const h3_vsr_image *in, int frames, i
     if (!sv2_vae_set_temporal(m, 1, error, error_size)) return 0;
     sv2_pool_drain(m);
     m->pool_bypass = 1;   /* exact live memory: clip_sync in the VAE makes the frees real */
+    /* the transformer's 6 GB are idle during the VAE: free them when the
+     * window would otherwise take more than 70 % of the GPU's memory */
+    uint64_t budget = video_budget();
+    int unload_dit = budget && video_peak_bytes(m->info.resident_bytes, m->dit_bytes, m->nax_vae, full_w, full_h, frames,
+                                                p.vae_split, 0) > budget * 7 / 10;
+    if (unload_dit) sv2_dit_unload(m);
     sv2_pool_drain(m);
 
     sv2_layout layouts[2];
@@ -156,8 +168,6 @@ int h3_seedvr2_restore_clip(h3_seedvr2 *m, const h3_vsr_image *in, int frames, i
     int ok = 0;
     double mark = now_seconds();
     if (!cond || !noise || !pred_host || !z || !enc_host || !tokens_host || !pred_bf16) CLIP_FAIL("SeedVR2 clip: out of memory");
-    if (!sv2_layout_build(m, &layouts[0], lw / 2, lh / 2, L, 0, error, error_size) ||
-        !sv2_layout_build(m, &layouts[1], lw / 2, lh / 2, L, 1, error, error_size)) goto done;
 
     /* resize every frame into F32 [T, full_h, full_w, 3] in [-1, 1] (black padding) */
     rgb_in = h3_gpu_tensor_new_f32(m->gpu, (size_t)frames * plane);
@@ -198,7 +208,10 @@ int h3_seedvr2_restore_clip(h3_seedvr2 *m, const h3_vsr_image *in, int frames, i
         trace_peak(m, &mark, "encode (clip)");
     }
 
-    /* transformer: one Euler step from t = 1 */
+    /* transformer: one Euler step from t = 1 (its blocks reload if they were freed) */
+    if (!sv2_dit_ensure(m, error, error_size)) goto done;
+    if (!sv2_layout_build(m, &layouts[0], lw / 2, lh / 2, L, 0, error, error_size) ||
+        !sv2_layout_build(m, &layouts[1], lw / 2, lh / 2, L, 1, error, error_size)) goto done;
     if (p.noise_override) memcpy(noise, p.noise_override, latent * sizeof(float));
     else if (!sv2_fill_noise_clip(noise, p.first_latent_frame, L, lw, lh, seed)) CLIP_FAIL("SeedVR2 clip: out of memory");
     sv2_pack_tokens(noise, cond, lw, lh, L, tokens_host);
@@ -216,10 +229,12 @@ int h3_seedvr2_restore_clip(h3_seedvr2 *m, const h3_vsr_image *in, int frames, i
                 size_t at = ((size_t)c * L + t) * lplane + i;
                 z[((size_t)t * lplane + i) * SV2_LATENT + c] = (noise[at] - pred_host[at]) / SV2_SCALING;
             }
+    sv2_layout_free(m, &layouts[0]); sv2_layout_free(m, &layouts[1]);   /* only the transformer needs them */
     sv2_pool_drain(m);
     trace_peak(m, &mark, "dit (clip)");
 
     /* decode (sliced): [L, lh, lw, 16] -> [T, H, W, 3] */
+    if (unload_dit) sv2_dit_unload(m);
     zt = (act){h3_gpu_tensor_from_f32(m->gpu, z, latent), lh, lw, SV2_LATENT, L};
     if (!zt.t) CLIP_FAIL("SeedVR2 clip: out of GPU memory");
     if (!h3_gpu_begin(m->gpu)) CLIP_FAIL("SeedVR2: %s", h3_gpu_error(m->gpu));
