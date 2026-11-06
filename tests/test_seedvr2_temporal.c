@@ -127,6 +127,28 @@ static void test_noise(void) {
     printf("ok: per-frame noise (mean %.3f, var %.3f)\n", mean, var);
 }
 
+/* The memory model against the measured points (within 5 %), and its shape. */
+static void test_memory_model(void) {
+    const uint64_t R = 7015000000ull;   /* the model's resident bytes */
+    struct { int nax, w, h, T, split; double measured_gb; } pts[] = {
+        {1, 1344, 768, 5, 0, 16.98}, {1, 896, 512, 5, 0, 11.56}, {1, 960, 544, 17, 4, 17.02}, {1, 896, 512, 17, 4, 15.84},
+        {0, 960, 544, 5, 0, 18.09}, {0, 896, 512, 5, 0, 16.84}, {0, 768, 432, 17, 4, 17.28}};
+    for (size_t i = 0; i < sizeof(pts) / sizeof(*pts); i++) {
+        double est = (double)sv2_video_peak_bytes(R, pts[i].nax, pts[i].w, pts[i].h, pts[i].T, pts[i].split) / 1e9;
+        double rel = fabs(est - pts[i].measured_gb) / pts[i].measured_gb;
+        if (rel > 0.05) fprintf(stderr, "memory model: %dx%d T=%d split %d nax %d: %.2f GB, measured %.2f\n",
+                                pts[i].w, pts[i].h, pts[i].T, pts[i].split, pts[i].nax, est, pts[i].measured_gb);
+        CHECK(rel <= 0.05);
+    }
+    /* sliced memory does not grow with T; the whole window does */
+    CHECK(sv2_video_peak_bytes(R, 1, 1344, 768, 17, 4) == sv2_video_peak_bytes(R, 1, 1344, 768, 29, 4) ||
+          sv2_video_peak_bytes(R, 1, 1344, 768, 29, 4) - sv2_video_peak_bytes(R, 1, 1344, 768, 17, 4) < 2000000000ull);
+    CHECK(sv2_video_peak_bytes(R, 1, 1344, 768, 9, 0) > sv2_video_peak_bytes(R, 1, 1344, 768, 5, 0));
+    /* 17 frames at 1344x768 need more than a 24 GB Mac's working set (about 17.8 GiB) either way */
+    CHECK(sv2_video_peak_bytes(R, 1, 1344, 768, 17, 4) > 19100000000ull && sv2_video_peak_bytes(R, 1, 1344, 768, 17, 0) > 19100000000ull);
+    printf("ok: video memory model (%zu measured points)\n", sizeof(pts) / sizeof(*pts));
+}
+
 static const char *model_dir(char *buf, size_t size) {
     const char *dir = getenv("H3_SEEDVR2_DIR");
     if (dir) return dir;
@@ -255,6 +277,7 @@ static void test_clip(h3_seedvr2 *m, const char *path) {
     CHECK(h3_seedvr2_debug_encode_video(m, x, T, W, H, 4, 99, enc_sliced, &of, &ow, &oh, &oc, 2 * lsize, error, sizeof(error)) ||
           (fprintf(stderr, "%s\n", error), 0));
     CHECK(of == L && oc == 32);
+    /* bit for bit on the grid; the F32 path keeps its causal state in BF16 (about 1e-4) */
     report("encode sliced = whole", compare(enc_sliced, enc, 2 * lsize, 1.0), 1e-3);
     float *mean_sliced_ref = load_tensor(&h, "enc_mean_sliced", lsize);
     report("encode sliced vs ref", compare(enc_sliced, mean_sliced_ref, lsize, 1.0), 0.05);
@@ -338,6 +361,7 @@ static void test_clip(h3_seedvr2 *m, const char *path) {
 int main(int argc, char **argv) {
     test_windows3();
     test_noise();
+    test_memory_model();
     char mbuf[1024], fbuf[1024], cfg[1200], path[1200];
     const char *dir = model_dir(mbuf, sizeof(mbuf));
     const char *fixtures = fixture_dir(fbuf, sizeof(fbuf));

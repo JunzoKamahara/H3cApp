@@ -459,6 +459,13 @@ h3_gpu_tensor *sv2_pool_take(h3_seedvr2 *m, size_t elements, int bf16) {
 
 void sv2_pool_give(h3_seedvr2 *m, h3_gpu_tensor *t) {
     if (!t) return;
+    if (m->pool_bypass && h3_gpu_tensor_elements(t) * (h3_gpu_tensor_dtype(t) == H3_GPU_BF16 ? 2 : 4) >= ((size_t)128 << 20)) {
+        /* a clip's large buffer: wait for the GPU so the memory is really
+         * released now, not when the command buffer completes */
+        if (h3_gpu_command_open(m->gpu)) { h3_gpu_submit(m->gpu); h3_gpu_begin(m->gpu); }
+        h3_gpu_tensor_free(t);
+        return;
+    }
     int bf16 = h3_gpu_tensor_dtype(t) == H3_GPU_BF16;
     size_t bytes = h3_gpu_tensor_elements(t) * (bf16 ? 2 : 4);
     if (m->pool_count < (int)(sizeof(m->pool) / sizeof(*m->pool))) {
@@ -471,7 +478,7 @@ void sv2_pool_give(h3_seedvr2 *m, h3_gpu_tensor *t) {
     }
 }
 
-static void pool_drain(h3_seedvr2 *m) {
+void sv2_pool_drain(h3_seedvr2 *m) {
     for (int i = 0; i < m->pool_count; i++) h3_gpu_tensor_free(m->pool[i].t);
     m->pool_count = 0;
 }
@@ -568,7 +575,7 @@ void h3_seedvr2_close(h3_seedvr2 *m) {
         for (int b = 0; b < SV2_LAYERS; b++) free_block(&m->blocks[b]);
         h3_gpu_tensor_free(m->out_scale); h3_gpu_tensor_free(m->out_shift);
         sv2_free_vae(m);
-        pool_drain(m);
+        sv2_pool_drain(m);
         for (int i = 0; i < m->deferred_count; i++) h3_gpu_tensor_free(m->deferred[i]);
         h3_gpu_free(m->gpu);
     }
@@ -688,21 +695,6 @@ int h3_seedvr2_get_stats(const h3_seedvr2 *m, double *gpu_seconds, uint64_t *pea
 /* ---------------------------------------------------------------- */
 /* Transformer: window layout and the 32-block forward on one frame */
 
-#define SV2_MAX_CLASSES 64
-
-typedef struct { int hs, he, ws, we, ts, te; } sv2_window;
-
-typedef struct {
-    int tokens_w, tokens_h, tokens_t, N;
-    int windows;                   /* W */
-    int rows;                      /* every window's video rows + text rows */
-    int classes;
-    struct { int first, count, length, row_offset; } cls[SV2_MAX_CLASSES];
-    h3_gpu_tensor *index[SV2_MAX_CLASSES], *cosine[SV2_MAX_CLASSES], *sine[SV2_MAX_CLASSES],
-                  *dest[SV2_MAX_CLASSES];
-    h3_gpu_tensor *q[SV2_MAX_CLASSES], *k[SV2_MAX_CLASSES], *v[SV2_MAX_CLASSES], *a[SV2_MAX_CLASSES];
-    h3_gpu_tensor *base;           /* U32 [W]: N + w * 58, the text rows' home in `att` */
-} sv2_layout;
 
 /* The reference's make_720Pwindows_bysize / make_shifted_720Pwindows_bysize
  * (models/dit_v2/window.py; mflux's _make_windows for one frame): window
@@ -771,7 +763,7 @@ static void rope_row(float *cosine, float *sine, int pos_t, int pos_h, int pos_w
     }
 }
 
-static void layout_free(h3_seedvr2 *m, sv2_layout *L) {
+void sv2_layout_free(h3_seedvr2 *m, sv2_layout *L) {
     (void)m;
     for (int c = 0; c < L->classes; c++) {
         h3_gpu_tensor_free(L->index[c]); h3_gpu_tensor_free(L->cosine[c]);
@@ -787,7 +779,7 @@ static void layout_free(h3_seedvr2 *m, sv2_layout *L) {
  * tokens (t-major rows): windows grouped by length, each window's video
  * rows (t, h, w order) with RoPE positions (58 + t, h, w) relative to the
  * window, then its 58 text rows at (j, j, j). */
-static int layout_build(h3_seedvr2 *m, sv2_layout *L, int tokens_w, int tokens_h, int tokens_t, int shifted,
+int sv2_layout_build(h3_seedvr2 *m, sv2_layout *L, int tokens_w, int tokens_h, int tokens_t, int shifted,
                         char *error, size_t error_size) {
     memset(L, 0, sizeof(*L));
     L->tokens_w = tokens_w; L->tokens_h = tokens_h; L->tokens_t = tokens_t;
@@ -905,7 +897,7 @@ static int run_lin(h3_seedvr2 *m, h3_gpu_tensor *out, const h3_gpu_tensor *in, c
 /* tokens BF16 [N, 132] -> pred BF16 [N, 64]; layouts[0] even blocks,
  * layouts[1] odd blocks. dump_block >= 0 writes that block's video rows
  * (F32, [N, 2560]) to the file named by H3_SV2_DUMP. */
-static int dit_forward(h3_seedvr2 *m, sv2_layout *layouts, const h3_gpu_tensor *tokens,
+int sv2_dit_forward(h3_seedvr2 *m, sv2_layout *layouts, const h3_gpu_tensor *tokens,
                        h3_gpu_tensor *pred, int dump_block,
                        h3_progress_callback on_progress, void *opaque,
                        const volatile int *cancel_requested, char *error, size_t error_size) {
@@ -1053,7 +1045,7 @@ failed:
  * order (ph, pw, c). */
 /* noise and cond F32 [16, frames, h, w] -> tokens BF16 [frames * h/2 * w/2,
  * 132] (t-major; within a token (ph, pw, c) with c = noise, cond, mask 1). */
-static void pack_tokens(const float *noise, const float *cond, int lw, int lh, int frames, uint16_t *tokens) {
+void sv2_pack_tokens(const float *noise, const float *cond, int lw, int lh, int frames, uint16_t *tokens) {
     int tw = lw / 2, th = lh / 2;
     size_t plane = (size_t)lw * lh, channel = plane * frames;
     for (int t = 0; t < frames; t++)
@@ -1073,7 +1065,7 @@ static void pack_tokens(const float *noise, const float *cond, int lw, int lh, i
 }
 
 /* pred BF16 [N, 64] (order (ph, pw, c), t-major tokens) -> F32 [16, frames, h, w]. */
-static void unpack_pred(const uint16_t *pred, int lw, int lh, int frames, float *out) {
+void sv2_unpack_pred(const uint16_t *pred, int lw, int lh, int frames, float *out) {
     int tw = lw / 2, th = lh / 2;
     size_t plane = (size_t)lw * lh, channel = plane * frames;
     for (int t = 0; t < frames; t++)
@@ -1130,7 +1122,7 @@ static void hist_lut(const float *src, const float *ref, size_t n, int stride, f
 }
 
 /* content and style: F32 [H, W, 3] in [-1, 1] on the GPU; out may be content. */
-static int color_transfer(h3_seedvr2 *m, h3_gpu_tensor *out, const h3_gpu_tensor *content,
+int sv2_color_transfer(h3_seedvr2 *m, h3_gpu_tensor *out, const h3_gpu_tensor *content,
                           const h3_gpu_tensor *style, int width, int height,
                           char *error, size_t error_size) {
     size_t n = (size_t)width * height * 3, pixels = (size_t)width * height;
@@ -1272,8 +1264,8 @@ int h3_seedvr2_debug_noise(uint64_t seed, int first_frame, int frames, int laten
 
 void h3_seedvr2_session_close(h3_seedvr2_session *s) {
     if (!s) return;
-    layout_free(s->m, &s->layouts[0]);
-    layout_free(s->m, &s->layouts[1]);
+    sv2_layout_free(s->m, &s->layouts[0]);
+    sv2_layout_free(s->m, &s->layouts[1]);
     free(s->noise);
     h3_gpu_tensor_free(s->pixels_in);
     h3_gpu_tensor_free(s->pixels_out);
@@ -1294,8 +1286,8 @@ h3_seedvr2_session *h3_seedvr2_session_open(h3_seedvr2 *m, int in_w, int in_h, i
     s->full_h = round_up(out_h, SV2_PIXEL_MULTIPLE);
     s->lw = s->full_w / 8; s->lh = s->full_h / 8;
     int N = (s->lw / 2) * (s->lh / 2);
-    if (!layout_build(m, &s->layouts[0], s->lw / 2, s->lh / 2, 1, 0, error, error_size) ||
-        !layout_build(m, &s->layouts[1], s->lw / 2, s->lh / 2, 1, 1, error, error_size)) {
+    if (!sv2_layout_build(m, &s->layouts[0], s->lw / 2, s->lh / 2, 1, 0, error, error_size) ||
+        !sv2_layout_build(m, &s->layouts[1], s->lw / 2, s->lh / 2, 1, 1, error, error_size)) {
         h3_seedvr2_session_close(s);
         return NULL;
     }
@@ -1407,16 +1399,16 @@ static int restore_frame(h3_seedvr2_session *s, const h3_gpu_tensor *rgb_in, h3_
     }
     const float *noise = noise_override ? noise_override : s->noise;
     /* transformer */
-    pack_tokens(noise, s->cond_host, lw, lh, 1, s->tokens_host);
+    sv2_pack_tokens(noise, s->cond_host, lw, lh, 1, s->tokens_host);
     h3_gpu_tensor *tokens = h3_gpu_tensor_from_bf16(m->gpu, s->tokens_host, (size_t)N * SV2_PATCH_IN);
     h3_gpu_tensor *pred = sv2_pool_take(m, (size_t)N * SV2_PATCH_OUT, 1);
     if (!tokens || !pred) { h3_gpu_tensor_free(tokens); sv2_pool_give(m, pred); fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
-    int ok = dit_forward(m, s->layouts, tokens, pred, dump_block, on_progress, opaque, cancel_requested, error, error_size);
+    int ok = sv2_dit_forward(m, s->layouts, tokens, pred, dump_block, on_progress, opaque, cancel_requested, error, error_size);
     h3_gpu_tensor_free(tokens);
     if (ok) ok = h3_gpu_tensor_read_bf16(pred, s->pred_bf16, (size_t)N * SV2_PATCH_OUT);
     sv2_pool_give(m, pred);
     if (!ok) { if (error && !error[0]) fail(error, error_size, "SeedVR2: cannot read the prediction"); return 0; }
-    unpack_pred(s->pred_bf16, lw, lh, 1, s->pred_host);
+    sv2_unpack_pred(s->pred_bf16, lw, lh, 1, s->pred_host);
     trace(&mark, "dit");
     /* one Euler step from t = 1: z = noise - v; the decoder divides by the scaling */
     float *z = malloc((size_t)lw * lh * SV2_LATENT * sizeof(float));
@@ -1488,7 +1480,7 @@ int h3_seedvr2_session_process(h3_seedvr2_session *s, const h3_vsr_image *in, h3
         /* the reference matches the cropped frames; the padding is black in
          * both, so matching the padded frames differs only by those pixels'
          * share of the histograms */
-        if (!color_transfer(m, rgb_out, rgb_out, rgb_in, s->full_w, s->full_h, error, error_size)) goto done;
+        if (!sv2_color_transfer(m, rgb_out, rgb_out, rgb_in, s->full_w, s->full_h, error, error_size)) goto done;
     }
     if (!h3_gpu_begin(m->gpu) ||
         !h3_gpu_sv2_f32_to_pixels(m->gpu, s->pixels_out, rgb_out, (uint32_t)s->full_w, (uint32_t)s->full_h,
@@ -1562,13 +1554,13 @@ int h3_seedvr2_debug_dit(h3_seedvr2 *m, const float *dit_in, int lw, int lh, flo
     if (!s) return 0;
     size_t plane = (size_t)lw * lh;
     int N = (lw / 2) * (lh / 2);
-    pack_tokens(dit_in, dit_in + 16 * plane, lw, lh, 1, s->tokens_host);
+    sv2_pack_tokens(dit_in, dit_in + 16 * plane, lw, lh, 1, s->tokens_host);
     h3_gpu_tensor *tokens = h3_gpu_tensor_from_bf16(m->gpu, s->tokens_host, (size_t)N * SV2_PATCH_IN);
     h3_gpu_tensor *out = sv2_pool_take(m, (size_t)N * SV2_PATCH_OUT, 1);
     int ok = tokens && out &&
-             dit_forward(m, s->layouts, tokens, out, dump_block, NULL, NULL, NULL, error, error_size) &&
+             sv2_dit_forward(m, s->layouts, tokens, out, dump_block, NULL, NULL, NULL, error, error_size) &&
              h3_gpu_tensor_read_bf16(out, s->pred_bf16, (size_t)N * SV2_PATCH_OUT);
-    if (ok) unpack_pred(s->pred_bf16, lw, lh, 1, pred);
+    if (ok) sv2_unpack_pred(s->pred_bf16, lw, lh, 1, pred);
     h3_gpu_tensor_free(tokens);
     sv2_pool_give(m, out);
     h3_seedvr2_session_close(s);
@@ -1602,7 +1594,7 @@ int h3_seedvr2_debug_color(h3_seedvr2 *m, const float *content, const float *sty
     h3_gpu_tensor *c = upload_chw(m->gpu, content, 3, width, height);
     h3_gpu_tensor *st = upload_chw(m->gpu, style, 3, width, height);
     h3_gpu_tensor *o = h3_gpu_tensor_new_f32(m->gpu, (size_t)width * height * 3);
-    int ok = c && st && o && color_transfer(m, o, c, st, width, height, error, error_size) &&
+    int ok = c && st && o && sv2_color_transfer(m, o, c, st, width, height, error, error_size) &&
              download_chw(o, out, 3, width, height);
     h3_gpu_tensor_free(c); h3_gpu_tensor_free(st); h3_gpu_tensor_free(o);
     return ok;
@@ -1665,7 +1657,7 @@ int h3_seedvr2_debug_encode_video(h3_seedvr2 *m, const float *rgb, int frames, i
     if (!in.t) { fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
     int ok = h3_gpu_begin(m->gpu);
     if (ok && split > 0) {
-        ok = sv2_vae_encode_video(m, &in, &y, split, error, error_size);
+        ok = sv2_vae_encode_video(m, &in, &y, split, NULL, NULL, NULL, error, error_size);
     } else if (ok) {
         sv2_causal *ctx = calloc(1, sizeof(*ctx));
         ok = ctx && sv2_vae_encode_clip(m, &in, &y, stage, ctx, error, error_size);
@@ -1693,7 +1685,7 @@ int h3_seedvr2_debug_decode_video(h3_seedvr2 *m, const float *latent, int latent
     if (!z.t) { fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
     int ok = h3_gpu_begin(m->gpu);
     if (ok && split > 0) {
-        ok = sv2_vae_decode_video(m, &z, &y, split, error, error_size);
+        ok = sv2_vae_decode_video(m, &z, &y, split, NULL, NULL, NULL, error, error_size);
     } else if (ok) {
         sv2_causal *ctx = calloc(1, sizeof(*ctx));
         ok = ctx && sv2_vae_decode_clip(m, &z, &y, stage, ctx, error, error_size);
@@ -1729,21 +1721,21 @@ int h3_seedvr2_debug_dit_video(h3_seedvr2 *m, const float *dit_in, int frames, i
     uint16_t *pred_bf16 = malloc((size_t)N * SV2_PATCH_OUT * sizeof(uint16_t));
     h3_gpu_tensor *tokens = NULL, *out = NULL;
     int ok = tokens_host && pred_bf16 &&
-             layout_build(m, &layouts[0], lw / 2, lh / 2, frames, 0, error, error_size) &&
-             layout_build(m, &layouts[1], lw / 2, lh / 2, frames, 1, error, error_size);
+             sv2_layout_build(m, &layouts[0], lw / 2, lh / 2, frames, 0, error, error_size) &&
+             sv2_layout_build(m, &layouts[1], lw / 2, lh / 2, frames, 1, error, error_size);
     if (ok) {
-        pack_tokens(dit_in, dit_in + 16 * channel, lw, lh, frames, tokens_host);
+        sv2_pack_tokens(dit_in, dit_in + 16 * channel, lw, lh, frames, tokens_host);
         tokens = h3_gpu_tensor_from_bf16(m->gpu, tokens_host, (size_t)N * SV2_PATCH_IN);
         out = sv2_pool_take(m, (size_t)N * SV2_PATCH_OUT, 1);
         ok = tokens && out &&
-             dit_forward(m, layouts, tokens, out, dump_block, NULL, NULL, NULL, error, error_size) &&
+             sv2_dit_forward(m, layouts, tokens, out, dump_block, NULL, NULL, NULL, error, error_size) &&
              h3_gpu_tensor_read_bf16(out, pred_bf16, (size_t)N * SV2_PATCH_OUT);
-        if (ok) unpack_pred(pred_bf16, lw, lh, frames, pred);
+        if (ok) sv2_unpack_pred(pred_bf16, lw, lh, frames, pred);
     }
     if (!ok && error && !error[0]) fail(error, error_size, "SeedVR2 DiT: out of memory");
     h3_gpu_tensor_free(tokens);
     sv2_pool_give(m, out);
-    layout_free(m, &layouts[0]); layout_free(m, &layouts[1]);
+    sv2_layout_free(m, &layouts[0]); sv2_layout_free(m, &layouts[1]);
     free(tokens_host); free(pred_bf16);
     return ok;
 }

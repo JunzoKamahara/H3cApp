@@ -300,52 +300,89 @@ static int conv3x3_image(h3_seedvr2 *m, const act *x, const sv2_conv *c, int str
     return 1;
 }
 
-/* The causal 3D version on F32 frames: h3_gpu_sv2_pad3d_f32 lays out the
- * front frames (the state, or copies of frame 0) and the spatial zeros,
- * then one Conv3d as per-tap 2D convolutions. Stride 2 is spatial (padding
- * (0, 1)) and, for a conv with temporal taps, temporal too. */
+/* The causal 3D version on F32 frames, one output frame at a time: the kt
+ * input frames of that frame (from the clip, the state, or copies of frame
+ * 0) are gathered into a small staging buffer, spatially zero-padded
+ * (h3_gpu_sv2_pad3d_f32 with no front frames) and convolved as one Conv3d
+ * of depth kt (per-tap 2D convolutions). Memory stays at the input, the
+ * output and a few frames, instead of a padded copy of the whole clip.
+ * Stride 2 is spatial (padding (0, 1)) and, for a conv with temporal taps,
+ * temporal too. The state (the last kt - stride input frames) is kept in
+ * BF16, half the memory. */
 static int conv3x3_clip(h3_seedvr2 *m, const act *x, const sv2_conv *c, int stride, act *y,
                         sv2_causal *ctx, char *error, size_t error_size) {
     int f = act_frames(x), kt = c->kt, st = kt > 1 ? stride : 1;
     uint32_t top = stride == 2 ? 0 : 1, left = top;
-    const h3_gpu_tensor *prev = NULL;
-    int front = kt - 1, prev_frames = 0;
-    if (kt > 1 && ctx->mode == SV2_CAUSAL_ACTIVE && ctx->mem[c->slot]) {
-        prev = ctx->mem[c->slot];
-        prev_frames = front = ctx->mem_frames[c->slot];
+    int ph = x->h + (int)top + 1, pw = x->w + (int)left + 1;
+    int oh = (ph - 3) / stride + 1, ow = (pw - 3) / stride + 1;
+    size_t plane = (size_t)x->h * x->w * c->in, oplane = (size_t)oh * ow * c->out;
+    if (kt == 1) {
+        /* no temporal taps (1x3x3): every frame on its own, padded in the graph */
+        if (!act_new_f(m, y, f, oh, ow, c->out)) { fail(error, error_size, "SeedVR2 VAE: out of memory"); return 0; }
+        h3_gpu_tensor *in1 = sv2_pool_take(m, plane, 0), *out1 = sv2_pool_take(m, oplane, 0);
+        int ok = in1 && out1;
+        for (int t = 0; t < f && ok; t++)
+            ok = h3_gpu_copy_f32(m->gpu, in1, 0, x->t, (size_t)t * plane, plane) &&
+                 h3_gpu_conv2d_padded_f32(m->gpu, out1, in1, c->w, c->b, (uint32_t)x->h, (uint32_t)x->w,
+                                          (uint32_t)c->in, (uint32_t)c->out, 3, 3, (uint32_t)stride, (uint32_t)stride,
+                                          top, 1, left, 1) &&
+                 h3_gpu_copy_f32(m->gpu, y->t, (size_t)t * oplane, out1, 0, oplane);
+        sv2_pool_give(m, in1); sv2_pool_give(m, out1);
+        if (!ok) { fail(error, error_size, "SeedVR2 VAE conv: %s", h3_gpu_error(m->gpu)); return 0; }
+        return 1;
     }
-    int depth = front + f, ph = x->h + (int)top + 1, pw = x->w + (int)left + 1;
-    int of = (depth - kt) / st + 1, oh = (ph - 3) / stride + 1, ow = (pw - 3) / stride + 1;
-    if (depth < kt) { fail(error, error_size, "SeedVR2 VAE: %d frames for a %d-tap causal conv", depth, kt); return 0; }
-    size_t plane = (size_t)x->h * x->w * c->in;
-    h3_gpu_tensor *padded = sv2_pool_take(m, (size_t)depth * ph * pw * c->in, 0);
-    if (!padded || !act_new_f(m, y, of, oh, ow, c->out)) {
-        sv2_pool_give(m, padded);
-        fail(error, error_size, "SeedVR2 VAE: out of memory");
-        return 0;
+    /* the frames before frame 0: the state (ACTIVE) or copies of frame 0 */
+    h3_gpu_tensor *head = NULL;
+    int front = kt - 1;
+    if (ctx->mode == SV2_CAUSAL_ACTIVE && ctx->mem[c->slot]) {
+        front = ctx->mem_frames[c->slot];
+        head = sv2_pool_take(m, (size_t)front * plane, 0);
+        if (!head || !h3_gpu_cast_bf16_to_f32(m->gpu, head, ctx->mem[c->slot], (uint32_t)((size_t)front * plane))) {
+            sv2_pool_give(m, head);
+            fail(error, error_size, "SeedVR2 VAE: %s", h3_gpu_error(m->gpu));
+            return 0;
+        }
     }
-    int ok = h3_gpu_sv2_pad3d_f32(m->gpu, padded, x->t, prev, (uint32_t)prev_frames, (uint32_t)f,
-                                  (uint32_t)x->h, (uint32_t)x->w, (uint32_t)c->in, (uint32_t)front,
-                                  top, 1, left, 1) &&
-             h3_gpu_conv3d_as_2d_f32(m->gpu, y->t, padded, c->w, c->b, 1, (uint32_t)depth, (uint32_t)ph,
-                                     (uint32_t)pw, (uint32_t)c->in, (uint32_t)c->out, (uint32_t)kt, 3, 3,
-                                     (uint32_t)st, (uint32_t)stride, (uint32_t)stride);
-    sv2_pool_give(m, padded);
-    if (!ok) { fail(error, error_size, "SeedVR2 VAE conv: %s", h3_gpu_error(m->gpu)); return 0; }
-    /* the state: the last kt - st frames of [front | x] */
+    int depth = front + f, of = (depth - kt) / st + 1;
+    if (depth < kt) { sv2_pool_give(m, head); fail(error, error_size, "SeedVR2 VAE: %d frames for a %d-tap causal conv", depth, kt); return 0; }
+    h3_gpu_tensor *window = sv2_pool_take(m, (size_t)kt * plane, 0);
+    h3_gpu_tensor *padded = sv2_pool_take(m, (size_t)kt * ph * pw * c->in, 0);
+    h3_gpu_tensor *out1 = sv2_pool_take(m, oplane, 0);
+    int ok = window && padded && out1 && act_new_f(m, y, of, oh, ow, c->out);
+    if (!ok) fail(error, error_size, "SeedVR2 VAE: out of memory");
+    for (int o = 0; o < of && ok; o++) {
+        for (int k = 0; k < kt && ok; k++) {
+            int e = o * st + k;   /* frame of [head | x] */
+            if (e >= front) ok = h3_gpu_copy_f32(m->gpu, window, (size_t)k * plane, x->t, (size_t)(e - front) * plane, plane);
+            else if (head) ok = h3_gpu_copy_f32(m->gpu, window, (size_t)k * plane, head, (size_t)e * plane, plane);
+            else ok = h3_gpu_copy_f32(m->gpu, window, (size_t)k * plane, x->t, 0, plane);
+        }
+        ok = ok &&
+             h3_gpu_sv2_pad3d_f32(m->gpu, padded, window, NULL, 0, (uint32_t)kt, (uint32_t)x->h, (uint32_t)x->w,
+                                  (uint32_t)c->in, 0, top, 1, left, 1) &&
+             h3_gpu_conv3d_as_2d_f32(m->gpu, out1, padded, c->w, c->b, 1, (uint32_t)kt, (uint32_t)ph, (uint32_t)pw,
+                                     (uint32_t)c->in, (uint32_t)c->out, (uint32_t)kt, 3, 3, 1, (uint32_t)stride,
+                                     (uint32_t)stride) &&
+             h3_gpu_copy_f32(m->gpu, y->t, (size_t)o * oplane, out1, 0, oplane);
+    }
+    sv2_pool_give(m, padded); sv2_pool_give(m, out1);
+    if (!ok) { sv2_pool_give(m, window); sv2_pool_give(m, head); fail(error, error_size, "SeedVR2 VAE conv: %s", h3_gpu_error(m->gpu)); return 0; }
+    /* the state: the last kt - st frames of [head | x], stored as BF16 */
     int k = kt - st;
-    if (kt > 1 && k > 0 && ctx->mode != SV2_CAUSAL_DISABLED) {
-        h3_gpu_tensor *fresh = sv2_pool_take(m, (size_t)k * plane, 0);
-        if (!fresh) { fail(error, error_size, "SeedVR2 VAE: out of memory"); return 0; }
+    if (k > 0 && ctx->mode != SV2_CAUSAL_DISABLED) {
+        h3_gpu_tensor *fresh = sv2_pool_take(m, (size_t)k * plane, 1);
+        ok = fresh != NULL;
         for (int j = 0; j < k && ok; j++) {
             int e = depth - k + j;
-            if (e >= front) ok = h3_gpu_copy_f32(m->gpu, fresh, (size_t)j * plane, x->t, (size_t)(e - front) * plane, plane);
-            else if (prev) ok = h3_gpu_copy_f32(m->gpu, fresh, (size_t)j * plane, prev, (size_t)e * plane, plane);
-            else ok = h3_gpu_copy_f32(m->gpu, fresh, (size_t)j * plane, x->t, 0, plane);
+            if (e >= front) ok = h3_gpu_copy_f32(m->gpu, window, (size_t)j * plane, x->t, (size_t)(e - front) * plane, plane);
+            else if (head) ok = h3_gpu_copy_f32(m->gpu, window, (size_t)j * plane, head, (size_t)e * plane, plane);
+            else ok = h3_gpu_copy_f32(m->gpu, window, (size_t)j * plane, x->t, 0, plane);
         }
-        if (!ok) { sv2_pool_give(m, fresh); fail(error, error_size, "SeedVR2 VAE: %s", h3_gpu_error(m->gpu)); return 0; }
+        if (ok) ok = h3_gpu_cast_f32_to_bf16(m->gpu, fresh, window, (uint32_t)((size_t)k * plane));
+        if (!ok) { sv2_pool_give(m, fresh); sv2_pool_give(m, window); sv2_pool_give(m, head); fail(error, error_size, "SeedVR2 VAE: %s", h3_gpu_error(m->gpu)); return 0; }
         causal_keep(m, ctx, c->slot, fresh, k);
     }
+    sv2_pool_give(m, window); sv2_pool_give(m, head);
     return 1;
 }
 
@@ -477,6 +514,16 @@ static void gact_offsets(const gact *a, int k, int32_t *offsets) {
 }
 
 #define GRID_OP(call) do { if (!(call)) { fail(error, error_size, "SeedVR2 VAE (grid): %s", h3_gpu_error(m->gpu)); return 0; } } while (0)
+
+/* A clip's layers allocate GBs at encode time, far ahead of the GPU; a
+ * buffer freed on the host stays until the command buffer that reads it
+ * completes. Waiting for the GPU after each layer keeps the footprint at
+ * the live bytes (the still-image path, ctx NULL, never waits). */
+static int clip_sync(h3_seedvr2 *m, const sv2_causal *ctx, char *error, size_t error_size) {
+    if (!ctx || !h3_gpu_command_open(m->gpu)) return 1;
+    if (!h3_gpu_submit(m->gpu) || !h3_gpu_begin(m->gpu)) { fail(error, error_size, "SeedVR2 VAE: %s", h3_gpu_error(m->gpu)); return 0; }
+    return 1;
+}
 
 /* Puts the causal head into x's front slots for a conv with temporal stride
  * st: the state's frames in ACTIVE mode, else kt - 1 copies of frame 0.
@@ -658,12 +705,15 @@ static int vae_encode_grid(h3_seedvr2 *m, const act *rgb, act *out, int stop, sv
         for (int j = 0; j < 2; j++) {
             if (!gresnet(m, &x, &e->down[i][j], &y, ctx, error, error_size)) { gact_free(m, &x); return 0; }
             gact_free(m, &x); x = y;
+            if (!clip_sync(m, ctx, error, error_size)) { gact_free(m, &x); return 0; }
+            if (ctx) sv2_pool_drain(m);
         }
         if (i < 3) {
             if (!gconv_s2(m, &x, &e->downsample[i], &y, ctx, error, error_size)) { gact_free(m, &x); return 0; }
             gact_free(m, &x); x = y;
         }
         if (stop == i + 1) { ok = gact_unpack(m, &x, out, error, error_size); gact_free(m, &x); return ok; }
+        if (ctx) { if (!clip_sync(m, ctx, error, error_size)) { gact_free(m, &x); return 0; } sv2_pool_drain(m); }
     }
     trace_sync(m->gpu, &mark, "enc down (grid)");
     if (!gresnet(m, &x, &e->mid_a, &y, ctx, error, error_size)) { gact_free(m, &x); return 0; }
@@ -706,6 +756,8 @@ static int vae_decode_grid(h3_seedvr2 *m, const act *z, act *out, int stop, sv2_
         for (int j = 0; j < 3; j++) {
             if (!gresnet(m, &x, &d->up[i][j], &y, ctx, error, error_size)) { gact_free(m, &x); return 0; }
             gact_free(m, &x); x = y;
+            if (!clip_sync(m, ctx, error, error_size)) { gact_free(m, &x); return 0; }
+            if (ctx) sv2_pool_drain(m);
         }
         if (i < 3) {
             int C = x.c, tf = d->up_temporal[i];
@@ -727,6 +779,7 @@ static int vae_decode_grid(h3_seedvr2 *m, const act *z, act *out, int stop, sv2_
         snprintf(label, sizeof(label), "dec up%d (grid)", i);
         trace_sync(m->gpu, &mark, label);
         if (stop == i + 2) { ok = gact_unpack(m, &x, out, error, error_size); gact_free(m, &x); return ok; }
+        if (ctx) { if (!clip_sync(m, ctx, error, error_size)) { gact_free(m, &x); return 0; } sv2_pool_drain(m); }   /* a clip's buffers are large: keep none of another block's size */
     }
     if (!ggn(m, &x, &d->norm_out, &y, 1, 1, error, error_size)) { gact_free(m, &x); return 0; }
     x = y;
@@ -752,12 +805,15 @@ int sv2_vae_encode_clip(h3_seedvr2 *m, const act *rgb, act *out, int stop, sv2_c
         for (int j = 0; j < 2; j++) {
             if (!resnet(m, &x, &e->down[i][j], &y, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; }
             sv2_act_free(m, &x); x = y;
+            if (!clip_sync(m, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; }
+            if (ctx) sv2_pool_drain(m);
         }
         if (i < 3) {
             if (!conv3x3(m, &x, &e->downsample[i], 2, &y, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; }
             sv2_act_free(m, &x); x = y;
         }
         if (stop == i + 1) { *out = x; return 1; }
+        if (ctx) { if (!clip_sync(m, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; } sv2_pool_drain(m); }
     }
     trace_sync(m->gpu, &mark, "enc down");
     if (!resnet(m, &x, &e->mid_a, &y, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; }
@@ -806,6 +862,8 @@ int sv2_vae_decode_clip(h3_seedvr2 *m, const act *z, act *out, int stop, sv2_cau
         for (int j = 0; j < 3; j++) {
             if (!resnet(m, &x, &d->up[i][j], &y, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; }
             sv2_act_free(m, &x); x = y;
+            if (!clip_sync(m, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; }
+            if (ctx) sv2_pool_drain(m);
         }
         if (i < 3) {
             int C = x.c, tf = d->up_temporal[i], f = act_frames(&x);
@@ -826,6 +884,7 @@ int sv2_vae_decode_clip(h3_seedvr2 *m, const act *z, act *out, int stop, sv2_cau
         snprintf(label, sizeof(label), "dec up%d", i);
         trace_sync(m->gpu, &mark, label);
         if (stop == i + 2) { *out = x; return 1; }
+        if (ctx) { if (!clip_sync(m, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; } sv2_pool_drain(m); }
     }
     if (!group_norm_silu(m, &x, &d->norm_out, &y, 1, error, error_size)) { sv2_act_free(m, &x); return 0; }
     x = y;   /* in place: the same buffer */
@@ -867,7 +926,8 @@ typedef int (*sv2_clip_fn)(h3_seedvr2 *, const act *, act *, int, sv2_causal *, 
 
 /* The reference's slicing_encode / slicing_decode: [0, 1 + step) with the
  * state initialised, then `step` frames at a time with the state carried. */
-static int run_sliced(h3_seedvr2 *m, sv2_clip_fn fn, const act *x, act *out, int step,
+static int run_sliced(h3_seedvr2 *m, sv2_clip_fn fn, const act *x, act *out, int step, const char *phase,
+                      h3_progress_callback on_progress, void *opaque, const volatile int *cancel,
                       char *error, size_t error_size) {
     if (!m->vae_temporal) { fail(error, error_size, "SeedVR2 VAE: the weights are not in temporal form"); return 0; }
     int f = act_frames(x);
@@ -887,6 +947,11 @@ static int run_sliced(h3_seedvr2 *m, sv2_clip_fn fn, const act *x, act *out, int
     int done = 0, total = 0, n = 0;
     for (int s = 0; s < slices && ok; s++) {
         int first = s == 0 ? 0 : 1 + s * step, count = s == 0 ? 1 + step : (f - first < step ? f - first : step);
+        if ((cancel && *cancel) || (on_progress && on_progress(phase, s, slices, opaque))) {
+            fail(error, error_size, "vsr cancelled");
+            ok = 0;
+            break;
+        }
         act piece;
         ctx->mode = s == 0 ? SV2_CAUSAL_INIT : SV2_CAUSAL_ACTIVE;
         ok = act_slice(m, x, first, count, &piece, error, error_size) &&
@@ -899,6 +964,7 @@ static int run_sliced(h3_seedvr2 *m, sv2_clip_fn fn, const act *x, act *out, int
         if (!h3_gpu_continue(m->gpu)) { fail(error, error_size, "SeedVR2 VAE: %s", h3_gpu_error(m->gpu)); ok = 0; }
     }
     if (ok && done != f) { fail(error, error_size, "SeedVR2 VAE: slicing covered %d of %d frames", done, f); ok = 0; }
+    if (ok && on_progress && on_progress(phase, slices, slices, opaque)) { fail(error, error_size, "vsr cancelled"); ok = 0; }
     if (ok) {
         size_t plane = (size_t)parts[0].h * parts[0].w * parts[0].c, at = 0;
         ok = act_new_f(m, out, total, parts[0].h, parts[0].w, parts[0].c);
@@ -917,10 +983,15 @@ static int run_sliced(h3_seedvr2 *m, sv2_clip_fn fn, const act *x, act *out, int
     return ok;
 }
 
-int sv2_vae_encode_video(h3_seedvr2 *m, const act *rgb, act *out, int split, char *error, size_t error_size) {
-    return run_sliced(m, sv2_vae_encode_clip, rgb, out, split, error, error_size);
+int sv2_vae_encode_video(h3_seedvr2 *m, const act *rgb, act *out, int split,
+                         h3_progress_callback on_progress, void *opaque, const volatile int *cancel,
+                         char *error, size_t error_size) {
+    return run_sliced(m, sv2_vae_encode_clip, rgb, out, split, "vsr encode", on_progress, opaque, cancel, error, error_size);
 }
 
-int sv2_vae_decode_video(h3_seedvr2 *m, const act *z, act *out, int split, char *error, size_t error_size) {
-    return run_sliced(m, sv2_vae_decode_clip, z, out, split > 0 ? (split / 4 > 1 ? split / 4 : 1) : 0, error, error_size);
+int sv2_vae_decode_video(h3_seedvr2 *m, const act *z, act *out, int split,
+                         h3_progress_callback on_progress, void *opaque, const volatile int *cancel,
+                         char *error, size_t error_size) {
+    return run_sliced(m, sv2_vae_decode_clip, z, out, split > 0 ? (split / 4 > 1 ? split / 4 : 1) : 0, "vsr decode",
+                      on_progress, opaque, cancel, error, error_size);
 }

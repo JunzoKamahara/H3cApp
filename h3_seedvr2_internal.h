@@ -209,6 +209,7 @@ struct h3_seedvr2 {
     /* activation pool (F32 and BF16 buffers reused across frames) */
     struct { h3_gpu_tensor *t; size_t bytes; int bf16; } pool[64];
     int pool_count;
+    int pool_bypass;                   /* clips: free at once (their buffers are GBs; the layers wait for the GPU) */
     /* load-time temporaries freed after the next submit */
     h3_gpu_tensor *deferred[256];
     int deferred_count;
@@ -234,7 +235,37 @@ typedef struct {
     int mem_frames[SV2_MAX_CONVS];
 } sv2_causal;
 
+/* The transformer's attention layout (h3_seedvr2.c) */
+#define SV2_MAX_CLASSES 64
+
+typedef struct { int hs, he, ws, we, ts, te; } sv2_window;
+
+typedef struct {
+    int tokens_w, tokens_h, tokens_t, N;
+    int windows;                   /* W */
+    int rows;                      /* every window's video rows + text rows */
+    int classes;
+    struct { int first, count, length, row_offset; } cls[SV2_MAX_CLASSES];
+    h3_gpu_tensor *index[SV2_MAX_CLASSES], *cosine[SV2_MAX_CLASSES], *sine[SV2_MAX_CLASSES],
+                  *dest[SV2_MAX_CLASSES];
+    h3_gpu_tensor *q[SV2_MAX_CLASSES], *k[SV2_MAX_CLASSES], *v[SV2_MAX_CLASSES], *a[SV2_MAX_CLASSES];
+    h3_gpu_tensor *base;           /* U32 [W]: N + w * 58, the text rows' home in `att` */
+} sv2_layout;
+
 /* h3_seedvr2.c */
+void sv2_pool_drain(h3_seedvr2 *m);
+int sv2_layout_build(h3_seedvr2 *m, sv2_layout *L, int tokens_w, int tokens_h, int tokens_t, int shifted,
+                     char *error, size_t error_size);
+void sv2_layout_free(h3_seedvr2 *m, sv2_layout *L);
+/* tokens BF16 [N, 132] -> pred BF16 [N, 64]; layouts[0] even blocks, [1] odd */
+int sv2_dit_forward(h3_seedvr2 *m, sv2_layout *layouts, const h3_gpu_tensor *tokens, h3_gpu_tensor *pred,
+                    int dump_block, h3_progress_callback on_progress, void *opaque,
+                    const volatile int *cancel_requested, char *error, size_t error_size);
+void sv2_pack_tokens(const float *noise, const float *cond, int lw, int lh, int frames, uint16_t *tokens);
+void sv2_unpack_pred(const uint16_t *pred, int lw, int lh, int frames, float *out);
+/* wavelet + LAB colour transfer on one F32 [H, W, 3] frame (out may be content) */
+int sv2_color_transfer(h3_seedvr2 *m, h3_gpu_tensor *out, const h3_gpu_tensor *content,
+                       const h3_gpu_tensor *style, int width, int height, char *error, size_t error_size);
 float *sv2_read_f16_as_f32(const h3_st_header *h, const char *name, uint64_t expected,
                            char *error, size_t error_size);
 h3_gpu_tensor *sv2_upload_f32(h3_gpu *gpu, const float *values, size_t n);
@@ -272,7 +303,11 @@ int sv2_vae_decode_clip(h3_seedvr2 *m, const act *z, act *out, int stop, sv2_cau
 /* The whole clip in slices of `split` frames after the first 1 + split
  * (encode), or of max(1, split / 4) latent frames after the first 1 + that
  * (decode), the state carried; split 0 (or a clip that short) is one pass. */
-int sv2_vae_encode_video(h3_seedvr2 *m, const act *rgb, act *out, int split, char *error, size_t error_size);
-int sv2_vae_decode_video(h3_seedvr2 *m, const act *z, act *out, int split, char *error, size_t error_size);
+int sv2_vae_encode_video(h3_seedvr2 *m, const act *rgb, act *out, int split,
+                         h3_progress_callback on_progress, void *opaque, const volatile int *cancel,
+                         char *error, size_t error_size);
+int sv2_vae_decode_video(h3_seedvr2 *m, const act *z, act *out, int split,
+                         h3_progress_callback on_progress, void *opaque, const volatile int *cancel,
+                         char *error, size_t error_size);
 
 #endif

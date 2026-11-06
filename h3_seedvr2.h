@@ -86,6 +86,43 @@ int h3_seedvr2_session_process(h3_seedvr2_session *session, const h3_vsr_image *
                                char *error, size_t error_size);
 void h3_seedvr2_session_close(h3_seedvr2_session *session);
 
+/* One window of a video: `frames` (4n+1) frames in, the same number out,
+ * through the temporal VAE and the transformer's 3D windows (the reference's
+ * inference loop for one window; the session built on it handles overlap
+ * and the tail). vae_split: the causal slicing of the VAE (-1 or 4: the
+ * reference's 1 + 4 frames then 4, decode 1 + 1 latent then 1; 0: the
+ * whole window at once - more memory). first_latent_frame numbers the
+ * noise so overlapping windows agree. seed 0 takes the model's;
+ * color_transfer -1 the model's. noise_override ([16, L, h, w]) and
+ * dump_block are for tests. Progress phases: "vsr encode" / "vsr decode"
+ * (slices), "vsr dit" (blocks), "vsr output" (frames). */
+typedef struct {
+    int vae_split;
+    int first_latent_frame;
+    uint64_t seed;
+    int color_transfer;
+    const float *noise_override;
+    int dump_block;
+} h3_seedvr2_clip_params;
+/* Whether a window of `window_frames` (4n+1) fits this Mac, with the VAE
+ * form it would use (vae_split 0: the whole window; 4: causal slices) and
+ * the peak GPU memory it needs, from measurements (h3_seedvr2_video.c).
+ * Returns 0 only for bad arguments; `supported` says. */
+typedef struct {
+    int supported;
+    char reason[256];
+    uint64_t gpu_bytes;
+    int vae_split;
+    double estimated_seconds_per_frame;
+    int latent_frames, tokens;
+} h3_seedvr2_video_requirements;
+int h3_seedvr2_video_check_requirements(const h3_seedvr2 *model, int in_w, int in_h, int out_w, int out_h,
+                                        int window_frames, h3_seedvr2_video_requirements *out);
+int h3_seedvr2_restore_clip(h3_seedvr2 *model, const h3_vsr_image *in, int frames, int out_w, int out_h,
+                            h3_vsr_image_out *out, const h3_seedvr2_clip_params *params,
+                            h3_progress_callback on_progress, void *opaque,
+                            const volatile int *cancel_requested, char *error, size_t error_size);
+
 /* GPU seconds so far and the peak live bytes. */
 int h3_seedvr2_get_stats(const h3_seedvr2 *model, double *gpu_seconds,
                          uint64_t *peak_live_bytes);
@@ -119,6 +156,8 @@ int h3_seedvr2_debug_windows3(int frames, int tokens_w, int tokens_h, int shifte
 /* A clip's noise for latent frames [first_frame, first_frame + frames),
  * [16, frames, h, w]: the same values for the same absolute frame whatever
  * the window; frame 0 equals a still image's noise for that seed. */
+/* The memory model behind h3_seedvr2_video_check_requirements (tests). */
+uint64_t sv2_video_peak_bytes(uint64_t resident_bytes, int nax_vae, int full_w, int full_h, int frames, int vae_split);
 int h3_seedvr2_debug_noise(uint64_t seed, int first_frame, int frames, int latent_w, int latent_h, float *out);
 int h3_seedvr2_debug_dit_video(h3_seedvr2 *model, const float *dit_in, int frames, int latent_w, int latent_h,
                                float *pred, int dump_block, char *error, size_t error_size);

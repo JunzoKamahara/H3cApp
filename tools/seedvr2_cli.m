@@ -2,8 +2,13 @@
  * evaluation; the app uses the same C API from Swift):
  *   h3_seedvr2_cli --model DIR --in IN.png --out OUT.png [--width W --height H]
  *                  [--no-color] [--seed N] [--frames IN_DIR OUT_DIR]
+ *                  [--video-frames IN_DIR OUT_DIR [--window N] [--vae-split K]]
  * Without --width/--height the output is 2x. --frames restores every PNG
- * of a folder (sorted) into another, with one session. */
+ * of a folder (sorted) into another, one frame at a time, with one session.
+ * --video-frames restores the first --window PNGs (default: all) as one
+ * clip through the temporal path (h3_seedvr2_restore_clip): a count that
+ * is not 4n+1 is padded by repeating the last frame, as the reference does;
+ * only the real frames are written. */
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -93,9 +98,63 @@ static int restore_one(h3_seedvr2 *model, h3_seedvr2_session **session, const ch
     return ok;
 }
 
+/* --video-frames: the first `window` PNGs of a folder as one clip. */
+static int restore_clip(h3_seedvr2 *model, const char *frames_in, const char *frames_out, int window, int vae_split,
+                        int out_w, int out_h) {
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (NSString *name in [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:@(frames_in) error:NULL]
+                            sortedArrayUsingSelector:@selector(compare:)])
+        if ([name.pathExtension.lowercaseString isEqualToString:@"png"]) [names addObject:name];
+    int real = (int)names.count;
+    if (window > 0 && window < real) real = window;
+    if (real < 1) { fprintf(stderr, "%s: no PNG frames\n", frames_in); return 0; }
+    int frames = real % 4 == 1 ? real : (real / 4 + 1) * 4 + 1;   /* 4n+1, the tail repeated */
+    [[NSFileManager defaultManager] createDirectoryAtPath:@(frames_out) withIntermediateDirectories:YES attributes:nil error:NULL];
+    h3_vsr_image *in = calloc((size_t)frames, sizeof(*in));
+    h3_vsr_image_out *out = calloc((size_t)frames, sizeof(*out));
+    uint8_t **in_pixels = calloc((size_t)real, sizeof(*in_pixels)), **out_pixels = calloc((size_t)frames, sizeof(*out_pixels));
+    int ok = 0, w = 0, h = 0;
+    for (int t = 0; t < real; t++) {
+        int fw, fh;
+        in_pixels[t] = read_png_bgra([@(frames_in) stringByAppendingPathComponent:names[t]].UTF8String, &fw, &fh);
+        if (!in_pixels[t] || (t && (fw != w || fh != h))) { fprintf(stderr, "cannot read %s\n", names[t].UTF8String); goto done; }
+        w = fw; h = fh;
+    }
+    if (!out_w && !out_h) { out_w = 2 * w; out_h = 2 * h; }
+    else if (!out_w) out_w = (int)lround((double)out_h * w / h);
+    else if (!out_h) out_h = (int)lround((double)out_w * h / w);
+    for (int t = 0; t < frames; t++) {
+        int src = t < real ? t : real - 1;
+        in[t] = (h3_vsr_image){in_pixels[src], w, h, w * 4, H3_VSR_BGRA8};
+        out_pixels[t] = calloc((size_t)out_w * out_h * 4, 1);
+        out[t] = (h3_vsr_image_out){out_pixels[t], out_w, out_h, out_w * 4, H3_VSR_BGRA8};
+    }
+    fprintf(stderr, "%d frames (%d real) %dx%d -> %dx%d, vae split %d\n", frames, real, w, h, out_w, out_h, vae_split);
+    h3_seedvr2_clip_params params = {vae_split, 0, 0, -1, NULL, -1};
+    char error[512];
+    double start = now_seconds();
+    if (!h3_seedvr2_restore_clip(model, in, frames, out_w, out_h, out, &params, NULL, NULL, NULL, error, sizeof(error))) {
+        fprintf(stderr, "clip: %s\n", error);
+        goto done;
+    }
+    double total = now_seconds() - start;
+    fprintf(stderr, "%d frames in %.1f s (%.2f s/frame)\n", frames, total, total / frames);
+    ok = 1;
+    for (int t = 0; t < real; t++)
+        if (!write_png_bgra([@(frames_out) stringByAppendingPathComponent:names[t]].UTF8String, out_pixels[t], out_w, out_h)) {
+            fprintf(stderr, "cannot write %s\n", names[t].UTF8String);
+            ok = 0;
+        }
+done:
+    for (int t = 0; t < real; t++) free(in_pixels[t]);
+    for (int t = 0; t < frames; t++) free(out_pixels[t]);
+    free(in); free(out); free(in_pixels); free(out_pixels);
+    return ok;
+}
+
 int main(int argc, char **argv) {
     const char *model_dir = NULL, *in_path = NULL, *out_path = NULL, *frames_in = NULL, *frames_out = NULL;
-    int out_w = 0, out_h = 0, color = 1;
+    int out_w = 0, out_h = 0, color = 1, video = 0, window = 0, vae_split = -1;
     uint64_t seed = 42;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--model") && i + 1 < argc) model_dir = argv[++i];
@@ -106,10 +165,13 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--no-color")) color = 0;
         else if (!strcmp(argv[i], "--frames") && i + 2 < argc) { frames_in = argv[++i]; frames_out = argv[++i]; }
+        else if (!strcmp(argv[i], "--video-frames") && i + 2 < argc) { frames_in = argv[++i]; frames_out = argv[++i]; video = 1; }
+        else if (!strcmp(argv[i], "--window") && i + 1 < argc) window = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--vae-split") && i + 1 < argc) vae_split = atoi(argv[++i]);
         else { fprintf(stderr, "unknown argument %s\n", argv[i]); return 2; }
     }
     if (!model_dir || (!(in_path && out_path) && !(frames_in && frames_out))) {
-        fprintf(stderr, "usage: %s --model DIR (--in IN.png --out OUT.png | --frames IN_DIR OUT_DIR) [--width W --height H] [--no-color] [--seed N]\n", argv[0]);
+        fprintf(stderr, "usage: %s --model DIR (--in IN.png --out OUT.png | --frames IN_DIR OUT_DIR | --video-frames IN_DIR OUT_DIR [--window N] [--vae-split K]) [--width W --height H] [--no-color] [--seed N]\n", argv[0]);
         return 2;
     }
     char error[512];
@@ -123,6 +185,8 @@ int main(int argc, char **argv) {
     @autoreleasepool {
         if (in_path) {
             if (!restore_one(model, &session, in_path, out_path, out_w, out_h)) failures++;
+        } else if (video) {
+            if (!restore_clip(model, frames_in, frames_out, window, vae_split, out_w, out_h)) failures++;
         } else {
             NSArray<NSString *> *names = [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:@(frames_in) error:NULL]
                 sortedArrayUsingSelector:@selector(compare:)];
