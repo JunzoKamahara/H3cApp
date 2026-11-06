@@ -632,9 +632,13 @@ final class GenerationViewModel: ObservableObject {
     @Published var showingProjectVideos = false
     /// Asked for when generating several videos with no project open.
     @Published var showingBatchProject = false
-    /// プロジェクトとして保存 (no project open): the form, and the temp video
-    /// in the preview if there is one.
+    /// プロジェクトとして保存 (no project open, or a 無題のプロジェクト): the
+    /// form, and the temp video in the preview or the untitled project's
+    /// videos.
     @Published var showingSaveAsProject = false
+    /// Saving a 無題のプロジェクト under a name, or moving a video to another
+    /// project: its files are on their way, so nothing else writes them.
+    @Published var isMovingProjectFiles = false
     /// The record of a video finished with no project open (its `video` is
     /// the temp file's name), so saving as a project can keep it.
     var temporaryResultRecord: ProjectVideoRecord?
@@ -977,7 +981,7 @@ final class GenerationViewModel: ObservableObject {
 
     var canGenerate: Bool {
         engineState == .ready && !isGenerating && !isBuildingCache && !isImportingVideo
-            && validationMessage == nil
+            && !isMovingProjectFiles && validationMessage == nil
     }
 
     // MARK: Summary text shown above the primary button, and in "設定を見る"

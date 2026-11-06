@@ -113,6 +113,9 @@ struct ProjectFile: Codable {
     var updatedAt: Date
     var batchCount: Int
     var draft: ProjectDraft
+    /// A window's 無題のプロジェクト (ProjectStore.untitledDirectory) until
+    /// it is saved under a name. Absent in named projects.
+    var untitled: Bool? = nil
 }
 
 /// The .json next to each generated video: the request exactly as it ran.
@@ -167,6 +170,8 @@ struct OpenProject: Equatable {
     var url: URL
     var name: String
     var createdAt: Date
+    /// 無題のプロジェクト: kept in the app's own folder until saved.
+    var untitled = false
 }
 
 struct ProjectVideo: Identifiable, Equatable {
@@ -294,6 +299,79 @@ final class ProjectStore: ObservableObject {
     func isOpen(_ url: URL) -> Bool {
         owner(of: url).map { AppModels.shared.isShown($0) } ?? false
     }
+
+    // MARK: 無題のプロジェクト
+
+    /// Where windows keep their untitled projects until they are saved
+    /// under a name: Application Support/H3cApp/Untitled/<folder>.
+    static var untitledDirectory: URL {
+        URL(fileURLWithPath: h3AppSupportDirectory, isDirectory: true)
+            .appendingPathComponent("Untitled", isDirectory: true)
+    }
+
+    /// Whether `url` is a folder in untitledDirectory.
+    static func isUntitledFolder(_ url: URL) -> Bool {
+        url.standardizedFileURL.deletingLastPathComponent().path == untitledDirectory.standardizedFileURL.path
+    }
+
+    /// A fresh folder for a new untitled project (not created yet).
+    func newUntitledFolder() -> URL {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let base = "untitled-" + formatter.string(from: Date())
+        var url = Self.untitledDirectory.appendingPathComponent(base, isDirectory: true)
+        var counter = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = Self.untitledDirectory.appendingPathComponent("\(base)-\(counter)", isDirectory: true)
+            counter += 1
+        }
+        return url
+    }
+
+    /// "無題のプロジェクト", numbered while other windows have one open.
+    func untitledName() -> String {
+        let taken = Set(openOwners.values.compactMap { $0.owner?.project }.filter(\.untitled).map(\.name))
+        let first = String(localized: "無題のプロジェクト")
+        guard taken.contains(first) else { return first }
+        var number = 2
+        while taken.contains(String(localized: "無題のプロジェクト \(number)")) { number += 1 }
+        return String(localized: "無題のプロジェクト \(number)")
+    }
+
+    /// Drops a project folder that no longer exists (a deleted or saved
+    /// untitled one) from the recents and from reopening at launch.
+    func forget(_ url: URL) {
+        let path = url.standardizedFileURL.path
+        openOwners[path] = nil
+        recents.removeAll { $0.standardizedFileURL.path == path }
+        UserDefaults.standard.set(recents.map(\.path), forKey: Self.recentsKey)
+        if lastOpened?.standardizedFileURL.path == path {
+            UserDefaults.standard.removeObject(forKey: Self.lastOpenKey)
+        }
+    }
+
+    /// What the menus call a project folder: its folder name, or for an
+    /// untitled one its name and when it was made (several can be kept).
+    func displayName(for url: URL) -> String {
+        guard Self.isUntitledFolder(url), let file = try? ProjectFiles.read(url) else { return url.lastPathComponent }
+        let date = file.createdAt.formatted(date: .abbreviated, time: .shortened)
+        return String(localized: "\(file.name)（\(date)）")
+    }
+
+    /// At launch: untitled projects left with no video in them (the app quit
+    /// or crashed before their window closed), except the one to reopen.
+    func sweepEmptyUntitledProjects() {
+        let folder = Self.untitledDirectory
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return }
+        for name in names where !name.hasPrefix(".") {
+            let url = folder.appendingPathComponent(name, isDirectory: true)
+            guard url.standardizedFileURL.path != lastOpened?.standardizedFileURL.path,
+                  !ProjectFiles.containsVideo(url) else { continue }
+            try? FileManager.default.removeItem(at: url)
+            forget(url)
+        }
+    }
 }
 
 enum PendingProjectAction {
@@ -415,6 +493,23 @@ enum ProjectFiles {
             counter += 1
         }
         return name
+    }
+
+    /// Whether a video made in the project is in the folder or below it (a
+    /// つなげて生成's clips) - not a video copied in as a reference.
+    static func containsVideo(_ folder: URL) -> Bool {
+        guard let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil) else {
+            return false
+        }
+        for case let url as URL in walker {
+            if url.lastPathComponent == referencesFolder && url.deletingLastPathComponent().standardizedFileURL.path
+                == folder.standardizedFileURL.path {
+                walker.skipDescendants()
+            } else if url.pathExtension.lowercased() == "mp4" {
+                return true
+            }
+        }
+        return false
     }
 
     static func videos(in projectURL: URL) -> [ProjectVideo] {
@@ -739,7 +834,8 @@ extension GenerationViewModel {
             }
         }
         batchCount = file.batchCount.clamped(to: batchCountRange)
-        project = OpenProject(url: url, name: file.name, createdAt: file.createdAt)
+        project = OpenProject(url: url, name: file.name, createdAt: file.createdAt,
+                              untitled: file.untitled == true)
         lastSavedProjectFile = file
         ProjectStore.shared.noteOpened(url, by: self)
         reloadProjectVideos()
@@ -762,9 +858,185 @@ extension GenerationViewModel {
             self.resultURL = nil
             lastResult = nil
         }
+        // An untitled project with no video made in it has nothing to keep:
+        // it goes. One with videos stays, listed under 最近のプロジェクト.
+        if project.untitled, !isGenerating, !isUpscalingVideo, !isImportingVideo, !isExportingJoined,
+           !ProjectFiles.containsVideo(project.url) {
+            ProjectStore.shared.forget(project.url)
+            let references = project.url.appendingPathComponent(ProjectFiles.referencesFolder, isDirectory: true)
+            if ((try? FileManager.default.contentsOfDirectory(atPath: references.path)) ?? []).isEmpty {
+                try? FileManager.default.removeItem(at: project.url)
+            } else {
+                // The form can still point at the copies of its input files
+                // in it, which the next project copies in on its first save:
+                // only the project goes now, the folder at the next launch
+                // (ProjectStore.sweepEmptyUntitledProjects).
+                try? FileManager.default.removeItem(
+                    at: project.url.appendingPathComponent(ProjectFiles.projectFileName))
+            }
+        }
         self.project = nil
         projectVideos = []
         lastSavedProjectFile = nil
+    }
+
+    // MARK: 無題のプロジェクト
+
+    /// A window with no project of its own gets a 無題のプロジェクト: a
+    /// project folder in the app's own folder (ProjectStore.untitledDirectory)
+    /// holding the form and every video made in the window, with records and
+    /// latents like any project's, until it is saved under a name.
+    func startUntitledProject() {
+        guard project == nil else { return }
+        let store = ProjectStore.shared
+        let url = store.newUntitledFolder()
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            let now = Date()
+            let file = ProjectFile(name: store.untitledName(), createdAt: now, updatedAt: now,
+                                   batchCount: batchCount, draft: currentDraft(), untitled: true)
+            try ProjectFiles.write(file, to: url)
+            try attachProject(url: url, file: file, applyingDraft: false)
+            saveProjectIfChanged(force: true)
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            projectMessage = String(localized: "無題のプロジェクトを作れませんでした（詳細: \(error.localizedDescription)）")
+        }
+    }
+
+    /// プロジェクトを閉じる from a window: it goes on with a new untitled
+    /// project, as a new window does.
+    func closeProjectToUntitled() {
+        closeProject()
+        if AppModels.shared.isShown(self) { startUntitledProject() }
+    }
+
+    /// Whether closing would only swap an empty untitled project for another.
+    var closingProjectChangesNothing: Bool {
+        guard let project, project.untitled else { return false }
+        return projectVideos.isEmpty
+    }
+
+    /// Why the project's files can't be moved now (nil when they can): a
+    /// generation, an enlargement, an import or an export writing them.
+    var projectFilesBusyReason: String? {
+        guard isGenerating || isUpscalingVideo || isImportingVideo || isExportingJoined
+                || isMovingProjectFiles || referenceImportTask != nil else { return nil }
+        return String(localized: "生成・拡大・取り込み・書き出し・ファイルの移動が終わってから、もう一度お試しください。")
+    }
+
+    /// プロジェクトとして保存 for a 無題のプロジェクト: its folder, with every
+    /// video made so far, moves to `parent`/`name` and the project takes
+    /// that name. Returns whether it did; projectMessage says why not.
+    func saveUntitledProject(name: String, parent: URL) async -> Bool {
+        guard let project, project.untitled, lastSavedProjectFile != nil else { return false }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            projectMessage = ProjectError.invalidName.localizedDescription
+            return false
+        }
+        if let busy = projectFilesBusyReason {
+            projectMessage = busy
+            return false
+        }
+        let destination = parent.appendingPathComponent(ProjectFiles.folderName(for: trimmed), isDirectory: true)
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            projectMessage = ProjectError.alreadyExists(destination.path).localizedDescription
+            return false
+        }
+        // The form as it is, with paths relative to the folder, so they hold
+        // wherever it goes.
+        saveProjectIfChanged(force: true, importingReferences: false)
+        guard var file = lastSavedProjectFile else { return false }
+        file.name = trimmed
+        file.untitled = nil
+        file.updatedAt = Date()
+        let saved = file
+        let source = project.url
+        let shown = resultURL.map { ProjectFiles.stored($0.path, in: source) }
+        // Nothing writes into the folder while it moves (it can take a
+        // while to another volume).
+        projectAutosave = nil
+        isMovingProjectFiles = true
+        defer { isMovingProjectFiles = false }
+        let failure: Error? = await Task.detached(priority: .userInitiated) {
+            do {
+                try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: source, to: destination)
+            } catch {
+                return error
+            }
+            // Moved: a failure from here on still leaves the project there.
+            try? ProjectFiles.write(saved, to: destination)
+            return nil
+        }.value
+        if let failure {
+            startProjectAutosave()
+            projectMessage = String(localized: "プロジェクトを保存できませんでした（詳細: \(failure.localizedDescription)）")
+            return false
+        }
+        ProjectStore.shared.noteClosed(source, explicitly: false)
+        ProjectStore.shared.forget(source)
+        self.project = nil
+        lastSavedProjectFile = nil
+        do {
+            // The form again from the saved draft, so its files are the
+            // moved ones.
+            try attachProject(url: destination, file: saved, applyingDraft: true)
+        } catch {
+            projectMessage = error.localizedDescription
+            return false
+        }
+        if let shown, !shown.hasPrefix("/") { resultURL = destination.appendingPathComponent(shown) }
+        return true
+    }
+
+    // MARK: Moving a video to another project
+
+    /// 別のプロジェクトに移動: the video, its record and latent (and a
+    /// つなげて生成's clips) go to the project at `destination`, the record's
+    /// input files copied into that project's references. Returns nil when
+    /// done, else why not.
+    func moveProjectVideo(_ video: ProjectVideo, to destination: URL) async -> String? {
+        guard let project else { return String(localized: "プロジェクトが開いていません。") }
+        if let busy = projectFilesBusyReason { return busy }
+        let target = destination.standardizedFileURL
+        guard target.path != project.url.standardizedFileURL.path else {
+            return String(localized: "移動先が今のプロジェクトです。ほかのプロジェクトを選んでください。")
+        }
+        guard (try? ProjectFiles.read(target)) != nil else {
+            return ProjectError.notAProject(target.path).localizedDescription
+        }
+        guard FileManager.default.fileExists(atPath: video.url.path) else {
+            return String(localized: "動画が見つかりません: \(video.url.lastPathComponent)")
+        }
+        // Enlarged copies made before the latent was copied along use this
+        // video's: they get their own copy before it leaves.
+        let name = video.url.lastPathComponent
+        let copies = projectVideos.filter {
+            $0.record?.upscaledFrom == name
+                && !FileManager.default.fileExists(atPath: ProjectFiles.latentURL(for: $0.url).path)
+        }.map(\.url)
+        let move = ProjectFiles.VideoMove(video: video.url, sourceProject: project.url,
+                                          destinationProject: target, chainFolder: chainFolder(of: video),
+                                          latent: continuationLatent(of: video), enlargedCopies: copies)
+        isMovingProjectFiles = true
+        defer { isMovingProjectFiles = false }
+        let result = await Task.detached(priority: .userInitiated) { Result { try ProjectFiles.moveVideo(move) } }.value
+        switch result {
+        case .failure(let error):
+            reloadProjectVideos()
+            return String(localized: "動画を移動できませんでした（詳細: \(error.localizedDescription)）")
+        case .success(let moved):
+            if resultURL == video.url { resultURL = nil; lastResult = nil }
+            if continuation?.videoURL == video.url { continuation = nil }
+            reloadProjectVideos()
+            ProjectStore.shared.owner(of: target)?.reloadProjectVideos()
+            let projectName = (try? ProjectFiles.read(target).name) ?? target.lastPathComponent
+            projectMessage = String(localized: "\(name)を「\(projectName)」に移動しました（\(moved.lastPathComponent)）")
+            projectMessageFile = moved
+            return nil
+        }
     }
 
     func reloadProjectVideos() {

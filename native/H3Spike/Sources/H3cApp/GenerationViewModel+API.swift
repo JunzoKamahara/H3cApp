@@ -223,6 +223,8 @@ extension GenerationViewModel {
             return handleProjectRequest(request)
         case ("POST", "/api/project/join"):
             return await handleJoinRequest(request)
+        case ("POST", "/api/project/save"), ("POST", "/api/project/move-video"):
+            return await handleProjectFilesRequest(request)
         case ("GET", "/api/upscalers"):
             // The enlargement methods: which can be chosen now and why not
             // (not on this Mac, or its model not installed), and for
@@ -661,6 +663,8 @@ extension GenerationViewModel {
             "open": true,
             "name": project.name,
             "path": project.url.path,
+            // A window's 無題のプロジェクト, until POST /api/project/save names it.
+            "untitled": project.untitled,
             "batch_count": batchCount,
             // What the window last said about the project (an import's
             // progress or failure), and whether a video is being imported.
@@ -706,6 +710,45 @@ extension GenerationViewModel {
         }
     }
 
+    /// POST /api/project/save {"name", "directory"?}: names the open
+    /// 無題のプロジェクト, moving its folder with its videos into "directory"
+    /// (default ~/Movies/H3cApp). POST /api/project/move-video {"video",
+    /// "project"}: moves that video with its record, latent and a つなげて生成's
+    /// clips to the project folder "project". Both wait for the files.
+    private func handleProjectFilesRequest(_ request: HTTPRequest) async -> HTTPResponse {
+        let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+        guard let project else { return .error(400, "no project is open") }
+        if let busy = projectFilesBusyReason { return .error(409, busy) }
+        projectMessage = nil
+        if request.path == "/api/project/save" {
+            guard project.untitled else {
+                return .error(400, "the open project already has a name (only an untitled project is saved this way)")
+            }
+            guard let name = json["name"] as? String else { return .error(400, "\"name\" is required") }
+            let parent = (json["directory"] as? String).map { URL(fileURLWithPath: $0, isDirectory: true) }
+                ?? ProjectStore.defaultParentDirectory
+            guard await saveUntitledProject(name: name, parent: parent) else {
+                return .error(400, projectMessage ?? "the project could not be saved")
+            }
+            projectMessage = nil
+            return projectResponse()
+        }
+        guard let name = json["video"] as? String,
+              let video = projectVideos.first(where: { $0.url.lastPathComponent == name }) else {
+            return .error(400, "\"video\" must name a file listed by GET /api/project")
+        }
+        guard let path = json["project"] as? String else { return .error(400, "\"project\" (a project folder) is required") }
+        if let failure = await moveProjectVideo(video, to: URL(fileURLWithPath: path, isDirectory: true)) {
+            return .error(400, failure)
+        }
+        let moved = projectMessageFile?.lastPathComponent
+        projectMessage = nil
+        projectMessageFile = nil
+        var response: [String: Any] = ["ok": true, "project": path]
+        response["video"] = moved
+        return .json(200, response)
+    }
+
     private func handleProjectRequest(_ request: HTTPRequest) -> HTTPResponse {
         let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
         guard !isGenerating else { return .error(409, "a generation is running") }
@@ -724,8 +767,9 @@ extension GenerationViewModel {
             guard let path = json["path"] as? String else { return .error(400, "\"path\" is required") }
             openProject(at: URL(fileURLWithPath: path, isDirectory: true))
         case "/api/project/close":
-            closeProject()
-            return .json(200, ["ok": true])
+            // A window goes on with a new untitled project, as from its menu.
+            closeProjectToUntitled()
+            return .json(200, ["ok": true, "untitled": project?.untitled == true])
         case "/api/project/upscale-video":
             // 2倍に拡大した動画をつくる: {"video": "<name>.mp4"} enlarges that
             // project video 2x into a new one. Answers at once with the name

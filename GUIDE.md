@@ -2,7 +2,34 @@
 
 [English](GUIDE.md) | [日本語](GUIDE.ja.md)
 
-For your first video, start with the [README](README.md) or [illustrated getting-started guide](https://junzokamahara.github.io/H3cApp/en/getting-started.html). This guide explains continuation and joined generation.
+For your first video, start with the [README](README.md) or [illustrated getting-started guide](https://junzokamahara.github.io/H3cApp/en/getting-started.html). This guide explains projects, continuation and joined generation.
+
+## Projects
+
+Every video you generate is kept in a project: a folder holding the prompt
+and settings, copies of the reference files, and the videos with their
+settings records (.json) and latent files (.h3lt, used to continue a video
+and for Open-H3 regeneration).
+
+- **Untitled projects.** A new window opens on an “Untitled Project”
+  (unless it reopens the last project at launch). Videos made there keep
+  their records and latents like any project's, so they can be enlarged or
+  continued right away. Untitled projects live in the app's own folder
+  (`~/Library/Application Support/H3cApp/Untitled`).
+- **Saving under a name.** “Project” → “Save as Project…” asks for a
+  project name and a location (default `~/Movies/H3cApp`); the untitled
+  project's folder moves there with every video made so far.
+- **On closing.** An untitled project with no video in it goes away when
+  its window closes or another project opens. One with videos stays and is
+  listed under “Recent Projects” with the date it was made. After “Close
+  Project”, the window goes on with a new untitled project.
+- **Moving a video to another project.** In “Project Videos…”, choose
+  “More” → “Move to Another Project…” on a video and pick the project (a
+  recent one, or a folder). Its settings record and latent file move with
+  it, and a joined generation's clips folder too. The reference files the
+  record uses (images, audio and so on) are copied into that project. A
+  name already taken there gets “-2” and so on. Moving a video exported by
+  joining others leaves those videos where they are.
 
 ## Joined generation: how to use it
 
@@ -10,9 +37,8 @@ One generation makes at most 15 s (362 frames). Longer videos come from
 joined generation: short videos are made one after another,
 each continuing the one before, and joined into one at their overlaps.
 
-1. **Open a project.** The clips and the joined video are kept in one. With
-   none open, pressing generate asks you to create one or pick an existing
-   one.
+1. **The project.** The clips and the joined video are kept in the open
+   project (a new window's untitled project, too).
 2. **Pick the length.** In the length menu under the prompt, pick “15 s
    Joined” or “Custom Clips…” from the “Joined Generation” section.
    - **15 s Joined**: three clips of about 7 s (“Clip length for joined

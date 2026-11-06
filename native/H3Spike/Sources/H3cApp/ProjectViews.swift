@@ -32,14 +32,16 @@ struct ProjectMenuItems: View {
             viewModel.continueAfterSavingAsProject = false
             viewModel.showingSaveAsProject = true
         }
-            .disabled(viewModel.project != nil)
-            .help("今のプロンプトと設定、プレビューの動画を、名前を付けてプロジェクトとして保存します")
+            .disabled(!(viewModel.project?.untitled ?? true) || viewModel.isMovingProjectFiles)
+            .help(viewModel.project?.untitled == true
+                  ? "無題のプロジェクトに名前を付けて、これまでに生成した動画ごと保存します"
+                  : "今のプロンプトと設定、プレビューの動画を、名前を付けてプロジェクトとして保存します")
         Button("プロジェクトを開く…") { viewModel.chooseAndOpenProject() }
             .keyboardShortcut(inMenuBar ? KeyboardShortcut("o", modifiers: .command) : nil)
         let recents = store.existingRecents.filter { $0.standardizedFileURL != viewModel.project?.url.standardizedFileURL }
         Menu("最近のプロジェクト") {
             ForEach(recents, id: \.self) { url in
-                Button(url.lastPathComponent) { viewModel.openProject(at: url) }
+                Button(store.displayName(for: url)) { viewModel.openProject(at: url) }
             }
         }
         .disabled(recents.isEmpty)
@@ -62,19 +64,23 @@ struct ProjectMenuItems: View {
         }
         .disabled(viewModel.project == nil)
         Divider()
-        Button("プロジェクトを閉じる") { viewModel.closeProject() }
-            .disabled(viewModel.project == nil)
+        Button("プロジェクトを閉じる") { viewModel.closeProjectToUntitled() }
+            .disabled(viewModel.project == nil || viewModel.closingProjectChangesNothing
+                      || viewModel.isMovingProjectFiles)
     }
 }
 
-/// 新規プロジェクト, and プロジェクトとして保存 (`savingAs`), which also moves
-/// in the temp video shown in the preview.
+/// 新規プロジェクト, and プロジェクトとして保存 (`savingAs`): a 無題のプロジェクト
+/// moves to the folder named here with its videos; with no project open,
+/// the temp video shown in the preview moves in.
 struct NewProjectSheet: View {
     @ObservedObject var viewModel: GenerationViewModel
     @Binding var isPresented: Bool
     var savingAs = false
     @State private var name = ""
     @State private var parent = ProjectStore.defaultParentDirectory
+
+    private var savingUntitled: Bool { savingAs && viewModel.project?.untitled == true }
 
     private var folder: URL {
         let folderName = ProjectFiles.folderName(for: name)
@@ -107,23 +113,33 @@ struct NewProjectSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
+                if viewModel.isMovingProjectFiles {
+                    ProgressView().controlSize(.small)
+                    Text("保存しています…").font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button("キャンセル") {
                     viewModel.projectMessage = nil
                     isPresented = false
                 }
                     .keyboardShortcut(.cancelAction)
+                    .disabled(viewModel.isMovingProjectFiles)
                 Button(savingAs ? "保存" : "作成") {
                     viewModel.projectMessage = nil
-                    if savingAs {
+                    if savingUntitled {
+                        Task {
+                            if await viewModel.saveUntitledProject(name: name, parent: parent) { isPresented = false }
+                        }
+                    } else if savingAs {
                         viewModel.saveAsProject(name: name, parent: parent)
+                        if viewModel.project != nil { isPresented = false }
                     } else {
                         viewModel.createProject(name: name, parent: parent)
+                        if viewModel.project != nil { isPresented = false }
                     }
-                    if viewModel.project != nil { isPresented = false }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isMovingProjectFiles)
             }
         }
         .padding(H3Spacing.lg)
@@ -133,6 +149,9 @@ struct NewProjectSheet: View {
     private var description: String {
         guard savingAs else {
             return String(localized: "今のプロンプトと設定、参照ファイルがプロジェクトに入ります。生成した動画はこのフォルダに保存され、削除するまで残ります。")
+        }
+        if savingUntitled {
+            return String(localized: "無題のプロジェクトに名前を付けて保存します。これまでに生成した動画（\(viewModel.projectVideos.count)本）と、その設定の記録・潜在ファイル、今のプロンプトと設定、参照ファイルが、このフォルダに移ります。")
         }
         if let pending = viewModel.savableTemporaryResult {
             return String(localized: "今のプロンプトと設定、参照ファイル、プレビューの動画（\(pending.url.lastPathComponent)）をプロジェクトとして保存します。これから生成する動画もこのフォルダに保存され、削除するまで残ります。")
@@ -223,7 +242,7 @@ struct BatchProjectSheet: View {
                 } else {
                     List(candidates, id: \.self, selection: $selection) { url in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(url.lastPathComponent)
+                            Text(store.displayName(for: url))
                             Text(url.deletingLastPathComponent().path)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -318,6 +337,8 @@ struct ProjectVideosSheet: View {
     @State private var tree: [VideoNode] = []
     /// 2倍に拡大した動画をつくる…: shown from here, this being a sheet.
     @State private var upscaleRequest: GenerationViewModel.PendingUpscale?
+    /// 別のプロジェクトに移動…: the video to move.
+    @State private var moveRequest: ProjectVideo?
 
     var body: some View {
         VStack(alignment: .leading, spacing: H3Spacing.md) {
@@ -353,6 +374,9 @@ struct ProjectVideosSheet: View {
         .onChange(of: viewModel.projectVideos) { _, _ in tree = buildTree() }
         .sheet(item: $upscaleRequest) { pending in
             UpscaleSheet(viewModel: viewModel, pending: pending) { upscaleRequest = nil }
+        }
+        .sheet(item: $moveRequest) { video in
+            MoveVideoSheet(viewModel: viewModel, store: ProjectStore.shared, video: video) { moveRequest = nil }
         }
         .confirmationDialog("この動画を削除しますか？", isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
@@ -450,12 +474,22 @@ struct ProjectVideosSheet: View {
                     isPresented = false
                 }
                 Button("Finderで表示") { NSWorkspace.shared.activateFileViewerSelecting([video.url]) }
+                Button("別のプロジェクトに移動…") { moveRequest = video }
+                    // A つなげて生成's clip moves only with its joined video.
+                    .disabled(viewModel.projectFilesBusyReason != nil || (clipIndex != nil && !isInProjectFolder(video)))
+                    .help("この動画を、設定の記録と潜在ファイルごと別のプロジェクトに移します")
                 Divider()
                 Button("削除…", role: .destructive) { pendingDelete = video }
             }
             .fixedSize()
         }
         .padding(.vertical, 2)
+    }
+
+    /// Whether the video sits in the project's own folder (not in chains/).
+    private func isInProjectFolder(_ video: ProjectVideo) -> Bool {
+        guard let project = viewModel.project else { return false }
+        return video.url.deletingLastPathComponent().standardizedFileURL.path == project.url.standardizedFileURL.path
     }
 
     /// The list as a tree: videos no joined video includes, newest first,
@@ -528,6 +562,119 @@ struct ProjectVideosSheet: View {
                      ? String(localized: "生成時間 合計\(formatElapsed(record.generationSeconds))")
                      : String(localized: "生成時間 \(formatElapsed(record.generationSeconds))"))
         return parts.joined(separator: summarySeparator)
+    }
+}
+
+/// 別のプロジェクトに移動…: picks the project a video moves to - a recent
+/// one (also those open in other windows, untitled ones too) or any
+/// project folder.
+struct MoveVideoSheet: View {
+    @ObservedObject var viewModel: GenerationViewModel
+    @ObservedObject var store: ProjectStore
+    let video: ProjectVideo
+    var close: () -> Void
+    @State private var selection: URL?
+    @State private var chosenElsewhere: URL?
+    @State private var error: String?
+
+    private var candidates: [URL] {
+        let current = viewModel.project?.url.standardizedFileURL.path
+        var urls = store.existingRecents.filter { $0.standardizedFileURL.path != current }
+        if let chosenElsewhere,
+           !urls.contains(where: { $0.standardizedFileURL == chosenElsewhere.standardizedFileURL }) {
+            urls.insert(chosenElsewhere, at: 0)
+        }
+        return urls
+    }
+
+    /// What goes along besides the video, record and latent.
+    private var note: String? {
+        guard let clips = video.record?.joinedClips, !clips.isEmpty else { return nil }
+        return viewModel.chainFolder(of: video) != nil
+            ? String(localized: "つなげて生成したもとの\(clips.count)本の動画も一緒に移ります。")
+            : String(localized: "つないで書き出した動画です。もとの\(clips.count)本の動画は、このプロジェクトに残ります。")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: H3Spacing.md) {
+            Text("別のプロジェクトに移動").font(.headline)
+            Text("「\(video.url.lastPathComponent)」を、選んだプロジェクトに移します。設定の記録と潜在ファイル（続きの生成やOpen-H3 再生成に使います）も一緒に移り、使っている参照ファイルは移動先のプロジェクトにコピーします。")
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            if let note {
+                Text(note).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if candidates.isEmpty {
+                Text("ほかのプロジェクトはありません。「ほかのプロジェクトを選ぶ…」でフォルダを選んでください。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                List(candidates, id: \.self, selection: $selection) { url in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(store.displayName(for: url))
+                        Text(ProjectStore.isUntitledFolder(url)
+                             ? String(localized: "まだ名前を付けていないプロジェクト")
+                             : url.deletingLastPathComponent().path)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                .frame(height: 170)
+            }
+            Button("ほかのプロジェクトを選ぶ…") { chooseElsewhere() }
+            if let error {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                if viewModel.isMovingProjectFiles {
+                    ProgressView().controlSize(.small)
+                    Text("移動しています…").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("キャンセル") { close() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(viewModel.isMovingProjectFiles)
+                Button("移動") { move() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(selection == nil || viewModel.isMovingProjectFiles)
+            }
+        }
+        .padding(H3Spacing.lg)
+        .frame(width: 520)
+    }
+
+    private func move() {
+        guard let selection else { return }
+        error = nil
+        Task {
+            if let failure = await viewModel.moveProjectVideo(video, to: selection) {
+                error = failure
+            } else {
+                close()
+            }
+        }
+    }
+
+    private func chooseElsewhere() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = ProjectStore.defaultParentDirectory
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard (try? ProjectFiles.read(url)) != nil else {
+            error = ProjectError.notAProject(url.path).localizedDescription
+            return
+        }
+        error = nil
+        chosenElsewhere = url
+        selection = url
     }
 }
 

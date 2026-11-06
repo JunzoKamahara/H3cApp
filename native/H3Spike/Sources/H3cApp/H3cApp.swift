@@ -22,6 +22,8 @@ struct H3cApp: App {
         // Settles the app's folder (renamed from h3c-app) before anything
         // reads paths under it.
         _ = h3AppSupportDirectory
+        // Untitled projects a quit or crash left empty (Projects.swift).
+        ProjectStore.shared.sweepEmptyUntitledProjects()
         _ = AppModels.shared
     }
 
@@ -83,7 +85,7 @@ struct ProjectCommands: Commands {
                     .keyboardShortcut("o", modifiers: .command)
                 Menu("最近のプロジェクト") {
                     ForEach(store.existingRecents.filter { !store.isOpen($0) }, id: \.self) { url in
-                        Button(url.lastPathComponent) { openWindow(for: .open(url)) }
+                        Button(store.displayName(for: url)) { openWindow(for: .open(url)) }
                     }
                 }
                 .disabled(store.existingRecents.allSatisfy { store.isOpen($0) })

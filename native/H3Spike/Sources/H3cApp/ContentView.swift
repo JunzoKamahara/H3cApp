@@ -209,6 +209,10 @@ struct ContentView: View {
                 // closed its project): a new window still starts blank.
                 viewModel.startBlankDraft()
             }
+            // Every window has a project: without one of its own it starts
+            // a 無題のプロジェクト (a project chosen above replaces it, and
+            // an empty one goes when it does).
+            if !viewModel.isGenerating { viewModel.startUntitledProject() }
         }
         // initial: the engine can already have failed (no model registered)
         // before this window's first frame.
