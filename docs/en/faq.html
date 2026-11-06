@@ -46,7 +46,7 @@
   <main id="main">
     <div class="page-head">
       <h1>Troubleshooting</h1>
-      <p class="lead">Common stumbling points and what to check, in order. Written for H3cApp v0.6.2.</p>
+      <p class="lead">Common stumbling points and what to check, in order. Written for H3cApp v0.7.10.</p>
       <nav class="toc" aria-label="On this page">
         <p>On this page</p>
         <ol>
@@ -55,7 +55,7 @@
           <li><a href="#download">The download stopped, or there isn't enough space</a></li>
           <li><a href="#fast-mode">“Fast mode (experimental)” isn't shown</a></li>
           <li><a href="#saved">Where are videos saved?</a></li>
-          <li><a href="#project-required">Why batches need a project</a></li>
+          <li><a href="#untitled">What is an “Untitled Project”?</a></li>
           <li><a href="#old-mac">It doesn't run on an older macOS or an Intel Mac</a></li>
           <li><a href="#gatekeeper">A warning appears at launch</a></li>
           <li><a href="#update">Updating from an earlier version</a></li>
@@ -108,8 +108,8 @@
       <div class="table-wrap">
         <table>
           <tbody>
-            <tr><th scope="row">No project open</th><td>A temporary file, deleted when you generate the next one. Save it with “<span class="ui">Export Video…</span>” (starts in Downloads) or “<span class="ui">Save as Project…</span>”.</td></tr>
-            <tr><th scope="row">Project open</th><td>In the project folder (by default <code>~/Movies/H3cApp/&lt;name&gt;</code>): an MP4 named with the date, time and seed, plus a record of its settings (.json). It stays until you delete it.</td></tr>
+            <tr><th scope="row">Named project</th><td>In the project folder (by default <code>~/Movies/H3cApp/&lt;name&gt;</code>): an MP4 named with the date, time and seed, plus a record of its settings (.json) and its latent file (.h3lt). It stays until you delete it.</td></tr>
+            <tr><th scope="row">Untitled project</th><td>Inside <code>~/Library/Application Support/H3cApp/Untitled</code>, in the same form as a named project (from v0.7.10). Naming it with “<span class="ui">Save as Project…</span>” moves it wherever you choose.</td></tr>
             <tr><th scope="row">Model</th><td>The destination chosen at download time (by default <code>~/Library/Application Support/H3cApp/MiniMax-H3</code>).</td></tr>
             <tr><th scope="row">int8 cache</th><td>Inside <code>~/Library/Application Support/H3cApp/cache</code>.</td></tr>
           </tbody>
@@ -117,9 +117,9 @@
       </div>
     </section>
 
-    <section class="section section-narrow" id="project-required" aria-labelledby="q6">
-      <h2 id="q6">Why batches need a project</h2>
-      <p>Without an open project, each video is a temporary file that the next generation deletes. A batch would therefore lose all but its last video, so it needs a project to save them in. If you choose 2 or more with no project open, the app asks you to create a new project or pick an existing one. See <a href="guide.html#projects">Projects and batches</a>.</p>
+    <section class="section section-narrow" id="untitled" aria-labelledby="q6">
+      <h2 id="q6">What is an “Untitled Project”?</h2>
+      <p>From v0.7.10, a new window opens on an “Untitled Project”. Even before you name it, the videos you make are kept with their settings records and latent files, so batches, enlarging and continuing work right away. Name it with “<span class="ui">Save as Project…</span>”. An untitled project closed without any video goes away; one with videos stays and can be opened from “Recent Projects”. See <a href="guide.html#projects">Projects and batches</a>.</p>
     </section>
 
     <section class="section section-narrow" id="old-mac" aria-labelledby="q7">

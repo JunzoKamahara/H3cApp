@@ -46,7 +46,7 @@
   <main id="main">
     <div class="page-head">
       <h1>Guide</h1>
-      <p class="lead">Once your first video works, move on to image-based generation and batches in a project. This page follows H3cApp v0.6.2 with macOS set to English.</p>
+      <p class="lead">Once your first video works, move on to image-based generation and batches in a project. This page follows H3cApp v0.7.10 with macOS set to English.</p>
       <nav class="toc" aria-label="On this page">
         <p>On this page</p>
         <ol>
@@ -114,20 +114,20 @@
 
     <section class="section section-narrow" id="projects" aria-labelledby="projects-title">
       <h2 id="projects-title">Projects and batches</h2>
-      <p>A project is a folder that keeps the prompt and settings, copies of the reference files, and the generated videos together. It defaults to <code>~/Movies/H3cApp/&lt;name&gt;</code>. Without an open project, each video is a temporary file that the next generation deletes.</p>
+      <p>A project is a folder that keeps the prompt and settings, copies of the reference files, and the generated videos together. It defaults to <code>~/Movies/H3cApp/&lt;name&gt;</code>. Every video you generate is kept in a project, with its settings record (.json) and latent file (.h3lt, used to continue it and for Open-H3 regeneration).</p>
       <h3>Creating and opening projects</h3>
       <ul>
         <li>Use the project menu at the top left (folder icon), or the project menu in the menu bar.</li>
         <li>“<span class="ui">New Project…</span>”: name it and choose where to save it. The current prompt, settings and reference files go in.</li>
-        <li>“<span class="ui">Save as Project…</span>”: with no project open, saves the current prompt and settings together with the video in the preview.</li>
+        <li><strong>Untitled projects</strong> (from v0.7.10): a new window opens on an “Untitled Project” (unless it reopens the last project at launch). Videos made there are kept like any project’s. They are named “Untitled Project”, “Untitled Project 2” and so on, with a number no other untitled project has.</li>
+        <li>“<span class="ui">Save as Project…</span>”: gives an untitled project a name and a location; its folder moves there with every video made so far.</li>
+        <li>An untitled project closed without any video goes away. One with videos stays and is listed under “Recent Projects” with the date it was made. After “<span class="ui">Close Project</span>”, the window goes on with a new untitled project.</li>
         <li>“<span class="ui">Open Project…</span>” and “Recent Projects”: opening a saved project brings its prompt and settings back.</li>
       </ul>
       <h3>Several videos with the same settings</h3>
       <ol class="steps">
         <li>Choose a count such as 3 with the count button below the prompt field (1 to 20).</li>
-        <li>Generate: videos are made one after another with different seeds and saved in the project. With “Randomness” set to “Fixed”, only the first video uses that seed; the rest get random seeds.</li>
-        <li>If you choose 2 or more with no project open, “<span class="ui">Choose a Project to Generate</span>” appears. Create a “<span class="ui">New Project</span>” or pick an “<span class="ui">Existing Project</span>”. “<span class="ui">Cancel</span>” returns without generating.</li>
-        <li>When you pick an existing project whose saved prompt and settings differ from the current ones, the app asks before overwriting them. “<span class="ui">Overwrite and Generate</span>” generates with the current prompt and settings and saves them in the project.</li>
+        <li>Generate: videos are made one after another with different seeds and saved in the open project (an untitled one too). With “Randomness” set to “Fixed”, only the first video uses that seed; the rest get random seeds.</li>
       </ol>
       <h3>Viewing and reusing videos</h3>
       <p>“<span class="ui">Project Videos…</span>” in the project menu opens the list.</p>
@@ -136,6 +136,7 @@
         <li>“<span class="ui">Restore Settings</span>”: puts that video's prompt and settings back in the panel with its seed fixed, so generating makes the same video again.</li>
         <li>“<span class="ui">Use as Reference</span>”: adds that video as a reference video (needs Ref2VA).</li>
         <li>“<span class="ui">More</span>” → “<span class="ui">Continue This Video</span>” / “<span class="ui">Join Up to Here and Export</span>”: see <a href="#continue">Continuing a video</a>.</li>
+        <li>“<span class="ui">More</span>” → “<span class="ui">Move to Another Project…</span>” (from v0.7.10): pick a project (a recent one, or a folder) and the video moves there with its settings record and latent file; a joined generation takes its clips folder along. The reference files the record uses are copied there, and a name already taken gets “-2” and so on. Moving a video exported by joining others leaves those videos where they are.</li>
         <li>“<span class="ui">Delete…</span>”: moves the video and its settings record to the Trash.</li>
       </ul>
       <p class="small">“<span class="ui">Settings Used…</span>” above the preview shows the settings of the video on screen, and “<span class="ui">Back to the Form</span>” puts them back in the panel.</p>
@@ -231,7 +232,7 @@
       <h2 id="continue-title">Continuing a video</h2>
       <p>You can make one more clip that carries on from a finished video. The original's last 0.9 seconds or so and its sound carry over, so the new clip starts where the original ends.</p>
       <ol class="steps">
-        <li><strong>Pick the video.</strong> With a video in the preview, click “<span class="ui">Continue</span>” in the panel. From the list, choose “<span class="ui">More</span>” → “<span class="ui">Continue This Video</span>” in “<span class="ui">Project Videos…</span>”. A video outside any project is saved as a project first.</li>
+        <li><strong>Pick the video.</strong> With a video in the preview, click “<span class="ui">Continue</span>” in the panel. From the list, choose “<span class="ui">More</span>” → “<span class="ui">Continue This Video</span>” in “<span class="ui">Project Videos…</span>”.</li>
         <li><strong>Edit the prompt and generate.</strong> The original's prompt and settings come back into the panel, with the original shown under “<span class="ui">Continues</span>”. Rewrite the prompt for what happens next, then generate.</li>
         <li><strong>Join them.</strong> With the continuation shown, “<span class="ui">Join and Export</span>” in the panel joins everything from the first original up to that clip into one video, saved in the project. “<span class="ui">More</span>” → “<span class="ui">Join Up to Here and Export</span>” in the list does the same. You can stack continuations of continuations and join them all at the end.</li>
       </ol>
@@ -249,7 +250,7 @@
       <h2 id="chain-title">Making longer videos (joined generation)</h2>
       <p>One generation makes at most 15 seconds. Longer videos come from joined generation: short videos are made one after another, each continuing the one before, and joined into one at their overlaps.</p>
       <ol class="steps">
-        <li><strong>Open a project.</strong> It keeps the clips and the joined video. With none open, pressing generate asks you to create one or pick an existing one.</li>
+        <li><strong>The project.</strong> The clips and the joined video are kept in the open project (a new window's untitled project, too).</li>
         <li><strong>Pick the length.</strong> In the length menu under the prompt, pick “<span class="ui">15 s Joined</span>” or “<span class="ui">Custom Clips…</span>” from the “<span class="ui">Joined Generation</span>” section. 15 s Joined is three clips of about 7 s. In Custom Clips, the editor that opens sets each clip's length (3 to 15 s) and what happens in it, and “<span class="ui">Add a Clip</span>” adds the next clip below. The summary under the panel shows how many clips, such as “3 clips joined (15.1 s in all)”.</li>
         <li><strong>Write the common directions.</strong> The prompt box is used for every clip (the people, their clothes, the style); each clip gets its own directions added after it. Starting from how the clip before ends, then describing the movement, how the clip ends and what the camera does, moves the story on.</li>
         <li><strong>Generate.</strong> From the second clip on, each one carries over the previous clip's last 0.9 seconds or so and its sound. While it runs, the preview shows which clip of how many is being made, with the whole run's elapsed time, time left and finish time.</li>

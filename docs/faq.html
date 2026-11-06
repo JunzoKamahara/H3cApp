@@ -47,7 +47,7 @@
   <main id="main">
     <div class="page-head">
       <h1>困ったとき</h1>
-      <p class="lead">よくあるつまずきと、確認する順番をまとめました。内容はH3cApp v0.6.2に合わせています。</p>
+      <p class="lead">よくあるつまずきと、確認する順番をまとめました。内容はH3cApp v0.7.10に合わせています。</p>
       <nav class="toc" aria-label="このページの目次">
         <p>このページの内容</p>
         <ol>
@@ -56,7 +56,7 @@
           <li><a href="#download">ダウンロードが止まった・空き容量が足りない</a></li>
           <li><a href="#fast-mode">「高速モード（試験的）」が表示されない</a></li>
           <li><a href="#saved">動画はどこに保存される？</a></li>
-          <li><a href="#project-required">複数本の生成にプロジェクトが必要な理由</a></li>
+          <li><a href="#untitled">「無題のプロジェクト」とは</a></li>
           <li><a href="#old-mac">古いmacOS・Intel Macで動かない</a></li>
           <li><a href="#gatekeeper">起動時に警告が出る</a></li>
           <li><a href="#update">以前の版から更新する</a></li>
@@ -109,8 +109,8 @@
       <div class="table-wrap">
         <table>
           <tbody>
-            <tr><th scope="row">プロジェクトを開いていないとき</th><td>一時ファイルです。次に生成すると消えます。「<span class="ui">動画を書き出す…</span>」（最初はダウンロードフォルダ）か「<span class="ui">プロジェクトとして保存…</span>」で保存してください。</td></tr>
-            <tr><th scope="row">プロジェクトを開いているとき</th><td>プロジェクトのフォルダ（既定は <code>~/Movies/H3cApp/&lt;名前&gt;</code>）に、日付・時刻・シードを含む名前のMP4と、設定の記録（.json）が保存されます。削除するまで残ります。</td></tr>
+            <tr><th scope="row">名前のあるプロジェクト</th><td>プロジェクトのフォルダ（既定は <code>~/Movies/H3cApp/&lt;名前&gt;</code>）に、日付・時刻・シードを含む名前のMP4と、設定の記録（.json）・潜在ファイル（.h3lt）が保存されます。削除するまで残ります。</td></tr>
+            <tr><th scope="row">無題のプロジェクト</th><td><code>~/Library/Application Support/H3cApp/Untitled</code> の中に、名前のあるプロジェクトと同じ形で保存されます（v0.7.10から）。「<span class="ui">プロジェクトとして保存…</span>」で名前を付けると、好きな場所に移ります。</td></tr>
             <tr><th scope="row">モデル</th><td>ダウンロード時に選んだ保存先（既定は <code>~/Library/Application Support/H3cApp/MiniMax-H3</code>）。</td></tr>
             <tr><th scope="row">int8キャッシュ</th><td><code>~/Library/Application Support/H3cApp/cache</code> の中。</td></tr>
           </tbody>
@@ -118,9 +118,9 @@
       </div>
     </section>
 
-    <section class="section section-narrow" id="project-required" aria-labelledby="q6">
-      <h2 id="q6">複数本の生成にプロジェクトが必要な理由</h2>
-      <p>プロジェクトを開いていないときの動画は一時ファイルで、次の生成で消えてしまいます。複数本を続けてつくると前の動画が残らないため、保存先となるプロジェクトが必要です。プロジェクトなしで2本以上を選んで生成すると、新しいプロジェクトをつくるか既存のプロジェクトを選ぶ画面が出ます。くわしくは<a href="guide.html#projects">プロジェクトと複数生成</a>をご覧ください。</p>
+    <section class="section section-narrow" id="untitled" aria-labelledby="q6">
+      <h2 id="q6">「無題のプロジェクト」とは</h2>
+      <p>v0.7.10から、新しいウィンドウは「無題のプロジェクト」で開きます。名前を付ける前でも、生成した動画は設定の記録と潜在ファイル付きで残るので、複数本の生成や拡大、続きの生成にそのまま使えます。名前を付けるときは「<span class="ui">プロジェクトとして保存…</span>」を使います。動画を生成しないまま閉じた無題のプロジェクトは消え、動画のあるものは残って「最近のプロジェクト」から開けます。くわしくは<a href="guide.html#projects">プロジェクトと複数生成</a>をご覧ください。</p>
     </section>
 
     <section class="section section-narrow" id="old-mac" aria-labelledby="q7">
