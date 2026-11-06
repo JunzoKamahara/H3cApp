@@ -24,6 +24,37 @@ public struct H3SeedVR2Requirements: Sendable {
     public let tokens: Int
 }
 
+/// A window session's settings (h3_seedvr2_video_params): `windowFrames`
+/// 4n+1, `overlapFrames` 0 or 4n+1 below it, `blend` false keeps the
+/// earlier window's frames in the overlap, true cross-fades them.
+public struct H3SeedVR2VideoSettings: Sendable, Equatable {
+    public var windowFrames: Int
+    public var overlapFrames: Int
+    public var blend: Bool
+    public var seed: UInt64
+    public init(windowFrames: Int = 17, overlapFrames: Int = 1, blend: Bool = false, seed: UInt64 = 0) {
+        self.windowFrames = windowFrames
+        self.overlapFrames = overlapFrames
+        self.blend = blend
+        self.seed = seed
+    }
+    public var isValid: Bool {
+        var p = h3_seedvr2_video_params(window_frames: Int32(windowFrames), overlap_frames: Int32(overlapFrames),
+                                        vae_slicing: -1, blend: blend ? 1 : 0, seed: seed, color_transfer: -1)
+        var reason = [CChar](repeating: 0, count: 256)
+        return reason.withUnsafeMutableBufferPointer { h3_seedvr2_video_check_params(&p, $0.baseAddress, $0.count) } != 0
+    }
+}
+
+public struct H3SeedVR2VideoRequirements: Sendable {
+    public let supported: Bool
+    public let reason: String
+    public let gpuBytes: UInt64
+    public let vaeSliced: Bool
+    public let estimatedSecondsPerFrame: Double
+    public let latentFrames: Int
+}
+
 private func cString<T>(_ tuple: T) -> String {
     withUnsafeBytes(of: tuple) { raw in
         String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
@@ -64,6 +95,26 @@ private let h3SeedVR2ProcessTrampoline: h3_progress_callback = { phase, complete
         case "vsr encode": share = completed > 0 ? 0.2 : 0
         case "vsr dit": share = 0.2 + 0.4 * Double(completed) / Double(max(total, 1))
         case "vsr decode": share = completed > 0 ? 1 : 0.6
+        default: share = nil
+        }
+        if let share { bridge.progress(share) }
+    }
+    return bridge.cancelFlag.isCancelled ? 1 : 0
+}
+
+/// A window's phases as a share of the window (the clip pipeline's
+/// "vsr encode" / "vsr dit" / "vsr decode" / "vsr output", each with a count).
+private let h3SeedVR2VideoTrampoline: h3_progress_callback = { phase, completed, total, opaque in
+    guard let opaque else { return 0 }
+    let bridge = Unmanaged<SV2ProcessBridge>.fromOpaque(opaque).takeUnretainedValue()
+    if let phase {
+        let done = Double(completed) / Double(max(total, 1))
+        let share: Double?
+        switch String(cString: phase) {
+        case "vsr encode": share = 0.25 * done
+        case "vsr dit": share = 0.25 + 0.2 * done
+        case "vsr decode": share = 0.45 + 0.5 * done
+        case "vsr output": share = 0.95 + 0.05 * done
         default: share = nil
         }
         if let share { bridge.progress(share) }
@@ -206,6 +257,112 @@ public final class H3SeedVR2Restorer: @unchecked Sendable {
             }
             return output
         }
+    }
+
+    /// Whether a window of `settings.windowFrames` fits this Mac at these sizes.
+    public func videoRequirements(inputWidth: Int, inputHeight: Int, outputWidth: Int, outputHeight: Int,
+                                  windowFrames: Int) -> H3SeedVR2VideoRequirements {
+        var req = h3_seedvr2_video_requirements()
+        _ = h3_seedvr2_video_check_requirements(handle, Int32(inputWidth), Int32(inputHeight), Int32(outputWidth),
+                                                Int32(outputHeight), Int32(windowFrames), &req)
+        return H3SeedVR2VideoRequirements(supported: req.supported != 0, reason: cString(req.reason), gpuBytes: req.gpu_bytes,
+                                          vaeSliced: req.vae_split != 0, estimatedSecondsPerFrame: req.estimated_seconds_per_frame,
+                                          latentFrames: Int(req.latent_frames))
+    }
+
+    /// A video in overlapping windows through the temporal path: the same
+    /// contract as `H3VideoSuperResolver.Session` (frames in as
+    /// `nextChunkFrames` asks, outputs in order, `isLast` flushes).
+    public final class VideoSession {
+        private let handle: OpaquePointer
+        private let restorer: H3SeedVR2Restorer   // keeps the model alive
+        private let cancelFlag = SV2CancelFlag()
+        public let outputWidth: Int
+        public let outputHeight: Int
+
+        fileprivate init(restorer: H3SeedVR2Restorer, handle: OpaquePointer, outputWidth: Int, outputHeight: Int) {
+            self.restorer = restorer
+            self.handle = handle
+            self.outputWidth = outputWidth
+            self.outputHeight = outputHeight
+        }
+
+        deinit { h3_seedvr2_video_session_close(handle) }
+
+        /// Frames the next call should bring (0 when finished).
+        public var nextChunkFrames: Int { Int(h3_seedvr2_video_session_next_frames(handle)) }
+
+        /// Windows run so far and the frames they processed (padding included).
+        public var windowsRun: (windows: Int, frames: Int) {
+            var frames: Int32 = 0, padded: Int32 = 0
+            var seconds = 0.0
+            let windows = h3_seedvr2_video_session_windows(handle, &frames, &padded, &seconds)
+            return (Int(windows), Int(frames))
+        }
+
+        public func cancel() { cancelFlag.cancel() }
+
+        public func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
+                            progress: ((Double) -> Void)? = nil) throws -> [CVPixelBuffer] {
+            guard !frames.isEmpty || isLast else { return [] }
+            let bridge = progress.map { SV2ProcessBridge(progress: $0, cancelFlag: cancelFlag) }
+            let bridgeHandle = bridge.map { Unmanaged.passRetained($0) }
+            defer { bridgeHandle?.release() }
+            let capacity = Int(h3_seedvr2_video_session_pending_frames(handle)) + frames.count
+            var outputs: [CVPixelBuffer] = []
+            for _ in 0 ..< capacity {
+                var buffer: CVPixelBuffer?
+                CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
+                guard let buffer else { throw H3VSRError.failed(String(localized: "出力フレームを確保できませんでした")) }
+                outputs.append(buffer)
+            }
+            for frame in frames { CVPixelBufferLockBaseAddress(frame, .readOnly) }
+            for buffer in outputs { CVPixelBufferLockBaseAddress(buffer, []) }
+            defer {
+                for frame in frames { CVPixelBufferUnlockBaseAddress(frame, .readOnly) }
+                for buffer in outputs { CVPixelBufferUnlockBaseAddress(buffer, []) }
+            }
+            var inputs = frames.map { frame -> h3_vsr_image in
+                h3_vsr_image(pixels: CVPixelBufferGetBaseAddress(frame)!.assumingMemoryBound(to: UInt8.self),
+                             width: Int32(CVPixelBufferGetWidth(frame)), height: Int32(CVPixelBufferGetHeight(frame)),
+                             stride_bytes: Int32(CVPixelBufferGetBytesPerRow(frame)), format: H3_VSR_BGRA8)
+            }
+            var outs = outputs.map { buffer -> h3_vsr_image_out in
+                h3_vsr_image_out(pixels: CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self),
+                                 width: Int32(CVPixelBufferGetWidth(buffer)), height: Int32(CVPixelBufferGetHeight(buffer)),
+                                 stride_bytes: Int32(CVPixelBufferGetBytesPerRow(buffer)), format: H3_VSR_BGRA8)
+            }
+            var produced: Int32 = 0
+            var error = [CChar](repeating: 0, count: 1024)
+            let ok = inputs.withUnsafeMutableBufferPointer { ins in
+                outs.withUnsafeMutableBufferPointer { outPtr in
+                    error.withUnsafeMutableBufferPointer { buffer in
+                        h3_seedvr2_video_session_process(handle, ins.baseAddress, Int32(frames.count), isLast ? 1 : 0,
+                                                         outPtr.baseAddress, Int32(outputs.count), &produced,
+                                                         bridgeHandle == nil ? nil : h3SeedVR2VideoTrampoline,
+                                                         bridgeHandle?.toOpaque(),
+                                                         cancelFlag.engineFlag, buffer.baseAddress, buffer.count)
+                    }
+                }
+            }
+            guard ok != 0 else {
+                throw cancelFlag.isCancelled ? H3VSRError.cancelled : H3VSRError.failed(String(cString: error))
+            }
+            return Array(outputs.prefix(Int(produced)))
+        }
+    }
+
+    public func openVideoSession(inputWidth: Int, inputHeight: Int, outputWidth: Int, outputHeight: Int,
+                                 totalFrames: Int = 0, settings: H3SeedVR2VideoSettings) throws -> VideoSession {
+        var params = h3_seedvr2_video_params(window_frames: Int32(settings.windowFrames), overlap_frames: Int32(settings.overlapFrames),
+                                             vae_slicing: -1, blend: settings.blend ? 1 : 0, seed: settings.seed, color_transfer: -1)
+        var error = [CChar](repeating: 0, count: 1024)
+        let session = error.withUnsafeMutableBufferPointer { buffer in
+            h3_seedvr2_video_session_open(handle, Int32(inputWidth), Int32(inputHeight), Int32(outputWidth), Int32(outputHeight),
+                                          Int32(totalFrames), &params, buffer.baseAddress, buffer.count)
+        }
+        guard let session else { throw H3VSRError.failed(String(cString: error)) }
+        return VideoSession(restorer: self, handle: session, outputWidth: outputWidth, outputHeight: outputHeight)
     }
 
     public func openSession(inputWidth: Int, inputHeight: Int, outputWidth: Int, outputHeight: Int) throws -> Session {

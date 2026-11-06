@@ -149,6 +149,86 @@ static void test_memory_model(void) {
     printf("ok: video memory model (%zu measured points)\n", sizeof(pts) / sizeof(*pts));
 }
 
+/* The window session on a dry run (no model): every frame count comes out
+ * once, in order, for every window/overlap/blend/total-known combination;
+ * window starts are multiples of 4; a window's frames arrive as next_frames
+ * asks. Each input frame carries its number in every byte. */
+static void test_video_session(void) {
+    static const int counts[] = {1, 2, 4, 5, 6, 16, 17, 18, 28, 29, 30, 33, 56, 124};
+    static const int windows[] = {5, 17}, overlaps[] = {0, 1, 5, 9};
+    const int IW = 8, IH = 4, OW = 16, OH = 16;
+    int combos = 0;
+    for (size_t ci = 0; ci < sizeof(counts) / sizeof(*counts); ci++)
+        for (size_t wi = 0; wi < sizeof(windows) / sizeof(*windows); wi++)
+            for (size_t oi = 0; oi < sizeof(overlaps) / sizeof(*overlaps); oi++)
+                for (int blend = 0; blend < 2; blend++)
+                    for (int known = 0; known < 2; known++) {
+                        int N = counts[ci], W = windows[wi], O = overlaps[oi];
+                        if (O >= W) continue;
+                        h3_seedvr2_video_params p = {W, O, -1, blend, 1, -1};
+                        char error[512];
+                        h3_seedvr2_video_session *s = h3_seedvr2_video_session_open(NULL, IW, IH, OW, OH, known ? N : 0, &p, error, sizeof(error));
+                        if (!s) fprintf(stderr, "open: %s\n", error);
+                        CHECK(s != NULL);
+                        uint8_t *in_px = malloc((size_t)N * IW * IH * 4);
+                        for (int t = 0; t < N; t++) memset(in_px + (size_t)t * IW * IH * 4, t & 255, (size_t)IW * IH * 4);
+                        uint8_t *out_px = malloc((size_t)(N + 1) * OW * OH * 4);
+                        h3_vsr_image_out outs[256];
+                        int sent = 0, got = 0, calls = 0;
+                        while (sent < N || !got) {
+                            int want = h3_seedvr2_video_session_next_frames(s);
+                            CHECK(want > 0 || sent == N);
+                            int give = want < N - sent ? want : N - sent;
+                            int is_last = sent + give >= N;
+                            h3_vsr_image ins[128];
+                            for (int t = 0; t < give; t++)
+                                ins[t] = (h3_vsr_image){in_px + (size_t)(sent + t) * IW * IH * 4, IW, IH, IW * 4, H3_VSR_BGRA8};
+                            int capacity = h3_seedvr2_video_session_pending_frames(s) + give;
+                            CHECK(capacity <= 256);
+                            for (int t = 0; t < capacity; t++)
+                                outs[t] = (h3_vsr_image_out){out_px + (size_t)(got + t) * OW * OH * 4, OW, OH, OW * 4, H3_VSR_BGRA8};
+                            int produced = 0;
+                            if (!h3_seedvr2_video_session_process(s, ins, give, is_last, outs, capacity, &produced, NULL, NULL, NULL, error, sizeof(error)))
+                                fprintf(stderr, "N=%d W=%d O=%d blend %d known %d: %s\n", N, W, O, blend, known, error);
+                            CHECK(produced >= 0 && produced <= capacity);
+                            got += produced;
+                            sent += give;
+                            calls++;
+                            if (is_last) break;
+                            CHECK(calls < 1000);
+                        }
+                        if (got != N) fprintf(stderr, "N=%d W=%d O=%d blend %d known %d: %d frames out\n", N, W, O, blend, known, got);
+                        CHECK(got == N);
+                        CHECK(h3_seedvr2_video_session_next_frames(s) == 0 && h3_seedvr2_video_session_pending_frames(s) == 0);
+                        for (int t = 0; t < N; t++)
+                            for (size_t k = 0; k < (size_t)OW * OH * 4; k++) {
+                                if (out_px[(size_t)t * OW * OH * 4 + k] != (t & 255)) {
+                                    fprintf(stderr, "N=%d W=%d O=%d blend %d known %d: frame %d byte %zu = %d\n", N, W, O, blend, known, t, k, out_px[(size_t)t * OW * OH * 4 + k]);
+                                    CHECK(0);
+                                }
+                            }
+                        int frames_run, padded; double seconds;
+                        int nw = h3_seedvr2_video_session_windows(s, &frames_run, &padded, &seconds);
+                        CHECK(nw >= 1 && frames_run == nw * W);
+                        /* the last window ends on the last frame: padding only when the video is shorter than a window */
+                        if (N >= W) { if (padded) fprintf(stderr, "N=%d W=%d O=%d known %d: %d padded\n", N, W, O, known, padded); CHECK(padded == 0); }
+                        else CHECK(padded == W - N);
+                        int stride = W - O, expected_windows = N <= W ? 1 : (N - W + stride - 1) / stride + 1;
+                        CHECK(nw == expected_windows);
+                        h3_seedvr2_video_session_close(s);
+                        free(in_px); free(out_px);
+                        combos++;
+                    }
+    /* bad parameters are refused */
+    char reason[256];
+    h3_seedvr2_video_params bad1 = {4, 0, -1, 0, 0, -1}, bad2 = {9, 2, -1, 0, 0, -1}, bad3 = {5, 5, -1, 0, 0, -1}, ok = {9, 5, -1, 0, 0, -1};
+    CHECK(!h3_seedvr2_video_check_params(&bad1, reason, sizeof(reason)));
+    CHECK(!h3_seedvr2_video_check_params(&bad2, reason, sizeof(reason)));
+    CHECK(!h3_seedvr2_video_check_params(&bad3, reason, sizeof(reason)));
+    CHECK(h3_seedvr2_video_check_params(&ok, reason, sizeof(reason)));
+    printf("ok: video session frame bookkeeping (%d combinations)\n", combos);
+}
+
 static const char *model_dir(char *buf, size_t size) {
     const char *dir = getenv("H3_SEEDVR2_DIR");
     if (dir) return dir;
@@ -362,6 +442,7 @@ int main(int argc, char **argv) {
     test_windows3();
     test_noise();
     test_memory_model();
+    test_video_session();
     char mbuf[1024], fbuf[1024], cfg[1200], path[1200];
     const char *dir = model_dir(mbuf, sizeof(mbuf));
     const char *fixtures = fixture_dir(fbuf, sizeof(fbuf));

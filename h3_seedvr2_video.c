@@ -283,3 +283,308 @@ done:
     free(cond); free(noise); free(pred_host); free(z); free(enc_host); free(tokens_host); free(pred_bf16);
     return ok;
 }
+
+/* ---------------------------------------------------------------- */
+/* The window session: a video in windows of `window_frames` (4n+1) that
+ * overlap by `overlap_frames`, each through h3_seedvr2_restore_clip; the
+ * overlap is taken from the earlier window (which had the frames' past) or
+ * cross-faded. Window starts are multiples of 4 (the stride is), so the
+ * frame -> latent grouping and the per-latent-frame noise agree between
+ * windows; the last window is moved back to end on the last frame instead
+ * of being padded (its start may then be unaligned: only its new frames
+ * are used, so nothing depends on the agreement). Input frames are copied
+ * and kept until their window has run; outputs come back in order. */
+
+#define SV2_VIDEO_MAX_WINDOW 121
+
+static int pixel_bytes(h3_vsr_pixel_format format) { return format == H3_VSR_RGB24 ? 3 : 4; }
+
+struct h3_seedvr2_video_session {
+    h3_seedvr2 *m;                 /* NULL: a dry run (tests) that copies the input frames up */
+    int in_w, in_h, out_w, out_h;
+    h3_seedvr2_video_params p;
+    int total;                     /* frames in the video, 0 unknown */
+    int stride;                    /* window - overlap */
+    h3_vsr_pixel_format in_format, out_format;
+    int in_pixel, out_pixel;       /* bytes per pixel of the copies */
+    /* input frames kept: absolute frames [in_first, in_first + in_count) */
+    uint8_t **in_frames;
+    int in_cap, in_first, in_count;
+    int received, emitted;         /* absolute counts */
+    int next_start;                /* the next window's first frame */
+    int windows_done, frames_run, padded;   /* statistics */
+    /* the earlier window's output for the overlap, absolute [pend_start, +pend_count) */
+    uint8_t **pend;
+    int pend_start, pend_count;
+    uint8_t **win_out;             /* the window's output frames */
+    int done, failed;
+    double seconds;                /* in the windows */
+};
+
+int h3_seedvr2_video_check_params(const h3_seedvr2_video_params *p, char *reason, size_t reason_size) {
+    if (!p) return 0;
+    int W = p->window_frames, O = p->overlap_frames;
+    if (W < 1 || W % 4 != 1 || W > SV2_VIDEO_MAX_WINDOW) { snprintf(reason, reason_size, "the window must be 4n+1 frames (5, 9, ..., %d)", SV2_VIDEO_MAX_WINDOW); return 0; }
+    if (O < 0 || O >= W || (O != 0 && O % 4 != 1)) { snprintf(reason, reason_size, "the overlap must be 0 or 4n+1 frames below the window"); return 0; }
+    if (W == 1 && O != 0) { snprintf(reason, reason_size, "a 1-frame window has no overlap"); return 0; }
+    return 1;
+}
+
+h3_seedvr2_video_session *h3_seedvr2_video_session_open(h3_seedvr2 *m, int in_w, int in_h, int out_w, int out_h,
+                                                        int total_frames, const h3_seedvr2_video_params *params,
+                                                        char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    char reason[256];
+    if (in_w < 1 || in_h < 1 || out_w < 16 || out_h < 16 || total_frames < 0) { fail(error, error_size, "SeedVR2 video: bad sizes"); return NULL; }
+    if (!h3_seedvr2_video_check_params(params, reason, sizeof(reason))) { fail(error, error_size, "SeedVR2 video: %s", reason); return NULL; }
+    if (m) {
+        h3_seedvr2_video_requirements req;
+        if (!h3_seedvr2_video_check_requirements(m, in_w, in_h, out_w, out_h, params->window_frames, &req) || !req.supported) {
+            fail(error, error_size, "SeedVR2 video: %s", req.reason[0] ? req.reason : "unsupported");
+            return NULL;
+        }
+    }
+    h3_seedvr2_video_session *s = calloc(1, sizeof(*s));
+    if (!s) return NULL;
+    s->m = m; s->in_w = in_w; s->in_h = in_h; s->out_w = out_w; s->out_h = out_h;
+    s->p = *params; s->total = total_frames;
+    s->stride = s->p.window_frames - s->p.overlap_frames;
+    s->in_cap = 2 * s->p.window_frames + s->stride;   /* the last W frames stay: the last window may move back */
+    s->in_frames = calloc((size_t)s->in_cap, sizeof(*s->in_frames));
+    s->pend = calloc((size_t)s->p.window_frames, sizeof(*s->pend));
+    s->win_out = calloc((size_t)s->p.window_frames, sizeof(*s->win_out));
+    if (!s->in_frames || !s->pend || !s->win_out) { h3_seedvr2_video_session_close(s); fail(error, error_size, "SeedVR2 video: out of memory"); return NULL; }
+    s->in_format = H3_VSR_BGRA8; s->out_format = H3_VSR_BGRA8;
+    return s;
+}
+
+void h3_seedvr2_video_session_close(h3_seedvr2_video_session *s) {
+    if (!s) return;
+    if (s->in_frames) { for (int i = 0; i < s->in_cap; i++) free(s->in_frames[i]); free(s->in_frames); }
+    if (s->pend) { for (int i = 0; i < s->p.window_frames; i++) free(s->pend[i]); free(s->pend); }
+    if (s->win_out) { for (int i = 0; i < s->p.window_frames; i++) free(s->win_out[i]); free(s->win_out); }
+    free(s);
+}
+
+int h3_seedvr2_video_session_pending_frames(const h3_seedvr2_video_session *s) {
+    return s ? s->received - s->emitted : 0;
+}
+
+int h3_seedvr2_video_session_next_frames(const h3_seedvr2_video_session *s) {
+    if (!s || s->done || s->failed) return 0;
+    int need = s->next_start + s->p.window_frames - s->received;
+    if (s->total > 0 && need > s->total - s->received) need = s->total - s->received;
+    return need > 0 ? need : 0;
+}
+
+int h3_seedvr2_video_session_windows(const h3_seedvr2_video_session *s, int *frames_run, int *padded_frames, double *seconds) {
+    if (!s) return 0;
+    if (frames_run) *frames_run = s->frames_run;
+    if (padded_frames) *padded_frames = s->padded;
+    if (seconds) *seconds = s->seconds;
+    return s->windows_done;
+}
+
+/* The start of the window after one at `start`: a stride on, or, when
+ * that window would run past the end of a video whose length is known
+ * (`total`), the start that ends on the last frame - unless that is no
+ * further than `start`, in which case the window is padded. */
+static int next_window_start(const h3_seedvr2_video_session *s, int start, int total) {
+    int W = s->p.window_frames, ns = start + s->stride;
+    if (total > 0 && ns + W > total) {
+        int back = total - W;
+        if (back > start) ns = back;
+    }
+    return ns;
+}
+
+static uint8_t *frame_alloc(int w, int h, int pixel) { return malloc((size_t)w * h * pixel); }
+
+/* in[t] copied into the store as absolute frame `abs`. */
+static int store_input(h3_seedvr2_video_session *s, const h3_vsr_image *in, int abs) {
+    int slot = abs - s->in_first;
+    if (slot < 0 || slot >= s->in_cap) return 0;
+    if (!s->in_frames[slot]) s->in_frames[slot] = frame_alloc(s->in_w, s->in_h, s->in_pixel);
+    if (!s->in_frames[slot]) return 0;
+    size_t row = (size_t)s->in_w * s->in_pixel;
+    for (int y = 0; y < s->in_h; y++)
+        memcpy(s->in_frames[slot] + (size_t)y * row, in->pixels + (size_t)y * in->stride_bytes, row);
+    if (slot >= s->in_count) s->in_count = slot + 1;
+    return 1;
+}
+
+/* Drops stored frames before `abs`. */
+static void forget_input(h3_seedvr2_video_session *s, int abs) {
+    int drop = abs - s->in_first;
+    if (drop <= 0) return;
+    if (drop > s->in_count) drop = s->in_count;
+    for (int i = 0; i < drop; i++) free(s->in_frames[i]);
+    memmove(s->in_frames, s->in_frames + drop, (size_t)(s->in_cap - drop) * sizeof(*s->in_frames));
+    memset(s->in_frames + s->in_cap - drop, 0, (size_t)drop * sizeof(*s->in_frames));
+    s->in_first += drop;
+    s->in_count -= drop;
+}
+
+static int emit_frame(h3_seedvr2_video_session *s, const uint8_t *pixels, h3_vsr_image_out *out, int capacity,
+                      int *produced, char *error, size_t error_size) {
+    if (*produced >= capacity) { fail(error, error_size, "SeedVR2 video: no room for output frame %d", s->emitted); return 0; }
+    h3_vsr_image_out *o = &out[*produced];
+    if (o->width != s->out_w || o->height != s->out_h || o->format != s->out_format) {
+        fail(error, error_size, "SeedVR2 video: output frame %d is %dx%d, the session %dx%d", s->emitted, o->width, o->height, s->out_w, s->out_h);
+        return 0;
+    }
+    size_t row = (size_t)s->out_w * s->out_pixel;
+    for (int y = 0; y < s->out_h; y++) memcpy(o->pixels + (size_t)y * o->stride_bytes, pixels + (size_t)y * row, row);
+    (*produced)++;
+    s->emitted++;
+    return 1;
+}
+
+/* The overlap: the earlier window's frame, or a cross-fade (Hann weights
+ * over the overlap) with the later one's. i of n frames into the overlap. */
+static void blend_frames(const h3_seedvr2_video_session *s, uint8_t *earlier, const uint8_t *later, int i, int n) {
+    if (s->p.blend != 1) return;
+    double w = 0.5 - 0.5 * cos(M_PI * (double)(i + 1) / (double)(n + 1));
+    size_t bytes = (size_t)s->out_w * s->out_h * s->out_pixel;
+    for (size_t k = 0; k < bytes; k++)
+        earlier[k] = (uint8_t)lrint((1.0 - w) * earlier[k] + w * later[k]);
+}
+
+/* A dry run's window: nearest-neighbour copies of the input (tests). */
+static void dry_window(const h3_seedvr2_video_session *s, const h3_vsr_image *in, int frames, h3_vsr_image_out *out) {
+    for (int t = 0; t < frames; t++)
+        for (int y = 0; y < s->out_h; y++) {
+            int sy = (int)((int64_t)y * s->in_h / s->out_h);
+            for (int x = 0; x < s->out_w; x++) {
+                int sx = (int)((int64_t)x * s->in_w / s->out_w);
+                memcpy(out[t].pixels + (size_t)y * out[t].stride_bytes + (size_t)x * s->out_pixel,
+                       in[t].pixels + (size_t)sy * in[t].stride_bytes + (size_t)sx * s->in_pixel, (size_t)s->out_pixel);
+            }
+        }
+}
+
+/* Runs the window at `start` on the stored frames (the tail repeated to the
+ * window length), then emits and keeps what the policy says. */
+static int run_window(h3_seedvr2_video_session *s, int start, int last_window, h3_vsr_image_out *out, int capacity,
+                      int *produced, h3_progress_callback on_progress, void *opaque, const volatile int *cancel,
+                      char *error, size_t error_size) {
+    int W = s->p.window_frames;
+    int real = s->received - start;
+    if (real > W) real = W;
+    if (real < 1 || start < s->in_first) { fail(error, error_size, "SeedVR2 video: window at %d has no frames", start); return 0; }
+    h3_vsr_image in[SV2_VIDEO_MAX_WINDOW];
+    h3_vsr_image_out wo[SV2_VIDEO_MAX_WINDOW];
+    for (int t = 0; t < W; t++) {
+        int src = t < real ? t : real - 1;
+        in[t] = (h3_vsr_image){s->in_frames[start - s->in_first + src], s->in_w, s->in_h, s->in_w * s->in_pixel, s->in_format};
+        if (!s->win_out[t]) s->win_out[t] = frame_alloc(s->out_w, s->out_h, s->out_pixel);
+        if (!s->win_out[t]) { fail(error, error_size, "SeedVR2 video: out of memory"); return 0; }
+        wo[t] = (h3_vsr_image_out){s->win_out[t], s->out_w, s->out_h, s->out_w * s->out_pixel, s->out_format};
+    }
+    double t0 = now_seconds();
+    if (s->m) {
+        h3_seedvr2_clip_params cp = {s->p.vae_slicing, start / 4, s->p.seed, s->p.color_transfer, NULL, -1};
+        if (!h3_seedvr2_restore_clip(s->m, in, W, s->out_w, s->out_h, wo, &cp, on_progress, opaque, cancel, error, error_size))
+            return 0;
+    } else {
+        dry_window(s, in, W, wo);
+    }
+    s->seconds += now_seconds() - t0;
+    s->frames_run += W;
+    s->padded += W - real;
+    s->windows_done++;
+    /* the frames after the next window's start wait for it; the rest go out,
+     * the earlier window's overlap frames blended with ours */
+    int ns = last_window ? start + real : next_window_start(s, start, s->total);
+    for (int t = 0; t < real; t++) {
+        int abs = start + t;
+        if (abs < s->emitted) continue;                       /* already out (the window was moved back) */
+        if (abs >= ns && !last_window) break;
+        uint8_t *frame = s->win_out[t];
+        if (abs >= s->pend_start && abs < s->pend_start + s->pend_count) {
+            uint8_t *earlier = s->pend[abs - s->pend_start];
+            blend_frames(s, earlier, frame, abs - s->pend_start, s->pend_count);
+            frame = earlier;
+        }
+        if (!emit_frame(s, frame, out, capacity, produced, error, error_size)) return 0;
+    }
+    /* the new pending overlap: our frames from ns on (swap buffers in) */
+    for (int i = 0; i < s->pend_count; i++) { free(s->pend[i]); s->pend[i] = NULL; }
+    s->pend_count = 0;
+    if (!last_window) {
+        s->pend_start = ns;
+        for (int t = ns - start; t < real; t++) {
+            s->pend[s->pend_count++] = s->win_out[t];
+            s->win_out[t] = NULL;
+        }
+    }
+    s->next_start = ns;
+    forget_input(s, ns < s->received - W ? ns : s->received - W);
+    return 1;
+}
+
+int h3_seedvr2_video_session_process(h3_seedvr2_video_session *s, const h3_vsr_image *in, int in_frames, int is_last,
+                                     h3_vsr_image_out *out, int out_capacity, int *out_frames,
+                                     h3_progress_callback on_progress, void *opaque, const volatile int *cancel,
+                                     char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (out_frames) *out_frames = 0;
+    if (!s || (in_frames > 0 && !in) || in_frames < 0 || (!out && out_capacity > 0)) { fail(error, error_size, "SeedVR2 video: bad arguments"); return 0; }
+    if (s->failed) { fail(error, error_size, "SeedVR2 video: the session failed earlier"); return 0; }
+    if (s->done) { if (in_frames) { fail(error, error_size, "SeedVR2 video: the session is finished"); return 0; } return 1; }
+    int expected = h3_seedvr2_video_session_next_frames(s);
+    if (!is_last && in_frames != expected) { fail(error, error_size, "SeedVR2 video: this call needs %d frames (got %d)", expected, in_frames); s->failed = 1; return 0; }
+    if (in_frames > expected) { fail(error, error_size, "SeedVR2 video: at most %d frames now (got %d)", expected, in_frames); s->failed = 1; return 0; }
+    if (in_frames > 0) {
+        if (s->received == 0) {
+            s->in_format = in[0].format; s->in_pixel = pixel_bytes(s->in_format);
+            s->out_format = out_capacity > 0 ? out[0].format : H3_VSR_BGRA8; s->out_pixel = pixel_bytes(s->out_format);
+        }
+        for (int t = 0; t < in_frames; t++) {
+            if (in[t].width != s->in_w || in[t].height != s->in_h || in[t].format != s->in_format) {
+                fail(error, error_size, "SeedVR2 video: frame %d is %dx%d, the session %dx%d", s->received, in[t].width, in[t].height, s->in_w, s->in_h);
+                s->failed = 1;
+                return 0;
+            }
+            if (!store_input(s, &in[t], s->received)) { fail(error, error_size, "SeedVR2 video: out of memory"); s->failed = 1; return 0; }
+            s->received++;
+        }
+    }
+    if (s->total > 0 && s->received >= s->total) is_last = 1;
+    int produced = 0, W = s->p.window_frames;
+    for (;;) {
+        int start = s->next_start;
+        if (start >= s->received) break;
+        int complete = s->received >= start + W;
+        if (!complete && !is_last) break;
+        if (!complete && s->windows_done > 0 && s->received - W > start - s->stride && s->received - W >= s->in_first) {
+            start = s->received - W;   /* the end is known now: end on the last frame instead of padding */
+            s->next_start = start;
+            complete = 1;
+        }
+        int last_window = (s->total > 0 && start + W >= s->total) || (is_last && s->received <= start + W);
+        if (!run_window(s, start, last_window, out, out_capacity, &produced, on_progress, opaque, cancel, error, error_size)) {
+            s->failed = 1;
+            if (out_frames) *out_frames = produced;
+            return 0;
+        }
+        if (last_window) { s->done = 1; break; }
+    }
+    if (is_last && !s->done) {
+        /* no window left to run: whatever waits in the overlap is final */
+        for (int i = 0; i < s->pend_count; i++) {
+            if (s->pend_start + i < s->emitted) continue;
+            if (!emit_frame(s, s->pend[i], out, out_capacity, &produced, error, error_size)) { s->failed = 1; return 0; }
+        }
+        for (int i = 0; i < s->pend_count; i++) { free(s->pend[i]); s->pend[i] = NULL; }
+        s->pend_count = 0;
+        s->done = 1;
+    }
+    if (s->done && s->emitted != s->received) {
+        fail(error, error_size, "SeedVR2 video: %d frames in, %d out", s->received, s->emitted);
+        s->failed = 1;
+        return 0;
+    }
+    if (out_frames) *out_frames = produced;
+    return 1;
+}

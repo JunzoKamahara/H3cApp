@@ -451,6 +451,31 @@ private final class VSRChunkScaler: ChunkedFrameScaler {
     func cancel() { session.cancel() }
 }
 
+/// SeedVR2 on windows of frames through the engine's temporal path (the
+/// same contract as SwiftVR's chunks): a window takes a minute or more, so
+/// 中止 is read at every phase step. Not offered in the UI yet (phase 6).
+private final class SeedVR2ChunkScaler: ChunkedFrameScaler {
+    let session: H3SeedVR2Restorer.VideoSession
+    let isCancelled: () -> Bool
+    init(session: H3SeedVR2Restorer.VideoSession, isCancelled: @escaping () -> Bool) {
+        self.session = session
+        self.isCancelled = isCancelled
+    }
+    var chunkFrames: Int { max(1, session.nextChunkFrames) }
+    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
+                 progress: @escaping (Double) -> Void) throws -> [CVPixelBuffer] {
+        do {
+            return try session.process(frames, isLast: isLast, pool: pool) { [session, isCancelled] share in
+                if isCancelled() { session.cancel() }
+                progress(share)
+            }
+        } catch H3VSRError.cancelled {
+            throw VideoUpscale.UpscaleError.cancelled
+        }
+    }
+    func cancel() { session.cancel() }
+}
+
 /// SeedVR2 through the engine: one frame at a time, each taking seconds, so
 /// 中止 is read at every DiT block.
 private final class SeedVR2FrameScaler: ChunkedFrameScaler {

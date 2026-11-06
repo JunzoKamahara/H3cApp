@@ -123,6 +123,41 @@ int h3_seedvr2_restore_clip(h3_seedvr2 *model, const h3_vsr_image *in, int frame
                             h3_progress_callback on_progress, void *opaque,
                             const volatile int *cancel_requested, char *error, size_t error_size);
 
+/* A video in overlapping windows (the same contract as h3_vsr_session_*):
+ * window_frames 4n+1 (5 ... 121; 1 is one frame at a time through the
+ * clip path), overlap_frames 0 or 4n+1 below the window; vae_slicing -1
+ * lets the clip choose; blend 0 keeps the earlier window's frames in the
+ * overlap, 1 cross-fades them (Hann); seed 0 and color_transfer -1 take
+ * the model's. Starts are multiples of 4 so windows agree on the latent
+ * grouping and the noise; with total_frames known the last window ends on
+ * the last frame instead of being padded. next_frames says how many to
+ * bring (fewer only with is_last); size `out` for pending + in_frames.
+ * Progress phases are the clip's. A NULL model opens a dry run (tests). */
+typedef struct {
+    int window_frames;
+    int overlap_frames;
+    int vae_slicing;
+    int blend;
+    uint64_t seed;
+    int color_transfer;
+} h3_seedvr2_video_params;
+typedef struct h3_seedvr2_video_session h3_seedvr2_video_session;
+int h3_seedvr2_video_check_params(const h3_seedvr2_video_params *params, char *reason, size_t reason_size);
+h3_seedvr2_video_session *h3_seedvr2_video_session_open(h3_seedvr2 *model, int in_w, int in_h, int out_w, int out_h,
+                                                        int total_frames /* 0 = unknown */,
+                                                        const h3_seedvr2_video_params *params,
+                                                        char *error, size_t error_size);
+int h3_seedvr2_video_session_next_frames(const h3_seedvr2_video_session *session);
+int h3_seedvr2_video_session_process(h3_seedvr2_video_session *session, const h3_vsr_image *in, int in_frames,
+                                     int is_last, h3_vsr_image_out *out, int out_capacity, int *out_frames,
+                                     h3_progress_callback on_progress, void *opaque,
+                                     const volatile int *cancel_requested, char *error, size_t error_size);
+int h3_seedvr2_video_session_pending_frames(const h3_seedvr2_video_session *session);
+/* Windows run so far, the frames they processed, how many of those were padding, and the seconds spent. */
+int h3_seedvr2_video_session_windows(const h3_seedvr2_video_session *session, int *frames_run,
+                                     int *padded_frames, double *seconds);
+void h3_seedvr2_video_session_close(h3_seedvr2_video_session *session);
+
 /* GPU seconds so far and the peak live bytes. */
 int h3_seedvr2_get_stats(const h3_seedvr2 *model, double *gpu_seconds,
                          uint64_t *peak_live_bytes);
