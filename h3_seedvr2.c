@@ -690,10 +690,10 @@ int h3_seedvr2_get_stats(const h3_seedvr2 *m, double *gpu_seconds, uint64_t *pea
 
 #define SV2_MAX_CLASSES 64
 
-typedef struct { int hs, he, ws, we; } sv2_window;
+typedef struct { int hs, he, ws, we, ts, te; } sv2_window;
 
 typedef struct {
-    int tokens_w, tokens_h, N;
+    int tokens_w, tokens_h, tokens_t, N;
     int windows;                   /* W */
     int rows;                      /* every window's video rows + text rows */
     int classes;
@@ -704,10 +704,13 @@ typedef struct {
     h3_gpu_tensor *base;           /* U32 [W]: N + w * 58, the text rows' home in `att` */
 } sv2_layout;
 
-/* mflux WindowPartitioner._make_windows for one frame: window counts
- * (3, 3) over the grid resized to 45 x 80 tokens, shifted by half a window
- * in the odd blocks. Returns the count. */
-static int make_windows(int h, int w, int shifted, sv2_window *out, int capacity) {
+/* The reference's make_720Pwindows_bysize / make_shifted_720Pwindows_bysize
+ * (models/dit_v2/window.py; mflux's _make_windows for one frame): window
+ * counts (4, 3, 3) over t latent frames and the grid resized to 45 x 80
+ * tokens, the temporal window ceil(min(t, 30) / 4) frames, shifted by half
+ * a window in the odd blocks, enumerated iw, ih, it (it innermost). One
+ * frame gives the 2D partition. Returns the count. */
+static int make_windows(int t, int h, int w, int shifted, sv2_window *out, int capacity) {
     double scale = sqrt((45.0 * 80.0) / ((double)h * w));
     int rh = (int)lround(h * scale), rw = (int)lround(w * scale);
     /* Python's round() is half-to-even; lround is half-away-from-zero. */
@@ -715,16 +718,20 @@ static int make_windows(int h, int w, int shifted, sv2_window *out, int capacity
     if (fabs(fh - floor(fh) - 0.5) < 1e-9) rh = ((int)floor(fh) % 2 == 0) ? (int)floor(fh) : (int)floor(fh) + 1;
     if (fabs(fw - floor(fw) - 0.5) < 1e-9) rw = ((int)floor(fw) % 2 == 0) ? (int)floor(fw) : (int)floor(fw) + 1;
     int wh = (rh + 2) / 3, ww = (rw + 2) / 3;
-    double sh = 0, sw = 0;
-    int nh, nw;
+    int wt = ((t < 30 ? t : 30) + 3) / 4;
+    double sh = 0, sw = 0, st = 0;
+    int nh, nw, nt;
     if (shifted) {
         sh = wh < h ? 0.5 : 0.0;
         sw = ww < w ? 0.5 : 0.0;
+        st = wt < t ? 0.5 : 0.0;
         nh = sh > 0 ? (int)ceil((h - sh) / wh) + 1 : 1;
         nw = sw > 0 ? (int)ceil((w - sw) / ww) + 1 : 1;
+        nt = st > 0 ? (int)ceil((t - st) / wt) + 1 : 1;
     } else {
         nh = (h + wh - 1) / wh;
         nw = (w + ww - 1) / ww;
+        nt = (t + wt - 1) / wt;
     }
     int count = 0;
     for (int iw = 0; iw < nw; iw++) {
@@ -737,12 +744,20 @@ static int make_windows(int h, int w, int shifted, sv2_window *out, int capacity
             if (hs < 0) hs = 0;
             if (he > h) he = h;
             if (he <= hs) continue;
-            if (count < capacity) out[count] = (sv2_window){hs, he, ws, we};
-            count++;
+            for (int it = 0; it < nt; it++) {
+                int ts = (int)((it - st) * wt), te = (int)((it - st + 1) * wt);
+                if (ts < 0) ts = 0;
+                if (te > t) te = t;
+                if (te <= ts) continue;
+                if (count < capacity) out[count] = (sv2_window){hs, he, ws, we, ts, te};
+                count++;
+            }
         }
     }
     return count;
 }
+
+static int window_tokens(const sv2_window *o) { return (o->te - o->ts) * (o->he - o->hs) * (o->we - o->ws); }
 
 /* The RoPE angle tables of one gathered row. */
 static void rope_row(float *cosine, float *sine, int pos_t, int pos_h, int pos_w) {
@@ -768,22 +783,30 @@ static void layout_free(h3_seedvr2 *m, sv2_layout *L) {
     memset(L, 0, sizeof(*L));
 }
 
-static int layout_build(h3_seedvr2 *m, sv2_layout *L, int tokens_w, int tokens_h, int shifted,
+/* The attention layout of tokens_t latent frames of tokens_w x tokens_h
+ * tokens (t-major rows): windows grouped by length, each window's video
+ * rows (t, h, w order) with RoPE positions (58 + t, h, w) relative to the
+ * window, then its 58 text rows at (j, j, j). */
+static int layout_build(h3_seedvr2 *m, sv2_layout *L, int tokens_w, int tokens_h, int tokens_t, int shifted,
                         char *error, size_t error_size) {
     memset(L, 0, sizeof(*L));
-    L->tokens_w = tokens_w; L->tokens_h = tokens_h; L->N = tokens_w * tokens_h;
+    L->tokens_w = tokens_w; L->tokens_h = tokens_h; L->tokens_t = tokens_t;
+    L->N = tokens_w * tokens_h * tokens_t;
     sv2_window windows[1024];
-    int W = make_windows(tokens_h, tokens_w, shifted, windows, 1024);
-    if (W <= 0 || W > 1024) { fail(error, error_size, "SeedVR2: %d windows for a %dx%d grid", W, tokens_w, tokens_h); return 0; }
+    int W = make_windows(tokens_t, tokens_h, tokens_w, shifted, windows, 1024);
+    if (W <= 0 || W > 1024) {
+        fail(error, error_size, "SeedVR2: %d windows for %d x %dx%d tokens", W, tokens_t, tokens_w, tokens_h);
+        return 0;
+    }
     /* order windows by length (descending, stable) so equal lengths are consecutive */
     int order[1024];
     for (int i = 0; i < W; i++) order[i] = i;
     for (int i = 1; i < W; i++) {
         int j = i, key = order[i];
-        int len_key = (windows[key].he - windows[key].hs) * (windows[key].we - windows[key].ws);
+        int len_key = window_tokens(&windows[key]);
         while (j > 0) {
             const sv2_window *o = &windows[order[j - 1]];
-            if ((o->he - o->hs) * (o->we - o->ws) >= len_key) break;
+            if (window_tokens(o) >= len_key) break;
             order[j] = order[j - 1];
             j--;
         }
@@ -793,7 +816,7 @@ static int layout_build(h3_seedvr2 *m, sv2_layout *L, int tokens_w, int tokens_h
     int total_rows = 0;
     for (int i = 0; i < W; i++) {
         const sv2_window *o = &windows[order[i]];
-        total_rows += (o->he - o->hs) * (o->we - o->ws) + SV2_TXT_TOKENS;
+        total_rows += window_tokens(o) + SV2_TXT_TOKENS;
     }
     L->rows = total_rows;
     uint32_t *base = malloc((size_t)W * sizeof(uint32_t));
@@ -801,12 +824,12 @@ static int layout_build(h3_seedvr2 *m, sv2_layout *L, int tokens_w, int tokens_h
     int i = 0, row_offset = 0;
     while (i < W) {
         const sv2_window *o = &windows[order[i]];
-        int vid_len = (o->he - o->hs) * (o->we - o->ws);
+        int vid_len = window_tokens(o);
         int length = vid_len + SV2_TXT_TOKENS;
         int count = 1;
         while (i + count < W) {
             const sv2_window *p = &windows[order[i + count]];
-            if ((p->he - p->hs) * (p->we - p->ws) != vid_len) break;
+            if (window_tokens(p) != vid_len) break;
             count++;
         }
         if (L->classes >= SV2_MAX_CLASSES) { free(base); fail(error, error_size, "SeedVR2: too many window classes"); return 0; }
@@ -826,14 +849,16 @@ static int layout_build(h3_seedvr2 *m, sv2_layout *L, int tokens_w, int tokens_h
         for (int wi = 0; wi < count; wi++) {
             int wg = i + wi;   /* global window number (in sorted order) */
             const sv2_window *win = &windows[order[wg]];
-            for (int hh = win->hs; hh < win->he; hh++)
-                for (int xx = win->ws; xx < win->we; xx++) {
-                    index[r] = hh * tokens_w + xx;
-                    dest[r] = (uint32_t)(hh * tokens_w + xx);
-                    rope_row(cosine + r * SV2_ROPE_PAIRS, sine + r * SV2_ROPE_PAIRS,
-                             SV2_TXT_TOKENS, hh - win->hs, xx - win->ws);
-                    r++;
-                }
+            for (int tt = win->ts; tt < win->te; tt++)
+                for (int hh = win->hs; hh < win->he; hh++)
+                    for (int xx = win->ws; xx < win->we; xx++) {
+                        int token = (tt * tokens_h + hh) * tokens_w + xx;
+                        index[r] = token;
+                        dest[r] = (uint32_t)token;
+                        rope_row(cosine + r * SV2_ROPE_PAIRS, sine + r * SV2_ROPE_PAIRS,
+                                 SV2_TXT_TOKENS + tt - win->ts, hh - win->hs, xx - win->ws);
+                        r++;
+                    }
             for (int j = 0; j < SV2_TXT_TOKENS; j++) {
                 index[r] = -1 - j;
                 dest[r] = (uint32_t)(L->N + wg * SV2_TXT_TOKENS + j);
@@ -1026,38 +1051,44 @@ failed:
 /* The DiT's input tokens from the host latents: noise [16, h, w], cond
  * [16, h, w] (scaled encoder latent), mask 1 -> BF16 [N, 132] in the patch
  * order (ph, pw, c). */
-static void pack_tokens(const float *noise, const float *cond, int lw, int lh, uint16_t *tokens) {
+/* noise and cond F32 [16, frames, h, w] -> tokens BF16 [frames * h/2 * w/2,
+ * 132] (t-major; within a token (ph, pw, c) with c = noise, cond, mask 1). */
+static void pack_tokens(const float *noise, const float *cond, int lw, int lh, int frames, uint16_t *tokens) {
     int tw = lw / 2, th = lh / 2;
-    for (int hp = 0; hp < th; hp++)
-        for (int wp = 0; wp < tw; wp++) {
-            uint16_t *row = tokens + ((size_t)hp * tw + wp) * SV2_PATCH_IN;
-            for (int ph = 0; ph < 2; ph++)
-                for (int pw = 0; pw < 2; pw++) {
-                    size_t pixel = (size_t)(2 * hp + ph) * lw + (2 * wp + pw);
-                    for (int c = 0; c < SV2_VID_IN; c++) {
-                        float v = c < 16 ? noise[(size_t)c * lw * lh + pixel]
-                                : c < 32 ? cond[(size_t)(c - 16) * lw * lh + pixel] : 1.0f;
-                        row[(ph * 2 + pw) * SV2_VID_IN + c] = f32_to_bf16(v);
+    size_t plane = (size_t)lw * lh, channel = plane * frames;
+    for (int t = 0; t < frames; t++)
+        for (int hp = 0; hp < th; hp++)
+            for (int wp = 0; wp < tw; wp++) {
+                uint16_t *row = tokens + (((size_t)t * th + hp) * tw + wp) * SV2_PATCH_IN;
+                for (int ph = 0; ph < 2; ph++)
+                    for (int pw = 0; pw < 2; pw++) {
+                        size_t pixel = (size_t)t * plane + (size_t)(2 * hp + ph) * lw + (2 * wp + pw);
+                        for (int c = 0; c < SV2_VID_IN; c++) {
+                            float v = c < 16 ? noise[(size_t)c * channel + pixel]
+                                    : c < 32 ? cond[(size_t)(c - 16) * channel + pixel] : 1.0f;
+                            row[(ph * 2 + pw) * SV2_VID_IN + c] = f32_to_bf16(v);
+                        }
                     }
-                }
-        }
+            }
 }
 
-/* pred BF16 [N, 64] (order (ph, pw, c)) -> F32 [16, h, w]. */
-static void unpack_pred(const uint16_t *pred, int lw, int lh, float *out) {
+/* pred BF16 [N, 64] (order (ph, pw, c), t-major tokens) -> F32 [16, frames, h, w]. */
+static void unpack_pred(const uint16_t *pred, int lw, int lh, int frames, float *out) {
     int tw = lw / 2, th = lh / 2;
-    for (int hp = 0; hp < th; hp++)
-        for (int wp = 0; wp < tw; wp++) {
-            const uint16_t *row = pred + ((size_t)hp * tw + wp) * SV2_PATCH_OUT;
-            for (int ph = 0; ph < 2; ph++)
-                for (int pw = 0; pw < 2; pw++)
-                    for (int c = 0; c < SV2_VID_OUT; c++) {
-                        uint32_t bits = (uint32_t)row[(ph * 2 + pw) * SV2_VID_OUT + c] << 16;
-                        float v;
-                        memcpy(&v, &bits, 4);
-                        out[(size_t)c * lw * lh + (size_t)(2 * hp + ph) * lw + (2 * wp + pw)] = v;
-                    }
-        }
+    size_t plane = (size_t)lw * lh, channel = plane * frames;
+    for (int t = 0; t < frames; t++)
+        for (int hp = 0; hp < th; hp++)
+            for (int wp = 0; wp < tw; wp++) {
+                const uint16_t *row = pred + (((size_t)t * th + hp) * tw + wp) * SV2_PATCH_OUT;
+                for (int ph = 0; ph < 2; ph++)
+                    for (int pw = 0; pw < 2; pw++)
+                        for (int c = 0; c < SV2_VID_OUT; c++) {
+                            uint32_t bits = (uint32_t)row[(ph * 2 + pw) * SV2_VID_OUT + c] << 16;
+                            float v;
+                            memcpy(&v, &bits, 4);
+                            out[(size_t)c * channel + (size_t)t * plane + (size_t)(2 * hp + ph) * lw + (2 * wp + pw)] = v;
+                        }
+            }
 }
 
 /* ---------------------------------------------------------------- */
@@ -1209,6 +1240,36 @@ static void fill_noise(float *out, size_t n, uint64_t seed) {
     }
 }
 
+/* The noise of a clip, [16, frames, h, w]: latent frame a (absolute, from
+ * the start of the video) is fill_noise of its own seed, so overlapping
+ * windows draw the same noise for the same frame; frame 0 uses the seed
+ * itself, as a still image does. */
+static uint64_t frame_seed(uint64_t seed, int frame) {
+    if (frame == 0) return seed;
+    uint64_t z = seed + 0x9E3779B97F4A7C15ull * (uint64_t)(frame + 1);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    z ^= z >> 31;
+    return z ? z : 1;
+}
+
+int sv2_fill_noise_clip(float *out, int first_frame, int frames, int lw, int lh, uint64_t seed) {
+    size_t plane = (size_t)lw * lh;
+    float *one = malloc(16 * plane * sizeof(float));
+    if (!one) return 0;
+    for (int t = 0; t < frames; t++) {
+        fill_noise(one, 16 * plane, frame_seed(seed, first_frame + t));
+        for (int c = 0; c < 16; c++)
+            memcpy(out + ((size_t)c * frames + t) * plane, one + (size_t)c * plane, plane * sizeof(float));
+    }
+    free(one);
+    return 1;
+}
+
+int h3_seedvr2_debug_noise(uint64_t seed, int first_frame, int frames, int latent_w, int latent_h, float *out) {
+    return sv2_fill_noise_clip(out, first_frame, frames, latent_w, latent_h, seed);
+}
+
 void h3_seedvr2_session_close(h3_seedvr2_session *s) {
     if (!s) return;
     layout_free(s->m, &s->layouts[0]);
@@ -1233,8 +1294,8 @@ h3_seedvr2_session *h3_seedvr2_session_open(h3_seedvr2 *m, int in_w, int in_h, i
     s->full_h = round_up(out_h, SV2_PIXEL_MULTIPLE);
     s->lw = s->full_w / 8; s->lh = s->full_h / 8;
     int N = (s->lw / 2) * (s->lh / 2);
-    if (!layout_build(m, &s->layouts[0], s->lw / 2, s->lh / 2, 0, error, error_size) ||
-        !layout_build(m, &s->layouts[1], s->lw / 2, s->lh / 2, 1, error, error_size)) {
+    if (!layout_build(m, &s->layouts[0], s->lw / 2, s->lh / 2, 1, 0, error, error_size) ||
+        !layout_build(m, &s->layouts[1], s->lw / 2, s->lh / 2, 1, 1, error, error_size)) {
         h3_seedvr2_session_close(s);
         return NULL;
     }
@@ -1292,8 +1353,8 @@ int h3_seedvr2_check_requirements(const h3_seedvr2 *m, int in_w, int in_h, int o
     int tw = full_w / 16, th = full_h / 16;
     out->tokens = tw * th;
     sv2_window windows[1024];
-    out->windows_even = make_windows(th, tw, 0, windows, 1024);
-    out->windows_odd = make_windows(th, tw, 1, windows, 1024);
+    out->windows_even = make_windows(1, th, tw, 0, windows, 1024);
+    out->windows_odd = make_windows(1, th, tw, 1, windows, 1024);
     double megapixels = (double)full_w * full_h / 1e6;
     out->gpu_bytes = peak_gpu_bytes(m->info.resident_bytes, m->nax_vae, out_w, out_h);
     uint64_t budget = gpu_budget();
@@ -1346,7 +1407,7 @@ static int restore_frame(h3_seedvr2_session *s, const h3_gpu_tensor *rgb_in, h3_
     }
     const float *noise = noise_override ? noise_override : s->noise;
     /* transformer */
-    pack_tokens(noise, s->cond_host, lw, lh, s->tokens_host);
+    pack_tokens(noise, s->cond_host, lw, lh, 1, s->tokens_host);
     h3_gpu_tensor *tokens = h3_gpu_tensor_from_bf16(m->gpu, s->tokens_host, (size_t)N * SV2_PATCH_IN);
     h3_gpu_tensor *pred = sv2_pool_take(m, (size_t)N * SV2_PATCH_OUT, 1);
     if (!tokens || !pred) { h3_gpu_tensor_free(tokens); sv2_pool_give(m, pred); fail(error, error_size, "SeedVR2: out of GPU memory"); return 0; }
@@ -1355,7 +1416,7 @@ static int restore_frame(h3_seedvr2_session *s, const h3_gpu_tensor *rgb_in, h3_
     if (ok) ok = h3_gpu_tensor_read_bf16(pred, s->pred_bf16, (size_t)N * SV2_PATCH_OUT);
     sv2_pool_give(m, pred);
     if (!ok) { if (error && !error[0]) fail(error, error_size, "SeedVR2: cannot read the prediction"); return 0; }
-    unpack_pred(s->pred_bf16, lw, lh, s->pred_host);
+    unpack_pred(s->pred_bf16, lw, lh, 1, s->pred_host);
     trace(&mark, "dit");
     /* one Euler step from t = 1: z = noise - v; the decoder divides by the scaling */
     float *z = malloc((size_t)lw * lh * SV2_LATENT * sizeof(float));
@@ -1501,13 +1562,13 @@ int h3_seedvr2_debug_dit(h3_seedvr2 *m, const float *dit_in, int lw, int lh, flo
     if (!s) return 0;
     size_t plane = (size_t)lw * lh;
     int N = (lw / 2) * (lh / 2);
-    pack_tokens(dit_in, dit_in + 16 * plane, lw, lh, s->tokens_host);
+    pack_tokens(dit_in, dit_in + 16 * plane, lw, lh, 1, s->tokens_host);
     h3_gpu_tensor *tokens = h3_gpu_tensor_from_bf16(m->gpu, s->tokens_host, (size_t)N * SV2_PATCH_IN);
     h3_gpu_tensor *out = sv2_pool_take(m, (size_t)N * SV2_PATCH_OUT, 1);
     int ok = tokens && out &&
              dit_forward(m, s->layouts, tokens, out, dump_block, NULL, NULL, NULL, error, error_size) &&
              h3_gpu_tensor_read_bf16(out, s->pred_bf16, (size_t)N * SV2_PATCH_OUT);
-    if (ok) unpack_pred(s->pred_bf16, lw, lh, pred);
+    if (ok) unpack_pred(s->pred_bf16, lw, lh, 1, pred);
     h3_gpu_tensor_free(tokens);
     sv2_pool_give(m, out);
     h3_seedvr2_session_close(s);
@@ -1549,7 +1610,7 @@ int h3_seedvr2_debug_color(h3_seedvr2 *m, const float *content, const float *sty
 
 int h3_seedvr2_debug_windows(int tokens_w, int tokens_h, int shifted, int *windows, int capacity) {
     sv2_window w[1024];
-    int n = make_windows(tokens_h, tokens_w, shifted, w, 1024);
+    int n = make_windows(1, tokens_h, tokens_w, shifted, w, 1024);
     for (int i = 0; i < n && i < capacity; i++) {
         windows[i * 4] = w[i].hs; windows[i * 4 + 1] = w[i].he;
         windows[i * 4 + 2] = w[i].ws; windows[i * 4 + 3] = w[i].we;
@@ -1642,4 +1703,47 @@ int h3_seedvr2_debug_decode_video(h3_seedvr2 *m, const float *latent, int latent
     h3_gpu_tensor_free(z.t);
     if (!ok) { if (y.t) sv2_act_free(m, &y); if (error && !error[0]) fail(error, error_size, "SeedVR2: %s", h3_gpu_error(m->gpu)); return 0; }
     return finish_video_debug(m, &y, 0, out, out_frames, out_w, out_h, out_c, capacity, error, error_size);
+}
+
+/* ---- temporal DiT checks ---- */
+
+int h3_seedvr2_debug_windows3(int frames, int tokens_w, int tokens_h, int shifted, int *windows, int capacity) {
+    sv2_window w[1024];
+    int n = make_windows(frames, tokens_h, tokens_w, shifted, w, 1024);
+    for (int i = 0; i < n && i < capacity; i++) {
+        int *o = windows + i * 6;
+        o[0] = w[i].ts; o[1] = w[i].te; o[2] = w[i].hs; o[3] = w[i].he; o[4] = w[i].ws; o[5] = w[i].we;
+    }
+    return n;
+}
+
+int h3_seedvr2_debug_dit_video(h3_seedvr2 *m, const float *dit_in, int frames, int lw, int lh, float *pred,
+                               int dump_block, char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (lw % 2 || lh % 2 || frames < 1) { fail(error, error_size, "SeedVR2: the latent grid must be even"); return 0; }
+    int N = (lw / 2) * (lh / 2) * frames;
+    size_t channel = (size_t)lw * lh * frames;
+    sv2_layout layouts[2];
+    memset(layouts, 0, sizeof(layouts));
+    uint16_t *tokens_host = malloc((size_t)N * SV2_PATCH_IN * sizeof(uint16_t));
+    uint16_t *pred_bf16 = malloc((size_t)N * SV2_PATCH_OUT * sizeof(uint16_t));
+    h3_gpu_tensor *tokens = NULL, *out = NULL;
+    int ok = tokens_host && pred_bf16 &&
+             layout_build(m, &layouts[0], lw / 2, lh / 2, frames, 0, error, error_size) &&
+             layout_build(m, &layouts[1], lw / 2, lh / 2, frames, 1, error, error_size);
+    if (ok) {
+        pack_tokens(dit_in, dit_in + 16 * channel, lw, lh, frames, tokens_host);
+        tokens = h3_gpu_tensor_from_bf16(m->gpu, tokens_host, (size_t)N * SV2_PATCH_IN);
+        out = sv2_pool_take(m, (size_t)N * SV2_PATCH_OUT, 1);
+        ok = tokens && out &&
+             dit_forward(m, layouts, tokens, out, dump_block, NULL, NULL, NULL, error, error_size) &&
+             h3_gpu_tensor_read_bf16(out, pred_bf16, (size_t)N * SV2_PATCH_OUT);
+        if (ok) unpack_pred(pred_bf16, lw, lh, frames, pred);
+    }
+    if (!ok && error && !error[0]) fail(error, error_size, "SeedVR2 DiT: out of memory");
+    h3_gpu_tensor_free(tokens);
+    sv2_pool_give(m, out);
+    layout_free(m, &layouts[0]); layout_free(m, &layouts[1]);
+    free(tokens_host); free(pred_bf16);
+    return ok;
 }

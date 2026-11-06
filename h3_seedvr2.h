@@ -111,6 +111,17 @@ int h3_seedvr2_debug_decode(h3_seedvr2 *model, const float *latent /* [16, h, w]
 /* The window partition of a tokens_w x tokens_h grid (mflux's rule): up to
  * `capacity` windows as (h_start, h_end, w_start, w_end); returns the count. */
 int h3_seedvr2_debug_windows(int tokens_w, int tokens_h, int shifted, int *windows, int capacity);
+/* The 3D partition of `frames` latent frames (the reference's window.py):
+ * up to `capacity` windows as (t_start, t_end, h_start, h_end, w_start, w_end). */
+int h3_seedvr2_debug_windows3(int frames, int tokens_w, int tokens_h, int shifted, int *windows, int capacity);
+/* The transformer on a clip: dit_in [33, frames, h, w] (noise, latent, mask)
+ * -> pred [16, frames, h, w]; dump_block as h3_seedvr2_debug_dit. */
+/* A clip's noise for latent frames [first_frame, first_frame + frames),
+ * [16, frames, h, w]: the same values for the same absolute frame whatever
+ * the window; frame 0 equals a still image's noise for that seed. */
+int h3_seedvr2_debug_noise(uint64_t seed, int first_frame, int frames, int latent_w, int latent_h, float *out);
+int h3_seedvr2_debug_dit_video(h3_seedvr2 *model, const float *dit_in, int frames, int latent_w, int latent_h,
+                               float *pred, int dump_block, char *error, size_t error_size);
 int h3_seedvr2_debug_color(h3_seedvr2 *model, const float *content, const float *style,
                            int width, int height, float *out, char *error, size_t error_size);
 /* The temporal (video) VAE on host F32 tensors in the reference's

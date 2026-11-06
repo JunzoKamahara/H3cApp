@@ -243,6 +243,9 @@ h3_gpu_tensor *sv2_load_f16_f32(h3_gpu *gpu, const h3_st_header *h, const char *
 h3_gpu_tensor *sv2_pool_take(h3_seedvr2 *m, size_t elements, int bf16);
 void sv2_pool_give(h3_seedvr2 *m, h3_gpu_tensor *t);
 
+/* latent frames [first_frame, first_frame + frames) of a clip's noise -> [16, frames, h, w] */
+int sv2_fill_noise_clip(float *out, int first_frame, int frames, int lw, int lh, uint64_t seed);
+
 /* h3_seedvr2_vae.c */
 int sv2_load_vae(h3_seedvr2 *m, const h3_st_header *h, char *error, size_t error_size);
 void sv2_free_vae(h3_seedvr2 *m);

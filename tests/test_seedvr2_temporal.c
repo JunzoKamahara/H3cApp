@@ -15,6 +15,7 @@
  * Run it alone: the T=17 clips peak at 18-20 GB. */
 #include "h3_seedvr2.h"
 #include "h3_safetensors.h"
+#include "seedvr2_windows3.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -69,6 +70,61 @@ static void report(const char *stage, diff_stats d, double limit_rel) {
            stage, d.max_abs, d.rms, d.ref_rms, d.ref_rms > 0 ? d.rms / d.ref_rms : 0, d.psnr);
     CHECK(d.max_abs < INFINITY);
     CHECK(d.ref_rms == 0 || d.rms / d.ref_rms < limit_rel);
+}
+
+/* The 3D window partition against tables from the reference's window.py,
+ * and the number of distinct window lengths (the layout's classes) for the
+ * sizes the app runs. Needs no model. */
+static void test_windows3(void) {
+    static int got[1024 * 6];
+    for (size_t c = 0; c < sizeof(window_cases3) / sizeof(*window_cases3); c++) {
+        int n = h3_seedvr2_debug_windows3(window_cases3[c].t, window_cases3[c].w, window_cases3[c].h,
+                                          window_cases3[c].shifted, got, 1024);
+        if (n != window_cases3[c].count)
+            fprintf(stderr, "windows t=%d %dx%d shifted %d: %d, expected %d\n", window_cases3[c].t, window_cases3[c].w,
+                    window_cases3[c].h, window_cases3[c].shifted, n, window_cases3[c].count);
+        CHECK(n == window_cases3[c].count);
+        CHECK(memcmp(got, window_table3[window_cases3[c].first], (size_t)n * 6 * sizeof(int)) == 0);
+    }
+    /* latent tokens (w, h) of 512x288 .. 1920x1088 outputs, 1..8 latent frames */
+    static const int grids[][2] = {{32, 18}, {48, 27}, {84, 48}, {80, 46}, {120, 68}};
+    int worst = 0;
+    for (size_t g = 0; g < sizeof(grids) / sizeof(*grids); g++)
+        for (int t = 1; t <= 8; t++)
+            for (int shifted = 0; shifted < 2; shifted++) {
+                int n = h3_seedvr2_debug_windows3(t, grids[g][0], grids[g][1], shifted, got, 1024), lengths[1024], k = 0;
+                CHECK(n > 0 && n <= 1024);
+                for (int i = 0; i < n; i++) {
+                    const int *o = got + i * 6;
+                    int len = (o[1] - o[0]) * (o[3] - o[2]) * (o[5] - o[4]), seen = 0;
+                    for (int j = 0; j < k; j++) seen |= lengths[j] == len;
+                    if (!seen) lengths[k++] = len;
+                }
+                if (k > worst) worst = k;
+            }
+    printf("ok: 3D windows match window.py (%zu cases); at most %d window lengths per layout\n",
+           sizeof(window_cases3) / sizeof(*window_cases3), worst);
+    CHECK(worst <= 64);   /* SV2_MAX_CLASSES */
+}
+
+/* Per-frame noise: a frame's values do not depend on the window it is drawn in. */
+static void test_noise(void) {
+    enum { LW = 12, LH = 8, P = LW * LH };
+    static float a[16 * 6 * P], b[16 * 3 * P], one[16 * P];
+    CHECK(h3_seedvr2_debug_noise(42, 0, 6, LW, LH, a));
+    CHECK(h3_seedvr2_debug_noise(42, 2, 3, LW, LH, b));   /* frames 2..4 */
+    for (int c = 0; c < 16; c++)
+        for (int t = 0; t < 3; t++)
+            CHECK(memcmp(b + ((size_t)c * 3 + t) * P, a + ((size_t)c * 6 + t + 2) * P, P * sizeof(float)) == 0);
+    CHECK(h3_seedvr2_debug_noise(42, 0, 1, LW, LH, one));
+    for (int c = 0; c < 16; c++) CHECK(memcmp(one + (size_t)c * P, a + (size_t)c * 6 * P, P * sizeof(float)) == 0);
+    /* frames differ and look like N(0, 1) */
+    double sum = 0, sq = 0, same = 0;
+    for (size_t i = 0; i < sizeof(a) / sizeof(*a); i++) { sum += a[i]; sq += (double)a[i] * a[i]; }
+    for (int i = 0; i < P; i++) same += a[i] == a[P + i];
+    double n = (double)(sizeof(a) / sizeof(*a)), mean = sum / n, var = sq / n - mean * mean;
+    CHECK(fabs(mean) < 0.05 && fabs(var - 1.0) < 0.1 && same == 0);
+    printf("ok: per-frame noise (mean %.3f, var %.3f)\n", mean, var);
 }
 
 static const char *model_dir(char *buf, size_t size) {
@@ -139,6 +195,12 @@ static void test_single_frame(h3_seedvr2 *m, const char *path) {
         for (size_t i = 0; i < lplane; i++) dit_in[32 * lplane + i] = 1.0f;
         CHECK(h3_seedvr2_debug_dit(m, dit_in, lw, lh, pred, -1, error, sizeof(error)) || (fprintf(stderr, "%s\n", error), 0));
         report("dit prediction", compare(pred, pred_ref, 16 * lplane, 1.0), 0.05);
+        float *pred_video = malloc(16 * lplane * sizeof(float));
+        CHECK(h3_seedvr2_debug_dit_video(m, dit_in, 1, lw, lh, pred_video, -1, error, sizeof(error)) ||
+              (fprintf(stderr, "%s\n", error), 0));
+        CHECK(memcmp(pred_video, pred, 16 * lplane * sizeof(float)) == 0);
+        printf("  %-26s bit-identical to the image path\n", "dit (1-frame clip)");
+        free(pred_video);
         float *z = malloc(16 * lplane * sizeof(float));
         for (size_t i = 0; i < 16 * lplane; i++) z[i] = noise[i] - pred[i];
         report("z (noise - v)", compare(z, z_ref, 16 * lplane, 1.0), 0.05);
@@ -237,11 +299,45 @@ static void test_clip(h3_seedvr2 *m, const char *path) {
     }
     printf("  worst sliced frame vs ref: %d (rel %.4f)\n", worst_t, worst);
     CHECK(worst < 0.05);
+
+    if (h3_st_find(&h, "pred")) {
+        float *noise = load_tensor(&h, "noise", lsize), *pred_ref = load_tensor(&h, "pred", lsize);
+        float *z_ref = load_tensor(&h, "z", lsize), *dz_ref = load_tensor(&h, "decoded_z", rgb);
+        float *dit_in = malloc((lsize / 16 * 33) * sizeof(float)), *pred = malloc(lsize * sizeof(float));
+        memcpy(dit_in, noise, lsize * sizeof(float));
+        memcpy(dit_in + lsize, latent_ref, lsize * sizeof(float));
+        for (size_t i = 0; i < lsize / 16; i++) dit_in[2 * lsize + i] = 1.0f;
+        CHECK(h3_seedvr2_debug_dit_video(m, dit_in, L, lw, lh, pred, -1, error, sizeof(error)) ||
+              (fprintf(stderr, "%s\n", error), 0));
+        report("dit prediction", compare(pred, pred_ref, lsize, 1.0), 0.05);
+        /* per latent frame: the temporal windows must not favour any frame */
+        size_t lplane = (size_t)lh * lw;
+        for (int t = 0; t < L; t++) {
+            double se = 0, sr = 0;
+            for (int c = 0; c < 16; c++)
+                for (size_t i = 0; i < lplane; i++) {
+                    size_t at = ((size_t)c * L + t) * lplane + i;
+                    double e = (double)pred[at] - pred_ref[at];
+                    se += e * e; sr += (double)pred_ref[at] * pred_ref[at];
+                }
+            printf("    latent frame %d: rel %.4f\n", t, sr > 0 ? sqrt(se / sr) : 0);
+            CHECK(sr == 0 || sqrt(se / sr) < 0.05);
+        }
+        float *z = malloc(lsize * sizeof(float));
+        for (size_t i = 0; i < lsize; i++) z[i] = noise[i] - pred[i];
+        report("z (noise - v)", compare(z, z_ref, lsize, 1.0), 0.05);
+        CHECK(h3_seedvr2_debug_decode_video(m, z, L, lw, lh, 0, 99, dec, &of, &ow, &oh, &oc, rgb, error, sizeof(error)) ||
+              (fprintf(stderr, "%s\n", error), 0));
+        report("decode (our z)", compare(dec, dz_ref, rgb, 2.0), 0.1);
+        free(noise); free(pred_ref); free(z_ref); free(dz_ref); free(dit_in); free(pred); free(z);
+    }
     free(dec); free(dec_sliced); free(decoded_ref); free(decoded_sliced_ref); free(latent_ref); free(x);
     h3_st_free_header(&h);
 }
 
 int main(int argc, char **argv) {
+    test_windows3();
+    test_noise();
     char mbuf[1024], fbuf[1024], cfg[1200], path[1200];
     const char *dir = model_dir(mbuf, sizeof(mbuf));
     const char *fixtures = fixture_dir(fbuf, sizeof(fbuf));
