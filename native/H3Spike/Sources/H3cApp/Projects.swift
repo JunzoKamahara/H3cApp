@@ -329,9 +329,20 @@ final class ProjectStore: ObservableObject {
         return url
     }
 
-    /// "無題のプロジェクト", numbered while other windows have one open.
+    /// "無題のプロジェクト", or the lowest number no other untitled project
+    /// has: those open in other windows and those kept with their videos in
+    /// untitledDirectory, so no two untitled projects share a name.
     func untitledName() -> String {
-        let taken = Set(openOwners.values.compactMap { $0.owner?.project }.filter(\.untitled).map(\.name))
+        var taken = Set(openOwners.values.compactMap { $0.owner?.project }.filter(\.untitled).map(\.name))
+        let folder = Self.untitledDirectory
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where !name.hasPrefix(".") {
+            // A folder left with no project.json (emptied, swept at launch)
+            // is no project.
+            if let file = try? ProjectFiles.read(folder.appendingPathComponent(name, isDirectory: true)),
+               file.untitled == true {
+                taken.insert(file.name)
+            }
+        }
         let first = String(localized: "無題のプロジェクト")
         guard taken.contains(first) else { return first }
         var number = 2

@@ -14,7 +14,9 @@ and for Open-H3 regeneration).
 - **Untitled projects.** A new window opens on an “Untitled Project”
   (unless it reopens the last project at launch). Videos made there keep
   their records and latents like any project's, so they can be enlarged or
-  continued right away. Untitled projects live in the app's own folder
+  continued right away. They are named “Untitled Project”, “Untitled
+  Project 2” and so on, with a number no other untitled project has (open
+  in a window or kept with its videos). Untitled projects live in the app's own folder
   (`~/Library/Application Support/H3cApp/Untitled`).
 - **Saving under a name.** “Project” → “Save as Project…” asks for a
   project name and a location (default `~/Movies/H3cApp`); the untitled
