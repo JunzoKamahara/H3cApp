@@ -27,26 +27,29 @@ static int clip_progress(h3_progress_callback on_progress, void *opaque, const v
     return 1;
 }
 
-/* Peak live GPU memory of one window, from measurements on an M5 (24 GB,
- * 2026-11-06; the clip pipeline below, every large buffer freed as soon as
- * the GPU is done with it, the transformer's blocks freed around the VAE
- * phases, blocks 2-3 of a sliced decode streamed frame by frame; peak live
- * GiB -> GB, process footprint in brackets):
+/* Peak live GPU memory of one window, from measurements on an M5 (24 GB;
+ * the clip pipeline below, every large buffer freed as soon as the GPU is
+ * done with it, the transformer's blocks freed around the VAE phases,
+ * blocks 2-3 of a sliced decode streamed frame by frame, and since
+ * 2026-11-07 the causal state read from its own buffers instead of head
+ * slots ahead of every activation (gconv_t); peak live GiB -> GB, process
+ * footprint in brackets):
  *
  *   path  size      T  VAE     peak            phase that sets it
- *   grid  1344x768  5  whole    9.89 (12.6)    decode: block 3, T+2 frame slots
- *   grid  1344x768 17  sliced  16.72 (18.2)    decode: every conv's state + one frame
- *   grid  960x544  17  sliced   8.74 (12.9)
- *   F32   960x544   5  whole   11.21 (12.8)
+ *   grid  1344x768  5  whole    8.33 (12.6)    transformer (decode stays below)
+ *   grid  1344x768 17  sliced  13.56 (15.1)    decode: every conv's state + one frame
+ *   grid  960x544  17  sliced   8.61 (12.9)    transformer
+ *   F32   960x544   5  whole   11.21 (12.8)    (2026-11-06, head slots)
  *   F32   960x544  17  sliced  13.03 (15.5)
  *   F32   768x432  17  sliced   8.64 (13.1)
+ *   before 2026-11-07, grid: 1344x768 x5 whole 9.89, x17 sliced 16.72, 960x544 x17 8.74
  *
- * Per megapixel of output: decode whole 1.29 (grid) / 2.9 (F32) GB per
- * frame slot (T + 2), sliced 15.5 / 24 GB whatever T; encode whole 0.92 /
- * 1.93 per slot, sliced 12 / 20. The transformer phase is the resident
- * weights plus 113 KB per token. Before this policy a 17-frame 1344x768
- * run reached 36 GiB and swapped: never run an unmeasured configuration
- * without the estimate. */
+ * Per megapixel of output: decode whole 1.29 (grid, per frame) / 2.9 (F32,
+ * per frame + 2) GB, sliced 12.3 / 24 GB whatever T (the state is 7.3 of
+ * the 12.3); encode whole 0.92 per frame / 1.93 per frame + 2, sliced
+ * 8.3 / 20. The transformer phase is the resident weights plus 113 KB per
+ * token. Before this policy a 17-frame 1344x768 run reached 36 GiB and
+ * swapped: never run an unmeasured configuration without the estimate. */
 static uint64_t phase_max(uint64_t a, uint64_t b) { return a > b ? a : b; }
 
 static uint64_t video_peak_bytes(uint64_t resident, uint64_t dit_bytes, int nax_vae, int full_w, int full_h,
@@ -56,8 +59,9 @@ static uint64_t video_peak_bytes(uint64_t resident, uint64_t dit_bytes, int nax_
     double tokens = (double)L * (full_w / 16) * (full_h / 16);
     double rgb = 24e6 * frames * mp, common = 0.1e9 + rgb;
     double vae_base = (unload_dit ? (double)(resident - (dit_bytes < resident ? dit_bytes : 0)) : (double)resident) + common;
-    double enc = split > 0 ? (nax_vae ? 12.0e9 : 20.0e9) * mp : (nax_vae ? 0.92e9 : 1.93e9) * (frames + 2) * mp;
-    double dec = split > 0 ? (nax_vae ? 15.5e9 : 24.0e9) * mp : (nax_vae ? 1.29e9 : 2.9e9) * (frames + 2) * mp;
+    int slots = nax_vae ? frames : frames + 2;   /* the F32 path pads the head inside every conv */
+    double enc = split > 0 ? (nax_vae ? 8.3e9 : 20.0e9) * mp : (nax_vae ? 0.92e9 : 1.93e9) * slots * mp;
+    double dec = split > 0 ? (nax_vae ? 12.3e9 : 24.0e9) * mp : (nax_vae ? 1.29e9 : 2.9e9) * slots * mp;
     double dit = (double)resident + common + tokens * 113e3;
     return phase_max(phase_max((uint64_t)(vae_base + enc), (uint64_t)(vae_base + dec)), (uint64_t)dit);
 }
@@ -107,12 +111,12 @@ int h3_seedvr2_video_check_requirements(const h3_seedvr2 *m, int in_w, int in_h,
         return 1;
     }
     /* per frame the window processes (overlaps count), measured on an M5
-     * (UPSCALE_PLAN appendix A.10, windows 5-17 alike): grid 8.4 s at
-     * 1344x768, 3.7 s at 544x960, 1.3-1.7 s at 672x384; the F32 path took
-     * 2.2x the grid's time in the phase-3 runs, and other Apple GPUs are
-     * slower still */
+     * 2026-11-07 (one 17-frame window, model loaded): grid 6.5 s at
+     * 1344x768, 3.25 s at 960x544, about 6.3 s per megapixel; the F32 path
+     * took 2.2x the grid's time in the phase-3 runs, and other Apple GPUs
+     * are slower still */
     double mp = (double)full_w * full_h / 1e6;
-    double per_frame = m->nax_vae ? 8.0 : 18.0;
+    double per_frame = m->nax_vae ? 6.3 : 14.0;
     out->estimated_seconds_per_frame = mp * per_frame;
     out->supported = 1;
     return 1;

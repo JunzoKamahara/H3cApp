@@ -6935,6 +6935,7 @@ int h3_gpu_silu_mul_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
 typedef struct {
     uint32_t rows, x_rows, guard, in_ch, out_ch, taps, inputs, relu, has_bias, has_residual;
     int32_t offsets[27];
+    uint32_t x1_rows, tap_mask;
 } vsr_tapconv_args;
 typedef struct { uint32_t frames, height, width, channels, padded_channels, guard; } vsr_grid_args;
 
@@ -6944,31 +6945,37 @@ int h3_gpu_has_tensor_ops(const h3_gpu *opaque) {
     return gpu.tensorOpsEnabled;
 }
 
-int h3_gpu_vsr_tapconv_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
-                            const h3_gpu_tensor *x0, const h3_gpu_tensor *x1,
-                            const h3_gpu_tensor *w0, const h3_gpu_tensor *w1,
-                            const h3_gpu_tensor *bias, const h3_gpu_tensor *residual,
-                            uint32_t rows, uint32_t x_rows, uint32_t guard,
-                            uint32_t in_ch, uint32_t out_ch, uint32_t taps,
-                            const int32_t *offsets, int relu) {
-    H3GPU *gpu = GPU(opaque);
+/* x1 as a second input (w1, every tap; state_rows 0) or as the causal state
+ * of the taps in tap_mask (w0's weights, state_rows its rows). */
+static int vsr_tapconv(H3GPU *gpu, h3_gpu_tensor *output,
+                       const h3_gpu_tensor *x0, const h3_gpu_tensor *x1, uint32_t state_rows,
+                       const h3_gpu_tensor *w0, const h3_gpu_tensor *w1,
+                       const h3_gpu_tensor *bias, const h3_gpu_tensor *residual,
+                       uint32_t rows, uint32_t x_rows, uint32_t guard,
+                       uint32_t in_ch, uint32_t out_ch, uint32_t taps,
+                       const int32_t *offsets, uint32_t tap_mask, int relu) {
     if (!gpu.tensorOpsEnabled) { h3_gpu_set_error(gpu, @"VSR tapconv needs TensorOps"); return 0; }
+    int state = state_rows != 0;
     if (!rows || !taps || taps > 27 || in_ch % 64 || out_ch % 64 || !offsets ||
-        guard + rows + 128 > x_rows) {
+        guard + rows + 128 > x_rows || (state && !x1) || (!state && tap_mask) ||
+        (tap_mask >> taps) != 0) {
         h3_gpu_set_error(gpu, @"VSR tapconv: bad arguments");
         return 0;
     }
-    for (uint32_t t = 0; t < taps; t++)
-        if (offsets[t] < -(int32_t)guard || (int64_t)guard + rows + 128 + offsets[t] > (int64_t)x_rows) {
+    for (uint32_t t = 0; t < taps; t++) {
+        uint32_t limit = ((tap_mask >> t) & 1u) ? state_rows : x_rows;
+        if (offsets[t] < -(int32_t)guard || (int64_t)guard + rows + 128 + offsets[t] > (int64_t)limit) {
             h3_gpu_set_error(gpu, @"VSR tapconv: tap offset outside the guard rows");
             return 0;
         }
+    }
     size_t x_count = (size_t)x_rows * in_ch, y_count = (size_t)x_rows * out_ch;
+    size_t x1_count = state ? (size_t)state_rows * in_ch : x_count;
     size_t w_count = (size_t)taps * out_ch * in_ch;
     if (!h3_gpu_require_bf16(gpu, x0, x_count, @"VSR tapconv x0") ||
-        (x1 && !h3_gpu_require_bf16(gpu, x1, x_count, @"VSR tapconv x1")) ||
+        (x1 && !h3_gpu_require_bf16(gpu, x1, x1_count, @"VSR tapconv x1")) ||
         !h3_gpu_require_bf16(gpu, w0, w_count, @"VSR tapconv w0") ||
-        (x1 && !h3_gpu_require_bf16(gpu, w1, w_count, @"VSR tapconv w1")) ||
+        (x1 && !state && !h3_gpu_require_bf16(gpu, w1, w_count, @"VSR tapconv w1")) ||
         !h3_gpu_require_bf16(gpu, output, y_count, @"VSR tapconv output") ||
         (residual && !h3_gpu_require_bf16(gpu, residual, y_count, @"VSR tapconv residual")) ||
         !vsr_check_f32_vector(gpu, bias, out_ch, @"VSR tapconv bias")) return 0;
@@ -6978,10 +6985,11 @@ int h3_gpu_vsr_tapconv_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
         h3_gpu_set_error(gpu, @"device cannot dispatch the VSR TensorOps conv");
         return 0;
     }
-    vsr_tapconv_args args = {rows, x_rows, guard, in_ch, out_ch, taps, x1 ? 2u : 1u,
-                             relu != 0, bias != NULL, residual != NULL, {0}};
+    vsr_tapconv_args args = {rows, x_rows, guard, in_ch, out_ch, taps, (x1 && !state) ? 2u : 1u,
+                             relu != 0, bias != NULL, residual != NULL, {0},
+                             state ? state_rows : x_rows, tap_mask};
     memcpy(args.offsets, offsets, taps * sizeof(int32_t));
-    const h3_gpu_tensor *xb = x1 ? x1 : x0, *wb = x1 ? w1 : w0;
+    const h3_gpu_tensor *xb = x1 ? x1 : x0, *wb = (x1 && !state) ? w1 : w0;
     const h3_gpu_tensor *b = bias ? bias : w0, *r = residual ? residual : output;
     @autoreleasepool {
         id<MTLComputeCommandEncoder> encoder = [gpu.command computeCommandEncoder];
@@ -7002,6 +7010,28 @@ int h3_gpu_vsr_tapconv_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
     stats.direct_dispatches++;
     gpu.stats = stats;
     return 1;
+}
+
+int h3_gpu_vsr_tapconv_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
+                            const h3_gpu_tensor *x0, const h3_gpu_tensor *x1,
+                            const h3_gpu_tensor *w0, const h3_gpu_tensor *w1,
+                            const h3_gpu_tensor *bias, const h3_gpu_tensor *residual,
+                            uint32_t rows, uint32_t x_rows, uint32_t guard,
+                            uint32_t in_ch, uint32_t out_ch, uint32_t taps,
+                            const int32_t *offsets, int relu) {
+    return vsr_tapconv(GPU(opaque), output, x0, x1, 0, w0, w1, bias, residual, rows, x_rows, guard,
+                       in_ch, out_ch, taps, offsets, 0, relu);
+}
+
+int h3_gpu_vsr_tapconv_state_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
+                                  const h3_gpu_tensor *x0, const h3_gpu_tensor *state, uint32_t state_rows,
+                                  const h3_gpu_tensor *w, const h3_gpu_tensor *bias, const h3_gpu_tensor *residual,
+                                  uint32_t rows, uint32_t x_rows, uint32_t guard,
+                                  uint32_t in_ch, uint32_t out_ch, uint32_t taps,
+                                  const int32_t *offsets, uint32_t tap_mask, int relu) {
+    if (!state_rows) { h3_gpu_set_error(GPU(opaque), @"VSR tapconv: a state without rows"); return 0; }
+    return vsr_tapconv(GPU(opaque), output, x0, state, state_rows, w, NULL, bias, residual, rows, x_rows, guard,
+                       in_ch, out_ch, taps, offsets, tap_mask, relu);
 }
 
 int h3_gpu_vsr_zero_rows_bf16(h3_gpu *opaque, h3_gpu_tensor *x, uint32_t first,

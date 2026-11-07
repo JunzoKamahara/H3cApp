@@ -5836,6 +5836,9 @@ struct vsr_tapconv_args {
     uint guard;       /* leading guard rows */
     uint in_ch, out_ch, taps, inputs, relu, has_bias, has_residual;
     int offsets[27];  /* 3x3 spatial, or 3x3x3 with the temporal taps a frame apart */
+    uint x1_rows;     /* physical rows of x1 (x_rows when it is a second input) */
+    uint tap_mask;    /* bit t: tap t reads x1 (with w0's tap weights) instead of x0 - the
+                         causal state of a video frame, kept in its own buffer */
 };
 
 /* Metal 4 tensor API: compiled only with H3_METAL_HAS_TENSOR, like the other
@@ -5856,7 +5859,7 @@ kernel void h3_vsr_tapconv_bf16_nax(device bfloat *x0 [[buffer(0)]],
     auto xa = tensor<device bfloat, dextents<int32_t, 2>, tensor_inline>(
         x0, dextents<int32_t, 2>((int)args.in_ch, (int)args.x_rows));
     auto xb = tensor<device bfloat, dextents<int32_t, 2>, tensor_inline>(
-        x1, dextents<int32_t, 2>((int)args.in_ch, (int)args.x_rows));
+        x1, dextents<int32_t, 2>((int)args.in_ch, (int)args.x1_rows));
     auto wa = tensor<device bfloat, dextents<int32_t, 2>, tensor_inline>(
         w0, dextents<int32_t, 2>((int)args.in_ch, (int)(args.taps * args.out_ch)));
     auto wb = tensor<device bfloat, dextents<int32_t, 2>, tensor_inline>(
@@ -5876,9 +5879,14 @@ kernel void h3_vsr_tapconv_bf16_nax(device bfloat *x0 [[buffer(0)]],
         for (uint t = 0; t < args.taps; t++) {
             int base = row_start + (int)args.guard + args.offsets[t];
             int col = (int)(t * args.out_ch) + col_start;
+            bool from_x1 = input == 0 && ((args.tap_mask >> t) & 1u);
             for (int k = 0; k < (int)args.in_ch; k += KT) {
-                if (input == 0) {
+                if (input == 0 && !from_x1) {
                     auto a = xa.slice<KT, RT>(k, base);
+                    auto b = wa.slice<KT, CT>(k, col);
+                    mm.run(a, b, accum);
+                } else if (from_x1) {
+                    auto a = xb.slice<KT, RT>(k, base);
                     auto b = wa.slice<KT, CT>(k, col);
                     mm.run(a, b, accum);
                 } else {

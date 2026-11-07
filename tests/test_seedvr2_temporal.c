@@ -130,8 +130,8 @@ static void test_noise(void) {
 /* The memory model against the measured points (within 5 %), and its shape. */
 static void test_memory_model(void) {
     const uint64_t R = 7015000000ull, DIT = 6668000000ull;   /* the model's resident bytes, its transformer blocks */
-    struct { int nax, w, h, T, split; double measured_gb; } pts[] = {
-        {1, 1344, 768, 5, 0, 9.89}, {1, 1344, 768, 17, 4, 16.72}, {1, 960, 544, 17, 4, 8.74},
+    struct { int nax, w, h, T, split; double measured_gb; } pts[] = {   /* grid points 2026-11-07 (state buffers), F32 2026-11-06 */
+        {1, 1344, 768, 5, 0, 8.33}, {1, 1344, 768, 17, 4, 13.56}, {1, 960, 544, 17, 4, 8.61},
         {0, 960, 544, 5, 0, 11.21}, {0, 960, 544, 17, 4, 13.03}, {0, 768, 432, 17, 4, 8.64}};
     for (size_t i = 0; i < sizeof(pts) / sizeof(*pts); i++) {
         double est = (double)sv2_video_peak_bytes(R, DIT, pts[i].nax, pts[i].w, pts[i].h, pts[i].T, pts[i].split, 1) / 1e9;
@@ -143,9 +143,12 @@ static void test_memory_model(void) {
     /* sliced memory does not grow with T; the whole window does; the transformer resident costs more */
     CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 29, 4, 1) - sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 17, 4, 1) < 1000000000ull);
     CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 9, 0, 1) > sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 5, 0, 1));
-    CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 5, 0, 0) > sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 5, 0, 1) + 6000000000ull);
-    /* 17 frames at 1344x768 fit a 24 GB Mac (working set about 17.8 GiB = 19.1 GB, the engine keeps 90 %) */
-    CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 17, 4, 1) < 17160000000ull);
+    CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 5, 0, 0) > sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 5, 0, 1) + 5000000000ull);
+    /* 17 frames at 1344x768 fit a 24 GB Mac (working set about 17.8 GiB = 19.1 GB, the engine keeps 90 % = 17.2 GB);
+     * 1920x768 needs about 19 GB and 1920x1088 about 27 GB (the state alone 7.3 GB per megapixel) */
+    CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 17, 4, 1) < 14000000000ull);
+    CHECK(sv2_video_peak_bytes(R, DIT, 1, 1920, 768, 17, 4, 1) > 17160000000ull);
+    CHECK(sv2_video_peak_bytes(R, DIT, 1, 1920, 1088, 17, 4, 1) > 25000000000ull);
     /* the model-less check (the app's sheet) follows the same model: a
      * window of 4n+1, no larger than the budget takes, monotone in frames
      * and size, and a small output on any Mac the tests run on */
@@ -159,9 +162,10 @@ static void test_memory_model(void) {
     int fits17 = h3_seedvr2_video_output_fits(&info, 672, 384, 1344, 768, 17);
     int fits29 = h3_seedvr2_video_output_fits(&info, 672, 384, 1344, 768, 29);
     int large17 = h3_seedvr2_video_output_fits(&info, 960, 544, 1920, 1088, 17);
-    CHECK(fits5 >= fits17 && fits17 >= fits29 && fits17 >= large17);
-    printf("ok: video memory model (%zu measured points), model-less check 1344x768 x5 %d x17 %d x29 %d, 1920x1088 x17 %d\n",
-           sizeof(pts) / sizeof(*pts), fits5, fits17, fits29, large17);
+    int wide17 = h3_seedvr2_video_output_fits(&info, 960, 384, 1920, 768, 17);
+    CHECK(fits5 >= fits17 && fits17 >= fits29 && fits17 >= wide17 && wide17 >= large17);
+    printf("ok: video memory model (%zu measured points), model-less check 1344x768 x5 %d x17 %d x29 %d, 1920x768 x17 %d, 1920x1088 x17 %d\n",
+           sizeof(pts) / sizeof(*pts), fits5, fits17, fits29, wide17, large17);
 }
 
 /* The window session on a dry run (no model): every frame count comes out

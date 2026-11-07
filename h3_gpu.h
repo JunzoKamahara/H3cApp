@@ -426,6 +426,18 @@ int h3_gpu_vsr_tapconv_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                             uint32_t rows, uint32_t x_rows, uint32_t guard,
                             uint32_t in_ch, uint32_t out_ch, uint32_t taps,
                             const int32_t *offsets, int relu);
+/* The same convolution of x0 where the taps in `tap_mask` (bit t) read
+ * `state` instead - a buffer of `state_rows` rows in x0's channel layout,
+ * their offsets counted from the same output row (SeedVR2's causal state:
+ * the frames before a video frame, kept apart from it instead of in slots
+ * ahead of it). Rows [guard, guard + rows) of x0 are computed, so a frame
+ * range of a grid is `guard` moved to its first row. */
+int h3_gpu_vsr_tapconv_state_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                                  const h3_gpu_tensor *x0, const h3_gpu_tensor *state, uint32_t state_rows,
+                                  const h3_gpu_tensor *w, const h3_gpu_tensor *bias, const h3_gpu_tensor *residual,
+                                  uint32_t rows, uint32_t x_rows, uint32_t guard,
+                                  uint32_t in_ch, uint32_t out_ch, uint32_t taps,
+                                  const int32_t *offsets, uint32_t tap_mask, int relu);
 int h3_gpu_vsr_zero_rows_bf16(h3_gpu *gpu, h3_gpu_tensor *x, uint32_t first,
                               uint32_t count, uint32_t width);
 int h3_gpu_vsr_pack_grid_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
