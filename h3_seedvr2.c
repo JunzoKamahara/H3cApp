@@ -449,7 +449,9 @@ h3_gpu_tensor *sv2_pool_take(h3_seedvr2 *m, size_t elements, int bf16) {
         if (m->pool[i].bf16 != bf16 || m->pool[i].bytes < bytes) continue;
         if (best < 0 || m->pool[i].bytes < m->pool[best].bytes) best = i;
     }
-    if (best >= 0 && m->pool[best].bytes <= bytes * 2) {
+    /* a clip reuses only a buffer of the same size: its buffers are GBs and
+     * a half-used one would be a GB wasted */
+    if (best >= 0 && (m->pool_bypass ? m->pool[best].bytes == bytes : m->pool[best].bytes <= bytes * 2)) {
         h3_gpu_tensor *t = m->pool[best].t;
         m->pool[best] = m->pool[--m->pool_count];
         return t;
@@ -459,15 +461,24 @@ h3_gpu_tensor *sv2_pool_take(h3_seedvr2 *m, size_t elements, int bf16) {
 
 void sv2_pool_give(h3_seedvr2 *m, h3_gpu_tensor *t) {
     if (!t) return;
-    if (m->pool_bypass && h3_gpu_tensor_elements(t) * (h3_gpu_tensor_dtype(t) == H3_GPU_BF16 ? 2 : 4) >= ((size_t)128 << 20)) {
-        /* a clip's large buffer: wait for the GPU so the memory is really
-         * released now, not when the command buffer completes */
-        if (h3_gpu_command_open(m->gpu)) { h3_gpu_submit(m->gpu); h3_gpu_begin(m->gpu); }
-        h3_gpu_tensor_free(t);
-        return;
-    }
     int bf16 = h3_gpu_tensor_dtype(t) == H3_GPU_BF16;
     size_t bytes = h3_gpu_tensor_elements(t) * (bf16 ? 2 : 4);
+    if (m->pool_bypass && bytes >= ((size_t)128 << 20)) {
+        /* a clip's large buffer: kept for the next layer of the same size
+         * (an allocation freed and taken again inside one command buffer
+         * costs nothing, a fresh one costs the page faults of GBs) while the
+         * pool stays under a cap; past it, wait for the GPU so the memory is
+         * really released now, not when the command buffer completes.
+         * sv2_pool_drain after each resnet frees the rest. */
+        size_t pooled = 0;
+        for (int i = 0; i < m->pool_count; i++) pooled += m->pool[i].bytes;
+        size_t cap = ((size_t)(getenv("H3_SV2_POOL_CAP_MB") ? atoi(getenv("H3_SV2_POOL_CAP_MB")) : 512)) << 20;
+        if (pooled + bytes > cap) {
+            if (h3_gpu_command_open(m->gpu)) { h3_gpu_submit(m->gpu); h3_gpu_begin(m->gpu); }
+            h3_gpu_tensor_free(t);
+            return;
+        }
+    }
     if (m->pool_count < (int)(sizeof(m->pool) / sizeof(*m->pool))) {
         m->pool[m->pool_count].t = t;
         m->pool[m->pool_count].bytes = bytes;

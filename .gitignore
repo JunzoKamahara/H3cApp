@@ -14,6 +14,7 @@ h3
 h3_*test
 h3_*tests
 h3_*bench
+h3_bench_*
 h3_repro_check
 h3_latent_upscale
 h3_seedvr2_cli

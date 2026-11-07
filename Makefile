@@ -130,6 +130,10 @@ h3_vsr_session_tests: tests/test_vsr_session.o $(LIB_OBJ)
 h3_vsr_tapconv_tests: tests/test_vsr_tapconv.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# Speed of the TensorOps tap convolution on the SeedVR2 video VAE's shapes (development).
+h3_bench_tapconv: tests/bench_tapconv.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 h3_metal_tests: tests/test_metal.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 

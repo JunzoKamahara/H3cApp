@@ -252,6 +252,18 @@ static void h3_gpu_set_error(H3GPU *gpu, NSString *format, ...) {
     va_end(arguments);
 }
 
+/* The tapconv kernel's tile shapes (h3_shaders.metal instantiations):
+ * rows x channels per threadgroup, threads. H3_TAPCONV_KERNEL names one
+ * (benchmarks); the default is the first. */
+typedef struct { const char *name; uint32_t rt, ct, threads; } vsr_tapconv_variant;
+static const vsr_tapconv_variant vsr_tapconv_variants[] = {
+    {"h3_vsr_tapconv_bf16_nax", 128, 64, 128},
+    {"h3_vsr_tapconv_bf16_nax_r128c128", 128, 128, 256},
+    {"h3_vsr_tapconv_bf16_nax_r256c64", 256, 64, 256},
+    {"h3_vsr_tapconv_bf16_nax_r64c128", 64, 128, 128},
+    {"h3_vsr_tapconv_bf16_nax_r128c64k128", 128, 64, 128},
+};
+
 static int h3_gpu_require_command(H3GPU *gpu) {
     if (!gpu || !gpu.command) {
         if (gpu) h3_gpu_set_error(gpu, @"h3_gpu_begin() was not called");
@@ -526,6 +538,8 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
         if (gpu.tensorOpsEnabled) {
             [names addObject:@"h3_linear_bf16_nax_r128"];
             [names addObject:@"h3_vsr_tapconv_bf16_nax"];
+            for (size_t i = 1; i < sizeof(vsr_tapconv_variants) / sizeof(*vsr_tapconv_variants); i++)
+                [names addObject:[NSString stringWithUTF8String:vsr_tapconv_variants[i].name]];
             [names addObject:@"h3_linear_bf16_nax_r128_morton"];
             [names addObject:@"h3_linear_bf16_nax_r128_morton4"];
             [names addObject:
@@ -6935,8 +6949,27 @@ int h3_gpu_silu_mul_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
 typedef struct {
     uint32_t rows, x_rows, guard, in_ch, out_ch, taps, inputs, relu, has_bias, has_residual;
     int32_t offsets[27];
-    uint32_t x1_rows, tap_mask;
+    uint32_t x1_rows, tap_mask, order;
 } vsr_tapconv_args;
+
+/* A variant's row tile must also fit the rows after `guard + rows` (the
+ * tail): a tile of rt rows reads up to rt + max_offset past its start. */
+static const vsr_tapconv_variant *vsr_tapconv_variant_for(uint32_t in_ch, uint32_t out_ch, uint32_t rows,
+                                                          uint32_t guard, uint32_t x_rows, int32_t max_offset) {
+    /* The other shapes are within a few per cent of the first alone and
+     * made no measurable difference inside a SeedVR2 window (bench_tapconv
+     * and UPSCALE_PLAN appendix A.10, 2026-11-07): they stay for the
+     * benchmark, H3_TAPCONV_KERNEL picks one. */
+    const char *want = getenv("H3_TAPCONV_KERNEL");
+    if (want)
+        for (size_t i = 0; i < sizeof(vsr_tapconv_variants) / sizeof(*vsr_tapconv_variants); i++) {
+            const vsr_tapconv_variant *v = &vsr_tapconv_variants[i];
+            if (strcmp(want, v->name) || out_ch % v->ct || in_ch % (strstr(v->name, "k128") ? 128u : 64u)) continue;
+            uint32_t last_tile_end = (rows + v->rt - 1) / v->rt * v->rt;
+            if ((int64_t)guard + last_tile_end + (max_offset > 0 ? max_offset : 0) <= (int64_t)x_rows) return v;
+        }
+    return &vsr_tapconv_variants[0];
+}
 typedef struct { uint32_t frames, height, width, channels, padded_channels, guard; } vsr_grid_args;
 
 int h3_gpu_has_tensor_ops(const h3_gpu *opaque) {
@@ -6958,7 +6991,7 @@ static int vsr_tapconv(H3GPU *gpu, h3_gpu_tensor *output,
     int state = state_rows != 0;
     if (!rows || !taps || taps > 27 || in_ch % 64 || out_ch % 64 || !offsets ||
         guard + rows + 128 > x_rows || (state && !x1) || (!state && tap_mask) ||
-        (tap_mask >> taps) != 0) {
+        (tap_mask >> taps) != 0) {   /* tiles over 128 rows are clamped to the tail below */
         h3_gpu_set_error(gpu, @"VSR tapconv: bad arguments");
         return 0;
     }
@@ -6980,14 +7013,22 @@ static int vsr_tapconv(H3GPU *gpu, h3_gpu_tensor *output,
         (residual && !h3_gpu_require_bf16(gpu, residual, y_count, @"VSR tapconv residual")) ||
         !vsr_check_f32_vector(gpu, bias, out_ch, @"VSR tapconv bias")) return 0;
     if (!h3_gpu_require_command(gpu)) return 0;
-    id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(gpu, @"h3_vsr_tapconv_bf16_nax");
-    if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < 128) {
+    int32_t max_offset = 0;
+    for (uint32_t t = 0; t < taps; t++) if (offsets[t] > max_offset) max_offset = offsets[t];
+    const vsr_tapconv_variant *variant = vsr_tapconv_variant_for(in_ch, out_ch, rows, guard, x_rows, max_offset);
+    id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(gpu, [NSString stringWithUTF8String:variant->name]);
+    if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < variant->threads) {
         h3_gpu_set_error(gpu, @"device cannot dispatch the VSR TensorOps conv");
         return 0;
     }
+    /* row tiles fastest (as before): running a row tile's channel tiles
+     * together (H3_TAPCONV_ORDER=1) gained nothing at 128-256 channels and
+     * lost 1.5x at 512 channels x 27 taps (bench_tapconv, 2026-11-07) */
+    const char *order_env = getenv("H3_TAPCONV_ORDER");
+    uint32_t order = order_env ? (uint32_t)(atoi(order_env) != 0) : 0u;
     vsr_tapconv_args args = {rows, x_rows, guard, in_ch, out_ch, taps, (x1 && !state) ? 2u : 1u,
                              relu != 0, bias != NULL, residual != NULL, {0},
-                             state ? state_rows : x_rows, tap_mask};
+                             state ? state_rows : x_rows, tap_mask, order};
     memcpy(args.offsets, offsets, taps * sizeof(int32_t));
     const h3_gpu_tensor *xb = x1 ? x1 : x0, *wb = (x1 && !state) ? w1 : w0;
     const h3_gpu_tensor *b = bias ? bias : w0, *r = residual ? residual : output;
@@ -7002,8 +7043,9 @@ static int vsr_tapconv(H3GPU *gpu, h3_gpu_tensor *output,
         [encoder setBuffer:TENSOR(r).buffer offset:0 atIndex:5];
         [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:6];
         [encoder setBytes:&args length:sizeof(args) atIndex:7];
-        [encoder dispatchThreadgroups:MTLSizeMake((rows + 127) / 128, out_ch / 64, 1)
-                 threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+        uint32_t row_tiles = (rows + variant->rt - 1) / variant->rt, col_tiles = out_ch / variant->ct;
+        [encoder dispatchThreadgroups:order ? MTLSizeMake(col_tiles, row_tiles, 1) : MTLSizeMake(row_tiles, col_tiles, 1)
+                 threadsPerThreadgroup:MTLSizeMake(variant->threads, 1, 1)];
         [encoder endEncoding];
     }
     h3_gpu_stats stats = gpu.stats;
@@ -7466,6 +7508,7 @@ void h3_gpu_set_nax_linear_generic(h3_gpu *opaque, int on) {
     H3GPU *gpu = GPU(opaque);
     gpu.naxLinearGeneric = on != 0;
 }
+
 
 typedef struct { uint32_t rows, columns, group; } sv2_dequant_args;
 typedef struct { uint32_t rows, columns; } sv2_dequant_rows_args;

@@ -140,12 +140,12 @@ int h3_seedvr2_video_check_requirements(const h3_seedvr2 *m, int in_w, int in_h,
         return 1;
     }
     /* per frame the window processes (overlaps count), measured on an M5
-     * 2026-11-07 (one 17-frame window, model loaded): grid 6.5 s at
-     * 1344x768, 3.25 s at 960x544, about 6.3 s per megapixel; the F32 path
-     * took 2.2x the grid's time in the phase-3 runs, and other Apple GPUs
-     * are slower still */
+     * 2026-11-07 (one 17-frame window, model loaded, the clip's buffers
+     * reused): grid 5.4 s at 1344x768, 9.0 s at 1920x768, about 5.3 s per
+     * megapixel; the F32 path took 2.2x the grid's time in the phase-3
+     * runs, and other Apple GPUs are slower still */
     double mp = (double)full_w * full_h / 1e6;
-    double per_frame = m->nax_vae ? 6.3 : 14.0;
+    double per_frame = m->nax_vae ? 5.3 : 12.0;
     out->estimated_seconds_per_frame = mp * per_frame;
     out->supported = 1;
     return 1;

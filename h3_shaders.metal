@@ -5839,23 +5839,29 @@ struct vsr_tapconv_args {
     uint x1_rows;     /* physical rows of x1 (x_rows when it is a second input) */
     uint tap_mask;    /* bit t: tap t reads x1 (with w0's tap weights) instead of x0 - the
                          causal state of a video frame, kept in its own buffer */
+    uint order;       /* 0: threadgroup x = row tile, y = channel tile; 1: swapped, so the channel
+                         tiles of one row tile run together and share its input rows in the cache */
 };
 
 /* Metal 4 tensor API: compiled only with H3_METAL_HAS_TENSOR, like the other
  * *_nax kernels, so the library still builds on Macs without TensorOps (and
  * for the no-TensorOps retry in h3_gpu.m). */
 #ifdef H3_METAL_HAS_TENSOR
-kernel void h3_vsr_tapconv_bf16_nax(device bfloat *x0 [[buffer(0)]],
-                                    device bfloat *x1 [[buffer(1)]],
-                                    device bfloat *w0 [[buffer(2)]],
-                                    device bfloat *w1 [[buffer(3)]],
-                                    device const float *bias [[buffer(4)]],
-                                    device const bfloat *residual [[buffer(5)]],
-                                    device bfloat *output [[buffer(6)]],
-                                    constant vsr_tapconv_args &args [[buffer(7)]],
-                                    uint2 group [[threadgroup_position_in_grid]]) {
-    constexpr int RT = 128, CT = 64, KT = 64;
-    int row_start = (int)(group.x * RT), col_start = (int)(group.y * CT);
+/* One output tile of RT rows x CT channels per threadgroup of SG simdgroups,
+ * K in chunks of KT; instantiated below in several shapes (the host picks
+ * one by name: h3_gpu.m vsr_tapconv_variants). */
+template <int RT, int CT, int KT, int SG>
+kernel void h3_vsr_tapconv_bf16_nax_t(device bfloat *x0 [[buffer(0)]],
+                                      device bfloat *x1 [[buffer(1)]],
+                                      device bfloat *w0 [[buffer(2)]],
+                                      device bfloat *w1 [[buffer(3)]],
+                                      device const float *bias [[buffer(4)]],
+                                      device const bfloat *residual [[buffer(5)]],
+                                      device bfloat *output [[buffer(6)]],
+                                      constant vsr_tapconv_args &args [[buffer(7)]],
+                                      uint2 group [[threadgroup_position_in_grid]]) {
+    uint row_tile = args.order ? group.y : group.x, col_tile = args.order ? group.x : group.y;
+    int row_start = (int)(row_tile * RT), col_start = (int)(col_tile * CT);
     auto xa = tensor<device bfloat, dextents<int32_t, 2>, tensor_inline>(
         x0, dextents<int32_t, 2>((int)args.in_ch, (int)args.x_rows));
     auto xb = tensor<device bfloat, dextents<int32_t, 2>, tensor_inline>(
@@ -5867,7 +5873,7 @@ kernel void h3_vsr_tapconv_bf16_nax(device bfloat *x0 [[buffer(0)]],
     constexpr auto descriptor = matmul2d_descriptor(
         RT, CT, KT, false, true, false,
         matmul2d_descriptor::mode::multiply_accumulate);
-    matmul2d<descriptor, execution_simdgroups<4>> mm;
+    matmul2d<descriptor, execution_simdgroups<SG>> mm;
     auto first_a = xa.slice<KT, RT>(0, row_start);
     auto first_b = wa.slice<KT, CT>(0, col_start);
     auto accum = mm.template get_destination_cooperative_tensor<
@@ -5912,6 +5918,21 @@ kernel void h3_vsr_tapconv_bf16_nax(device bfloat *x0 [[buffer(0)]],
         output[at] = (bfloat)v;
     }
 }
+template [[host_name("h3_vsr_tapconv_bf16_nax")]] kernel void h3_vsr_tapconv_bf16_nax_t<128, 64, 64, 4>(
+    device bfloat *, device bfloat *, device bfloat *, device bfloat *, device const float *, device const bfloat *,
+    device bfloat *, constant vsr_tapconv_args &, uint2);
+template [[host_name("h3_vsr_tapconv_bf16_nax_r128c128")]] kernel void h3_vsr_tapconv_bf16_nax_t<128, 128, 64, 8>(
+    device bfloat *, device bfloat *, device bfloat *, device bfloat *, device const float *, device const bfloat *,
+    device bfloat *, constant vsr_tapconv_args &, uint2);
+template [[host_name("h3_vsr_tapconv_bf16_nax_r256c64")]] kernel void h3_vsr_tapconv_bf16_nax_t<256, 64, 64, 8>(
+    device bfloat *, device bfloat *, device bfloat *, device bfloat *, device const float *, device const bfloat *,
+    device bfloat *, constant vsr_tapconv_args &, uint2);
+template [[host_name("h3_vsr_tapconv_bf16_nax_r64c128")]] kernel void h3_vsr_tapconv_bf16_nax_t<64, 128, 64, 4>(
+    device bfloat *, device bfloat *, device bfloat *, device bfloat *, device const float *, device const bfloat *,
+    device bfloat *, constant vsr_tapconv_args &, uint2);
+template [[host_name("h3_vsr_tapconv_bf16_nax_r128c64k128")]] kernel void h3_vsr_tapconv_bf16_nax_t<128, 64, 128, 4>(
+    device bfloat *, device bfloat *, device bfloat *, device bfloat *, device const float *, device const bfloat *,
+    device bfloat *, constant vsr_tapconv_args &, uint2);
 #endif
 
 struct vsr_grid_args { uint frames, height, width, channels, padded_channels, guard; };
