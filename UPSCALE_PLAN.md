@@ -1030,3 +1030,51 @@ Time and memory: the two 1080p clips took 2026 s and 2086 s on the RTX machine, 
 Conditions for revisiting: a small (5B-class) LTX-family Refine model being released, or the target changing to restoring degraded live footage, where LTX's fidelity counts most.
 
 Left behind: the comparison kit in `~/Documents/work/h3c/ltx-refine-eval/` (the three inputs, the app's six outputs, the three RTX outputs with logs, `report.md`, a results section in `README.ja.md`) and the metrics venv (python3.12, torch 2.15, pyiqa 0.1.16, in the session scratchpad).
+
+### Appendix A.10: Multi-frame SeedVR2 (temporal VAE and DiT), the phase-5 quality comparison (2026-11-07, M5 24 GB, main 44b219f)
+
+**Purpose.** Phase 5 of `SEEDVR2_TEMPORAL_PLAN.ja.md`. Measures whether the window pipeline built in phases 0-4 (causal VAE over 4n+1 frames plus 3D window attention, `h3_seedvr2_video.c`, CLI `--video-frames`) is more stable over time than the current per-frame SeedVR2 (A.7), with the same input, output size, color transfer and seed. The proposed criterion from the plan's 9.3: on at least 3 of 4 or more main clips the warp error drops by 10 % or more against the per-frame path, no main clip gets more than 10 % worse, and a visual check is mandatory.
+
+**Method.** 8 clips of 41 frames (scene-cut: 10 frames of leopard-man followed by 23 of campus, 33 frames, cut at frame 10). The source video at the 2x output size is the ground truth (gt); the input is a ffmpeg bicubic 1/2 downscale, upscaled 2x. Main clips: campus (panning background, 1344x768), leopard-man (fur, 1344x768), face-real-webcam (real face, 1344x768, local only), face-photo-tall (generated face, 768x1344). Secondary: skin-face (544x960), dog (fast motion, 768x768), anime-runner (672x384), scene-cut. Conditions: SwiftVR (int8), per-frame (`--frames`, one noise for every frame), windows 5 / 17 / 29 (`--window N --overlap 1 --blend 0`, the later window wins), and window 17 with a 5-frame Hann cross-fade (`--window 17 --overlap 5 --blend 1`, "17+overlap" below). Seed 42.
+
+Metrics (`tools/quality_temporal.py`, development only): optical flow of the ground truth (RAFT large, torchvision 0.29.2, estimated at half size for the 1 MP clips, forward-backward consistency mask), frame t+1 warped back to t, mean absolute difference = **warp error** (same flow and mask for every condition; the ground truth's own value is the floor). Pairs that cross a window boundary (the owning window changes; for the cross-fade, pairs touching an overlap) are separated from interior pairs. The same on the face / fur crop (`crops.txt`). Also adjacent-frame difference (flicker), PSNR/SSIM/LPIPS, MUSIQ/MANIQA, time (`/usr/bin/time -l`, checked for no sleep and no other job), peak live GPU memory (`H3_SV2_TRACE=1`) and footprint. Full tables: `~/Documents/work/h3c/seedvr2-temporal-eval/report-tables.md`, collected by `tools/quality_temporal_report.py`.
+
+**Results (warp error, lower is more stable).**
+
+| clip | gt | SwiftVR | per-frame | w5 | w17 | w29 | 17+overlap | 17+overlap vs per-frame |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| campus 1344x768 | 1.76 | 3.39 | 3.99 | 3.64 | 2.62 | refused | **2.53** | **-36 %** |
+| leopard-man 1344x768 | 1.74 | 2.74 | 3.25 | 2.66 | 2.03 | refused | **1.96** | **-40 %** |
+| face-real-webcam 1344x768 | 0.80 | 1.19 | 1.56 | 1.64 | 1.47 | refused | 1.42 | -9 % |
+| face-photo-tall 768x1344 | 1.63 | 2.35 | 2.31 | 2.32 | 2.07 | refused | **2.02** | **-12 %** |
+| skin-face 544x960 | 1.54 | 3.02 | 4.15 | 3.82 | 2.28 | 2.21 | **2.24** | **-46 %** |
+| dog 768x768 (fast motion) | 4.87 | 8.62 | 6.54 | 8.00 | 6.45 | 6.42 | 6.35 | -3 % |
+| anime-runner 672x384 | 1.82 | 2.89 | 2.51 | 3.08 | 2.60 | 2.54 | 2.52 | +0.3 % |
+| scene-cut 1344x768 | 1.68 | 3.03 | 3.65 | 3.34 | 2.43 | refused | **2.24** | **-39 %** |
+
+- **The criterion is met by 17+overlap**: 3 of the 4 main clips improve by 10 % or more (campus -36 %, leopard-man -40 %, face-photo-tall -12 %), face-real-webcam by -9 %, and nothing, secondary clips included, gets more than 10 % worse (anime-runner +0.3 %). On the face / fur crops the gain is larger (campus 6.18 -> 3.54, leopard-man 5.96 -> 3.31, skin-face 6.83 -> 3.39, face-photo-tall 3.79 -> 3.31, webcam 2.01 -> 1.71).
+- **Window 5 is rejected**: worse on anime-runner (+23 %), dog (+22 %) and webcam (+5 %), and far behind window 17 where it improves. Two latent frames per window, with a boundary every 4 frames.
+- **Joining windows**: taking the later window (blend 0) makes the boundary pairs clearly worse than the interior (campus 5.80 vs 2.45, leopard-man 3.59 vs 1.95, worse than per-frame's 3.99 / 3.25). The 5-frame Hann cross-fade brings the boundary down to the interior level (campus 2.57, leopard-man 1.95, webcam 1.49, face-photo-tall 1.99). On the 3-frame crop sheets (`set-v2/<clip>/sheet-17.png`) no seam is visible in either.
+- **Window 29** is only 1-3 % better than 17 on the three small clips and is refused at 1344x768 (17.2 GB needed against the 19.1 GB budget).
+- **Scene cut**: the pair at the cut is about 36 in every condition (as it must be). On the pairs within +-2 of it: per-frame 3.67, w5 3.38, w17 2.39, 17+overlap 2.40 (gt 1.82). Visually, w5 smears the previous scene into frames 10-11 (the building streaks, window frames bend); window 17 also has the cut inside a window and does not break.
+- **The cost in still-image quality**: windows lower MANIQA by 4-12 % against per-frame (campus 0.381 -> 0.355, skin-face 0.615 -> 0.537, anime 0.618 -> 0.544; on the face crops campus 0.338 -> 0.295, leopard-man 0.581 -> 0.526). MUSIQ -0.5 to -1.5. LPIPS and PSNR are about equal (campus better, face-photo-tall slightly worse). Visually (1:1 zooms): fur spots, hair strands and window frames are slightly softer than per-frame, SwiftVR is the sharpest. No identity drift and no color step between windows. Adjacent-frame difference drops on campus and skin-face and rises slightly on leopard-man and face-photo-tall (cause not established).
+- **On face-real-webcam SwiftVR is still the more stable one** (warp 1.19 vs 1.42, flicker 1.42 vs 1.86): on real webcam footage SeedVR2's redrawing still wavers even with windows.
+
+**Time and memory (M5 24 GB, 2x, 41 frames; the window conditions process 51 frames including the overlaps).**
+
+| condition | wall time at 1344x768 | peak live GPU | footprint | small clips (anime / skin-face / dog) |
+|---|---:|---:|---:|---:|
+| SwiftVR int8 | 0.2 s/frame | — | 10.4 GB | 0.06 / 0.12 / 0.12 s/frame |
+| per-frame | 4.1-4.3 s/frame | 9.5 GiB | 10.9 GB | 0.98 / 2.35 / 2.53 |
+| window 5 | 9.7-10.1 | 9.2 GiB | 12.6 GB | 1.64 / 4.35 / 5.21 |
+| window 17 | 10.2-11.1 | 15.6 GiB | 18.3-18.6 GB | 1.62 / 4.64 / 5.23 |
+| 17+overlap | 10.3-10.7 | 15.6 GiB | 18.3-18.6 GB | 2.15 / 4.64 / 5.26 |
+| window 29 | refused (17.2 GB needed) | — | — | 2.46 / 5.17 / 5.89 (8.8-10.6 GiB) |
+
+At 1 MP window 17 takes about 2.5x the per-frame time (about 22 minutes for 124 frames of 5 s). A 5-frame overlap means 16/12 as many windows on long videos (the same number of windows in this 41-frame comparison). Window 17 at 1344x768 sits at an 18.6 GB footprint, close to the limit of a 24 GB Mac; 16 GB Macs are out.
+
+**Decision.** The temporal improvement is real and meets the criterion, so **phase 6 (UI, record, API, documents) goes ahead** with the configuration "window 17, overlap 5, Hann cross-fade" (the lightest one that meets the quality condition; window 5 is rejected, window 29 fits 24 GB only up to about 960x544 and adds little). **It will not become the default** (the per-frame path stays the default): it costs 2.5x the time, memory close to the 24 GB limit and slightly softer detail, and on real webcam footage SwiftVR is the more stable one. Display name along the lines of "SeedVR2 video (less flicker, experimental)", with the supported sizes limited to the measured 1344x768.
+
+Open points: the measurement noise against the 10 % line (one seed, one run per clip) was not checked. Boundary values for overlaps other than 5 (9, 13), 1920x1088 (48 GB Macs) and the time on M2-class Macs (F32 path) are not measured. The cause of the higher adjacent-frame difference on some clips is not established.
+
+Left behind: `~/Documents/work/h3c/seedvr2-temporal-eval/` (`make_set.sh`, `run_all.sh`, `run_metrics.py`, `make_videos.py`, `report-tables.md`, `report.ja.md` / `report.md`, `set-v2/<clip>/`{gt.raw, in/, out/<condition>/, metrics-*.json, sheet-*.png, crops.txt}, `videos/<clip>-crop{,-slow}.mp4` = gt | SwiftVR | per-frame | w17 | 17+overlap crops side by side at normal and 1/4 speed; face-real-webcam stays local). Metrics: `tools/quality_temporal.py` and `tools/quality_temporal_report.py` (development only, venv in the scratchpad).
