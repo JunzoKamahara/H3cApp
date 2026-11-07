@@ -39,6 +39,7 @@ static int clip_progress(h3_progress_callback on_progress, void *opaque, const v
  *   grid  1344x768  5  whole    8.33 (12.6)    transformer (decode stays below)
  *   grid  1344x768 17  sliced  13.56 (15.1)    decode: every conv's state + one frame
  *   grid  960x544  17  sliced   8.61 (12.9)    transformer
+ *   grid  1920x768  17  sliced  15.11 (17.2)    decode, the state in int8 (state_mode)
  *   F32   960x544   5  whole   11.21 (12.8)    (2026-11-06, head slots)
  *   F32   960x544  17  sliced  13.03 (15.5)
  *   F32   768x432  17  sliced   8.64 (13.1)
@@ -46,29 +47,59 @@ static int clip_progress(h3_progress_callback on_progress, void *opaque, const v
  *
  * Per megapixel of output: decode whole 1.29 (grid, per frame) / 2.9 (F32,
  * per frame + 2) GB, sliced 12.3 / 24 GB whatever T (the state is 7.3 of
- * the 12.3); encode whole 0.92 per frame / 1.93 per frame + 2, sliced
- * 8.3 / 20. The transformer phase is the resident weights plus 113 KB per
+ * the 12.3; 9.6 with the state in int8); encode whole 0.92 per frame /
+ * 1.93 per frame + 2, sliced 8.3 (7.0 int8) / 20. The transformer phase is the resident weights plus 113 KB per
  * token. Before this policy a 17-frame 1344x768 run reached 36 GiB and
  * swapped: never run an unmeasured configuration without the estimate. */
 static uint64_t phase_max(uint64_t a, uint64_t b) { return a > b ? a : b; }
 
 static uint64_t video_peak_bytes(uint64_t resident, uint64_t dit_bytes, int nax_vae, int full_w, int full_h,
-                                 int frames, int split, int unload_dit) {
+                                 int frames, int split, int unload_dit, int state_int8) {
     double mp = (double)full_w * full_h / 1e6;
     int L = (frames - 1) / 4 + 1;
     double tokens = (double)L * (full_w / 16) * (full_h / 16);
     double rgb = 24e6 * frames * mp, common = 0.1e9 + rgb;
     double vae_base = (unload_dit ? (double)(resident - (dit_bytes < resident ? dit_bytes : 0)) : (double)resident) + common;
     int slots = nax_vae ? frames : frames + 2;   /* the F32 path pads the head inside every conv */
-    double enc = split > 0 ? (nax_vae ? 8.3e9 : 20.0e9) * mp : (nax_vae ? 0.92e9 : 1.93e9) * slots * mp;
-    double dec = split > 0 ? (nax_vae ? 12.3e9 : 24.0e9) * mp : (nax_vae ? 1.29e9 : 2.9e9) * slots * mp;
+    /* sliced, grid: the state is 7.3 (decode) / 2.2 (encode) GB per megapixel of the total; int8 halves it */
+    double enc_sliced = nax_vae ? (state_int8 ? 7.0e9 : 8.3e9) : 20.0e9;
+    double dec_sliced = nax_vae ? (state_int8 ? 9.6e9 : 12.3e9) : 24.0e9;
+    double enc = split > 0 ? enc_sliced * mp : (nax_vae ? 0.92e9 : 1.93e9) * slots * mp;
+    double dec = split > 0 ? dec_sliced * mp : (nax_vae ? 1.29e9 : 2.9e9) * slots * mp;
     double dit = (double)resident + common + tokens * 113e3;
     return phase_max(phase_max((uint64_t)(vae_base + enc), (uint64_t)(vae_base + dec)), (uint64_t)dit);
 }
 
+uint64_t sv2_video_peak_bytes_state(uint64_t resident, uint64_t dit_bytes, int nax_vae, int full_w, int full_h,
+                                    int frames, int vae_split, int unload_dit, int state_int8) {
+    return video_peak_bytes(resident, dit_bytes, nax_vae, full_w, full_h, frames, vae_split, unload_dit, state_int8);
+}
+
 uint64_t sv2_video_peak_bytes(uint64_t resident, uint64_t dit_bytes, int nax_vae, int full_w, int full_h,
                               int frames, int vae_split, int unload_dit) {
-    return video_peak_bytes(resident, dit_bytes, nax_vae, full_w, full_h, frames, vae_split, unload_dit);
+    return video_peak_bytes(resident, dit_bytes, nax_vae, full_w, full_h, frames, vae_split, unload_dit, 0);
+}
+
+/* The cheapest form of a window that fits `budget` (0: unlimited): the
+ * whole window, the sliced VAE, then the sliced VAE with its state in int8
+ * (grid only; allowed when state_mode permits). Returns the bytes; *split
+ * and *state_int8 say the form, *fits whether it fits. */
+static uint64_t video_cheapest(uint64_t resident, uint64_t dit_bytes, int nax_vae, int full_w, int full_h, int frames,
+                               uint64_t budget, int state_mode, int *split, int *state_int8, int *fits) {
+    uint64_t whole = video_peak_bytes(resident, dit_bytes, nax_vae, full_w, full_h, frames, 0, 1, 0);
+    uint64_t sliced = video_peak_bytes(resident, dit_bytes, nax_vae, full_w, full_h, frames, 4, 1, 0);
+    int s = whole <= sliced ? 0 : 4, q = 0;
+    uint64_t need = whole <= sliced ? whole : sliced;
+    if (nax_vae && state_mode == 2) { s = 4; q = 1; need = video_peak_bytes(resident, dit_bytes, nax_vae, full_w, full_h, frames, 4, 1, 1); }
+    else if (budget && need > budget) {
+        if (sliced <= budget) { s = 4; need = sliced; }
+        else if (nax_vae && state_mode != 1) {
+            uint64_t sliced8 = video_peak_bytes(resident, dit_bytes, nax_vae, full_w, full_h, frames, 4, 1, 1);
+            if (sliced8 <= budget) { s = 4; q = 1; need = sliced8; }
+        }
+    }
+    *split = s; *state_int8 = q; *fits = !budget || need <= budget;
+    return need;
 }
 
 /* 90 % of the GPU's working set (the device's memory when it names none). */
@@ -95,16 +126,14 @@ int h3_seedvr2_video_check_requirements(const h3_seedvr2 *m, int in_w, int in_h,
     int full_w = round_up(out_w, SV2_PIXEL_MULTIPLE), full_h = round_up(out_h, SV2_PIXEL_MULTIPLE);
     out->latent_frames = (window_frames - 1) / 4 + 1;
     out->tokens = (full_w / 16) * (full_h / 16) * out->latent_frames;
-    uint64_t whole = video_peak_bytes(m->info.resident_bytes, m->dit_bytes, m->nax_vae, full_w, full_h, window_frames, 0, 1);
-    uint64_t sliced = video_peak_bytes(m->info.resident_bytes, m->dit_bytes, m->nax_vae, full_w, full_h, window_frames, 4, 1);
     uint64_t budget = video_budget();
-    /* the cheaper form that fits; both give the same output */
-    int split = whole <= sliced ? 0 : 4;
-    uint64_t need = whole <= sliced ? whole : sliced;
-    if (budget && need > budget && split == 0 && sliced <= budget) { split = 4; need = sliced; }
+    int split, q, fits;
+    uint64_t need = video_cheapest(m->info.resident_bytes, m->dit_bytes, m->nax_vae, full_w, full_h, window_frames,
+                                   budget, 0, &split, &q, &fits);
     out->vae_split = split;
+    out->state_int8 = q;
     out->gpu_bytes = need;
-    if (budget && need > budget) {
+    if (!fits) {
         snprintf(out->reason, sizeof(out->reason),
                  "about %.1f GB of GPU memory is needed for %d frames at %dx%d, this Mac has %.1f GB",
                  (double)need / 1e9, window_frames, out_w, out_h, (double)budget / 0.9 / 1e9);
@@ -128,10 +157,10 @@ int h3_seedvr2_video_output_fits(const h3_seedvr2_info *info, int in_w, int in_h
     if (window_frames < 1 || window_frames % 4 != 1 || window_frames > 121) return 0;
     int full_w = round_up(out_w, SV2_PIXEL_MULTIPLE), full_h = round_up(out_h, SV2_PIXEL_MULTIPLE);
     int nax_vae = info->tensor_ops && !getenv("H3_SV2_VAE_F32");
-    uint64_t whole = video_peak_bytes(info->resident_bytes, info->block_bytes, nax_vae, full_w, full_h, window_frames, 0, 1);
-    uint64_t sliced = video_peak_bytes(info->resident_bytes, info->block_bytes, nax_vae, full_w, full_h, window_frames, 4, 1);
-    uint64_t budget = video_budget();
-    return !budget || whole <= budget || sliced <= budget;
+    int split, q, fits;
+    video_cheapest(info->resident_bytes, info->block_bytes, nax_vae, full_w, full_h, window_frames, video_budget(), 0,
+                   &split, &q, &fits);
+    return fits;
 }
 
 int h3_seedvr2_restore_clip(h3_seedvr2 *m, const h3_vsr_image *in, int frames, int out_w, int out_h,
@@ -143,13 +172,16 @@ int h3_seedvr2_restore_clip(h3_seedvr2 *m, const h3_vsr_image *in, int frames, i
         fail(error, error_size, "SeedVR2 clip: %d frames (4n+1 needed) or bad sizes", frames);
         return 0;
     }
-    h3_seedvr2_clip_params p = {4, 0, 0, -1, NULL, -1};
+    h3_seedvr2_clip_params p = {4, 0, 0, -1, NULL, -1, 0};
     if (params) p = *params;
     int full_w = round_up(out_w, SV2_PIXEL_MULTIPLE), full_h = round_up(out_h, SV2_PIXEL_MULTIPLE);
-    if (p.vae_split < 0) {   /* the cheaper form (the same output either way) */
-        uint64_t whole = video_peak_bytes(m->info.resident_bytes, m->dit_bytes, m->nax_vae, full_w, full_h, frames, 0, 1);
-        uint64_t sliced = video_peak_bytes(m->info.resident_bytes, m->dit_bytes, m->nax_vae, full_w, full_h, frames, 4, 1);
-        p.vae_split = whole <= sliced ? 0 : 4;
+    {   /* the cheapest form that fits: whole, sliced, sliced with the state in int8 */
+        int split, q, fits;
+        video_cheapest(m->info.resident_bytes, m->dit_bytes, m->nax_vae, full_w, full_h, frames, video_budget(),
+                       p.state_mode, &split, &q, &fits);
+        if (p.vae_split < 0) p.vae_split = split;
+        m->state_int8 = m->nax_vae && p.vae_split > 0 && (p.state_mode == 2 || (p.state_mode == 0 && q));
+        if (getenv("H3_SV2_STATE_INT8")) m->state_int8 = m->nax_vae && p.vae_split > 0 && atoi(getenv("H3_SV2_STATE_INT8")) != 0;
     }
     uint64_t seed = p.seed ? p.seed : m->params.seed;
     int color = p.color_transfer < 0 ? m->params.color_transfer : p.color_transfer;
@@ -170,9 +202,11 @@ int h3_seedvr2_restore_clip(h3_seedvr2 *m, const h3_vsr_image *in, int frames, i
      * window would otherwise take more than 70 % of the GPU's memory */
     uint64_t budget = video_budget();
     int unload_dit = budget && video_peak_bytes(m->info.resident_bytes, m->dit_bytes, m->nax_vae, full_w, full_h, frames,
-                                                p.vae_split, 0) > budget * 7 / 10;
+                                                p.vae_split, 0, m->state_int8) > budget * 7 / 10;
     if (unload_dit) sv2_dit_unload(m);
     sv2_pool_drain(m);
+    if (trace_enabled()) fprintf(stderr, "sv2 clip: %d frames %dx%d, vae %s, state %s, transformer %s\n", frames, full_w, full_h,
+                                 p.vae_split ? "sliced" : "whole", m->state_int8 ? "int8" : "bf16", unload_dit ? "unloaded" : "resident");
 
     sv2_layout layouts[2];
     memset(layouts, 0, sizeof(layouts));
@@ -298,6 +332,7 @@ done:
     sv2_layout_free(m, &layouts[0]); sv2_layout_free(m, &layouts[1]);
     sv2_pool_drain(m);
     m->pool_bypass = 0;
+    m->state_int8 = 0;
     free(cond); free(noise); free(pred_host); free(z); free(enc_host); free(tokens_host); free(pred_bf16);
     return ok;
 }
@@ -501,7 +536,7 @@ static int run_window(h3_seedvr2_video_session *s, int start, int last_window, h
     }
     double t0 = now_seconds();
     if (s->m) {
-        h3_seedvr2_clip_params cp = {s->p.vae_slicing, start / 4, s->p.seed, s->p.color_transfer, NULL, -1};
+        h3_seedvr2_clip_params cp = {s->p.vae_slicing, start / 4, s->p.seed, s->p.color_transfer, NULL, -1, s->p.state_mode};
         if (!h3_seedvr2_restore_clip(s->m, in, W, s->out_w, s->out_h, wo, &cp, on_progress, opaque, cancel, error, error_size))
             return 0;
     } else {

@@ -269,17 +269,40 @@ void sv2_causal_reset(sv2_causal *ctx) {
     if (!ctx) return;
     for (int i = 0; i < SV2_MAX_CONVS; i++) {
         h3_gpu_tensor_free(ctx->mem[i]);
+        h3_gpu_tensor_free(ctx->scale[i]);
         ctx->mem[i] = NULL;
+        ctx->scale[i] = NULL;
         ctx->mem_frames[i] = 0;
+        ctx->mem_rows[i] = 0;
     }
     ctx->mode = SV2_CAUSAL_DISABLED;
 }
 
-/* Replaces conv `slot`'s state with `fresh` (k frames). */
-static void causal_keep(h3_seedvr2 *m, sv2_causal *ctx, int slot, h3_gpu_tensor *fresh, int k) {
-    sv2_pool_give(m, ctx->mem[slot]);
+/* Frees conv `slot`'s state (an int8 state and its scales at once, a
+ * BF16/F32 one back to the pool). */
+static void causal_drop(h3_seedvr2 *m, sv2_causal *ctx, int slot) {
+    if (ctx->scale[slot]) {
+        /* the conv that just ran reads this state in the open command
+         * buffer: let it finish before the buffers go (as sv2_pool_give
+         * does for a clip's large buffers) */
+        if (h3_gpu_command_open(m->gpu)) { h3_gpu_submit(m->gpu); h3_gpu_begin(m->gpu); }
+        h3_gpu_tensor_free(ctx->mem[slot]); h3_gpu_tensor_free(ctx->scale[slot]);
+    } else sv2_pool_give(m, ctx->mem[slot]);
+    ctx->mem[slot] = NULL;
+    ctx->scale[slot] = NULL;
+    ctx->mem_frames[slot] = 0;
+    ctx->mem_rows[slot] = 0;
+}
+
+/* Replaces conv `slot`'s state with `fresh` (k frames; `scale` and `rows`
+ * when it is int8 rows). */
+static void causal_keep(h3_seedvr2 *m, sv2_causal *ctx, int slot, h3_gpu_tensor *fresh, int k,
+                        h3_gpu_tensor *scale, uint32_t rows) {
+    causal_drop(m, ctx, slot);
     ctx->mem[slot] = fresh;
     ctx->mem_frames[slot] = k;
+    ctx->scale[slot] = scale;
+    ctx->mem_rows[slot] = rows;
 }
 
 /* 3x3 convolution with symmetric zero padding 1 (stride 1), or stride 2
@@ -380,7 +403,7 @@ static int conv3x3_clip(h3_seedvr2 *m, const act *x, const sv2_conv *c, int stri
         }
         if (ok) ok = h3_gpu_cast_f32_to_bf16(m->gpu, fresh, window, (uint32_t)((size_t)k * plane));
         if (!ok) { sv2_pool_give(m, fresh); sv2_pool_give(m, window); sv2_pool_give(m, head); fail(error, error_size, "SeedVR2 VAE: %s", h3_gpu_error(m->gpu)); return 0; }
-        causal_keep(m, ctx, c->slot, fresh, k);
+        causal_keep(m, ctx, c->slot, fresh, k, NULL, 0);
     }
     sv2_pool_give(m, window); sv2_pool_give(m, head);
     return 1;
@@ -562,7 +585,23 @@ static int gcausal_keep(h3_seedvr2 *m, const gact *x, const sv2_conv *c, int st,
             return 0;
         }
     }
-    causal_keep(m, ctx, c->slot, g.t, k);
+    if (m->state_int8) {
+        /* per-row int8 (one scale per grid row): half the bytes, read back
+         * through h3_gpu_sv2_dequant_rows_int8_bf16 when the conv runs */
+        uint32_t rows = g.x_rows, padded = (rows + 127u) & ~127u;
+        h3_gpu_tensor *q = h3_gpu_tensor_new_i8(m->gpu, (size_t)padded * x->cp);
+        h3_gpu_tensor *sc = h3_gpu_tensor_new_f32(m->gpu, padded);
+        int ok = q && sc && h3_gpu_quantize_rows_bf16_int8(m->gpu, q, sc, g.t, rows, (uint32_t)x->cp);
+        gact_free(m, &g);
+        if (!ok) {
+            h3_gpu_tensor_free(q); h3_gpu_tensor_free(sc);
+            fail(error, error_size, "SeedVR2 VAE (grid): int8 state: %s", h3_gpu_error(m->gpu));
+            return 0;
+        }
+        causal_keep(m, ctx, c->slot, q, k, sc, rows);
+        return 1;
+    }
+    causal_keep(m, ctx, c->slot, g.t, k, NULL, 0);
     return 1;
 }
 
@@ -578,18 +617,36 @@ static int gconv_t(h3_seedvr2 *m, const gact *x, const sv2_conv *c, const gact *
     int32_t offsets[27];
     int k = c->kernel, head = 0, state_frames = 0;
     const h3_gpu_tensor *state = NULL;
+    gact dq = {0};   /* an int8 state read back to BF16 for this conv */
     if (c->kt > 1) {
         if (!ctx) { fail(error, error_size, "SeedVR2 VAE (grid): temporal weights on a still image"); return 0; }
         if (ctx->mode == SV2_CAUSAL_ACTIVE && ctx->mem[c->slot]) {
             state = ctx->mem[c->slot];
             state_frames = ctx->mem_frames[c->slot];
             head = state_frames;
+            if (ctx->scale[c->slot]) {
+                if (!gact_new_f(m, &dq, state_frames, 0, x->h, x->w, x->c) || dq.x_rows != ctx->mem_rows[c->slot]) {
+                    if (dq.t) gact_free(m, &dq);
+                    fail(error, error_size, "SeedVR2 VAE (grid): int8 state rows");
+                    return 0;
+                }
+                if (!h3_gpu_sv2_dequant_rows_int8_bf16(m->gpu, dq.t, state, ctx->scale[c->slot], dq.x_rows, (uint32_t)x->cp)) {
+                    gact_free(m, &dq);
+                    fail(error, error_size, "SeedVR2 VAE (grid): %s", h3_gpu_error(m->gpu));
+                    return 0;
+                }
+                state = dq.t;
+            }
         } else {
             head = c->kt - 1;
         }
     }
     if (front_used) *front_used = head;
-    if (!gact_new_f(m, y, x->f, x->front, x->h, x->w, c->out)) { fail(error, error_size, "SeedVR2 VAE (grid): out of memory"); return 0; }
+    if (!gact_new_f(m, y, x->f, x->front, x->h, x->w, c->out)) {
+        if (dq.t) gact_free(m, &dq);
+        fail(error, error_size, "SeedVR2 VAE (grid): out of memory");
+        return 0;
+    }
     const h3_gpu_tensor *res = residual ? residual->t : NULL;
     if (c->kt == 1) {
         gact_offsets(x, k, offsets);
@@ -638,8 +695,9 @@ static int gconv_t(h3_seedvr2 *m, const gact *x, const sv2_conv *c, const gact *
     }
     GRID_OP(h3_gpu_vsr_zero_border_bf16(m->gpu, y->t, (uint32_t)y->f, (uint32_t)y->h, (uint32_t)y->w, (uint32_t)y->cp,
                                         y->guard, y->x_rows));
-    if (c->kt > 1 && !gcausal_keep(m, x, c, st, head, state, state_frames, ctx, error, error_size)) return 0;
-    return 1;
+    int kept = c->kt == 1 || gcausal_keep(m, x, c, st, head, state, state_frames, ctx, error, error_size);
+    if (dq.t) gact_free(m, &dq);
+    return kept;
 }
 
 static int gconv(h3_seedvr2 *m, const gact *x, const sv2_conv *c, const gact *residual, gact *y,
@@ -792,6 +850,12 @@ static int gdecode_blocks(h3_seedvr2 *m, gact x, act *out, int first, int stop, 
             gact_free(m, &x); x = y;
             if (!clip_sync(m, ctx, error, error_size)) { gact_free(m, &x); return 0; }
             if (ctx) sv2_pool_drain(m);
+            if (ctx && trace_enabled()) {
+                h3_gpu_stats st;
+                if (h3_gpu_get_stats(m->gpu, &st))
+                    fprintf(stderr, "sv2   dec up%d resnet %d: %d frames live %.2f GiB (peak %.2f)\n", i, j, x.f,
+                            (double)st.live_bytes / 1073741824.0, (double)st.peak_live_bytes / 1073741824.0);
+            }
         }
         if (i < 3) {
             int C = x.c, tf = d->up_temporal[i];
@@ -808,6 +872,12 @@ static int gdecode_blocks(h3_seedvr2 *m, gact x, act *out, int first, int stop, 
             if (!gconv(m, &s, &d->up_conv[i], NULL, &x, ctx, error, error_size)) { gact_free(m, &s); return 0; }
             gact_free(m, &s);
             if (!h3_gpu_continue(m->gpu)) { gact_free(m, &x); fail(error, error_size, "SeedVR2 VAE (grid): %s", h3_gpu_error(m->gpu)); return 0; }
+            if (ctx && trace_enabled()) {
+                h3_gpu_stats st;
+                if (h3_gpu_get_stats(m->gpu, &st))
+                    fprintf(stderr, "sv2   dec up%d upsampled: %d frames live %.2f GiB (peak %.2f)\n", i, x.f,
+                            (double)st.live_bytes / 1073741824.0, (double)st.peak_live_bytes / 1073741824.0);
+            }
         }
         char label[32];
         snprintf(label, sizeof(label), "dec up%d (grid)", i);
@@ -831,10 +901,10 @@ static void tail_state_reset(h3_seedvr2 *m, sv2_causal *ctx) {
     for (int i = 2; i < 4; i++)
         for (int j = 0; j < 3; j++) {
             const sv2_conv *c[2] = {&d->up[i][j].conv1, &d->up[i][j].conv2};
-            for (int k = 0; k < 2; k++) { sv2_pool_give(m, ctx->mem[c[k]->slot]); ctx->mem[c[k]->slot] = NULL; ctx->mem_frames[c[k]->slot] = 0; }
+            for (int k = 0; k < 2; k++) causal_drop(m, ctx, c[k]->slot);
         }
     const sv2_conv *c[2] = {&d->up_conv[2], &d->conv_out};
-    for (int k = 0; k < 2; k++) { sv2_pool_give(m, ctx->mem[c[k]->slot]); ctx->mem[c[k]->slot] = NULL; ctx->mem_frames[c[k]->slot] = 0; }
+    for (int k = 0; k < 2; k++) causal_drop(m, ctx, c[k]->slot);
 }
 
 /* The mode of frame t of a streamed tail: the first frame as the slice
@@ -1084,6 +1154,7 @@ static int run_sliced(h3_seedvr2 *m, sv2_clip_fn fn, const act *x, act *out, int
                       char *error, size_t error_size) {
     if (!m->vae_temporal) { fail(error, error_size, "SeedVR2 VAE: the weights are not in temporal form"); return 0; }
     int f = act_frames(x);
+    if (getenv("H3_SV2_STATE_INT8")) m->state_int8 = m->nax_vae && atoi(getenv("H3_SV2_STATE_INT8")) != 0;   /* tests */
     sv2_causal *ctx = calloc(1, sizeof(*ctx));
     if (!ctx) { fail(error, error_size, "SeedVR2 VAE: out of memory"); return 0; }
     int ok = 1;

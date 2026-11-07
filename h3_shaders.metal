@@ -6165,6 +6165,27 @@ kernel void h3_sv2_dequant_q8_bf16(device const uint *packed [[buffer(0)]],
         out[i] = h3_f32_to_bf16(fma(scale, float((value >> (8 * i)) & 0xffu), bias));
 }
 
+struct sv2_dequant_rows_args { uint rows, columns; };
+
+/* Per-row symmetric int8 (h3_quantize_bf16_int8_rows: one F32 scale per
+ * row) -> BF16 rows: the causal state of a video window kept in int8.
+ * Grid (columns / 4, rows). */
+kernel void h3_sv2_dequant_rows_int8_bf16(device const char4 *input [[buffer(0)]],
+                                          device const float *scales [[buffer(1)]],
+                                          device ushort *output [[buffer(2)]],
+                                          constant sv2_dequant_rows_args &args [[buffer(3)]],
+                                          uint2 gid [[thread_position_in_grid]]) {
+    uint vec = gid.x, row = gid.y, vectors = args.columns / 4;
+    if (vec >= vectors || row >= args.rows) return;
+    float s = scales[row];
+    char4 q = input[(size_t)row * vectors + vec];
+    device ushort *out = output + (size_t)row * args.columns + vec * 4;
+    out[0] = h3_f32_to_bf16(s * float(q.x));
+    out[1] = h3_f32_to_bf16(s * float(q.y));
+    out[2] = h3_f32_to_bf16(s * float(q.z));
+    out[3] = h3_f32_to_bf16(s * float(q.w));
+}
+
 struct sv2_rms_args { uint rows, width, has_scale, has_shift; float epsilon; };
 
 /* out = x / rms(x) * scale + shift (no norm weight; scale and shift are

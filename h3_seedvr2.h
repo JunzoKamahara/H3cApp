@@ -105,6 +105,9 @@ typedef struct {
     int color_transfer;
     const float *noise_override;
     int dump_block;
+    int state_mode;         /* the causal state on the TensorOps grid: 0 BF16 unless the window only fits
+                               with it in per-row int8 (half the memory, not bit-exact), 1 BF16 always
+                               (refused when it does not fit), 2 int8 always */
 } h3_seedvr2_clip_params;
 /* Whether a window of `window_frames` (4n+1) fits this Mac, with the VAE
  * form it would use (vae_split 0: the whole window; 4: causal slices) and
@@ -115,6 +118,7 @@ typedef struct {
     char reason[256];
     uint64_t gpu_bytes;
     int vae_split;
+    int state_int8;                 /* fits only with the causal state in int8 */
     double estimated_seconds_per_frame;
     int latent_frames, tokens;
 } h3_seedvr2_video_requirements;
@@ -147,6 +151,7 @@ typedef struct {
     int blend;
     uint64_t seed;
     int color_transfer;
+    int state_mode;         /* h3_seedvr2_clip_params.state_mode */
 } h3_seedvr2_video_params;
 typedef struct h3_seedvr2_video_session h3_seedvr2_video_session;
 int h3_seedvr2_video_check_params(const h3_seedvr2_video_params *params, char *reason, size_t reason_size);
@@ -199,6 +204,8 @@ int h3_seedvr2_debug_windows3(int frames, int tokens_w, int tokens_h, int shifte
  * [16, frames, h, w]: the same values for the same absolute frame whatever
  * the window; frame 0 equals a still image's noise for that seed. */
 /* The memory model behind h3_seedvr2_video_check_requirements (tests). */
+uint64_t sv2_video_peak_bytes_state(uint64_t resident_bytes, uint64_t dit_bytes, int nax_vae, int full_w, int full_h,
+                                    int frames, int vae_split, int unload_dit, int state_int8);
 uint64_t sv2_video_peak_bytes(uint64_t resident_bytes, uint64_t dit_bytes, int nax_vae, int full_w, int full_h,
                               int frames, int vae_split, int unload_dit);
 int h3_seedvr2_debug_noise(uint64_t seed, int first_frame, int frames, int latent_w, int latent_h, float *out);

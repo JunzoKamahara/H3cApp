@@ -40,7 +40,7 @@ public struct H3SeedVR2VideoSettings: Sendable, Equatable {
     }
     public var isValid: Bool {
         var p = h3_seedvr2_video_params(window_frames: Int32(windowFrames), overlap_frames: Int32(overlapFrames),
-                                        vae_slicing: -1, blend: blend ? 1 : 0, seed: seed, color_transfer: -1)
+                                        vae_slicing: -1, blend: blend ? 1 : 0, seed: seed, color_transfer: -1, state_mode: 0)
         var reason = [CChar](repeating: 0, count: 256)
         return reason.withUnsafeMutableBufferPointer { h3_seedvr2_video_check_params(&p, $0.baseAddress, $0.count) } != 0
     }
@@ -51,6 +51,8 @@ public struct H3SeedVR2VideoRequirements: Sendable {
     public let reason: String
     public let gpuBytes: UInt64
     public let vaeSliced: Bool
+    /// Fits only with the causal state kept in int8 (half its memory; not bit-exact).
+    public let stateInt8: Bool
     public let estimatedSecondsPerFrame: Double
     public let latentFrames: Int
 }
@@ -286,7 +288,8 @@ public final class H3SeedVR2Restorer: @unchecked Sendable {
         _ = h3_seedvr2_video_check_requirements(handle, Int32(inputWidth), Int32(inputHeight), Int32(outputWidth),
                                                 Int32(outputHeight), Int32(windowFrames), &req)
         return H3SeedVR2VideoRequirements(supported: req.supported != 0, reason: cString(req.reason), gpuBytes: req.gpu_bytes,
-                                          vaeSliced: req.vae_split != 0, estimatedSecondsPerFrame: req.estimated_seconds_per_frame,
+                                          vaeSliced: req.vae_split != 0, stateInt8: req.state_int8 != 0,
+                                          estimatedSecondsPerFrame: req.estimated_seconds_per_frame,
                                           latentFrames: Int(req.latent_frames))
     }
 
@@ -375,7 +378,7 @@ public final class H3SeedVR2Restorer: @unchecked Sendable {
     public func openVideoSession(inputWidth: Int, inputHeight: Int, outputWidth: Int, outputHeight: Int,
                                  totalFrames: Int = 0, settings: H3SeedVR2VideoSettings) throws -> VideoSession {
         var params = h3_seedvr2_video_params(window_frames: Int32(settings.windowFrames), overlap_frames: Int32(settings.overlapFrames),
-                                             vae_slicing: -1, blend: settings.blend ? 1 : 0, seed: settings.seed, color_transfer: -1)
+                                             vae_slicing: -1, blend: settings.blend ? 1 : 0, seed: settings.seed, color_transfer: -1, state_mode: 0)
         var error = [CChar](repeating: 0, count: 1024)
         let session = error.withUnsafeMutableBufferPointer { buffer in
             h3_seedvr2_video_session_open(handle, Int32(inputWidth), Int32(inputHeight), Int32(outputWidth), Int32(outputHeight),

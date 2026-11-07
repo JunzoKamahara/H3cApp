@@ -1107,6 +1107,10 @@ int h3_gpu_sv2_dequant_q8_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                                const h3_gpu_tensor *packed, const h3_gpu_tensor *scales,
                                const h3_gpu_tensor *biases, uint32_t rows,
                                uint32_t columns, uint32_t group);
+/* Per-row int8 (h3_gpu_quantize_rows_bf16_int8: I8 [rows, columns], F32
+ * scales [rows]) -> BF16 [rows, columns]; columns a multiple of 4. */
+int h3_gpu_sv2_dequant_rows_int8_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *quantized,
+                                      const h3_gpu_tensor *scales, uint32_t rows, uint32_t columns);
 /* out = x / rms(x) * scale + shift (F32 vectors, NULL = 1 / 0). */
 int h3_gpu_sv2_rms_mod_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
                             const h3_gpu_tensor *scale, const h3_gpu_tensor *shift,

@@ -2,7 +2,7 @@
  * evaluation; the app uses the same C API from Swift):
  *   h3_seedvr2_cli --model DIR --in IN.png --out OUT.png [--width W --height H]
  *                  [--no-color] [--seed N] [--frames IN_DIR OUT_DIR]
- *                  [--video-frames IN_DIR OUT_DIR [--window N] [--overlap M] [--blend 0|1] [--vae-split K]]
+ *                  [--video-frames IN_DIR OUT_DIR [--window N] [--overlap M] [--blend 0|1] [--vae-split K] [--state-mode 0|1|2]]
  * Without --width/--height the output is 2x. --frames restores every PNG
  * of a folder (sorted) into another, one frame at a time, with one session.
  * --video-frames restores every PNG through the window session
@@ -101,7 +101,7 @@ static int restore_one(h3_seedvr2 *model, h3_seedvr2_session **session, const ch
 /* --video-frames: every PNG of a folder through the window session, fed as
  * next_frames asks, outputs written as they come. */
 static int restore_video(h3_seedvr2 *model, const char *frames_in, const char *frames_out, int window, int overlap,
-                         int blend, int vae_split, uint64_t seed, int out_w, int out_h) {
+                         int blend, int vae_split, int state_mode, uint64_t seed, int out_w, int out_h) {
     NSMutableArray<NSString *> *names = [NSMutableArray array];
     for (NSString *name in [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:@(frames_in) error:NULL]
                             sortedArrayUsingSelector:@selector(compare:)])
@@ -116,12 +116,12 @@ static int restore_video(h3_seedvr2 *model, const char *frames_in, const char *f
     if (!out_w && !out_h) { out_w = 2 * w; out_h = 2 * h; }
     else if (!out_w) out_w = (int)lround((double)out_h * w / h);
     else if (!out_h) out_h = (int)lround((double)out_w * h / w);
-    h3_seedvr2_video_params params = {window, overlap, vae_split, blend, seed, -1};
+    h3_seedvr2_video_params params = {window, overlap, vae_split, blend, seed, -1, state_mode};
     char error[512];
     h3_seedvr2_video_requirements req;
     if (h3_seedvr2_video_check_requirements(model, w, h, out_w, out_h, window, &req))
         fprintf(stderr, "window %d: %s, about %.1f GB, vae %s, %.1f s/frame estimated\n", window,
-                req.supported ? "fits" : req.reason, (double)req.gpu_bytes / 1e9, req.vae_split ? "sliced" : "whole",
+                req.supported ? "fits" : req.reason, (double)req.gpu_bytes / 1e9, req.vae_split ? (req.state_int8 ? "sliced, int8 state" : "sliced") : "whole",
                 req.estimated_seconds_per_frame);
     h3_seedvr2_video_session *s = h3_seedvr2_video_session_open(model, w, h, out_w, out_h, total, &params, error, sizeof(error));
     if (!s) { fprintf(stderr, "session: %s\n", error); return 0; }
@@ -172,7 +172,7 @@ static int restore_video(h3_seedvr2 *model, const char *frames_in, const char *f
 
 int main(int argc, char **argv) {
     const char *model_dir = NULL, *in_path = NULL, *out_path = NULL, *frames_in = NULL, *frames_out = NULL;
-    int out_w = 0, out_h = 0, color = 1, video = 0, window = 17, overlap = 1, blend = 0, vae_split = -1;
+    int out_w = 0, out_h = 0, color = 1, video = 0, window = 17, overlap = 1, blend = 0, vae_split = -1, state_mode = 0;
     uint64_t seed = 42;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--model") && i + 1 < argc) model_dir = argv[++i];
@@ -186,12 +186,13 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--video-frames") && i + 2 < argc) { frames_in = argv[++i]; frames_out = argv[++i]; video = 1; }
         else if (!strcmp(argv[i], "--window") && i + 1 < argc) window = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--vae-split") && i + 1 < argc) vae_split = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--state-mode") && i + 1 < argc) state_mode = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--overlap") && i + 1 < argc) overlap = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--blend") && i + 1 < argc) blend = atoi(argv[++i]);
         else { fprintf(stderr, "unknown argument %s\n", argv[i]); return 2; }
     }
     if (!model_dir || (!(in_path && out_path) && !(frames_in && frames_out))) {
-        fprintf(stderr, "usage: %s --model DIR (--in IN.png --out OUT.png | --frames IN_DIR OUT_DIR | --video-frames IN_DIR OUT_DIR [--window N] [--overlap M] [--blend 0|1] [--vae-split K]) [--width W --height H] [--no-color] [--seed N]\n", argv[0]);
+        fprintf(stderr, "usage: %s --model DIR (--in IN.png --out OUT.png | --frames IN_DIR OUT_DIR | --video-frames IN_DIR OUT_DIR [--window N] [--overlap M] [--blend 0|1] [--vae-split K] [--state-mode 0|1|2]) [--width W --height H] [--no-color] [--seed N]\n", argv[0]);
         return 2;
     }
     char error[512];
@@ -206,7 +207,7 @@ int main(int argc, char **argv) {
         if (in_path) {
             if (!restore_one(model, &session, in_path, out_path, out_w, out_h)) failures++;
         } else if (video) {
-            if (!restore_video(model, frames_in, frames_out, window, overlap, blend, vae_split, seed, out_w, out_h)) failures++;
+            if (!restore_video(model, frames_in, frames_out, window, overlap, blend, vae_split, state_mode, seed, out_w, out_h)) failures++;
         } else {
             NSArray<NSString *> *names = [[[NSFileManager defaultManager] contentsOfDirectoryAtPath:@(frames_in) error:NULL]
                 sortedArrayUsingSelector:@selector(compare:)];
