@@ -6189,6 +6189,50 @@ kernel void h3_sv2_dequant_q8_bf16(device const uint *packed [[buffer(0)]],
 struct sv2_dequant_rows_args { uint rows, columns; };
 struct sv2_quant_rows_args { uint rows, columns, in_row0, out_row0; };
 
+/* 4-bit affine in groups of 64 along the row (scale and minimum per group,
+ * F32 pairs in `params`): q = round((x - min) / scale) in 0..15, two per
+ * byte, the even column in the low nibble. rows x columns/64 threads,
+ * one per group. */
+kernel void h3_sv2_quantize_rows_bf16_int4(device const bfloat *input [[buffer(0)]],
+                                           device uchar *output [[buffer(1)]],
+                                           device float *params [[buffer(2)]],
+                                           constant sv2_quant_rows_args &args [[buffer(3)]],
+                                           uint2 gid [[thread_position_in_grid]]) {
+    uint g = gid.x, row = gid.y, groups = args.columns / 64;
+    if (g >= groups || row >= args.rows) return;
+    size_t in_base = (size_t)(args.in_row0 + row) * args.columns + g * 64;
+    float lo = INFINITY, hi = -INFINITY;
+    for (uint i = 0; i < 64; i++) { float v = (float)input[in_base + i]; lo = min(lo, v); hi = max(hi, v); }
+    float scale = (hi - lo) / 15.0f;
+    if (!(scale > 0.0f)) scale = 1.0f;
+    float inverse = 1.0f / scale;
+    size_t p = ((size_t)(args.out_row0 + row) * groups + g) * 2;
+    params[p] = scale; params[p + 1] = lo;
+    device uchar *out = output + ((size_t)(args.out_row0 + row) * args.columns + g * 64) / 2;
+    for (uint i = 0; i < 64; i += 2) {
+        int a = clamp((int)rint(((float)input[in_base + i] - lo) * inverse), 0, 15);
+        int b = clamp((int)rint(((float)input[in_base + i + 1] - lo) * inverse), 0, 15);
+        out[i / 2] = (uchar)(a | (b << 4));
+    }
+}
+
+/* The reverse: rows x columns/2 threads, one per byte. */
+kernel void h3_sv2_dequant_rows_int4_bf16(device const uchar *input [[buffer(0)]],
+                                          device const float *params [[buffer(1)]],
+                                          device ushort *output [[buffer(2)]],
+                                          constant sv2_dequant_rows_args &args [[buffer(3)]],
+                                          uint2 gid [[thread_position_in_grid]]) {
+    uint b = gid.x, row = gid.y, half_cols = args.columns / 2;
+    if (b >= half_cols || row >= args.rows) return;
+    uint column = b * 2, groups = args.columns / 64;
+    size_t p = ((size_t)row * groups + column / 64) * 2;
+    float scale = params[p], lo = params[p + 1];
+    uchar q = input[(size_t)row * half_cols + b];
+    device ushort *out = output + (size_t)row * args.columns + column;
+    out[0] = h3_f32_to_bf16(fma(float(q & 15u), scale, lo));
+    out[1] = h3_f32_to_bf16(fma(float(q >> 4), scale, lo));
+}
+
 /* Per-row symmetric int8 of rows [in_row0, in_row0 + rows) of a BF16 row
  * buffer into rows [out_row0, ...) of an int8 one (scales at out_row0 too):
  * one frame of a video window into its slot of the causal state. One

@@ -130,12 +130,12 @@ static void test_noise(void) {
 /* The memory model against the measured points (within 5 %), and its shape. */
 static void test_memory_model(void) {
     const uint64_t R = 7015000000ull, DIT = 6668000000ull;   /* the model's resident bytes, its transformer blocks */
-    struct { int nax, w, h, T, split, int8; double measured_gb; } pts[] = {   /* grid points 2026-11-07 (state buffers), F32 2026-11-06 */
+    struct { int nax, w, h, T, split, bits; double measured_gb; } pts[] = {   /* grid points 2026-11-07 (state buffers), F32 2026-11-06 */
         {1, 1344, 768, 5, 0, 0, 8.33}, {1, 1344, 768, 17, 4, 0, 13.56}, {1, 960, 544, 17, 4, 0, 8.61},
-        {1, 1920, 768, 17, 4, 1, 14.35},
+        {1, 1920, 768, 17, 4, 8, 14.35}, {1, 1920, 1088, 17, 4, 4, 16.48},
         {0, 960, 544, 5, 0, 0, 11.21}, {0, 960, 544, 17, 4, 0, 13.03}, {0, 768, 432, 17, 4, 0, 8.64}};
     for (size_t i = 0; i < sizeof(pts) / sizeof(*pts); i++) {
-        double est = (double)sv2_video_peak_bytes_state(R, DIT, pts[i].nax, pts[i].w, pts[i].h, pts[i].T, pts[i].split, 1, pts[i].int8) / 1e9;
+        double est = (double)sv2_video_peak_bytes_state(R, DIT, pts[i].nax, pts[i].w, pts[i].h, pts[i].T, pts[i].split, 1, pts[i].bits) / 1e9;
         double rel = fabs(est - pts[i].measured_gb) / pts[i].measured_gb;
         if (rel > 0.05) fprintf(stderr, "memory model: %dx%d T=%d split %d nax %d: %.2f GB, measured %.2f\n",
                                 pts[i].w, pts[i].h, pts[i].T, pts[i].split, pts[i].nax, est, pts[i].measured_gb);
@@ -150,9 +150,10 @@ static void test_memory_model(void) {
     CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 17, 4, 1) < 14000000000ull);
     CHECK(sv2_video_peak_bytes(R, DIT, 1, 1920, 768, 17, 4, 1) > 17160000000ull);
     CHECK(sv2_video_peak_bytes(R, DIT, 1, 1920, 1088, 17, 4, 1) > 25000000000ull);
-    /* with the state in int8, 1920x768 fits (measured 15.1 GB) and 1920x1088 (about 21.6 GB) still does not */
-    CHECK(sv2_video_peak_bytes_state(R, DIT, 1, 1920, 768, 17, 4, 1, 1) < 17160000000ull);
-    CHECK(sv2_video_peak_bytes_state(R, DIT, 1, 1920, 1088, 17, 4, 1, 1) > 17160000000ull);
+    /* with the state in int8, 1920x768 fits (measured 14.4 GB) and 1920x1088 does not; in int4 it should */
+    CHECK(sv2_video_peak_bytes_state(R, DIT, 1, 1920, 768, 17, 4, 1, 8) < 17160000000ull);
+    CHECK(sv2_video_peak_bytes_state(R, DIT, 1, 1920, 1088, 17, 4, 1, 8) > 17160000000ull);
+    CHECK(sv2_video_peak_bytes_state(R, DIT, 1, 1920, 1088, 17, 4, 1, 4) < 17160000000ull);
     /* the model-less check (the app's sheet) follows the same model: a
      * window of 4n+1, no larger than the budget takes, monotone in frames
      * and size, and a small output on any Mac the tests run on */
@@ -384,8 +385,10 @@ static void test_clip(h3_seedvr2 *m, const char *path) {
     /* bit for bit on the grid (the F32 path keeps its state in BF16, about 1e-4);
      * with the state in int8 (H3_SV2_STATE_INT8=1, the form the engine takes
      * when a window fits no other way) about 2e-3 */
-    int int8_state = getenv("H3_SV2_STATE_INT8") && atoi(getenv("H3_SV2_STATE_INT8")) != 0;
-    report("encode sliced = whole", compare(enc_sliced, enc, 2 * lsize, 1.0), int8_state ? 1e-2 : 1e-3);
+    int state_bits = getenv("H3_SV2_STATE_BITS") ? atoi(getenv("H3_SV2_STATE_BITS"))
+                   : (getenv("H3_SV2_STATE_INT8") && atoi(getenv("H3_SV2_STATE_INT8")) != 0 ? 8 : 0);
+    double state_tol = state_bits == 4 ? 5e-2 : state_bits == 8 ? 1e-2 : 1e-3;
+    report("encode sliced = whole", compare(enc_sliced, enc, 2 * lsize, 1.0), state_tol);
     float *mean_sliced_ref = load_tensor(&h, "enc_mean_sliced", lsize);
     report("encode sliced vs ref", compare(enc_sliced, mean_sliced_ref, lsize, 1.0), 0.05);
     free(mean_sliced_ref); free(enc); free(enc_sliced); free(ours);
@@ -410,7 +413,7 @@ static void test_clip(h3_seedvr2 *m, const char *path) {
     CHECK(h3_seedvr2_debug_decode_video(m, latent_ref, L, lw, lh, 4, 99, dec_sliced, &of, &ow, &oh, &oc, rgb, error, sizeof(error)) ||
           (fprintf(stderr, "%s\n", error), 0));
     CHECK(of == T && oc == 3);
-    report("decode sliced = whole", compare(dec_sliced, dec, rgb, 2.0), int8_state ? 1e-2 : 1e-3);
+    report("decode sliced = whole", compare(dec_sliced, dec, rgb, 2.0), state_tol);
     report("decode sliced vs ref", compare(dec_sliced, decoded_sliced_ref, rgb, 2.0), 0.05);
     report("ref sliced vs ref whole", compare(decoded_sliced_ref, decoded_ref, rgb, 2.0), 0.05);
     /* per frame: the worst frame of the sliced decode (a seam would show here) */

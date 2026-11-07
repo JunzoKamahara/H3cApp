@@ -275,6 +275,7 @@ void sv2_causal_reset(sv2_causal *ctx) {
         ctx->mem_frames[i] = 0;
         ctx->mem_rows[i] = 0;
         ctx->ring[i] = 0;
+        ctx->bits[i] = 0;
     }
     ctx->mode = SV2_CAUSAL_DISABLED;
 }
@@ -294,6 +295,7 @@ static void causal_drop(h3_seedvr2 *m, sv2_causal *ctx, int slot) {
     ctx->mem_frames[slot] = 0;
     ctx->mem_rows[slot] = 0;
     ctx->ring[slot] = 0;
+    ctx->bits[slot] = 0;
 }
 
 /* Replaces conv `slot`'s state with `fresh` (k frames; `scale` and `rows`
@@ -570,7 +572,7 @@ static uint32_t slim_rows(const gact *x, int frames) {
  * the new frame overwrites the oldest slot and the ring turns; the slots
  * are filled from x, and before x from the state (or frame 0 again when
  * there was none). BF16 rows, or int8 rows with one scale per row when
- * m->state_int8. */
+ * m->state_bits (8 or 4). */
 static int gcausal_keep(h3_seedvr2 *m, const gact *x, const sv2_conv *c, int st, int head,
                         const h3_gpu_tensor *state, int state_frames, sv2_causal *ctx,
                         char *error, size_t error_size) {
@@ -579,20 +581,22 @@ static int gcausal_keep(h3_seedvr2 *m, const gact *x, const sv2_conv *c, int st,
     int slot = c->slot;
     size_t frame = (size_t)x->frame_rows * x->cp;
     uint32_t sguard = slim_guard(x->w), srows = slim_rows(x, k);
-    int fresh = !ctx->mem[slot] || ctx->mem_frames[slot] != k || ctx->mem_rows[slot] != srows ||
-                (ctx->scale[slot] != NULL) != (m->state_int8 != 0);
+    int bits = m->state_bits;
+    int fresh = !ctx->mem[slot] || ctx->mem_frames[slot] != k || ctx->mem_rows[slot] != srows || ctx->bits[slot] != bits;
     if (fresh) {
         causal_drop(m, ctx, slot);
-        if (m->state_int8) {
-            uint32_t padded = (srows + 127u) & ~127u;
-            ctx->mem[slot] = h3_gpu_tensor_new_i8(m->gpu, (size_t)padded * x->cp);
-            ctx->scale[slot] = h3_gpu_tensor_new_f32(m->gpu, padded);
+        if (bits) {
+            uint32_t padded = (srows + 127u) & ~127u, cp = (uint32_t)x->cp;
+            ctx->mem[slot] = h3_gpu_tensor_new_i8(m->gpu, (size_t)padded * cp / (bits == 4 ? 2 : 1));
+            ctx->scale[slot] = h3_gpu_tensor_new_f32(m->gpu, bits == 4 ? (size_t)padded * (cp / 64) * 2 : padded);
+            ctx->bits[slot] = bits;
             if (!ctx->mem[slot] || !ctx->scale[slot]) { causal_drop(m, ctx, slot); fail(error, error_size, "SeedVR2 VAE (grid): out of memory"); return 0; }
             /* the guard rows must be zero rows: the first launch quantizes
              * the whole buffer, the slots below overwrite the frames */
-            h3_gpu_tensor *zero = sv2_pool_take(m, (size_t)srows * x->cp, 1);
-            int ok = zero && h3_gpu_vsr_zero_rows_bf16(m->gpu, zero, 0, srows, (uint32_t)x->cp) &&
-                     h3_gpu_quantize_rows_bf16_int8(m->gpu, ctx->mem[slot], ctx->scale[slot], zero, srows, (uint32_t)x->cp);
+            h3_gpu_tensor *zero = sv2_pool_take(m, (size_t)srows * cp, 1);
+            int ok = zero && h3_gpu_vsr_zero_rows_bf16(m->gpu, zero, 0, srows, cp) &&
+                     (bits == 4 ? h3_gpu_sv2_quantize_rows_bf16_int4(m->gpu, ctx->mem[slot], ctx->scale[slot], zero, 0, 0, srows, cp)
+                                : h3_gpu_quantize_rows_bf16_int8(m->gpu, ctx->mem[slot], ctx->scale[slot], zero, srows, cp));
             sv2_pool_give(m, zero);
             if (!ok) { causal_drop(m, ctx, slot); fail(error, error_size, "SeedVR2 VAE (grid): %s", h3_gpu_error(m->gpu)); return 0; }
         } else {
@@ -624,7 +628,10 @@ static int gcausal_keep(h3_seedvr2 *m, const gact *x, const sv2_conv *c, int st,
             src = state; from = ((size_t)sguard + (size_t)((ctx->ring[slot] + ext) % k) * x->frame_rows) * x->cp;
         } else { src = x->t; from = (size_t)x->guard * x->cp; }   /* a copy of frame 0 */
         int ok;
-        if (ctx->scale[slot]) {
+        if (ctx->bits[slot] == 4) {
+            ok = h3_gpu_sv2_quantize_rows_bf16_int4(m->gpu, ctx->mem[slot], ctx->scale[slot], src, (uint32_t)(from / x->cp),
+                                                    (uint32_t)(to / x->cp), x->frame_rows, (uint32_t)x->cp);
+        } else if (ctx->bits[slot] == 8) {
             /* src is BF16 rows (x, or the dequantised state): quantize the frame into the slot */
             ok = h3_gpu_sv2_quantize_rows_bf16_int8(m->gpu, ctx->mem[slot], ctx->scale[slot], src, (uint32_t)(from / x->cp),
                                                     (uint32_t)(to / x->cp), x->frame_rows, (uint32_t)x->cp);
@@ -662,7 +669,10 @@ static int gconv_t(h3_seedvr2 *m, const gact *x, const sv2_conv *c, const gact *
                     fail(error, error_size, "SeedVR2 VAE (grid): int8 state rows");
                     return 0;
                 }
-                if (!h3_gpu_sv2_dequant_rows_int8_bf16(m->gpu, dq.t, state, ctx->scale[c->slot], dq.x_rows, (uint32_t)x->cp)) {
+                int dq_ok = ctx->bits[c->slot] == 4
+                    ? h3_gpu_sv2_dequant_rows_int4_bf16(m->gpu, dq.t, state, ctx->scale[c->slot], dq.x_rows, (uint32_t)x->cp)
+                    : h3_gpu_sv2_dequant_rows_int8_bf16(m->gpu, dq.t, state, ctx->scale[c->slot], dq.x_rows, (uint32_t)x->cp);
+                if (!dq_ok) {
                     gact_free(m, &dq);
                     fail(error, error_size, "SeedVR2 VAE (grid): %s", h3_gpu_error(m->gpu));
                     return 0;
@@ -1178,12 +1188,30 @@ typedef int (*sv2_clip_fn)(h3_seedvr2 *, const act *, act *, int, sv2_causal *, 
 
 /* The reference's slicing_encode / slicing_decode: [0, 1 + step) with the
  * state initialised, then `step` frames at a time with the state carried. */
+static int run_sliced_bits(h3_seedvr2 *m, sv2_clip_fn fn, const act *x, act *out, int step, const char *phase,
+                           h3_progress_callback on_progress, void *opaque, const volatile int *cancel,
+                           char *error, size_t error_size);
+
+/* The state's form for this phase: int4 only in the decoder, whose state
+ * sets the peak; the encoder's (smaller, and carrying the input's range,
+ * where int4 cost 3x the error) stays int8. */
 static int run_sliced(h3_seedvr2 *m, sv2_clip_fn fn, const act *x, act *out, int step, const char *phase,
                       h3_progress_callback on_progress, void *opaque, const volatile int *cancel,
                       char *error, size_t error_size) {
+    if (getenv("H3_SV2_STATE_BITS")) m->state_bits = m->nax_vae ? atoi(getenv("H3_SV2_STATE_BITS")) : 0;   /* tests: 0, 8 or 4 */
+    else if (getenv("H3_SV2_STATE_INT8")) m->state_bits = m->nax_vae && atoi(getenv("H3_SV2_STATE_INT8")) != 0 ? 8 : 0;
+    int saved = m->state_bits;
+    if (saved == 4 && strcmp(phase, "vsr encode") == 0 && !getenv("H3_SV2_STATE_INT4_ENCODER")) m->state_bits = 8;
+    int ok = run_sliced_bits(m, fn, x, out, step, phase, on_progress, opaque, cancel, error, error_size);
+    m->state_bits = saved;
+    return ok;
+}
+
+static int run_sliced_bits(h3_seedvr2 *m, sv2_clip_fn fn, const act *x, act *out, int step, const char *phase,
+                           h3_progress_callback on_progress, void *opaque, const volatile int *cancel,
+                           char *error, size_t error_size) {
     if (!m->vae_temporal) { fail(error, error_size, "SeedVR2 VAE: the weights are not in temporal form"); return 0; }
     int f = act_frames(x);
-    if (getenv("H3_SV2_STATE_INT8")) m->state_int8 = m->nax_vae && atoi(getenv("H3_SV2_STATE_INT8")) != 0;   /* tests */
     sv2_causal *ctx = calloc(1, sizeof(*ctx));
     if (!ctx) { fail(error, error_size, "SeedVR2 VAE: out of memory"); return 0; }
     int ok = 1;

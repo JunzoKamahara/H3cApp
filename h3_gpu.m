@@ -529,6 +529,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_vae_encoder_norm_chunk_square_f32",
             @"h3_vae_encoder_norm_chunk_apply_silu_f32",
             @"h3_sv2_dequant_q8_bf16", @"h3_sv2_dequant_rows_int8_bf16", @"h3_sv2_quantize_rows_bf16_int8",
+            @"h3_sv2_quantize_rows_bf16_int4", @"h3_sv2_dequant_rows_int4_bf16",
             @"h3_sv2_rms_mod_bf16", @"h3_sv2_qkv_window_bf16",
             @"h3_sv2_txt_mean_bf16", @"h3_sv2_pad_f32", @"h3_sv2_pad3d_f32", @"h3_sv2_shuffle_f32",
             @"h3_sv2_group_norm_f32", @"h3_sv2_bicubic_pixels_f32", @"h3_sv2_f32_to_pixels",
@@ -7608,6 +7609,42 @@ int h3_gpu_sv2_quantize_rows_bf16_int8(h3_gpu *opaque, h3_gpu_tensor *quantized,
     stats.direct_dispatches++;
     gpu.stats = stats;
     return 1;
+}
+
+int h3_gpu_sv2_quantize_rows_bf16_int4(h3_gpu *opaque, h3_gpu_tensor *packed, h3_gpu_tensor *params,
+                                       const h3_gpu_tensor *input, uint32_t in_row0, uint32_t out_row0,
+                                       uint32_t rows, uint32_t columns) {
+    H3GPU *gpu = GPU(opaque);
+    if (!rows || !columns || columns % 64) { h3_gpu_set_error(gpu, @"sv2 quantize rows int4: columns %u", columns); return 0; }
+    size_t groups = columns / 64;
+    if (!h3_gpu_require_bf16(gpu, input, ((size_t)in_row0 + rows) * columns, @"sv2 int4 input") ||
+        !h3_gpu_require_i8(gpu, packed, ((size_t)out_row0 + rows) * columns / 2, @"sv2 int4 packed") ||
+        !h3_gpu_require_f32(gpu, params, ((size_t)out_row0 + rows) * groups * 2, @"sv2 int4 params")) return 0;
+    sv2_quant_rows_args args = {rows, columns, in_row0, out_row0};
+    return h3_gpu_dispatch_2d(gpu, @"h3_sv2_quantize_rows_bf16_int4", (uint32_t)groups, rows,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(packed).buffer offset:0 atIndex:1];
+            [encoder setBuffer:TENSOR(params).buffer offset:0 atIndex:2];
+            [encoder setBytes:&args length:sizeof(args) atIndex:3];
+        });
+}
+
+int h3_gpu_sv2_dequant_rows_int4_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_gpu_tensor *packed,
+                                      const h3_gpu_tensor *params, uint32_t rows, uint32_t columns) {
+    H3GPU *gpu = GPU(opaque);
+    if (!rows || !columns || columns % 64) { h3_gpu_set_error(gpu, @"sv2 dequant rows int4: columns %u", columns); return 0; }
+    if (!h3_gpu_require_i8(gpu, packed, (size_t)rows * columns / 2, @"sv2 int4 packed") ||
+        !h3_gpu_require_f32(gpu, params, (size_t)rows * (columns / 64) * 2, @"sv2 int4 params") ||
+        !h3_gpu_require_bf16(gpu, output, (size_t)rows * columns, @"sv2 int4 output")) return 0;
+    sv2_dequant_rows_args args = {rows, columns};
+    return h3_gpu_dispatch_2d(gpu, @"h3_sv2_dequant_rows_int4_bf16", columns / 2, rows,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(packed).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(params).buffer offset:0 atIndex:1];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:2];
+            [encoder setBytes:&args length:sizeof(args) atIndex:3];
+        });
 }
 
 int h3_gpu_sv2_rms_mod_bf16(h3_gpu *opaque, h3_gpu_tensor *output, const h3_gpu_tensor *input,

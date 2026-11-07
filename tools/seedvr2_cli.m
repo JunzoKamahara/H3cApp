@@ -2,7 +2,7 @@
  * evaluation; the app uses the same C API from Swift):
  *   h3_seedvr2_cli --model DIR --in IN.png --out OUT.png [--width W --height H]
  *                  [--no-color] [--seed N] [--frames IN_DIR OUT_DIR]
- *                  [--video-frames IN_DIR OUT_DIR [--window N] [--overlap M] [--blend 0|1] [--vae-split K] [--state-mode 0|1|2]]
+ *                  [--video-frames IN_DIR OUT_DIR [--window N] [--overlap M] [--blend 0|1] [--vae-split K] [--state-mode 0|1|2|3]]
  * Without --width/--height the output is 2x. --frames restores every PNG
  * of a folder (sorted) into another, one frame at a time, with one session.
  * --video-frames restores every PNG through the window session
@@ -121,7 +121,7 @@ static int restore_video(h3_seedvr2 *model, const char *frames_in, const char *f
     h3_seedvr2_video_requirements req;
     if (h3_seedvr2_video_check_requirements(model, w, h, out_w, out_h, window, &req))
         fprintf(stderr, "window %d: %s, about %.1f GB, vae %s, %.1f s/frame estimated\n", window,
-                req.supported ? "fits" : req.reason, (double)req.gpu_bytes / 1e9, req.vae_split ? (req.state_int8 ? "sliced, int8 state" : "sliced") : "whole",
+                req.supported ? "fits" : req.reason, (double)req.gpu_bytes / 1e9, req.vae_split ? (req.state_bits == 4 ? "sliced, int4 state" : req.state_bits == 8 ? "sliced, int8 state" : "sliced") : "whole",
                 req.estimated_seconds_per_frame);
     h3_seedvr2_video_session *s = h3_seedvr2_video_session_open(model, w, h, out_w, out_h, total, &params, error, sizeof(error));
     if (!s) { fprintf(stderr, "session: %s\n", error); return 0; }
@@ -192,7 +192,7 @@ int main(int argc, char **argv) {
         else { fprintf(stderr, "unknown argument %s\n", argv[i]); return 2; }
     }
     if (!model_dir || (!(in_path && out_path) && !(frames_in && frames_out))) {
-        fprintf(stderr, "usage: %s --model DIR (--in IN.png --out OUT.png | --frames IN_DIR OUT_DIR | --video-frames IN_DIR OUT_DIR [--window N] [--overlap M] [--blend 0|1] [--vae-split K] [--state-mode 0|1|2]) [--width W --height H] [--no-color] [--seed N]\n", argv[0]);
+        fprintf(stderr, "usage: %s --model DIR (--in IN.png --out OUT.png | --frames IN_DIR OUT_DIR | --video-frames IN_DIR OUT_DIR [--window N] [--overlap M] [--blend 0|1] [--vae-split K] [--state-mode 0|1|2|3]) [--width W --height H] [--no-color] [--seed N]\n", argv[0]);
         return 2;
     }
     char error[512];

@@ -1116,6 +1116,14 @@ int h3_gpu_sv2_dequant_rows_int8_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const 
 int h3_gpu_sv2_quantize_rows_bf16_int8(h3_gpu *gpu, h3_gpu_tensor *quantized, h3_gpu_tensor *scales,
                                        const h3_gpu_tensor *input, uint32_t in_row0, uint32_t out_row0,
                                        uint32_t rows, uint32_t columns);
+/* 4-bit affine in groups of 64 columns: `packed` I8 [rows, columns / 2],
+ * `params` F32 [rows, columns / 64, 2] (scale, minimum); columns a
+ * multiple of 64. */
+int h3_gpu_sv2_quantize_rows_bf16_int4(h3_gpu *gpu, h3_gpu_tensor *packed, h3_gpu_tensor *params,
+                                       const h3_gpu_tensor *input, uint32_t in_row0, uint32_t out_row0,
+                                       uint32_t rows, uint32_t columns);
+int h3_gpu_sv2_dequant_rows_int4_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *packed,
+                                      const h3_gpu_tensor *params, uint32_t rows, uint32_t columns);
 /* out = x / rms(x) * scale + shift (F32 vectors, NULL = 1 / 0). */
 int h3_gpu_sv2_rms_mod_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
                             const h3_gpu_tensor *scale, const h3_gpu_tensor *shift,

@@ -51,8 +51,8 @@ public struct H3SeedVR2VideoRequirements: Sendable {
     public let reason: String
     public let gpuBytes: UInt64
     public let vaeSliced: Bool
-    /// Fits only with the causal state kept in int8 (half its memory; not bit-exact).
-    public let stateInt8: Bool
+    /// 0: the causal state in BF16; 8 / 4: fits only with it in int8 / int4 (not bit-exact).
+    public let stateBits: Int
     public let estimatedSecondsPerFrame: Double
     public let latentFrames: Int
 }
@@ -288,7 +288,7 @@ public final class H3SeedVR2Restorer: @unchecked Sendable {
         _ = h3_seedvr2_video_check_requirements(handle, Int32(inputWidth), Int32(inputHeight), Int32(outputWidth),
                                                 Int32(outputHeight), Int32(windowFrames), &req)
         return H3SeedVR2VideoRequirements(supported: req.supported != 0, reason: cString(req.reason), gpuBytes: req.gpu_bytes,
-                                          vaeSliced: req.vae_split != 0, stateInt8: req.state_int8 != 0,
+                                          vaeSliced: req.vae_split != 0, stateBits: Int(req.state_bits),
                                           estimatedSecondsPerFrame: req.estimated_seconds_per_frame,
                                           latentFrames: Int(req.latent_frames))
     }

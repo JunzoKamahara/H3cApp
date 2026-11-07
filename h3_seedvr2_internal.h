@@ -212,8 +212,8 @@ struct h3_seedvr2 {
     struct { h3_gpu_tensor *t; size_t bytes; int bf16; } pool[64];
     int pool_count;
     int pool_bypass;                   /* clips: free at once (their buffers are GBs; the layers wait for the GPU) */
-    int state_int8;                    /* this clip keeps the grid's causal state in per-row int8 (half the memory,
-                                          not bit-exact): h3_seedvr2_clip_params.state_mode */
+    int state_bits;                    /* this clip keeps the grid's causal state in per-row int8 (8) or group
+                                          int4 (4) rows instead of BF16 (0): h3_seedvr2_clip_params.state_mode */
     /* H3_SV2_TRACE accounting of a clip's buffer traffic and GPU waits */
     struct { uint64_t allocs, alloc_bytes, pool_hits, pool_hit_bytes, cap_frees, cap_free_bytes, syncs; double sync_seconds; } clip_stats;
     /* load-time temporaries freed after the next submit */
@@ -239,7 +239,8 @@ typedef struct {
     int mode;
     h3_gpu_tensor *mem[SV2_MAX_CONVS];  /* F32 [k, h, w, c] or a slim grid of k frames (BF16; I8 rows with `scale`) */
     int mem_frames[SV2_MAX_CONVS];
-    h3_gpu_tensor *scale[SV2_MAX_CONVS];   /* F32 per-row scales when the grid state is kept in int8 (m->state_int8) */
+    h3_gpu_tensor *scale[SV2_MAX_CONVS];   /* F32 scales (int8: per row; int4: scale + minimum per group of 64) */
+    int bits[SV2_MAX_CONVS];               /* 8 / 4 when `scale` is set */
     uint32_t mem_rows[SV2_MAX_CONVS];      /* rows of that slim grid */
     int ring[SV2_MAX_CONVS];               /* grid: the physical slot of the oldest frame (the state is a ring:
                                               a new frame overwrites the oldest slot instead of a new buffer) */
