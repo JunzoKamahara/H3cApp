@@ -274,6 +274,7 @@ void sv2_causal_reset(sv2_causal *ctx) {
         ctx->scale[i] = NULL;
         ctx->mem_frames[i] = 0;
         ctx->mem_rows[i] = 0;
+        ctx->ring[i] = 0;
     }
     ctx->mode = SV2_CAUSAL_DISABLED;
 }
@@ -292,6 +293,7 @@ static void causal_drop(h3_seedvr2 *m, sv2_causal *ctx, int slot) {
     ctx->scale[slot] = NULL;
     ctx->mem_frames[slot] = 0;
     ctx->mem_rows[slot] = 0;
+    ctx->ring[slot] = 0;
 }
 
 /* Replaces conv `slot`'s state with `fresh` (k frames; `scale` and `rows`
@@ -546,7 +548,9 @@ static void gact_offsets(const gact *a, int k, int32_t *offsets) {
  * the live bytes (the still-image path, ctx NULL, never waits). */
 static int clip_sync(h3_seedvr2 *m, const sv2_causal *ctx, char *error, size_t error_size) {
     if (!ctx || !h3_gpu_command_open(m->gpu)) return 1;
+    double t0 = now_seconds();
     if (!h3_gpu_submit(m->gpu) || !h3_gpu_begin(m->gpu)) { fail(error, error_size, "SeedVR2 VAE: %s", h3_gpu_error(m->gpu)); return 0; }
+    m->clip_stats.syncs++; m->clip_stats.sync_seconds += now_seconds() - t0;
     return 1;
 }
 
@@ -561,47 +565,75 @@ static uint32_t slim_rows(const gact *x, int frames) {
     return slim_guard(x->w) + (uint32_t)frames * x->frame_rows + tail + 128;
 }
 
-/* Keeps the last k = kt - st frames of [head | x] as the state: frames of
- * x, and before them the state's (or frame 0 again when there was none). */
+/* Keeps the last k = kt - st frames of [head | x] as the state. The state
+ * buffer lives on: when x brings fewer than k frames (a streamed frame),
+ * the new frame overwrites the oldest slot and the ring turns; the slots
+ * are filled from x, and before x from the state (or frame 0 again when
+ * there was none). BF16 rows, or int8 rows with one scale per row when
+ * m->state_int8. */
 static int gcausal_keep(h3_seedvr2 *m, const gact *x, const sv2_conv *c, int st, int head,
                         const h3_gpu_tensor *state, int state_frames, sv2_causal *ctx,
                         char *error, size_t error_size) {
     int k = c->kt - st;
     if (k <= 0 || ctx->mode == SV2_CAUSAL_DISABLED) return 1;
+    int slot = c->slot;
     size_t frame = (size_t)x->frame_rows * x->cp;
-    gact g;
-    if (!gact_new_f(m, &g, k, 0, x->h, x->w, x->c)) { fail(error, error_size, "SeedVR2 VAE (grid): out of memory"); return 0; }
-    uint32_t sguard = slim_guard(x->w);
+    uint32_t sguard = slim_guard(x->w), srows = slim_rows(x, k);
+    int fresh = !ctx->mem[slot] || ctx->mem_frames[slot] != k || ctx->mem_rows[slot] != srows ||
+                (ctx->scale[slot] != NULL) != (m->state_int8 != 0);
+    if (fresh) {
+        causal_drop(m, ctx, slot);
+        if (m->state_int8) {
+            uint32_t padded = (srows + 127u) & ~127u;
+            ctx->mem[slot] = h3_gpu_tensor_new_i8(m->gpu, (size_t)padded * x->cp);
+            ctx->scale[slot] = h3_gpu_tensor_new_f32(m->gpu, padded);
+            if (!ctx->mem[slot] || !ctx->scale[slot]) { causal_drop(m, ctx, slot); fail(error, error_size, "SeedVR2 VAE (grid): out of memory"); return 0; }
+            /* the guard rows must be zero rows: the first launch quantizes
+             * the whole buffer, the slots below overwrite the frames */
+            h3_gpu_tensor *zero = sv2_pool_take(m, (size_t)srows * x->cp, 1);
+            int ok = zero && h3_gpu_vsr_zero_rows_bf16(m->gpu, zero, 0, srows, (uint32_t)x->cp) &&
+                     h3_gpu_quantize_rows_bf16_int8(m->gpu, ctx->mem[slot], ctx->scale[slot], zero, srows, (uint32_t)x->cp);
+            sv2_pool_give(m, zero);
+            if (!ok) { causal_drop(m, ctx, slot); fail(error, error_size, "SeedVR2 VAE (grid): %s", h3_gpu_error(m->gpu)); return 0; }
+        } else {
+            gact g;
+            if (!gact_new_f(m, &g, k, 0, x->h, x->w, x->c)) { fail(error, error_size, "SeedVR2 VAE (grid): out of memory"); return 0; }
+            ctx->mem[slot] = g.t;
+        }
+        ctx->mem_frames[slot] = k;
+        ctx->mem_rows[slot] = srows;
+        ctx->ring[slot] = 0;
+    }
+    /* the frames to keep, as [head | x] indices, into physical slots: with
+     * fewer new frames than slots the F newest replace the F oldest, so the
+     * ring turns by F and the kept frames stay where they are */
+    int F = x->f, first = head + F - k;   /* first kept extended index */
+    int in_place = !fresh && state && state_frames == k && F < k;
+    int new_ring = in_place ? (ctx->ring[slot] + F) % k : 0;
     for (int j = 0; j < k; j++) {
-        int ext = head + x->f - k + j;   /* in [head | x] */
-        const h3_gpu_tensor *src = x->t;
+        int ext = first + j;
+        if (in_place && ext < head) continue;   /* still in its slot */
+        int phys = (new_ring + j) % k;
+        size_t to = ((size_t)sguard + (size_t)phys * x->frame_rows) * x->cp;
+        const h3_gpu_tensor *src;
         size_t from;
-        if (ext >= head) from = ((size_t)x->guard + (size_t)(ext - head) * x->frame_rows) * x->cp;
-        else if (state && ext < state_frames) { src = state; from = ((size_t)sguard + (size_t)ext * x->frame_rows) * x->cp; }
-        else from = (size_t)x->guard * x->cp;   /* a copy of frame 0 */
-        if (!h3_gpu_copy_bf16(m->gpu, g.t, ((size_t)g.guard + (size_t)j * x->frame_rows) * x->cp, src, from, frame)) {
-            gact_free(m, &g);
-            fail(error, error_size, "SeedVR2 VAE (grid): %s", h3_gpu_error(m->gpu));
-            return 0;
+        if (ext >= head) { src = x->t; from = ((size_t)x->guard + (size_t)(ext - head) * x->frame_rows) * x->cp; }
+        else if (state && ext < state_frames) {
+            /* an old state frame moves to another slot (only when the ring
+             * cannot keep it in place: never with F < k, so BF16 copy only) */
+            src = state; from = ((size_t)sguard + (size_t)((ctx->ring[slot] + ext) % k) * x->frame_rows) * x->cp;
+        } else { src = x->t; from = (size_t)x->guard * x->cp; }   /* a copy of frame 0 */
+        int ok;
+        if (ctx->scale[slot]) {
+            /* src is BF16 rows (x, or the dequantised state): quantize the frame into the slot */
+            ok = h3_gpu_sv2_quantize_rows_bf16_int8(m->gpu, ctx->mem[slot], ctx->scale[slot], src, (uint32_t)(from / x->cp),
+                                                    (uint32_t)(to / x->cp), x->frame_rows, (uint32_t)x->cp);
+        } else {
+            ok = h3_gpu_copy_bf16(m->gpu, ctx->mem[slot], to, src, from, frame);
         }
+        if (!ok) { fail(error, error_size, "SeedVR2 VAE (grid): %s", h3_gpu_error(m->gpu)); return 0; }
     }
-    if (m->state_int8) {
-        /* per-row int8 (one scale per grid row): half the bytes, read back
-         * through h3_gpu_sv2_dequant_rows_int8_bf16 when the conv runs */
-        uint32_t rows = g.x_rows, padded = (rows + 127u) & ~127u;
-        h3_gpu_tensor *q = h3_gpu_tensor_new_i8(m->gpu, (size_t)padded * x->cp);
-        h3_gpu_tensor *sc = h3_gpu_tensor_new_f32(m->gpu, padded);
-        int ok = q && sc && h3_gpu_quantize_rows_bf16_int8(m->gpu, q, sc, g.t, rows, (uint32_t)x->cp);
-        gact_free(m, &g);
-        if (!ok) {
-            h3_gpu_tensor_free(q); h3_gpu_tensor_free(sc);
-            fail(error, error_size, "SeedVR2 VAE (grid): int8 state: %s", h3_gpu_error(m->gpu));
-            return 0;
-        }
-        causal_keep(m, ctx, c->slot, q, k, sc, rows);
-        return 1;
-    }
-    causal_keep(m, ctx, c->slot, g.t, k, NULL, 0);
+    ctx->ring[slot] = new_ring;
     return 1;
 }
 
@@ -672,11 +704,12 @@ static int gconv_t(h3_seedvr2 *m, const gact *x, const sv2_conv *c, const gact *
                         int32_t sp = (dy - k / 2) * (x->w + 2) + (dx - k / 2);
                         if (sfr >= 0) offsets[idx] = d * frame_rows + sp;
                         else if (state) {
-                            /* the state's frame, or its first when the window reaches
-                             * past the state (a stride-2 conv keeps one frame: that
-                             * output is dropped by the stride) */
-                            int slot = state_frames + sfr < 0 ? 0 : state_frames + sfr;
-                            offsets[idx] = sguard + slot * frame_rows - base + sp;
+                            /* the state's frame (j-th oldest sits in ring slot (ring + j) % k), or
+                             * its oldest when the window reaches past the state (a stride-2
+                             * conv keeps one frame: that output is dropped by the stride) */
+                            int j = state_frames + sfr < 0 ? 0 : state_frames + sfr;
+                            int phys = (ctx->ring[c->slot] + j) % state_frames;
+                            offsets[idx] = sguard + phys * frame_rows - base + sp;
                             mask |= 1u << idx;
                         } else {
                             offsets[idx] = -t * frame_rows + sp;   /* frame 0 again */
@@ -809,7 +842,6 @@ static int vae_encode_grid(h3_seedvr2 *m, const act *rgb, act *out, int stop, sv
             if (!gresnet(m, &x, &e->down[i][j], &y, ctx, error, error_size)) { gact_free(m, &x); return 0; }
             gact_free(m, &x); x = y;
             if (!clip_sync(m, ctx, error, error_size)) { gact_free(m, &x); return 0; }
-            if (ctx) sv2_pool_drain(m);
         }
         if (i < 3) {
             if (!gconv_s2(m, &x, &e->downsample[i], &y, ctx, error, error_size)) { gact_free(m, &x); return 0; }
@@ -849,7 +881,6 @@ static int gdecode_blocks(h3_seedvr2 *m, gact x, act *out, int first, int stop, 
             if (!gresnet(m, &x, &d->up[i][j], &y, ctx, error, error_size)) { gact_free(m, &x); return 0; }
             gact_free(m, &x); x = y;
             if (!clip_sync(m, ctx, error, error_size)) { gact_free(m, &x); return 0; }
-            if (ctx) sv2_pool_drain(m);
             if (ctx && trace_enabled()) {
                 h3_gpu_stats st;
                 if (h3_gpu_get_stats(m->gpu, &st))
@@ -994,7 +1025,6 @@ int sv2_vae_encode_clip(h3_seedvr2 *m, const act *rgb, act *out, int stop, sv2_c
             if (!resnet(m, &x, &e->down[i][j], &y, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; }
             sv2_act_free(m, &x); x = y;
             if (!clip_sync(m, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; }
-            if (ctx) sv2_pool_drain(m);
         }
         if (i < 3) {
             if (!conv3x3(m, &x, &e->downsample[i], 2, &y, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; }
@@ -1040,7 +1070,6 @@ static int decode_blocks(h3_seedvr2 *m, act x, act *out, int first, int stop, sv
             if (!resnet(m, &x, &d->up[i][j], &y, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; }
             sv2_act_free(m, &x); x = y;
             if (!clip_sync(m, ctx, error, error_size)) { sv2_act_free(m, &x); return 0; }
-            if (ctx) sv2_pool_drain(m);
         }
         if (i < 3) {
             int C = x.c, tf = d->up_temporal[i], f = act_frames(&x);

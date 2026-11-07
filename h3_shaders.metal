@@ -6187,6 +6187,38 @@ kernel void h3_sv2_dequant_q8_bf16(device const uint *packed [[buffer(0)]],
 }
 
 struct sv2_dequant_rows_args { uint rows, columns; };
+struct sv2_quant_rows_args { uint rows, columns, in_row0, out_row0; };
+
+/* Per-row symmetric int8 of rows [in_row0, in_row0 + rows) of a BF16 row
+ * buffer into rows [out_row0, ...) of an int8 one (scales at out_row0 too):
+ * one frame of a video window into its slot of the causal state. One
+ * threadgroup of 256 per row. */
+kernel void h3_sv2_quantize_rows_bf16_int8(device const bfloat *input [[buffer(0)]],
+                                           device char *output [[buffer(1)]],
+                                           device float *scales [[buffer(2)]],
+                                           constant sv2_quant_rows_args &args [[buffer(3)]],
+                                           uint tid [[thread_index_in_threadgroup]],
+                                           uint row [[threadgroup_position_in_grid]]) {
+    if (row >= args.rows) return;
+    size_t in_base = (size_t)(args.in_row0 + row) * args.columns, out_base = (size_t)(args.out_row0 + row) * args.columns;
+    threadgroup float scratch[256];
+    float local_max = 0.0f;
+    for (uint c = tid; c < args.columns; c += 256) local_max = max(local_max, fabs((float)input[in_base + c]));
+    scratch[tid] = local_max;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 128; stride > 0; stride >>= 1) {
+        if (tid < stride) scratch[tid] = max(scratch[tid], scratch[tid + stride]);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    float max_abs = scratch[0];
+    float scale = max_abs > 0.0f ? max_abs / 127.0f : 1.0f / 127.0f;
+    float inverse = max_abs > 0.0f ? 127.0f / max_abs : 127.0f;
+    if (tid == 0) scales[args.out_row0 + row] = scale;
+    for (uint c = tid; c < args.columns; c += 256) {
+        int q = (int)rint((float)input[in_base + c] * inverse);
+        output[out_base + c] = (char)clamp(q, -127, 127);
+    }
+}
 
 /* Per-row symmetric int8 (h3_quantize_bf16_int8_rows: one F32 scale per
  * row) -> BF16 rows: the causal state of a video window kept in int8.

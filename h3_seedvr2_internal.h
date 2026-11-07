@@ -214,6 +214,8 @@ struct h3_seedvr2 {
     int pool_bypass;                   /* clips: free at once (their buffers are GBs; the layers wait for the GPU) */
     int state_int8;                    /* this clip keeps the grid's causal state in per-row int8 (half the memory,
                                           not bit-exact): h3_seedvr2_clip_params.state_mode */
+    /* H3_SV2_TRACE accounting of a clip's buffer traffic and GPU waits */
+    struct { uint64_t allocs, alloc_bytes, pool_hits, pool_hit_bytes, cap_frees, cap_free_bytes, syncs; double sync_seconds; } clip_stats;
     /* load-time temporaries freed after the next submit */
     h3_gpu_tensor *deferred[256];
     int deferred_count;
@@ -239,6 +241,8 @@ typedef struct {
     int mem_frames[SV2_MAX_CONVS];
     h3_gpu_tensor *scale[SV2_MAX_CONVS];   /* F32 per-row scales when the grid state is kept in int8 (m->state_int8) */
     uint32_t mem_rows[SV2_MAX_CONVS];      /* rows of that slim grid */
+    int ring[SV2_MAX_CONVS];               /* grid: the physical slot of the oldest frame (the state is a ring:
+                                              a new frame overwrites the oldest slot instead of a new buffer) */
 } sv2_causal;
 
 /* The transformer's attention layout (h3_seedvr2.c) */

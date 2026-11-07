@@ -132,7 +132,7 @@ static void test_memory_model(void) {
     const uint64_t R = 7015000000ull, DIT = 6668000000ull;   /* the model's resident bytes, its transformer blocks */
     struct { int nax, w, h, T, split, int8; double measured_gb; } pts[] = {   /* grid points 2026-11-07 (state buffers), F32 2026-11-06 */
         {1, 1344, 768, 5, 0, 0, 8.33}, {1, 1344, 768, 17, 4, 0, 13.56}, {1, 960, 544, 17, 4, 0, 8.61},
-        {1, 1920, 768, 17, 4, 1, 15.11},
+        {1, 1920, 768, 17, 4, 1, 14.35},
         {0, 960, 544, 5, 0, 0, 11.21}, {0, 960, 544, 17, 4, 0, 13.03}, {0, 768, 432, 17, 4, 0, 8.64}};
     for (size_t i = 0; i < sizeof(pts) / sizeof(*pts); i++) {
         double est = (double)sv2_video_peak_bytes_state(R, DIT, pts[i].nax, pts[i].w, pts[i].h, pts[i].T, pts[i].split, 1, pts[i].int8) / 1e9;

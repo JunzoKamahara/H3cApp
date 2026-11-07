@@ -1111,6 +1111,11 @@ int h3_gpu_sv2_dequant_q8_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
  * scales [rows]) -> BF16 [rows, columns]; columns a multiple of 4. */
 int h3_gpu_sv2_dequant_rows_int8_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *quantized,
                                       const h3_gpu_tensor *scales, uint32_t rows, uint32_t columns);
+/* The reverse for `rows` rows starting at in_row0 of a BF16 row buffer,
+ * into rows from out_row0 of the int8 one (and its scales). */
+int h3_gpu_sv2_quantize_rows_bf16_int8(h3_gpu *gpu, h3_gpu_tensor *quantized, h3_gpu_tensor *scales,
+                                       const h3_gpu_tensor *input, uint32_t in_row0, uint32_t out_row0,
+                                       uint32_t rows, uint32_t columns);
 /* out = x / rms(x) * scale + shift (F32 vectors, NULL = 1 / 0). */
 int h3_gpu_sv2_rms_mod_bf16(h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *input,
                             const h3_gpu_tensor *scale, const h3_gpu_tensor *shift,

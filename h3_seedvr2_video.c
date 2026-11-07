@@ -39,7 +39,7 @@ static int clip_progress(h3_progress_callback on_progress, void *opaque, const v
  *   grid  1344x768  5  whole    8.33 (12.6)    transformer (decode stays below)
  *   grid  1344x768 17  sliced  13.56 (15.1)    decode: every conv's state + one frame
  *   grid  960x544  17  sliced   8.61 (12.9)    transformer
- *   grid  1920x768  17  sliced  15.11 (17.2)    decode, the state in int8 (state_mode)
+ *   grid  1920x768  17  sliced  14.35 (16.4)    decode, the state in int8 (state_mode), the state a ring
  *   F32   960x544   5  whole   11.21 (12.8)    (2026-11-06, head slots)
  *   F32   960x544  17  sliced  13.03 (15.5)
  *   F32   768x432  17  sliced   8.64 (13.1)
@@ -47,7 +47,7 @@ static int clip_progress(h3_progress_callback on_progress, void *opaque, const v
  *
  * Per megapixel of output: decode whole 1.29 (grid, per frame) / 2.9 (F32,
  * per frame + 2) GB, sliced 12.3 / 24 GB whatever T (the state is 7.3 of
- * the 12.3; 9.6 with the state in int8); encode whole 0.92 per frame /
+ * the 12.3; 9.2 with the state in int8); encode whole 0.92 per frame /
  * 1.93 per frame + 2, sliced 8.3 (7.0 int8) / 20. The transformer phase is the resident weights plus 113 KB per
  * token. Before this policy a 17-frame 1344x768 run reached 36 GiB and
  * swapped: never run an unmeasured configuration without the estimate. */
@@ -63,7 +63,7 @@ static uint64_t video_peak_bytes(uint64_t resident, uint64_t dit_bytes, int nax_
     int slots = nax_vae ? frames : frames + 2;   /* the F32 path pads the head inside every conv */
     /* sliced, grid: the state is 7.3 (decode) / 2.2 (encode) GB per megapixel of the total; int8 halves it */
     double enc_sliced = nax_vae ? (state_int8 ? 7.0e9 : 8.3e9) : 20.0e9;
-    double dec_sliced = nax_vae ? (state_int8 ? 9.6e9 : 12.3e9) : 24.0e9;
+    double dec_sliced = nax_vae ? (state_int8 ? 9.2e9 : 12.3e9) : 24.0e9;
     double enc = split > 0 ? enc_sliced * mp : (nax_vae ? 0.92e9 : 1.93e9) * slots * mp;
     double dec = split > 0 ? dec_sliced * mp : (nax_vae ? 1.29e9 : 2.9e9) * slots * mp;
     double dit = (double)resident + common + tokens * 113e3;
@@ -197,6 +197,7 @@ int h3_seedvr2_restore_clip(h3_seedvr2 *m, const h3_vsr_image *in, int frames, i
     }
     if (!sv2_vae_set_temporal(m, 1, error, error_size)) return 0;
     sv2_pool_drain(m);
+    memset(&m->clip_stats, 0, sizeof(m->clip_stats));
     m->pool_bypass = 1;   /* exact live memory: clip_sync in the VAE makes the frees real */
     /* the transformer's 6 GB are idle during the VAE: free them when the
      * window would otherwise take more than 70 % of the GPU's memory */
@@ -323,6 +324,13 @@ int h3_seedvr2_restore_clip(h3_seedvr2 *m, const h3_vsr_image *in, int frames, i
     }
     clip_progress(on_progress, opaque, cancel, "vsr output", frames, frames);
     trace_peak(m, &mark, "colour + output (clip)");
+    if (trace_enabled())
+        fprintf(stderr, "sv2 clip buffers: %llu new (%.1f GB), %llu reused from the pool (%.1f GB), %llu freed past the cap (%.1f GB); "
+                        "%llu GPU waits, %.1f s\n",
+                (unsigned long long)m->clip_stats.allocs, (double)m->clip_stats.alloc_bytes / 1e9,
+                (unsigned long long)m->clip_stats.pool_hits, (double)m->clip_stats.pool_hit_bytes / 1e9,
+                (unsigned long long)m->clip_stats.cap_frees, (double)m->clip_stats.cap_free_bytes / 1e9,
+                (unsigned long long)m->clip_stats.syncs, m->clip_stats.sync_seconds);
     ok = 1;
 done:
     h3_gpu_tensor_free(rgb_in); h3_gpu_tensor_free(pixels); h3_gpu_tensor_free(tokens); h3_gpu_tensor_free(zt.t);

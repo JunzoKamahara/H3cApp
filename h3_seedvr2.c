@@ -454,8 +454,10 @@ h3_gpu_tensor *sv2_pool_take(h3_seedvr2 *m, size_t elements, int bf16) {
     if (best >= 0 && (m->pool_bypass ? m->pool[best].bytes == bytes : m->pool[best].bytes <= bytes * 2)) {
         h3_gpu_tensor *t = m->pool[best].t;
         m->pool[best] = m->pool[--m->pool_count];
+        m->clip_stats.pool_hits++; m->clip_stats.pool_hit_bytes += bytes;
         return t;
     }
+    m->clip_stats.allocs++; m->clip_stats.alloc_bytes += bytes;
     return bf16 ? h3_gpu_tensor_new_bf16(m->gpu, elements) : h3_gpu_tensor_new_f32(m->gpu, elements);
 }
 
@@ -464,17 +466,20 @@ void sv2_pool_give(h3_seedvr2 *m, h3_gpu_tensor *t) {
     int bf16 = h3_gpu_tensor_dtype(t) == H3_GPU_BF16;
     size_t bytes = h3_gpu_tensor_elements(t) * (bf16 ? 2 : 4);
     if (m->pool_bypass && bytes >= ((size_t)128 << 20)) {
-        /* a clip's large buffer: kept for the next layer of the same size
-         * (an allocation freed and taken again inside one command buffer
-         * costs nothing, a fresh one costs the page faults of GBs) while the
-         * pool stays under a cap; past it, wait for the GPU so the memory is
-         * really released now, not when the command buffer completes.
-         * sv2_pool_drain after each resnet frees the rest. */
-        size_t pooled = 0;
-        for (int i = 0; i < m->pool_count; i++) pooled += m->pool[i].bytes;
-        size_t cap = ((size_t)(getenv("H3_SV2_POOL_CAP_MB") ? atoi(getenv("H3_SV2_POOL_CAP_MB")) : 512)) << 20;
-        if (pooled + bytes > cap) {
+        /* a clip's large buffer: two of them are kept for the next layers of
+         * the same size (an allocation freed and taken again inside one
+         * command buffer costs nothing, a fresh one costs the page faults of
+         * GBs); a third waits for the GPU and goes, so the memory is really
+         * released now, not when the command buffer completes. Measured
+         * 2026-11-07 (1344x768 x17): 2 kept 88.9 s at a 12.47 GiB peak, 4
+         * kept 90.2 s / 13.60 GiB, none kept (every free a GPU wait) 110.9 s
+         * / 12.63 GiB. The blocks drain the pool where the sizes change. */
+        int keep = getenv("H3_SV2_POOL_KEEP_N") ? atoi(getenv("H3_SV2_POOL_KEEP_N")) : 2;
+        if (m->pool_count >= keep) {
+            double t0 = now_seconds();
             if (h3_gpu_command_open(m->gpu)) { h3_gpu_submit(m->gpu); h3_gpu_begin(m->gpu); }
+            m->clip_stats.syncs++; m->clip_stats.sync_seconds += now_seconds() - t0;
+            m->clip_stats.cap_frees++; m->clip_stats.cap_free_bytes += bytes;
             h3_gpu_tensor_free(t);
             return;
         }
