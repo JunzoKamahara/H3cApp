@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="assets/js/lang.js"></script>
   <title>動画の拡大 — H3cApp</title>
-  <meta name="description" content="H3cAppで動画をあとから拡大する使い方。8つの方法の選び方、倍率の決め方、AIモデルの準備、Open-H3の強さ、時間の目安、うまくいかないときの確かめ方。">
+  <meta name="description" content="H3cAppで動画をあとから拡大する使い方。9つの方法の選び方、倍率の決め方、AIモデルの準備、Open-H3の強さ、時間の目安、うまくいかないときの確かめ方。">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/upscale.html">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/upscale.html">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/upscale.html">
@@ -15,7 +15,7 @@
   <meta property="og:locale:alternate" content="en_US">
   <meta property="og:site_name" content="H3cApp">
   <meta property="og:title" content="動画の拡大 — H3cApp">
-  <meta property="og:description" content="8つの拡大の方法の選び方と使い方、モデルの準備、時間の目安。">
+  <meta property="og:description" content="9つの拡大の方法の選び方と使い方、モデルの準備、時間の目安。">
   <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/upscale.html">
   <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image.jpg">
   <meta name="twitter:card" content="summary_large_image">
@@ -47,7 +47,7 @@
   <main id="main">
     <div class="page-head">
       <h1>動画の拡大</h1>
-      <p class="lead">できあがった動画を、あとから大きくしたり、同じ大きさのまま細部を描き直したりする手順です。方法は8つあり、「早さ」と「描き足しの強さ」が大きく違います。まず<a href="#compare">仕上がりを見比べて</a>、迷ったら<a href="#choose">方法の選び方</a>をご覧ください。</p>
+      <p class="lead">できあがった動画を、あとから大きくしたり、同じ大きさのまま細部を描き直したりする手順です。方法は9つあり、「早さ」と「描き足しの強さ」が大きく違います。まず<a href="#compare">仕上がりを見比べて</a>、迷ったら<a href="#choose">方法の選び方</a>をご覧ください。</p>
       <nav class="toc" aria-label="このページの目次">
         <p>このページの内容</p>
         <ol>
@@ -74,9 +74,10 @@
         <div class="compare-choices">
           <label>映像
             <select id="compare-clip">
-              <option value="person" data-note="人物：見るところは肌、まつ毛、イヤリングです。Real-ESRGANは肌がなめらかになり、そばかすが減ります。SwiftVRとSeedVR2はまつ毛とそばかすがくっきりします。Open-H3は弱いでも瞳の色が変わり、中と強いではそばかすが額まで広がり、強いではイヤリングの形も変わります。">人物（風に揺れる髪と笑顔）</option>
-              <option value="anime" data-note="アニメ：見るところは輪郭の線と目です。SwiftVRは線が荒れ、SeedVR2は目のまわりに線が足されます。Open-H3は線がいちばんきれいになりますが、中と強いでは顔立ちや口の形が変わります。">アニメ（走る少女）</option>
-              <option value="cat" data-note="猫：見るところは毛糸とひげです。SwiftVRとSeedVR2はひげと毛糸の筋を強く描き足します。Open-H3は毛糸を糸から描き直します。強いでは猫の向きや模様まで変わり、別の場面になります。">猫（毛糸と毛並み）</option>
+              <option value="person" data-note="人物：見るところは肌、まつ毛、イヤリングです。Real-ESRGANは肌がなめらかになり、そばかすが減ります。SwiftVRとSeedVR2はまつ毛とそばかすがくっきりします。SeedVR2 動画は、細部の出方はSeedVR2とほぼ同じで、動きを差し引いたフレーム間の揺れは17%小さくなります（2.98に対して2.47）。Open-H3は弱いでも瞳の色が変わり、中と強いではそばかすが額まで広がり、強いではイヤリングの形も変わります。">人物（風に揺れる髪と笑顔）</option>
+              <option value="anime" data-note="アニメ：見るところは輪郭の線と目です。SwiftVRは線が荒れ、SeedVR2は目のまわりに線が足されます。SeedVR2 動画も同じように線が足され、アニメでは揺れも1フレームずつと変わりません。Open-H3は線がいちばんきれいになりますが、中と強いでは顔立ちや口の形が変わります。">アニメ（走る少女）</option>
+              <option value="cat" data-note="猫：見るところは毛糸とひげです。SwiftVRとSeedVR2はひげと毛糸の筋を強く描き足します。SeedVR2 動画も毛並みの筋を描き足します。表の「隣のフレームとの差」はSeedVR2と変わりませんが、動きを差し引いた揺れは13%小さくなります（2.49に対して2.16）。Open-H3は毛糸を糸から描き直します。強いでは猫の向きや模様まで変わり、別の場面になります。">猫（毛糸と毛並み）</option>
+              <option value="face" data-note="顔のアップ：見るところは目のまわりの肌、まつ毛、歯です。標準とReal-ESRGANはなめらかで、SwiftVRとSeedVR2は肌のきめとまつ毛を描き足します。SeedVR2は1フレームずつでは目のまわりの細部が毎フレーム描き直されて揺れ、SeedVR2 動画では落ち着きます（動きを差し引いたフレーム間の揺れは2.09に対して1.73）。Open-H3は弱いでもまつ毛が描き足されて瞳の色が変わり、中と強いでは肌のきめが消えてなめらかになり、顔立ちが少し変わります。">顔のアップ（濡れた髪と笑顔）</option>
             </select>
           </label>
           <label>左の方法
@@ -88,6 +89,7 @@
               <option value="swiftvr">SwiftVR</option>
               <option value="swiftvr-4x">SwiftVR 4倍で生成してから縮小</option>
               <option value="seedvr2">SeedVR2</option>
+              <option value="seedvr2-video">SeedVR2 動画</option>
               <option value="openh3-light">Open-H3 弱い</option>
               <option value="openh3-medium">Open-H3 中</option>
               <option value="openh3-strong">Open-H3 強い</option>
@@ -102,6 +104,7 @@
               <option value="swiftvr" selected>SwiftVR</option>
               <option value="swiftvr-4x">SwiftVR 4倍で生成してから縮小</option>
               <option value="seedvr2">SeedVR2</option>
+              <option value="seedvr2-video">SeedVR2 動画</option>
               <option value="openh3-light">Open-H3 弱い</option>
               <option value="openh3-medium">Open-H3 中</option>
               <option value="openh3-strong">Open-H3 強い</option>
@@ -123,7 +126,7 @@
         </div>
         <p class="compare-note" id="compare-note" aria-live="polite"></p>
       </div>
-      <p>動きは、動画を「<span class="ui">4分の1の速さ</span>」にすると見比べやすくなります。髪や背景の細部が動く間に揺れないか、顔が途中で変わらないかを見てください。自然に見えるかどうかは好みと映像によるので、自分の動画でも短いクリップで試すことをおすすめします。</p>
+      <p>動きは、動画を「<span class="ui">4分の1の速さ</span>」にすると見比べやすくなります。髪や背景の細部が動く間に揺れないか、顔が途中で変わらないかを見てください。「顔のアップ」でSeedVR2とSeedVR2 動画を並べると、1フレームずつでは目のまわりの肌やまつ毛が毎フレーム描き直されて揺れ、動画として描くと落ち着くのが分かります。自然に見えるかどうかは好みと映像によるので、自分の動画でも短いクリップで試すことをおすすめします。</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th scope="col">方法</th><th scope="col">かかった時間</th><th scope="col">隣のフレームとの差</th></tr></thead>
@@ -135,6 +138,7 @@
             <tr><th scope="row">SwiftVR</th><td>18秒</td><td class="num">1.86</td></tr>
             <tr><th scope="row">SwiftVR 4倍で生成してから縮小</th><td>約1分</td><td class="num">1.91</td></tr>
             <tr><th scope="row">SeedVR2</th><td>約5分</td><td class="num">2.79</td></tr>
+            <tr><th scope="row">SeedVR2 動画</th><td>約10分</td><td class="num">2.82</td></tr>
             <tr><th scope="row">Open-H3 弱い</th><td>約6分</td><td class="num">2.19</td></tr>
             <tr><th scope="row">Open-H3 中</th><td>約6分</td><td class="num">2.87</td></tr>
             <tr><th scope="row">Open-H3 強い</th><td>約7分30秒</td><td class="num">4.16</td></tr>
@@ -184,6 +188,7 @@
             <tr><th scope="row">大きさを変えずに細部だけ整えたい（等倍）</th><td>SwiftVR 4倍で生成してから縮小（最初に試す）</td></tr>
             <tr><th scope="row">まつ毛や肌のきめなど、1フレームごとの細部を最優先したい</th><td>SeedVR2</td></tr>
             <tr><th scope="row">模様や質感を、H3の生成そのものの質で描き直したい</th><td>Open-H3 再生成</td></tr>
+            <tr><th scope="row">SeedVR2の細部のまま、髪や肌が前後のフレームで揺れないようにしたい</th><td>SeedVR2 動画</td></tr>
           </tbody>
           <caption>やりたいことと方法の対応。</caption>
         </table>
@@ -206,6 +211,7 @@
             <tr><th scope="row">標準、MetalFX</th><td class="num">1.1〜8倍</td><td>一辺4096ピクセル</td></tr>
             <tr><th scope="row">Real-ESRGAN（汎用、アニメ）</th><td class="num">1〜4倍</td><td>一辺4096ピクセル</td></tr>
             <tr><th scope="row">SwiftVR（2つの方法）、SeedVR2</th><td class="num">1〜4倍</td><td>一辺4096ピクセル、かつこのMacのGPUメモリに入る大きさ</td></tr>
+            <tr><th scope="row">SeedVR2 動画</th><td class="num">1〜4倍</td><td>一辺4096ピクセル、かつこのMacのGPUメモリに入る大きさ（24GBでは1920×1088まで。16GBでは使えません）</td></tr>
             <tr><th scope="row">Open-H3 再生成</th><td class="num">1〜4倍</td><td>1344×768ピクセル（H3の上限）</td></tr>
           </tbody>
           <caption>方法ごとの倍率と上限。</caption>
@@ -239,6 +245,9 @@
       <h3>SeedVR2（AI超解像・細部重視、非常に遅い・試験的）</h3>
       <p>1フレームずつ描き起こします。まつ毛・肌のきめ・布地の細部はSwiftVRより強く出ますが、元の映像から離れることがあり、顔の印象が変わることもあります。毛並みにモアレが出たり、ちらつきが増えたりすることもあります。1フレームに数秒かかります。初回に<a href="#setup">モデルの準備</a>が必要です。</p>
 
+      <h3>SeedVR2 動画（ちらつきを抑える・非常に遅い・試験的）</h3>
+      <p>同じSeedVR2-3Bに、1フレームずつではなく17フレームの窓で動画として描き起こさせます（v0.7.11から）。窓どうしは5フレームを重ねてクロスフェードするので、継ぎ目は見えません。細部の描き方はSeedVR2のままで、髪・肌・毛皮が前後のフレームで揺れにくくなります。上の比較では、動きを差し引いたフレーム間の揺れが1フレームずつより顔のアップと人物で17%、猫で13%小さくなり、顔のアップではSwiftVRやOpen-H3よりも小さくなりました。アニメでは変わりません。そのぶん細部はわずかに柔らかくなります。時間は1フレームずつの約2倍で、GPUに約13GBを使います。24GBのMacでは1920×1088まで拡大できます（1344×768より大きいときは途中の状態を8ビット、1920×1088では4ビットで持つので、出力がわずかに変わります。16GBのMacでは使えません）。重みは1フレームずつのSeedVR2と同じなので、<a href="#setup">モデルの準備</a>は一度で済みます。</p>
+
       <h3>Open-H3 再生成（H3で描き直し・最大1344×768、非常に遅い・試験的）</h3>
       <p>拡大というより、H3自身に大きな画面で描き直させる方法です。SeedVR2が1フレームずつ描くのに対して、全フレームをまとめて描き直します。動きの自然さは動画によって違うので、見比べて選んでください。生成したときの文章とseedを引き継ぐので、入力は要りません。<a href="#strength">描き直しの強さ</a>を選べます。</p>
       <p>使える動画に条件があります。</p>
@@ -252,7 +261,7 @@
 
     <section class="section section-narrow" id="setup" aria-labelledby="setup-title">
       <h2 id="setup-title">AIモデルを準備する</h2>
-      <p>SwiftVR、SeedVR2、Open-H3の重みはアプリに入っていないので、初回だけ準備します。標準、MetalFX、Real-ESRGANは準備なしで使えます。</p>
+      <p>SwiftVR、SeedVR2（動画も同じ重み）、Open-H3の重みはアプリに入っていないので、初回だけ準備します。標準、MetalFX、Real-ESRGANは準備なしで使えます。</p>
       <ol class="steps">
         <li><strong>「<span class="ui">拡大の方法</span>」のメニューで方法を選びます。</strong>準備がまだなら、説明の下にオレンジ色の案内と「<span class="ui">モデルを準備…</span>」のボタンが出ます。このあいだ「<span class="ui">拡大する</span>」は押せません。</li>
         <li><strong>「<span class="ui">モデルを準備…</span>」を押します。</strong>「<span class="ui">モデル管理</span>」の「<span class="ui">拡大モデル</span>」からも開けます。</li>
@@ -307,12 +316,13 @@
             <tr><th scope="row">SwiftVR</th><td>960×544の5秒を2倍に：約40秒</td></tr>
             <tr><th scope="row">SwiftVR 4倍で生成してから縮小</th><td>544×960の5秒を2倍に：約4分</td></tr>
             <tr><th scope="row">SeedVR2</th><td>672×384の5秒を2倍に：約8分（GPUに約10GB）。960×544の5秒を2倍に：約21分（約13GB）</td></tr>
+            <tr><th scope="row">SeedVR2 動画</th><td>672×384の5秒を2倍に：約17分（約13GB）。960×384の5秒を1920×768に：約26分（約15GB）。960×544の5秒を1920×1088に：約35分（約17GB、24GBのMacの上限）</td></tr>
             <tr><th scope="row">Open-H3 再生成</th><td>672×384の56フレームを2倍に：弱いで約4〜5分、強いで約5分30秒〜7分。1344×768の5秒は強いで約12分（メモリは生成と同じ約15GB）</td></tr>
           </tbody>
           <caption>M5・24GBでの時間の目安。</caption>
         </table>
       </div>
-      <p>Open-H3では、シートに今の動画と強さでの見込み時間が表示されます。SwiftVR、SeedVR2、Open-H3はGPUをまるごと使うので、生成・キャッシュ作成・動画の取り込みの最中は使えません。終わってから拡大してください。</p>
+      <p>Open-H3では、シートに今の動画と強さでの見込み時間が表示されます。SwiftVR、SeedVR2（2つの方法）、Open-H3はGPUをまるごと使うので、生成・キャッシュ作成・動画の取り込みの最中は使えません。終わってから拡大してください。</p>
     </section>
 
     <section class="section section-narrow" id="after" aria-labelledby="after-title">
@@ -340,7 +350,7 @@
             <tr><th scope="row">Open-H3でフレーム数が違うと出る</th><td>つないだ動画です。つなぐ前の各クリップを再生成します</td></tr>
             <tr><th scope="row">顔や目が変わった</th><td>Open-H3なら「<span class="ui">弱い</span>」に下げます。SeedVR2やSwiftVRなら「SwiftVR 4倍で生成してから縮小」を試します</td></tr>
             <tr><th scope="row">元にない模様が出た</th><td>Real-ESRGANやSwiftVRの描き足しです。「SwiftVR 4倍で生成してから縮小」か標準に変えます</td></tr>
-            <tr><th scope="row">ちらつきが増えた</th><td>SeedVR2やSwiftVRで増えることがあります。「SwiftVR 4倍で生成してから縮小」を試します。等倍の比較では、6本中5本でちらつきが元より減りました</td></tr>
+            <tr><th scope="row">ちらつきが増えた</th><td>SeedVR2やSwiftVRで増えることがあります。SeedVR2なら「SeedVR2 動画」に、SwiftVRなら「SwiftVR 4倍で生成してから縮小」に変えます。等倍の比較では、6本中5本でちらつきが元より減りました</td></tr>
             <tr><th scope="row">時間がかかりすぎる</th><td>「<span class="ui">中止</span>」で止めて、倍率を下げるか、より早い方法に変えます。保存先に元からあったファイルは消えません</td></tr>
           </tbody>
           <caption>よくある症状と確かめること。</caption>

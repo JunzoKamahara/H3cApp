@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="../assets/js/lang.js"></script>
   <title>Enlarging videos — H3cApp</title>
-  <meta name="description" content="How to enlarge videos afterwards in H3cApp: choosing among the eight methods, choosing the scale, setting up the AI models, Open-H3 strength, time, and what to check when something goes wrong.">
+  <meta name="description" content="How to enlarge videos afterwards in H3cApp: choosing among the nine methods, choosing the scale, setting up the AI models, Open-H3 strength, time, and what to check when something goes wrong.">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/upscale.html">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/upscale.html">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/upscale.html">
@@ -14,7 +14,7 @@
   <meta property="og:locale" content="en_US">
   <meta property="og:site_name" content="H3cApp">
   <meta property="og:title" content="Enlarging videos — H3cApp">
-  <meta property="og:description" content="Choosing and using the eight enlarging methods, model setup, and time.">
+  <meta property="og:description" content="Choosing and using the nine enlarging methods, model setup, and time.">
   <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/upscale.html">
   <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image-en.jpg">
   <meta name="twitter:card" content="summary_large_image">
@@ -46,7 +46,7 @@
   <main id="main">
     <div class="page-head">
       <h1>Enlarging videos</h1>
-      <p class="lead">How to make a finished video larger afterwards, or redraw its fine detail at the same size. There are eight methods, and they differ most in speed and in how much they add. <a href="#compare">Compare the results</a> first, and if you are still unsure, see <a href="#choose">Choosing a method</a>. This page uses the labels of H3cApp with macOS set to English.</p>
+      <p class="lead">How to make a finished video larger afterwards, or redraw its fine detail at the same size. There are nine methods, and they differ most in speed and in how much they add. <a href="#compare">Compare the results</a> first, and if you are still unsure, see <a href="#choose">Choosing a method</a>. This page uses the labels of H3cApp with macOS set to English.</p>
       <nav class="toc" aria-label="On this page">
         <p>On this page</p>
         <ol>
@@ -67,15 +67,16 @@
 
     <section class="section compare-section" id="compare" aria-labelledby="compare-title">
       <h2 id="compare-title">Compare the results</h2>
-      <p>The same clip, enlarged 2x (672×384 to 1344×768) by each method, side by side. Choose a clip and a method for each side, then use <span class="ui">Still</span> for detail and <span class="ui">Video</span> for motion.</p>
+      <p>The same clip, enlarged 2x (672×384 to 1344×768) by each method, side by side. Choose a clip and a method for each side, then use <span class="ui">Still</span> for detail and <span class="ui">Video</span> for motion. In the face close-up, put SeedVR2 next to SeedVR2 video: per frame, the skin around the eye and the lashes are redrawn every frame and waver; drawn as video, they settle.</p>
       <noscript><p>This comparison needs JavaScript.</p></noscript>
       <div id="compare-panel" data-base="../assets/compare/" hidden>
         <div class="compare-choices">
           <label>Clip
             <select id="compare-clip">
-              <option value="person" data-note="Person: look at the skin, the eyelashes and the earring. Real-ESRGAN smooths the skin and loses freckles. SwiftVR and SeedVR2 sharpen eyelashes and freckles. Open-H3 changes the eye color even at Light; at Medium and Strong the freckles spread to the forehead, and at Strong the earring changes too.">Person (hair in the wind, a smile)</option>
-              <option value="anime" data-note="Anime: look at the outlines and the eyes. SwiftVR roughens the lines, and SeedVR2 adds lines around the eye. Open-H3 gives the cleanest lines, but at Medium and Strong the face and the mouth change.">Anime (a girl running)</option>
-              <option value="cat" data-note="Cat: look at the yarn and the whiskers. SwiftVR and SeedVR2 add strong whiskers and strands. Open-H3 redraws the yarn thread by thread. At Strong the cat's pose and markings change as well, making it a different scene.">Cat (yarn and fur)</option>
+              <option value="person" data-note="Person: look at the skin, the eyelashes and the earring. Real-ESRGAN smooths the skin and loses freckles. SwiftVR and SeedVR2 sharpen eyelashes and freckles. SeedVR2 video draws about the same detail as SeedVR2, with 17% less motion-compensated waver between frames (2.47 against 2.98). Open-H3 changes the eye color even at Light; at Medium and Strong the freckles spread to the forehead, and at Strong the earring changes too.">Person (hair in the wind, a smile)</option>
+              <option value="anime" data-note="Anime: look at the outlines and the eyes. SwiftVR roughens the lines, and SeedVR2 adds lines around the eye. SeedVR2 video adds the same kind of lines, and on anime its waver is the same as per-frame SeedVR2's. Open-H3 gives the cleanest lines, but at Medium and Strong the face and the mouth change.">Anime (a girl running)</option>
+              <option value="cat" data-note="Cat: look at the yarn and the whiskers. SwiftVR and SeedVR2 add strong whiskers and strands. SeedVR2 video adds the same strands. Its change between frames in the table is the same as SeedVR2's, but its motion-compensated waver is 13% lower (2.16 against 2.49). Open-H3 redraws the yarn thread by thread. At Strong the cat's pose and markings change as well, making it a different scene.">Cat (yarn and fur)</option>
+              <option value="face" data-note="Face close-up: look at the skin around the eye, the eyelashes and the teeth. Standard and Real-ESRGAN stay smooth; SwiftVR and SeedVR2 add skin texture and lashes. Per frame, SeedVR2 redraws the detail around the eye every frame and it wavers; SeedVR2 video settles it (motion-compensated frame-to-frame waver 1.73 against 2.09). Open-H3 adds lashes and changes the eye color even at Light; at Medium and Strong the skin texture goes smooth and the face changes a little.">Face close-up (wet hair, a smile)</option>
             </select>
           </label>
           <label>Left method
@@ -87,6 +88,7 @@
               <option value="swiftvr">SwiftVR</option>
               <option value="swiftvr-4x">SwiftVR, restore at 4x then shrink</option>
               <option value="seedvr2">SeedVR2</option>
+              <option value="seedvr2-video">SeedVR2 video</option>
               <option value="openh3-light">Open-H3 Light</option>
               <option value="openh3-medium">Open-H3 Medium</option>
               <option value="openh3-strong">Open-H3 Strong</option>
@@ -101,6 +103,7 @@
               <option value="swiftvr" selected>SwiftVR</option>
               <option value="swiftvr-4x">SwiftVR, restore at 4x then shrink</option>
               <option value="seedvr2">SeedVR2</option>
+              <option value="seedvr2-video">SeedVR2 video</option>
               <option value="openh3-light">Open-H3 Light</option>
               <option value="openh3-medium">Open-H3 Medium</option>
               <option value="openh3-strong">Open-H3 Strong</option>
@@ -134,6 +137,7 @@
             <tr><th scope="row">SwiftVR</th><td>18 s</td><td class="num">1.86</td></tr>
             <tr><th scope="row">SwiftVR, restore at 4x then shrink</th><td>about 1 min</td><td class="num">1.91</td></tr>
             <tr><th scope="row">SeedVR2</th><td>about 5 min</td><td class="num">2.79</td></tr>
+            <tr><th scope="row">SeedVR2 video</th><td>about 10 min</td><td class="num">2.82</td></tr>
             <tr><th scope="row">Open-H3 Light</th><td>about 6 min</td><td class="num">2.19</td></tr>
             <tr><th scope="row">Open-H3 Medium</th><td>about 6 min</td><td class="num">2.87</td></tr>
             <tr><th scope="row">Open-H3 Strong</th><td>about 7 min 30 s</td><td class="num">4.16</td></tr>
@@ -183,6 +187,7 @@
             <tr><th scope="row">Clean up detail without changing the size (Same size)</th><td>SwiftVR, restore at 4x then shrink (try it first)</td></tr>
             <tr><th scope="row">Put per-frame detail such as eyelashes and skin texture first</th><td>SeedVR2</td></tr>
             <tr><th scope="row">Redraw pattern and texture at the quality of H3's own generation</th><td>Open-H3 regeneration</td></tr>
+            <tr><th scope="row">Keep SeedVR2's detail, but stop hair and skin wavering from frame to frame</th><td>SeedVR2 video</td></tr>
           </tbody>
           <caption>What you want and the method to choose.</caption>
         </table>
@@ -205,6 +210,7 @@
             <tr><th scope="row">Standard, MetalFX</th><td class="num">1.1x to 8x</td><td>4096 pixels a side</td></tr>
             <tr><th scope="row">Real-ESRGAN (General, Anime)</th><td class="num">1x to 4x</td><td>4096 pixels a side</td></tr>
             <tr><th scope="row">SwiftVR (both methods), SeedVR2</th><td class="num">1x to 4x</td><td>4096 pixels a side, and what fits this Mac's GPU memory</td></tr>
+            <tr><th scope="row">SeedVR2 video</th><td class="num">1x to 4x</td><td>4096 pixels a side, and what fits this Mac's GPU memory (up to 1920×1088 with 24 GB; not available with 16 GB)</td></tr>
             <tr><th scope="row">Open-H3 regeneration</th><td class="num">1x to 4x</td><td>1344×768 pixels (H3's limit)</td></tr>
           </tbody>
           <caption>Scales and limits by method.</caption>
@@ -238,6 +244,9 @@
       <h3>SeedVR2 (AI super-resolution, detail first; very slow, experimental)</h3>
       <p>Redraws one frame at a time. Eyelashes, skin texture and fabric come out stronger than with SwiftVR, but the result can drift from the source, and a face's look may change. Moiré can appear in fur, and flicker can increase. Each frame takes seconds. It needs <a href="#setup">model setup</a> the first time.</p>
 
+      <h3>SeedVR2 video (less flicker; very slow, experimental)</h3>
+      <p>The same SeedVR2-3B redraws the video in windows of 17 frames instead of one frame at a time (since v0.7.11). Neighboring windows share 5 frames that are cross-faded, so there is no visible seam. The detail is drawn as SeedVR2 draws it, but hair, skin and fur waver less from frame to frame. In the comparison above, the motion-compensated frame-to-frame waver was 17% lower than per frame on the face close-up and the person and 13% lower on the cat, and on the face close-up lower than SwiftVR and Open-H3. On anime it is unchanged. In exchange the detail is slightly softer. It takes about twice as long as per-frame SeedVR2 and uses about 13 GB of GPU memory. A 24 GB Mac can go up to 1920×1088 (above 1344×768 the intermediate state is kept in 8 bits, and at 1920×1088 in 4 bits, which changes the output slightly; it is not available on 16 GB Macs). The weights are the per-frame SeedVR2's, so <a href="#setup">model setup</a> is done once.</p>
+
       <h3>Open-H3 regeneration (redrawn by H3, up to 1344×768; very slow, experimental)</h3>
       <p>Less an enlargement than H3 itself redrawing the video on a larger canvas. Where SeedVR2 draws one frame at a time, this redraws all frames together. How natural the motion looks varies by video, so compare before you choose. It reuses the prompt and seed of the generation, so there is nothing to type. You can choose the <a href="#strength">redraw strength</a>.</p>
       <p>Only some videos qualify:</p>
@@ -251,7 +260,7 @@
 
     <section class="section section-narrow" id="setup" aria-labelledby="setup-title">
       <h2 id="setup-title">Setting up the AI models</h2>
-      <p>The weights of SwiftVR, SeedVR2 and Open-H3 are not in the app, so each is set up once. Standard, MetalFX and Real-ESRGAN need no setup.</p>
+      <p>The weights of SwiftVR, SeedVR2 (shared by its video method) and Open-H3 are not in the app, so each is set up once. Standard, MetalFX and Real-ESRGAN need no setup.</p>
       <ol class="steps">
         <li><strong>Choose the method in the <span class="ui">Upscaler</span> menu.</strong> If it is not set up, an orange note and a <span class="ui">Set up model…</span> button appear below the description. <span class="ui">Enlarge</span> stays off until it is.</li>
         <li><strong>Press <span class="ui">Set up model…</span>.</strong> You can also open it from <span class="ui">Model Manager</span> → <span class="ui">Upscaling models</span>.</li>
@@ -306,12 +315,13 @@
             <tr><th scope="row">SwiftVR</th><td>5 s of 960×544 at 2x: about 40 seconds</td></tr>
             <tr><th scope="row">SwiftVR, restore at 4x then shrink</th><td>5 s of 544×960 at 2x: about 4 minutes</td></tr>
             <tr><th scope="row">SeedVR2</th><td>5 s of 672×384 at 2x: about 8 minutes (about 10 GB of GPU memory). 5 s of 960×544 at 2x: about 21 minutes (about 13 GB)</td></tr>
+            <tr><th scope="row">SeedVR2 video</th><td>5 s of 672×384 at 2x: about 17 minutes (about 13 GB). 5 s of 960×384 to 1920×768: about 26 minutes (about 15 GB). 5 s of 960×544 to 1920×1088: about 35 minutes (about 17 GB, the limit on a 24 GB Mac)</td></tr>
             <tr><th scope="row">Open-H3 regeneration</th><td>56 frames of 672×384 at 2x: about 4 to 5 minutes at Light, about 5.5 to 7 minutes at Strong. 5 s at 1344×768 takes about 12 minutes at Strong (memory as in generation, about 15 GB)</td></tr>
           </tbody>
           <caption>Approximate times on an M5 with 24 GB.</caption>
         </table>
       </div>
-      <p>For Open-H3, the sheet shows an estimate for this video and strength. SwiftVR, SeedVR2 and Open-H3 take the whole GPU, so they cannot run during generation, cache building or a video import. Enlarge once those finish.</p>
+      <p>For Open-H3, the sheet shows an estimate for this video and strength. SwiftVR, SeedVR2 (both methods) and Open-H3 take the whole GPU, so they cannot run during generation, cache building or a video import. Enlarge once those finish.</p>
     </section>
 
     <section class="section section-narrow" id="after" aria-labelledby="after-title">
@@ -339,7 +349,7 @@
             <tr><th scope="row">Open-H3 says the frame counts differ</th><td>This is a joined video. Regenerate each clip before joining</td></tr>
             <tr><th scope="row">A face or eyes changed</th><td>With Open-H3, go down to <span class="ui">Light</span>. With SeedVR2 or SwiftVR, try "SwiftVR, restore at 4x then shrink"</td></tr>
             <tr><th scope="row">A pattern appeared that was not in the source</th><td>Real-ESRGAN or SwiftVR added it. Change to "SwiftVR, restore at 4x then shrink" or Standard</td></tr>
-            <tr><th scope="row">Flicker increased</th><td>This can happen with SeedVR2 or SwiftVR. Try "SwiftVR, restore at 4x then shrink": in a same-size comparison it had less flicker than the source in five videos of six</td></tr>
+            <tr><th scope="row">Flicker increased</th><td>This can happen with SeedVR2 or SwiftVR. With SeedVR2, change to "SeedVR2 video"; with SwiftVR, try "SwiftVR, restore at 4x then shrink": in a same-size comparison it had less flicker than the source in five videos of six</td></tr>
             <tr><th scope="row">It takes too long</th><td>Press <span class="ui">Cancel</span>, then lower the scale or choose a faster method. A file already at the destination is not removed</td></tr>
           </tbody>
           <caption>Common problems and what to check.</caption>
