@@ -142,14 +142,17 @@ the user's judgement; the app records facts and labels nothing "commercial".
 
 ## SeedVR2 and mflux (the "SeedVR2" upscaler; no weights bundled)
 
-The "SeedVR2（AI超解像・細部重視）" upscaler is the engine's own C/Metal
-implementation (`h3_seedvr2.c`, `h3_shaders.metal`) of SeedVR2-3B, the
-one-step diffusion restoration model by ByteDance Seed
+The "SeedVR2（AI超解像・細部重視）" and "SeedVR2 動画（ちらつきを抑える）"
+upscalers are the engine's own C/Metal implementation (`h3_seedvr2.c`,
+`h3_seedvr2_vae.c`, `h3_seedvr2_video.c`, `h3_shaders.metal`) of
+SeedVR2-3B, the one-step diffusion restoration model by ByteDance Seed
 ([ByteDance-Seed/SeedVR](https://github.com/ByteDance-Seed/SeedVR), Apache
 License 2.0; the NaDiT transformer with windowed attention and the causal
-3D autoencoder, run one frame at a time), written against the MLX
-implementation in [filipstrand/mflux](https://github.com/filipstrand/mflux)
-(MIT) and checked stage by stage against it. No code from those projects
+3D autoencoder, run one frame at a time or on windows of 4n+1 frames),
+written against the MLX implementation in
+[filipstrand/mflux](https://github.com/filipstrand/mflux) (MIT) for the
+single-frame path and against the official PyTorch code for the temporal
+path, and checked stage by stage against them. No code from those projects
 ships in the app.
 
 The model weights are **not bundled**. The app fetches

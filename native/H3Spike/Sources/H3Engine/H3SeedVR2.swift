@@ -161,6 +161,26 @@ public final class H3SeedVR2Restorer: @unchecked Sendable {
         }
     }
 
+    /// The same for the video path: whether a window of `windowFrames`
+    /// (4n+1) frames at these sizes fits this Mac, by the engine's measured
+    /// memory model (h3_seedvr2_video_output_fits), without loading the model.
+    public static func videoSizeCheck(modelDirectory: String, windowFrames: Int) -> (@Sendable (Int, Int, Int, Int) -> Bool)? {
+        var info = h3_seedvr2_info()
+        var error = [CChar](repeating: 0, count: 512)
+        let ok = modelDirectory.withCString { dir in
+            error.withUnsafeMutableBufferPointer { buffer in
+                h3_seedvr2_inspect_dir(dir, &info, buffer.baseAddress, buffer.count)
+            }
+        }
+        guard ok != 0 else { return nil }
+        let inspected = info
+        return { inputWidth, inputHeight, outputWidth, outputHeight in
+            var info = inspected
+            return h3_seedvr2_video_output_fits(&info, Int32(inputWidth), Int32(inputHeight),
+                                                Int32(outputWidth), Int32(outputHeight), Int32(windowFrames)) != 0
+        }
+    }
+
     /// Loads the model onto the GPU (about 7 GB resident; a few seconds).
     /// `colorTransfer` matches each frame's colours to its input with the
     /// reference's wavelet + L*a*b* transfer; `seed` fixes the noise (the

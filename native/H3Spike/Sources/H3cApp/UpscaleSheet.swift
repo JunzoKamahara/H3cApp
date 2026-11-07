@@ -191,7 +191,7 @@ struct UpscaleSheet: View {
                     }
                 }
             }
-            if upscaler == .seedVR2 {
+            if upscaler.isSeedVR2 {
                 HStack {
                     Button(modelReady ? "モデルを管理…" : "モデルを準備…") { showingSeedVR2Setup = true }
                         .controlSize(.small)

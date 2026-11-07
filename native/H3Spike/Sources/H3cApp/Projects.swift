@@ -164,6 +164,11 @@ struct ProjectVideoRecord: Codable {
     var upscaleFactor: Double? = nil
     /// Open-H3 再生成's strength (OpenH3Strength).
     var upscaleStrength: String? = nil
+    /// SeedVR2 動画's windows (SeedVR2VideoWindow): frames per window, frames
+    /// shared with the next, whether they cross-fade.
+    var upscaleWindowFrames: Int? = nil
+    var upscaleOverlapFrames: Int? = nil
+    var upscaleBlend: Bool? = nil
 }
 
 struct OpenProject: Equatable {
@@ -1313,6 +1318,9 @@ extension ResolvedResult {
             upscaler: record.upscaler.flatMap(VideoUpscaler.init(rawValue:)),
             upscaleFactor: record.upscaleFactor.flatMap(UpscaleFactor.init(rawValue:)),
             upscaleStrength: record.upscaleStrength.flatMap(OpenH3Strength.init(rawValue:)),
+            upscaleWindow: record.upscaleWindowFrames.map {
+                SeedVR2VideoWindow(windowFrames: $0, overlapFrames: record.upscaleOverlapFrames ?? 0, blend: record.upscaleBlend ?? false)
+            },
             plannedClipCount: record.chainPlannedClips,
             chainClipFrames: (draft.chained ?? false) ? (draft.chainClipFrames ?? defaultChainClipLength.frames) : nil,
             clipPrompts: (draft.chained ?? false) ? draft.clipPrompts : nil,

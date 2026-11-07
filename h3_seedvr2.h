@@ -34,6 +34,8 @@ typedef struct {
     int quant_bits, quant_group;
     uint64_t file_bytes;        /* the three safetensors */
     uint64_t resident_bytes;    /* BF16 transformer + F32 VAE on the GPU */
+    uint64_t block_bytes;       /* of those, the transformer's blocks (BF16), which a
+                                   video window frees around its VAE phases */
     int tensor_ops;             /* this Mac has tensor hardware (NAX linears) */
 } h3_seedvr2_info;
 
@@ -118,6 +120,11 @@ typedef struct {
 } h3_seedvr2_video_requirements;
 int h3_seedvr2_video_check_requirements(const h3_seedvr2 *model, int in_w, int in_h, int out_w, int out_h,
                                         int window_frames, h3_seedvr2_video_requirements *out);
+/* Whether h3_seedvr2_video_check_requirements would take this size and
+ * window, from what h3_seedvr2_inspect_dir read (no weights loaded; the
+ * app's sheet asks before loading anything). */
+int h3_seedvr2_video_output_fits(const h3_seedvr2_info *info, int in_w, int in_h, int out_w, int out_h,
+                                 int window_frames);
 int h3_seedvr2_restore_clip(h3_seedvr2 *model, const h3_vsr_image *in, int frames, int out_w, int out_h,
                             h3_vsr_image_out *out, const h3_seedvr2_clip_params *params,
                             h3_progress_callback on_progress, void *opaque,

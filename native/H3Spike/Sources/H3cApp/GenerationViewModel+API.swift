@@ -272,7 +272,7 @@ extension GenerationViewModel {
                         ["id": strength.rawValue, "label": strength.label, "sigmas": strength.sigmas.map { (Double($0) * 1e6).rounded() / 1e6 }]
                     }
                 }
-                if upscaler == .seedVR2 {
+                if upscaler.isSeedVR2 {
                     item["model_directory"] = SeedVR2Model.directory
                     item["model_installed"] = SeedVR2Model.weightsPresent
                     item["license_accepted"] = SeedVR2Model.licenseAcceptedAt != nil
@@ -283,6 +283,13 @@ extension GenerationViewModel {
                     item["verified_at"] = SeedVR2Model.verified
                         ? SeedVR2Model.provenance.map { ISO8601DateFormatter().string(from: $0.verifiedAt) } as Any
                         : NSNull()
+                }
+                if upscaler == .seedVR2Video {
+                    // How it cuts the video (appendix A.10's choice; fixed).
+                    let window = SeedVR2VideoWindow.chosen
+                    item["window_frames"] = window.windowFrames
+                    item["overlap_frames"] = window.overlapFrames
+                    item["blend"] = window.blend ? "hann" : "cut"
                 }
                 return item
             })

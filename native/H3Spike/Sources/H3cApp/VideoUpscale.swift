@@ -40,6 +40,12 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
     /// most detailed enlargement and by far the slowest (UPSCALE_PLAN
     /// appendix A.7). Experimental.
     case seedVR2
+    /// The same model on windows of frames through its temporal path (the
+    /// causal video VAE and 3D window attention, h3_seedvr2_video.c): the
+    /// per-frame detail with less flicker, at about 2.5x the time and
+    /// 24 GB Macs' limit of memory (UPSCALE_PLAN appendix A.10, which chose
+    /// SeedVR2VideoWindow.standard). Experimental.
+    case seedVR2Video
     /// H3 itself regenerating the clip on a larger canvas from its latent:
     /// LBH's latent upscaler, then two denoising steps with NVIDIA's
     /// Open-H3 refiner LoRA and LightX2V Turbo v1.2 (OpenH3Regenerate.swift,
@@ -58,6 +64,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         case .swiftVR: return String(localized: "SwiftVR（AI動画超解像）")
         case .swiftVRFourX: return String(localized: "SwiftVR 4倍で生成してから縮小（質感が穏やか）")
         case .seedVR2: return String(localized: "SeedVR2（AI超解像・細部重視、非常に遅い・試験的）")
+        case .seedVR2Video: return String(localized: "SeedVR2 動画（ちらつきを抑える・非常に遅い・試験的）")
         case .openH3: return String(localized: "Open-H3 再生成（H3で描き直し・最大1344×768、非常に遅い・試験的）")
         }
     }
@@ -96,15 +103,18 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return Bundle.main.url(forResource: "realesr-general-x4v3", withExtension: "safetensors", subdirectory: "Upscalers")
         case .realESRGANAnime:
             return Bundle.main.url(forResource: "realesr-animevideov3", withExtension: "safetensors", subdirectory: "Upscalers")
-        case .swiftVR, .swiftVRFourX, .seedVR2, .openH3: return nil
+        case .swiftVR, .swiftVRFourX, .seedVR2, .seedVR2Video, .openH3: return nil
         }
     }
 
     /// Whether it is SwiftVR in either form (the same model and setup).
     var isSwiftVR: Bool { self == .swiftVR || self == .swiftVRFourX }
 
+    /// Whether it is SeedVR2 in either form (the same model and setup).
+    var isSeedVR2: Bool { self == .seedVR2 || self == .seedVR2Video }
+
     /// Whether it needs a model the user downloads (a モデルを準備 button).
-    var needsDownloadedModel: Bool { isSwiftVR || self == .seedVR2 || self == .openH3 }
+    var needsDownloadedModel: Bool { isSwiftVR || isSeedVR2 || self == .openH3 }
 
     /// Whether it regenerates with H3 itself (a project clip's latent, not
     /// the frames): only project videos, and sizes of its own.
@@ -125,6 +135,8 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return String(localized: "動画全体を一度に見るAIモデル（SwiftVR、Wan2.2ベース）で、質感や細部を描き起こしながら拡大します。24フレームずつ処理し、Real-ESRGANより大幅に時間がかかります（M5で5秒の動画に1分前後）。重みは同梱せず、配布元でApache License 2.0と宣言されていた版をダウンロードし（SHA-256で照合）、アプリで変換して使います。")
         case .seedVR2:
             return String(localized: "SeedVR2-3B（ByteDance Seed、Apache License 2.0）で1フレームずつ描き起こします。まつ毛や肌のきめなど細部の表現はSwiftVRより強く、そのぶん元の映像から離れることがあります（顔の印象が変わることも）。1フレームに数秒かかり、5秒の動画をM5で672×384から2倍にすると約8分（960×544からは約21分）、GPUに約10GBを使います。重みは同梱せず、配布元の記録と照合してダウンロードします。試験的な方式です。")
+        case .seedVR2Video:
+            return String(localized: "SeedVR2-3Bに、17フレームの窓で動画として描き起こさせます（時間方向のVAEと3Dウィンドウ注意）。細部の描き方は1フレームずつのSeedVR2と同じで、髪・肌・毛皮のちらつきが減ります（窓の継ぎ目は5フレームの重なりをクロスフェード。比較では、フレーム間の揺れが1枚ずつより35〜45%小さくなり、速い動きやアニメでは差が小さく、細部はわずかに柔らかくなりました）。時間は1枚ずつの約2.5倍で、5秒の動画をM5で672×384から2倍にすると約22分、GPUに約16GBを使います（24GBのMacでは1344×768まで。16GBのMacでは使えません）。重みは1枚ずつのSeedVR2と同じです。試験的な方式です。")
         case .openH3:
             return String(localized: "H3自身に描き直させます。生成したときの潜在をOpen-H3の潜在アップスケーラで大きな格子に広げ、選んだ強さまでノイズを戻して、NVIDIAのOpen-H3精緻化LoRAとLightX2V Turbo v1.2で2〜3ステップだけ生成し直します。模様や質感がH3の生成そのものの質で描かれ、生成時の設定（文章・seed）を引き継ぎます。大きさはH3の上限（1344×768ピクセル）まで、このアプリで生成した動画（潜在ファイルのあるもの）だけに使えます。1344×768・5秒でM5で約12分、生成と同じメモリ（約15GB）を使います。重みは同梱せず、配布元の記録と照合してダウンロードし、精緻化LoRAはこのMacで取り出します。試験的な方式です。")
         case .swiftVRFourX:
@@ -150,7 +162,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
             return weightsURL != nil && MTLCreateSystemDefaultDevice() != nil
         case .swiftVR, .swiftVRFourX:
             return Self.swiftVRCachePath != nil && MTLCreateSystemDefaultDevice() != nil
-        case .seedVR2:
+        case .seedVR2, .seedVR2Video:
             return SeedVR2Model.weightsPresent && MTLCreateSystemDefaultDevice() != nil
         case .openH3:
             return OpenH3Model.ready && MTLCreateSystemDefaultDevice() != nil
@@ -169,7 +181,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
                 return String(localized: "SwiftVRの重みはありますが、このMac用に変換されていません。「モデルを準備…」で変換すると選べます。")
             }
             return String(localized: "SwiftVRのモデルが入っていません。「モデルを準備…」で重み（約20GB）をダウンロードして変換すると選べます。")
-        case .seedVR2:
+        case .seedVR2, .seedVR2Video:
             return String(localized: "SeedVR2のモデルが入っていません。「モデルを準備…」で重み（約4.7GB）をダウンロードすると選べます。")
         case .openH3:
             if OpenH3Model.upsamplerPresent && OpenH3Model.refinerPresent {
@@ -182,7 +194,7 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
     }
 
     /// Whether it wants the GPU to itself (so it waits for a generation).
-    var needsIdleGPU: Bool { isSwiftVR || self == .seedVR2 || self == .openH3 }
+    var needsIdleGPU: Bool { isSwiftVR || isSeedVR2 || self == .openH3 }
 
     /// The smallest factor it takes: 等倍 for the ones that redraw the
     /// frames, while a resizer at that size would change nothing.
@@ -216,9 +228,53 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         case .seedVR2:
             guard SeedVR2Model.weightsPresent else { return nil }
             return H3SeedVR2Restorer.sizeCheck(modelDirectory: Self.seedVR2ModelDirectory)
+        case .seedVR2Video:
+            guard SeedVR2Model.weightsPresent else { return nil }
+            return H3SeedVR2Restorer.videoSizeCheck(modelDirectory: Self.seedVR2ModelDirectory,
+                                                    windowFrames: SeedVR2VideoWindow.chosen.windowFrames)
         default:
             return nil
         }
+    }
+}
+
+/// How SeedVR2 動画 cuts a video into windows: `windowFrames` (4n+1) per
+/// window, `overlapFrames` of them shared with the next, and whether the
+/// shared frames cross-fade (Hann) or switch over. Recorded with the video.
+struct SeedVR2VideoWindow: Hashable, Codable {
+    var windowFrames: Int
+    var overlapFrames: Int
+    var blend: Bool
+
+    /// What the app runs: the configuration appendix A.10 chose (17 frames,
+    /// 5 shared and cross-faded: a switch-over left a visible step at every
+    /// window, 5-frame windows were worse than per frame, 29 frames don't
+    /// fit 24 GB at 1344x768).
+    static let standard = SeedVR2VideoWindow(windowFrames: 17, overlapFrames: 5, blend: true)
+
+    /// `standard`, unless the developer environment variables
+    /// H3_SV2_VIDEO_WINDOW / H3_SV2_VIDEO_OVERLAP / H3_SV2_VIDEO_BLEND (0/1)
+    /// name another valid one (for comparisons; not a user setting).
+    static var chosen: SeedVR2VideoWindow {
+        let env = ProcessInfo.processInfo.environment
+        guard env["H3_SV2_VIDEO_WINDOW"] != nil || env["H3_SV2_VIDEO_OVERLAP"] != nil || env["H3_SV2_VIDEO_BLEND"] != nil else {
+            return standard
+        }
+        let other = SeedVR2VideoWindow(windowFrames: env["H3_SV2_VIDEO_WINDOW"].flatMap(Int.init) ?? standard.windowFrames,
+                                       overlapFrames: env["H3_SV2_VIDEO_OVERLAP"].flatMap(Int.init) ?? standard.overlapFrames,
+                                       blend: env["H3_SV2_VIDEO_BLEND"].map { $0 != "0" } ?? standard.blend)
+        return other.engineSettings.isValid ? other : standard
+    }
+
+    /// The engine's form, with the per-frame path's seed.
+    var engineSettings: H3SeedVR2VideoSettings {
+        H3SeedVR2VideoSettings(windowFrames: windowFrames, overlapFrames: overlapFrames, blend: blend, seed: 42)
+    }
+
+    /// "17枚（重なり5、クロスフェード）", for the record.
+    var label: String {
+        blend ? String(localized: "\(windowFrames)枚（重なり\(overlapFrames)、クロスフェード）")
+            : String(localized: "\(windowFrames)枚（重なり\(overlapFrames)、切り替え）")
     }
 }
 
@@ -453,7 +509,7 @@ private final class VSRChunkScaler: ChunkedFrameScaler {
 
 /// SeedVR2 on windows of frames through the engine's temporal path (the
 /// same contract as SwiftVR's chunks): a window takes a minute or more, so
-/// 中止 is read at every phase step. Not offered in the UI yet (phase 6).
+/// 中止 is read at every phase step.
 private final class SeedVR2ChunkScaler: ChunkedFrameScaler {
     let session: H3SeedVR2Restorer.VideoSession
     let isCancelled: () -> Bool
@@ -707,6 +763,30 @@ enum VideoUpscale {
             do {
                 scaler = SeedVR2FrameScaler(session: try restorer.openSession(inputWidth: inputWidth, inputHeight: inputHeight,
                                                                               outputWidth: width, outputHeight: height),
+                                            isCancelled: isCancelled)
+            } catch {
+                throw UpscaleError.cannotWrite(error.localizedDescription)
+            }
+        case .seedVR2Video:
+            guard SeedVR2Model.weightsPresent else { throw UpscaleError.unavailable(upscaler.label) }
+            let restorer: H3SeedVR2Restorer
+            do {
+                restorer = try H3SeedVR2Restorer(modelDirectory: VideoUpscaler.seedVR2ModelDirectory)
+            } catch {
+                throw UpscaleError.cannotWrite(error.localizedDescription)
+            }
+            let window = SeedVR2VideoWindow.chosen
+            let requirements = restorer.videoRequirements(inputWidth: inputWidth, inputHeight: inputHeight,
+                                                          outputWidth: width, outputHeight: height,
+                                                          windowFrames: window.windowFrames)
+            guard requirements.supported else { throw UpscaleError.cannotWrite(requirements.reason) }
+            do {
+                // The length is left unknown (0): the frame count from the
+                // duration can be off by one, and the session moves its
+                // last window back onto the final frame on `isLast` anyway.
+                scaler = SeedVR2ChunkScaler(session: try restorer.openVideoSession(inputWidth: inputWidth, inputHeight: inputHeight,
+                                                                                   outputWidth: width, outputHeight: height,
+                                                                                   totalFrames: 0, settings: window.engineSettings),
                                             isCancelled: isCancelled)
             } catch {
                 throw UpscaleError.cannotWrite(error.localizedDescription)
@@ -1288,6 +1368,10 @@ extension GenerationViewModel {
                 record.upscaledFrom = video.url.lastPathComponent
                 record.upscaler = upscaler.rawValue
                 record.upscaleStrength = upscaler.regeneratesFromLatent ? strength.rawValue : nil
+                let window = upscaler == .seedVR2Video ? SeedVR2VideoWindow.chosen : nil
+                record.upscaleWindowFrames = window?.windowFrames
+                record.upscaleOverlapFrames = window?.overlapFrames
+                record.upscaleBlend = window?.blend
                 let size = try await VideoUpscale.frameSize(of: destination)
                 record.upscaledSize = [size.width, size.height]
                 // Joins only other enlarged copies: the one it continues.
@@ -1383,6 +1467,9 @@ extension GenerationViewModel {
                 record.upscaledFrom = source.lastPathComponent
                 record.upscaler = upscaler.rawValue
                 record.upscaleStrength = strength.rawValue
+                record.upscaleWindowFrames = nil
+                record.upscaleOverlapFrames = nil
+                record.upscaleBlend = nil
                 record.upscaledSize = [size.width, size.height]
                 GenerationMetadata.tag(destination, record: record)
             } else {

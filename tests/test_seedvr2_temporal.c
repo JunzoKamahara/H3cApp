@@ -146,7 +146,22 @@ static void test_memory_model(void) {
     CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 5, 0, 0) > sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 5, 0, 1) + 6000000000ull);
     /* 17 frames at 1344x768 fit a 24 GB Mac (working set about 17.8 GiB = 19.1 GB, the engine keeps 90 %) */
     CHECK(sv2_video_peak_bytes(R, DIT, 1, 1344, 768, 17, 4, 1) < 17160000000ull);
-    printf("ok: video memory model (%zu measured points)\n", sizeof(pts) / sizeof(*pts));
+    /* the model-less check (the app's sheet) follows the same model: a
+     * window of 4n+1, no larger than the budget takes, monotone in frames
+     * and size, and a small output on any Mac the tests run on */
+    h3_seedvr2_info info = {0};
+    info.resident_bytes = R; info.block_bytes = DIT; info.tensor_ops = 1;
+    CHECK(!h3_seedvr2_video_output_fits(&info, 672, 384, 1344, 768, 4));
+    CHECK(!h3_seedvr2_video_output_fits(&info, 672, 384, 1344, 768, 0));
+    CHECK(!h3_seedvr2_video_output_fits(&info, 672, 384, 1344, 768, 125));
+    CHECK(h3_seedvr2_video_output_fits(&info, 128, 128, 256, 256, 17));
+    int fits5 = h3_seedvr2_video_output_fits(&info, 672, 384, 1344, 768, 5);
+    int fits17 = h3_seedvr2_video_output_fits(&info, 672, 384, 1344, 768, 17);
+    int fits29 = h3_seedvr2_video_output_fits(&info, 672, 384, 1344, 768, 29);
+    int large17 = h3_seedvr2_video_output_fits(&info, 960, 544, 1920, 1088, 17);
+    CHECK(fits5 >= fits17 && fits17 >= fits29 && fits17 >= large17);
+    printf("ok: video memory model (%zu measured points), model-less check 1344x768 x5 %d x17 %d x29 %d, 1920x1088 x17 %d\n",
+           sizeof(pts) / sizeof(*pts), fits5, fits17, fits29, large17);
 }
 
 /* The window session on a dry run (no model): every frame count comes out

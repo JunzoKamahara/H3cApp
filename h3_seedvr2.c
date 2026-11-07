@@ -560,6 +560,7 @@ int h3_seedvr2_inspect_dir(const char *model_dir, h3_seedvr2_info *info,
         vae_params += n;
     }
     info->resident_bytes = (mm + shared + other) * 2 + vae_params * 4;
+    info->block_bytes = (mm + shared) * 2;
     files_close(&f);
     h3_device_info device;
     char probe[256];

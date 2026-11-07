@@ -106,14 +106,28 @@ int h3_seedvr2_video_check_requirements(const h3_seedvr2 *m, int in_w, int in_h,
                  (double)need / 1e9, window_frames, out_w, out_h, (double)budget / 0.9 / 1e9);
         return 1;
     }
-    /* measured on an M5 (the table above): grid 5.3 s/frame at 1344x768 (T=5),
-     * 2.6 s/frame at 960x544 (T=17); F32 5.8 s/frame at 960x544 (T=5) on the
-     * same GPU, and other Apple GPUs are slower still */
+    /* per frame the window processes (overlaps count), measured on an M5
+     * (UPSCALE_PLAN appendix A.10, windows 5-17 alike): grid 8.4 s at
+     * 1344x768, 3.7 s at 544x960, 1.3-1.7 s at 672x384; the F32 path took
+     * 2.2x the grid's time in the phase-3 runs, and other Apple GPUs are
+     * slower still */
     double mp = (double)full_w * full_h / 1e6;
-    double per_frame = m->nax_vae ? 5.0 : 11.0;
-    out->estimated_seconds_per_frame = mp * per_frame * (window_frames <= 5 ? 1.0 : 0.8);
+    double per_frame = m->nax_vae ? 8.0 : 18.0;
+    out->estimated_seconds_per_frame = mp * per_frame;
     out->supported = 1;
     return 1;
+}
+
+int h3_seedvr2_video_output_fits(const h3_seedvr2_info *info, int in_w, int in_h, int out_w, int out_h,
+                                 int window_frames) {
+    if (!info || in_w < 16 || in_h < 16 || out_w < 64 || out_h < 64 || out_w > 4096 || out_h > 4096) return 0;
+    if (window_frames < 1 || window_frames % 4 != 1 || window_frames > 121) return 0;
+    int full_w = round_up(out_w, SV2_PIXEL_MULTIPLE), full_h = round_up(out_h, SV2_PIXEL_MULTIPLE);
+    int nax_vae = info->tensor_ops && !getenv("H3_SV2_VAE_F32");
+    uint64_t whole = video_peak_bytes(info->resident_bytes, info->block_bytes, nax_vae, full_w, full_h, window_frames, 0, 1);
+    uint64_t sliced = video_peak_bytes(info->resident_bytes, info->block_bytes, nax_vae, full_w, full_h, window_frames, 4, 1);
+    uint64_t budget = video_budget();
+    return !budget || whole <= budget || sliced <= budget;
 }
 
 int h3_seedvr2_restore_clip(h3_seedvr2 *m, const h3_vsr_image *in, int frames, int out_w, int out_h,
