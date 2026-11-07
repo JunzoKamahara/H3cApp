@@ -1096,3 +1096,17 @@ Numbers: on the fixtures sliced = whole is rel 0.0018-0.0032 (0 in BF16), the re
 **A 17-frame window at 1920×1088 now runs on 24 GB**: 17 frames in 204 s (12.0 s/frame), peak live 15.35 GiB, footprint 18.1 GB (the encode phase 13.6 GiB).
 Quality (int4 decoder against the BF16 state): fixtures' sliced = whole rel 0.015 (int8 0.003), PSNR 42.7 dB or better at 1344×768, adjacent-frame difference 3.07 -> 3.23. A.10 metrics: skin-face warp 2.235 -> 2.349 (+5 %), campus 2.534 -> 2.676 (+5.6 %), face crops +3-6 %, flicker +2-5 %, PSNR -0.1 dB, MANIQA -0.5 to -1 %; about 90 % of the gain over per-frame (4.15 / 3.99) remains. Never used at 1344×768 and below (BF16 fits).
 Memory model: the int4 decode coefficient 7.4 GB/MP (measured 16.48 GB / 2.09 MP), encode the int8 7.0. Strings, guide and API docs now say "up to 1920×1088 on 24 GB; above 1344×768 an 8-bit state, at 1920×1088 a 4-bit one". Room left: groups of 32, or int4 in block 3 only (not enough memory for 1920×1088).
+
+**A face close-up compared (2026-11-07, AI似顔絵生成中動画 20261101-173649_seed1, 672×384 -> 1344×768, 56 frames).** The same clip enlarged 2x by SwiftVR, Real-ESRGAN and Open-H3 regeneration (the app's outputs of 2026-11-01), SeedVR2 per-frame and SeedVR2 video (window 17 + overlap 5; today's app outputs), with the A.10 metrics against a bicubic 2x of the source (flow from the source; there is no ground truth, so PSNR/LPIPS mean closeness to the source; the face crop is the 448×448 eyes-to-mouth region). Today's per-frame output is bit-identical to the one of 2026-11-01 (the still-image path is unchanged).
+
+| method | warp | face warp | PSNR (vs source) | LPIPS | MANIQA | face MANIQA |
+|---|---:|---:|---:|---:|---:|---:|
+| source (bicubic) | 1.18 | — | — | — | 0.370 | — |
+| SwiftVR | 1.82 | 2.77 | 34.4 | 0.114 | 0.473 | 0.558 |
+| Real-ESRGAN | 1.17 | 1.58 | 37.6 | 0.067 | 0.412 | 0.399 |
+| Open-H3 regeneration | 1.91 | 3.00 | 23.7 | 0.179 | 0.443 | 0.498 |
+| SeedVR2 per-frame | 2.09 | 3.26 | 36.1 | 0.131 | 0.487 | **0.647** |
+| **SeedVR2 video** | **1.73** | **2.69** | 34.5 | 0.128 | 0.452 | 0.549 |
+
+Visually (`seedvr2-temporal-eval/set-v2/face-wet/sheet-*-app.png`, `face-crop-slow-app.mp4`): SeedVR2 video gives smooth, natural skin, eyes and lashes a little softer than per-frame, teeth and lips as in the source. Per-frame has the sharpest pores and lashes (best face MANIQA) and the most frame-to-frame waver. SwiftVR draws edges and lashes as crisp strokes and is second in temporal stability. Open-H3 has the most photographic skin and eye highlights but changes the eye colour, the lip and tooth shapes and the brightness (PSNR 23.7) and wavers more than SeedVR2 video. Real-ESRGAN keeps the source's softness (adds no texture). In short: for a face kept as it is with less flicker and some texture, SeedVR2 video; for the sharpest detail, per-frame or SwiftVR; for a photographic look at the price of a different picture, Open-H3.
+Caveat: the CLI's PNG path (frames expanded by ffmpeg) and the app's mp4 path (AVFoundation) treat the source's colours differently, so the same engine's outputs differ by about 5/255 in brightness between them; compare app outputs with app outputs and CLI outputs with CLI outputs (all of phase 5 in A.10 is the CLI path).
