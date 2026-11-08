@@ -18,7 +18,7 @@ FRAMEWORKS := -framework Foundation -framework Metal \
 LDLIBS := $(FRAMEWORKS) -licucore -lm $(MINOS_FLAG)
 
 LIB_C := h3.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c \
-	h3_dit_schedule.c h3_dit.c h3_lora.c
+	h3_dit_schedule.c h3_dit.c h3_lora.c h3_hyperflow.c
 
 LIB_C += h3_video_vae.c h3_video_encoder.c h3_audio_vae.c \
 	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c h3_adaln_curve.c \
@@ -159,6 +159,12 @@ h3_seedvr2_tests: tests/test_seedvr2.o $(LIB_OBJ)
 h3_seedvr2_temporal_tests: tests/test_seedvr2_temporal.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# HyperFlow H3 Flash (h3_hyperflow.h): grids and (t, r) rows; with
+# H3_HYPERFLOW_DIR also the inspector and the two-time AdaLN schedule
+# against a CPU reference (skips without it unless H3_HYPERFLOW_STRICT=1).
+h3_hyperflow_tests: tests/test_hyperflow.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 # The LoRA rank extraction (h3_lora_extract.c) on a synthetic file.
 h3_lora_extract_tests: tests/test_lora_extract.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
@@ -272,9 +278,10 @@ test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_
 	h3_real_audio_encoder_test h3_real_video_encoder_test \
 	h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests h3_real_refmod_test \
 	h3_real_qwen_vision_test h3_real_multimodal_text_test \
-	h3_real_ref_video_text_test
+	h3_real_ref_video_text_test h3_hyperflow_tests
 
 	./h3_tests
+	./h3_hyperflow_tests
 	./h3_sdpa_tests
 	H3_NAX=0 ./h3_sdpa_tests
 	./h3_seedvr2_tests
@@ -404,7 +411,7 @@ tests/%.o: tests/%.c
 
 clean:
 	rm -f h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests h3_real_refmod_test
-	rm -f h3_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_extract_tests h3_seedvr2_cli h3_metal_tests h3_bf16_tests h3_renoise_tests h3_tokenizer_tests \
+	rm -f h3_tests h3_hyperflow_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_extract_tests h3_seedvr2_cli h3_metal_tests h3_bf16_tests h3_renoise_tests h3_tokenizer_tests \
 		h3_text_tests h3_real_prompt_test h3_real_dit_block_test \
 		h3_audio_gpu_tests h3_determinism_tests h3_repro_check \
 		h3_real_audio_vae_test h3_real_audio_encoder_test \

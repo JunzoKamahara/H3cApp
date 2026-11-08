@@ -43,6 +43,38 @@ h3_dit_schedule *h3_dit_schedule_precompute_curve(
     int audio_condition,
     h3_dit_schedule_progress progress, void *progress_opaque,
     char *error, size_t error_size);
+/* HyperFlow H3 Flash's two-time AdaLN (h3_hyperflow.h): every row is a
+ * (t, r) pair - the step's time t = 1 - sigma_i and its endpoint
+ * r = 1 - sigma_{i+1}, condition rows r = t - embedded as
+ * silu(E_t(t) + gate * (E_r(r) - E_t(t))) and projected by each present
+ * block's [96768, time_dim] AdaLN weights (block_count of them; the rest
+ * stay NULL like pruned blocks) and the final layer's. */
+h3_dit_schedule *h3_dit_schedule_precompute_two_time(
+    const h3_weight_store *weights, h3_gpu *gpu,
+    const h3_sigma_schedule *sigmas, int visual_condition,
+    int audio_condition, float gate, uint32_t time_dim,
+    unsigned block_count,
+    h3_dit_schedule_progress progress, void *progress_opaque,
+    char *error, size_t error_size);
+
+typedef struct {
+    float t;
+    float r;
+} h3_dit_time_pair;
+
+/* The rows of a two-time schedule, one per distinct (t, r) pair, in order
+ * of first use: per step the video pair, then the audio pair; then the
+ * condition pairs (visual t = r = max(video t, 0.999), audio t = r = 1).
+ * Fills pairs (capacity >= 2 * steps + 2) and the per-step row indices
+ * (visual/audio condition arrays only when those conditions are present,
+ * else they may be NULL). Returns the row count, 0 on invalid arguments. */
+uint32_t h3_dit_two_time_rows(const h3_sigma_schedule *sigmas,
+                              int visual_condition, int audio_condition,
+                              h3_dit_time_pair *pairs, uint32_t capacity,
+                              uint32_t *video_rows, uint32_t *audio_rows,
+                              uint32_t *visual_condition_rows,
+                              uint32_t *audio_condition_rows);
+
 void h3_dit_schedule_free(h3_dit_schedule *schedule);
 
 /* Diagnostic: moves a random `fraction` of the schedule's BF16 values one

@@ -539,6 +539,12 @@ typedef struct {
     char main_type[16];   /* format of most of the weight bytes, e.g. Q8_0 */
     char architecture[32];/* general.architecture, if any */
     char name[96];        /* general.name, if any */
+    /* DiT: HyperFlow H3 Flash (h3_hyperflow.h) - the two-time embedder,
+     * its block count (renumbered after pruning) and how many blocks have
+     * factored (down/up) linears. 0 for an ordinary H3 DiT. */
+    int hyperflow;
+    int dit_blocks;
+    int factored_blocks;
 } h3_gguf_info;
 
 int h3_gguf_inspect(const char *path, h3_gguf_info *info,

@@ -5,6 +5,7 @@
 #include "h3_av_reader.h"
 #include "h3_av_writer.h"
 #include "h3_dit.h"
+#include "h3_hyperflow.h"
 #include "h3_lora.h"
 #include "h3_memory.h"
 #include "h3_metal.h"
@@ -2210,6 +2211,46 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         h3_set_error(ctx, "out of memory resolving generation model paths");
         goto cleanup;
     }
+    /* HyperFlow H3 Flash (a GGUF transformer) brings its own 4/6/8-step
+     * sampler and supports none of the H3 speed-ups that change blocks or
+     * steps; refuse those before any work. */
+    int hyperflow = 0;
+    char hyperflow_detail[512] = {0};
+    if (h3_dir_has_gguf(ctx->model_dir, ref2va ? "Ref2VA/transformer"
+                                               : "FL2VA/transformer")) {
+        h3_weight_store *store = h3_weight_store_open(dit_path, hyperflow_detail,
+                                                      sizeof(hyperflow_detail));
+        h3_hyperflow_info hyperflow_info;
+        int inspected = store && h3_hyperflow_inspect(
+            store, &hyperflow_info, hyperflow_detail, sizeof(hyperflow_detail));
+        h3_weight_store_free(store);
+        if (!inspected) {
+            h3_set_error(ctx, "%s", hyperflow_detail);
+            goto cleanup;
+        }
+        hyperflow = hyperflow_info.two_time;
+    }
+    if (hyperflow) {
+        const char *problem =
+            params->steps != 4 && params->steps != 6 && params->steps != 8 ?
+                "it samples in 4, 6 or 8 steps" :
+            params->lora_count ? "LoRA adapters do not apply to it" :
+            params->sampler != H3_SAMPLER_EULER ?
+                "it uses its own Euler sampler (no re-noise)" :
+            params->denoise_reuse != 1 || params->core_reuse != 1 ||
+            params->token_reduction ||
+            params->dit_layers != H3_DEFAULT_DIT_LAYERS ?
+                "speed settings that skip blocks or evaluations do not "
+                "apply to it" :
+            params->video_sigmas ? "it has its own sigma schedule" :
+            params->audio_sigma_shift > 0.0f &&
+                params->audio_sigma_shift != (float)H3_AUDIO_SIGMA_SHIFT ?
+                "its audio shift is fixed at 3" : NULL;
+        if (problem) {
+            h3_set_error(ctx, "HyperFlow H3 Flash checkpoint: %s", problem);
+            goto cleanup;
+        }
+    }
     char plan_error[512];
     if (!h3_continuation_plan(params, latent_h, latent_w, temporal,
                               &continuation, plan_error, sizeof(plan_error)) ||
@@ -2959,11 +3000,14 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                 planned_text_tokens, planned_dit_tokens, text.tokens,
                 layout.seq_len);
     h3_sigma_schedule sigmas;
-    if (!h3_serving_schedule_build_shifted(
+    if (hyperflow ? !h3_hyperflow_schedule_build(params->steps, &sigmas) :
+        !h3_serving_schedule_build_shifted(
             params->steps, h3_audio_sigma_shift(params), &sigmas)) {
         h3_set_error(ctx, "cannot construct the requested sigma schedule");
         goto cleanup;
     }
+    if (hyperflow)
+        fprintf(stderr, "h3: HyperFlow %d-step schedule\n", params->steps);
     if (params->video_sigmas) {
         for (int step = 0; step <= sigmas.steps; step++)
             sigmas.video[step] = params->video_sigmas[step];

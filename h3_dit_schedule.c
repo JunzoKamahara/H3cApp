@@ -391,6 +391,13 @@ failed:
     return NULL;
 }
 
+static h3_gpu_tensor *project_rows(h3_gpu *gpu, const char *prefix,
+                                   h3_gpu_tensor *weight, h3_gpu_tensor *bias,
+                                   const h3_gpu_tensor *coordinates,
+                                   uint32_t rows, uint32_t rank,
+                                   uint32_t outputs, const float *delta,
+                                   char *error, size_t error_size);
+
 /* One curve-form projection: coordinates [rows, rank] times the projected
  * weight [outputs, rank]^T plus bias, in F32, then rounded to the BF16 the
  * dense path produces. */
@@ -405,6 +412,19 @@ static h3_gpu_tensor *curve_projection(const h3_adaln_curve *curve,
         curve, gpu, prefix, outputs, error, error_size);
     h3_gpu_tensor *bias = weight ? h3_adaln_curve_load_bias(
         curve, gpu, prefix, outputs, error, error_size) : NULL;
+    return project_rows(gpu, prefix, weight, bias, coordinates, rows, rank,
+                        outputs, delta, error, error_size);
+}
+
+/* coordinates [rows, rank] times weight [outputs, rank]^T (plus a LoRA
+ * delta when given) plus bias, in F32, rounded to BF16. Takes ownership of
+ * weight and bias (either may be NULL after a failed load). */
+static h3_gpu_tensor *project_rows(h3_gpu *gpu, const char *prefix,
+                                   h3_gpu_tensor *weight, h3_gpu_tensor *bias,
+                                   const h3_gpu_tensor *coordinates,
+                                   uint32_t rows, uint32_t rank,
+                                   uint32_t outputs, const float *delta,
+                                   char *error, size_t error_size) {
     h3_gpu_tensor *wide = h3_gpu_tensor_new_f32(gpu, (size_t)rows * outputs);
     h3_gpu_tensor *result = h3_gpu_tensor_new_bf16(gpu, (size_t)rows * outputs);
     /* A LoRA curve branch: weight += delta before the projection. */
@@ -516,6 +536,260 @@ failed:
     free(times);
     free(coordinates);
     h3_gpu_tensor_free(coordinate_tensor);
+    h3_dit_schedule_free(schedule);
+    return NULL;
+}
+
+static uint32_t find_or_add_pair(h3_dit_time_pair *pairs, uint32_t *count,
+                                 uint32_t capacity, float t, float r) {
+    for (uint32_t row = 0; row < *count; row++)
+        if (pairs[row].t == t && pairs[row].r == r) return row;
+    if (*count >= capacity) return UINT32_MAX;
+    pairs[*count] = (h3_dit_time_pair){t, r};
+    return (*count)++;
+}
+
+uint32_t h3_dit_two_time_rows(const h3_sigma_schedule *sigmas,
+                              int visual_condition, int audio_condition,
+                              h3_dit_time_pair *pairs, uint32_t capacity,
+                              uint32_t *video_rows, uint32_t *audio_rows,
+                              uint32_t *visual_condition_rows,
+                              uint32_t *audio_condition_rows) {
+    if (!sigmas || sigmas->steps < 1 || sigmas->steps > H3_MAX_STEPS ||
+        !pairs || !video_rows || !audio_rows ||
+        (visual_condition && !visual_condition_rows) ||
+        (audio_condition && !audio_condition_rows))
+        return 0;
+    uint32_t count = 0;
+    for (int step = 0; step < sigmas->steps; step++) {
+        float video_t = 1.0f - sigmas->video[step];
+        float video_r = 1.0f - sigmas->video[step + 1];
+        float audio_t = 1.0f - sigmas->audio[step];
+        float audio_r = 1.0f - sigmas->audio[step + 1];
+        video_rows[step] = find_or_add_pair(pairs, &count, capacity,
+                                            video_t, video_r);
+        audio_rows[step] = find_or_add_pair(pairs, &count, capacity,
+                                            audio_t, audio_r);
+        if (video_rows[step] == UINT32_MAX || audio_rows[step] == UINT32_MAX)
+            return 0;
+    }
+    for (int step = 0; step < sigmas->steps; step++) {
+        if (visual_condition) {
+            float video_t = 1.0f - sigmas->video[step];
+            float t = video_t > 0.999f ? video_t : 0.999f;
+            visual_condition_rows[step] = find_or_add_pair(
+                pairs, &count, capacity, t, t);
+            if (visual_condition_rows[step] == UINT32_MAX) return 0;
+        }
+        if (audio_condition) {
+            audio_condition_rows[step] = find_or_add_pair(
+                pairs, &count, capacity, 1.0f, 1.0f);
+            if (audio_condition_rows[step] == UINT32_MAX) return 0;
+        }
+    }
+    return count;
+}
+
+/* One time embedder (prefix.proj_in -> SiLU -> prefix.proj_out, all F32)
+ * applied to features [rows, TIME_INPUT]; output [rows, time_dim]. */
+static int embed_time_f32(const h3_weight_store *weights, h3_gpu *gpu,
+                          const char *prefix, const h3_gpu_tensor *features,
+                          uint32_t rows, uint32_t time_dim,
+                          h3_gpu_tensor *output, char *error,
+                          size_t error_size) {
+    char name[96];
+    snprintf(name, sizeof(name), "%s.proj_in.weight", prefix);
+    h3_gpu_tensor *in_w = weight_f32_2d(weights, gpu, name, TIME_HIDDEN,
+                                        TIME_INPUT, error, error_size);
+    snprintf(name, sizeof(name), "%s.proj_in.bias", prefix);
+    h3_gpu_tensor *in_b = in_w ? weight_f32_1d(weights, gpu, name,
+                                               TIME_HIDDEN, error,
+                                               error_size) : NULL;
+    snprintf(name, sizeof(name), "%s.proj_out.weight", prefix);
+    h3_gpu_tensor *out_w = in_b ? weight_f32_2d(weights, gpu, name, time_dim,
+                                                TIME_HIDDEN, error,
+                                                error_size) : NULL;
+    snprintf(name, sizeof(name), "%s.proj_out.bias", prefix);
+    h3_gpu_tensor *out_b = out_w ? weight_f32_1d(weights, gpu, name,
+                                                 time_dim, error,
+                                                 error_size) : NULL;
+    h3_gpu_tensor *hidden = h3_gpu_tensor_new_f32(
+        gpu, (size_t)rows * TIME_HIDDEN);
+    h3_gpu_tensor *activated = h3_gpu_tensor_new_f32(
+        gpu, (size_t)rows * TIME_HIDDEN);
+    int ok = 0;
+    if (!in_w || !in_b || !out_w || !out_b || !hidden || !activated) {
+        if (!error || !*error)
+            fail(error, error_size, "cannot allocate %s tensors: %s", prefix,
+                 h3_gpu_error(gpu));
+    } else {
+        ok = gpu_op(gpu, h3_gpu_begin(gpu), error, error_size, prefix) &&
+            gpu_op(gpu, h3_gpu_linear_f32(gpu, hidden, features, in_w, in_b,
+                                          rows, TIME_INPUT, TIME_HIDDEN),
+                   error, error_size, prefix) &&
+            gpu_op(gpu, h3_gpu_silu_f32(gpu, activated, hidden,
+                                        rows * TIME_HIDDEN),
+                   error, error_size, prefix) &&
+            gpu_op(gpu, h3_gpu_linear_f32(gpu, output, activated, out_w,
+                                          out_b, rows, TIME_HIDDEN, time_dim),
+                   error, error_size, prefix) &&
+            gpu_op(gpu, h3_gpu_submit(gpu), error, error_size, prefix);
+    }
+    free_tensor(&in_w);
+    free_tensor(&in_b);
+    free_tensor(&out_w);
+    free_tensor(&out_b);
+    free_tensor(&hidden);
+    free_tensor(&activated);
+    return ok;
+}
+
+h3_dit_schedule *h3_dit_schedule_precompute_two_time(
+    const h3_weight_store *weights, h3_gpu *gpu,
+    const h3_sigma_schedule *sigmas, int visual_condition,
+    int audio_condition, float gate, uint32_t time_dim,
+    unsigned block_count,
+    h3_dit_schedule_progress progress, void *progress_opaque,
+    char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (!weights || !gpu || !sigmas || sigmas->steps < 1 ||
+        sigmas->steps > H3_MAX_STEPS || !isfinite(gate) || !time_dim ||
+        time_dim > TIME_HIDDEN || !block_count ||
+        block_count > H3_DIT_BLOCKS) {
+        fail(error, error_size, "invalid two-time AdaLN schedule arguments");
+        return NULL;
+    }
+    h3_dit_schedule *schedule = calloc(1, sizeof(*schedule));
+    if (!schedule) {
+        fail(error, error_size, "out of memory creating AdaLN schedule");
+        return NULL;
+    }
+    schedule->gpu = gpu;
+    schedule->steps = sigmas->steps;
+    uint32_t capacity = 2u * (uint32_t)sigmas->steps + 2u;
+    h3_dit_time_pair *pairs = calloc(capacity, sizeof(*pairs));
+    float *times = calloc(capacity, sizeof(*times));
+    float *ends = calloc(capacity, sizeof(*ends));
+    float *t_features = NULL, *r_features = NULL;
+    h3_gpu_tensor *t_input = NULL, *r_input = NULL, *t_embed = NULL,
+                  *r_embed = NULL, *mixed = NULL, *coordinates = NULL;
+    schedule->video_rows = calloc((size_t)sigmas->steps,
+                                  sizeof(*schedule->video_rows));
+    schedule->audio_rows = calloc((size_t)sigmas->steps,
+                                  sizeof(*schedule->audio_rows));
+    if (visual_condition)
+        schedule->visual_condition_rows = calloc(
+            (size_t)sigmas->steps, sizeof(*schedule->visual_condition_rows));
+    if (audio_condition)
+        schedule->audio_condition_rows = calloc(
+            (size_t)sigmas->steps, sizeof(*schedule->audio_condition_rows));
+    if (!pairs || !times || !ends || !schedule->video_rows ||
+        !schedule->audio_rows ||
+        (visual_condition && !schedule->visual_condition_rows) ||
+        (audio_condition && !schedule->audio_condition_rows)) {
+        fail(error, error_size, "out of memory allocating timestep rows");
+        goto failed;
+    }
+    schedule->time_rows = h3_dit_two_time_rows(
+        sigmas, visual_condition, audio_condition, pairs, capacity,
+        schedule->video_rows, schedule->audio_rows,
+        schedule->visual_condition_rows, schedule->audio_condition_rows);
+    if (!schedule->time_rows) {
+        fail(error, error_size, "invalid two-time timestep rows");
+        goto failed;
+    }
+    uint32_t rows = schedule->time_rows;
+    for (uint32_t row = 0; row < rows; row++) {
+        times[row] = pairs[row].t;
+        ends[row] = pairs[row].r;
+    }
+    t_features = time_features(times, rows, error, error_size);
+    r_features = t_features ? time_features(ends, rows, error, error_size)
+                            : NULL;
+    if (!t_features || !r_features) goto failed;
+    t_input = h3_gpu_tensor_from_f32(gpu, t_features, (size_t)rows * TIME_INPUT);
+    r_input = h3_gpu_tensor_from_f32(gpu, r_features, (size_t)rows * TIME_INPUT);
+    t_embed = h3_gpu_tensor_new_f32(gpu, (size_t)rows * time_dim);
+    r_embed = h3_gpu_tensor_new_f32(gpu, (size_t)rows * time_dim);
+    mixed = h3_gpu_tensor_new_f32(gpu, (size_t)rows * time_dim);
+    coordinates = h3_gpu_tensor_new_f32(gpu, (size_t)rows * time_dim);
+    if (!t_input || !r_input || !t_embed || !r_embed || !mixed ||
+        !coordinates) {
+        fail(error, error_size, "cannot allocate two-time embeddings: %s",
+             h3_gpu_error(gpu));
+        goto failed;
+    }
+    if (!embed_time_f32(weights, gpu, "time_embedder", t_input, rows,
+                        time_dim, t_embed, error, error_size) ||
+        !embed_time_f32(weights, gpu, "endpoint_time_embedder", r_input, rows,
+                        time_dim, r_embed, error, error_size))
+        goto failed;
+    /* temb = E_t + gate (E_r - E_t), then the SiLU the AdaLN projection
+     * applies to its input (as the dense H3 path does). */
+    if (!gpu_op(gpu, h3_gpu_begin(gpu), error, error_size,
+                "begin two-time mix") ||
+        !gpu_op(gpu, h3_gpu_add_scaled_f32(gpu, mixed, t_embed, r_embed,
+                                           1.0f - gate, gate, rows * time_dim),
+                error, error_size, "two-time mix") ||
+        !gpu_op(gpu, h3_gpu_silu_f32(gpu, coordinates, mixed,
+                                     rows * time_dim),
+                error, error_size, "two-time SiLU") ||
+        !gpu_op(gpu, h3_gpu_submit(gpu), error, error_size,
+                "submit two-time mix"))
+        goto failed;
+    for (unsigned block = 0; block < block_count; block++) {
+        char prefix[96], name[128];
+        snprintf(prefix, sizeof(prefix), "blocks.%u.adaln_proj.linear", block);
+        snprintf(name, sizeof(name), "%s.weight", prefix);
+        h3_gpu_tensor *weight = weight_f32_2d(weights, gpu, name, BLOCK_OUTPUT,
+                                              time_dim, error, error_size);
+        snprintf(name, sizeof(name), "%s.bias", prefix);
+        h3_gpu_tensor *bias = weight ? weight_f32_1d(
+            weights, gpu, name, BLOCK_OUTPUT, error, error_size) : NULL;
+        schedule->blocks[block] = project_rows(
+            gpu, prefix, weight, bias, coordinates, rows, time_dim,
+            BLOCK_OUTPUT, NULL, error, error_size);
+        if (!schedule->blocks[block]) goto failed;
+        if (progress) progress((int)block + 1, (int)block_count,
+                               progress_opaque);
+    }
+    {
+        const char *prefix = "final_layer.adaln_proj.linear";
+        h3_gpu_tensor *weight = weight_f32_2d(
+            weights, gpu, "final_layer.adaln_proj.linear.weight", FINAL_OUTPUT,
+            time_dim, error, error_size);
+        h3_gpu_tensor *bias = weight ? weight_f32_1d(
+            weights, gpu, "final_layer.adaln_proj.linear.bias", FINAL_OUTPUT,
+            error, error_size) : NULL;
+        schedule->final = project_rows(gpu, prefix, weight, bias, coordinates,
+                                       rows, time_dim, FINAL_OUTPUT, NULL,
+                                       error, error_size);
+        if (!schedule->final) goto failed;
+    }
+    free(pairs);
+    free(times);
+    free(ends);
+    free(t_features);
+    free(r_features);
+    free_tensor(&t_input);
+    free_tensor(&r_input);
+    free_tensor(&t_embed);
+    free_tensor(&r_embed);
+    free_tensor(&mixed);
+    free_tensor(&coordinates);
+    return schedule;
+failed:
+    free(pairs);
+    free(times);
+    free(ends);
+    free(t_features);
+    free(r_features);
+    free_tensor(&t_input);
+    free_tensor(&r_input);
+    free_tensor(&t_embed);
+    free_tensor(&r_embed);
+    free_tensor(&mixed);
+    free_tensor(&coordinates);
     h3_dit_schedule_free(schedule);
     return NULL;
 }
@@ -646,7 +920,10 @@ h3_dit_schedule_host *h3_dit_schedule_export(const h3_dit_schedule *schedule) {
              (!schedule->visual_condition_rows || host->visual_condition_rows) &&
              (!schedule->audio_condition_rows || host->audio_condition_rows);
     size_t block_count = (size_t)schedule->time_rows * BLOCK_OUTPUT;
+    /* Block 0 always exists; a NULL block after it is one a two-time
+     * checkpoint does not have (pruned blocks are pruned after export). */
     for (unsigned block = 0; ok && block < H3_DIT_BLOCKS; block++) {
+        if (block && !schedule->blocks[block]) continue;
         host->blocks[block] = malloc(block_count * sizeof(uint16_t));
         ok = schedule->blocks[block] && host->blocks[block] &&
              h3_gpu_tensor_read_bf16(schedule->blocks[block],
@@ -692,6 +969,7 @@ h3_dit_schedule *h3_dit_schedule_import(const h3_dit_schedule_host *host,
              (!host->audio_condition_rows || schedule->audio_condition_rows);
     size_t block_count = (size_t)host->time_rows * BLOCK_OUTPUT;
     for (unsigned block = 0; ok && block < H3_DIT_BLOCKS; block++) {
+        if (block && !host->blocks[block]) continue;
         schedule->blocks[block] =
             h3_gpu_tensor_from_bf16(gpu, host->blocks[block], block_count);
         ok = schedule->blocks[block] != NULL;
@@ -713,7 +991,10 @@ h3_dit_schedule *h3_dit_schedule_import(const h3_dit_schedule_host *host,
 size_t h3_dit_schedule_host_bytes(const h3_dit_schedule_host *host) {
     if (!host) return 0;
     size_t rows = (size_t)host->time_rows;
-    size_t bytes = (rows * BLOCK_OUTPUT * H3_DIT_BLOCKS + rows * FINAL_OUTPUT) *
+    size_t present = 0;
+    for (unsigned block = 0; block < H3_DIT_BLOCKS; block++)
+        present += host->blocks[block] != NULL;
+    size_t bytes = (rows * BLOCK_OUTPUT * present + rows * FINAL_OUTPUT) *
                    sizeof(uint16_t);
     size_t maps = 2 + (host->visual_condition_rows != NULL) +
                   (host->audio_condition_rows != NULL);

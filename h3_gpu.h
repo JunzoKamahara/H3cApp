@@ -884,6 +884,26 @@ int h3_gpu_sdpa_bf16_head_major_output(
 int h3_gpu_swiglu_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                        const h3_gpu_tensor *fused, uint32_t rows,
                        uint32_t width);
+/* output = silu(gate) * up, element-wise over count values (output may be
+ * up). HyperFlow's factored FC1 makes the two SwiGLU halves separately. */
+int h3_gpu_swiglu_split_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *gate,
+                             const h3_gpu_tensor *up, uint32_t count);
+/* The Q/K per-head RMS norm + RoPE of h3_gpu_grouped_qkv_rope_bf16 for Q
+ * and K that are already separate token-major [sequence, heads * head_dim]
+ * buffers (HyperFlow's factored attention); writes query and key only.
+ * head_dim must be 128 and heads a multiple of 4. */
+int h3_gpu_qk_rope_split_bf16(h3_gpu *gpu, h3_gpu_tensor *query,
+                              h3_gpu_tensor *key,
+                              const h3_gpu_tensor *q_input,
+                              const h3_gpu_tensor *k_input,
+                              const h3_gpu_tensor *q_norm,
+                              const h3_gpu_tensor *k_norm,
+                              const h3_gpu_tensor *rope_cos,
+                              const h3_gpu_tensor *rope_sin,
+                              uint32_t sequence, uint32_t heads,
+                              uint32_t head_dim, uint32_t rope_half,
+                              float epsilon);
 int h3_gpu_embedding_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                           const h3_gpu_tensor *weight,
                           const h3_gpu_tensor *token_ids, uint32_t tokens,

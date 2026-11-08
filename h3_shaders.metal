@@ -4254,6 +4254,117 @@ kernel void h3_qkv_rope_bf16_coop(
     }
 }
 
+/* HyperFlow factored attention (h3_hyperflow.h): Q and K come from their
+ * own up-projections as token-major [sequence, heads * head_dim] buffers
+ * (the layout the query/key outputs already have), so this is
+ * h3_qkv_rope_bf16_coop's per-head RMS norm + RoPE with separate inputs and
+ * the value left alone (its up-projection writes the value directly). */
+kernel void h3_qk_rope_split_bf16_coop(
+                             device const ushort *q_input [[buffer(0)]],
+                             device const ushort *q_weight [[buffer(1)]],
+                             device const ushort *k_weight [[buffer(2)]],
+                             device const ushort *rope_cos [[buffer(3)]],
+                             device const ushort *rope_sin [[buffer(4)]],
+                             device ushort *query [[buffer(5)]],
+                             device ushort *key [[buffer(6)]],
+                             device const ushort *k_input [[buffer(7)]],
+                             constant qkv_args &args [[buffer(8)]],
+                             uint2 group [[threadgroup_position_in_grid]],
+                             uint lane [[thread_index_in_simdgroup]],
+                             uint simdgroup [[simdgroup_index_in_threadgroup]]) {
+    constexpr uint WIDTH = 128;
+    constexpr uint HEADS_PER_GROUP = 4;
+    uint head = group.x * HEADS_PER_GROUP + simdgroup;
+    uint row = group.y;
+    if (head >= args.heads || row >= args.sequence) return;
+    uint inner = args.heads * args.head_dim;
+    uint q_base = row * inner + head * args.head_dim;
+    uint k_base = q_base;
+
+    threadgroup ushort q_values[HEADS_PER_GROUP * WIDTH];
+    threadgroup ushort k_values[HEADS_PER_GROUP * WIDTH];
+    uint cache_base = simdgroup * WIDTH;
+    for (uint dimension = lane; dimension < WIDTH; dimension += 32) {
+        q_values[cache_base + dimension] = q_input[q_base + dimension];
+        k_values[cache_base + dimension] = k_input[k_base + dimension];
+    }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+
+    threadgroup float q_inverse[HEADS_PER_GROUP];
+    threadgroup float k_inverse[HEADS_PER_GROUP];
+    if (lane == 0) {
+        float q_sum = 0.0f;
+        float k_sum = 0.0f;
+        for (uint dimension = 0; dimension < WIDTH; dimension++) {
+            float q_element =
+                h3_bf16_to_f32(q_values[cache_base + dimension]);
+            float k_element =
+                h3_bf16_to_f32(k_values[cache_base + dimension]);
+            q_sum = fma(q_element, q_element, q_sum);
+            k_sum = fma(k_element, k_element, k_sum);
+        }
+        q_inverse[simdgroup] =
+            rsqrt(q_sum / float(args.head_dim) + args.epsilon);
+        k_inverse[simdgroup] =
+            rsqrt(k_sum / float(args.head_dim) + args.epsilon);
+    }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint dimension = lane; dimension < WIDTH; dimension += 32) {
+        float q0 = h3_bf16_to_f32(q_values[cache_base + dimension]) *
+                   q_inverse[simdgroup] *
+                   h3_bf16_to_f32(q_weight[dimension]);
+        float k0 = h3_bf16_to_f32(k_values[cache_base + dimension]) *
+                   k_inverse[simdgroup] *
+                   h3_bf16_to_f32(k_weight[dimension]);
+        if (dimension < args.rope_half) {
+            uint pair = dimension + args.rope_half;
+            float q1 = h3_bf16_to_f32(q_values[cache_base + pair]) *
+                       q_inverse[simdgroup] *
+                       h3_bf16_to_f32(q_weight[pair]);
+            float k1 = h3_bf16_to_f32(k_values[cache_base + pair]) *
+                       k_inverse[simdgroup] *
+                       h3_bf16_to_f32(k_weight[pair]);
+            float c = h3_bf16_to_f32(
+                rope_cos[row * args.rope_half + dimension]);
+            float s = h3_bf16_to_f32(
+                rope_sin[row * args.rope_half + dimension]);
+            q0 = q0 * c - q1 * s;
+            k0 = k0 * c - k1 * s;
+        } else if (dimension < args.rope_half * 2) {
+            uint pair = dimension - args.rope_half;
+            float q1 = h3_bf16_to_f32(q_values[cache_base + pair]) *
+                       q_inverse[simdgroup] *
+                       h3_bf16_to_f32(q_weight[pair]);
+            float k1 = h3_bf16_to_f32(k_values[cache_base + pair]) *
+                       k_inverse[simdgroup] *
+                       h3_bf16_to_f32(k_weight[pair]);
+            float c = h3_bf16_to_f32(
+                rope_cos[row * args.rope_half + pair]);
+            float s = h3_bf16_to_f32(
+                rope_sin[row * args.rope_half + pair]);
+            q0 = q0 * c + q1 * s;
+            k0 = k0 * c + k1 * s;
+        }
+        uint output_index =
+            (row * args.heads + head) * args.head_dim + dimension;
+        query[output_index] = h3_f32_to_bf16(q0);
+        key[output_index] = h3_f32_to_bf16(k0);
+    }
+}
+
+/* SwiGLU from separate gate and up buffers (HyperFlow's factored FC1
+ * writes the two halves on their own); output may be up itself. */
+kernel void h3_swiglu_split_bf16(device const ushort *gate [[buffer(0)]],
+                                 device const ushort *up [[buffer(1)]],
+                                 device ushort *output [[buffer(2)]],
+                                 constant uint &count [[buffer(3)]],
+                                 uint gid [[thread_position_in_grid]]) {
+    if (gid >= count) return;
+    float g = h3_bf16_to_f32(gate[gid]);
+    float u = h3_bf16_to_f32(up[gid]);
+    output[gid] = h3_f32_to_bf16(g / (1.0f + exp(-g)) * u);
+}
+
 kernel void h3_swiglu_bf16(device const ushort *fused [[buffer(0)]],
                            device ushort *output [[buffer(1)]],
                            constant swiglu_args &args [[buffer(2)]],

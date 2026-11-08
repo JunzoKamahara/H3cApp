@@ -2,6 +2,7 @@
 
 #include "h3_adaln_curve.h"
 #include "h3_dit_schedule.h"
+#include "h3_hyperflow.h"
 #include "h3_lora.h"
 #include "h3_quant.h"
 #include "h3_weights.h"
@@ -52,6 +53,27 @@ typedef struct {
     h3_gpu_tensor *fc1_scales;
     h3_gpu_tensor *fc2_int8;
     h3_gpu_tensor *fc2_scales;
+    /* HyperFlow factored linears (h3_hyperflow.h), y = up(down(x)); NULL
+     * where a linear is dense. FC1's up-projection is kept as its SwiGLU
+     * gate and up halves, and a dense FC1 next to a factored FC2 is split
+     * the same way (fc1_gate/fc1_value), so the unfused MLP never needs a
+     * [sequence, 2 * FFN] buffer. */
+    h3_gpu_tensor *q_down;
+    h3_gpu_tensor *q_up;
+    h3_gpu_tensor *k_down;
+    h3_gpu_tensor *k_up;
+    h3_gpu_tensor *v_down;
+    h3_gpu_tensor *v_up;
+    h3_gpu_tensor *out_down;
+    h3_gpu_tensor *out_up;
+    h3_gpu_tensor *fc1_down;
+    h3_gpu_tensor *fc1_gate_up;
+    h3_gpu_tensor *fc1_value_up;
+    h3_gpu_tensor *fc1_gate;
+    h3_gpu_tensor *fc1_value;
+    h3_gpu_tensor *fc2_down;
+    h3_gpu_tensor *fc2_up;
+    uint32_t rank[H3_HF_LINEARS];
 } h3_dit_block;
 
 enum {
@@ -296,6 +318,14 @@ struct h3_dit {
     h3_gpu_tensor *previous_audio_velocity;
     h3_gpu_tensor *previous_video_velocity;
     h3_gpu_tensor *forced_audio_velocity; /* F32 rows, GPU sampler only */
+    /* HyperFlow H3 Flash (h3_hyperflow.h): set when the checkpoint has the
+     * two-time embedder. Blocks at and after hyperflow_info.block_count do
+     * not exist and stay inactive. lowrank_tmp holds a factored linear's
+     * [rows, rank] middle (and a copy of the MLP input for a dense FC1 in a
+     * factored MLP): [sequence, max(max rank, HIDDEN)]. */
+    int hyperflow;
+    h3_hyperflow_info hyperflow_info;
+    h3_gpu_tensor *lowrank_tmp;
 };
 
 static void fail(char *error, size_t error_size, const char *format, ...) {
@@ -762,6 +792,109 @@ static void free_block(h3_dit_block *block) {
     free_tensor(&block->fc1_scales);
     free_tensor(&block->fc2_int8);
     free_tensor(&block->fc2_scales);
+    free_tensor(&block->q_down);
+    free_tensor(&block->q_up);
+    free_tensor(&block->k_down);
+    free_tensor(&block->k_up);
+    free_tensor(&block->v_down);
+    free_tensor(&block->v_up);
+    free_tensor(&block->out_down);
+    free_tensor(&block->out_up);
+    free_tensor(&block->fc1_down);
+    free_tensor(&block->fc1_gate_up);
+    free_tensor(&block->fc1_value_up);
+    free_tensor(&block->fc1_gate);
+    free_tensor(&block->fc1_value);
+    free_tensor(&block->fc2_down);
+    free_tensor(&block->fc2_up);
+}
+
+/* Splits a BF16 [2 * half_rows, columns] tensor into its two row halves
+ * (FC1's SwiGLU gate rows first, then its up rows). */
+static int split_rows_bf16(h3_dit *dit, h3_gpu_tensor *source,
+                           uint64_t half_rows, uint64_t columns,
+                           h3_gpu_tensor **first, h3_gpu_tensor **second,
+                           const char *name, char *error,
+                           size_t error_size) {
+    size_t half = (size_t)half_rows * columns;
+    *first = h3_gpu_tensor_new_bf16(dit->gpu, half);
+    *second = h3_gpu_tensor_new_bf16(dit->gpu, half);
+    if (!*first || !*second ||
+        !h3_gpu_begin(dit->gpu) ||
+        !h3_gpu_copy_bf16(dit->gpu, *first, 0, source, 0, half) ||
+        !h3_gpu_copy_bf16(dit->gpu, *second, 0, source, half, half) ||
+        !h3_gpu_submit(dit->gpu)) {
+        fail(error, error_size, "cannot split %s: %s", name,
+             h3_gpu_error(dit->gpu));
+        free_tensor(first);
+        free_tensor(second);
+        return 0;
+    }
+    return 1;
+}
+
+/* A HyperFlow block (h3_hyperflow.h): the norms, then each linear dense or
+ * as its down/up factors. No LoRA (load_dit refuses it for HyperFlow). */
+static int load_hyperflow_block(h3_dit *dit, unsigned index,
+                                char *error, size_t error_size) {
+    h3_dit_block *block = &dit->blocks[index];
+    const uint32_t *rank = dit->hyperflow_info.rank[index];
+    char prefix[64], name[160];
+    snprintf(prefix, sizeof(prefix), "blocks.%u.", index);
+    if (!load_block_norms(dit, block, prefix, error, error_size)) return 0;
+    memcpy(block->rank, rank, sizeof(block->rank));
+#define LOAD(field, suffix, rows, columns) do {                                \
+    snprintf(name, sizeof(name), "%s%s", prefix, suffix);                    \
+    block->field = bf2(dit, name, rows, columns, error, error_size);           \
+    if (!block->field) return 0;                                                \
+} while (0)
+    if (rank[H3_HF_Q]) {
+        LOAD(q_down, "attn.q_proj.down.weight", rank[H3_HF_Q], HIDDEN);
+        LOAD(q_up, "attn.q_proj.up.weight", INNER, rank[H3_HF_Q]);
+        LOAD(k_down, "attn.k_proj.down.weight", rank[H3_HF_K], HIDDEN);
+        LOAD(k_up, "attn.k_proj.up.weight", INNER, rank[H3_HF_K]);
+        LOAD(v_down, "attn.v_proj.down.weight", rank[H3_HF_V], HIDDEN);
+        LOAD(v_up, "attn.v_proj.up.weight", INNER, rank[H3_HF_V]);
+    } else {
+        LOAD(qkv, "attn.qkv_proj.weight", INNER * 3, HIDDEN);
+    }
+    if (rank[H3_HF_OUT]) {
+        LOAD(out_down, "attn.out_proj.down.weight", rank[H3_HF_OUT], INNER);
+        LOAD(out_up, "attn.out_proj.up.weight", HIDDEN, rank[H3_HF_OUT]);
+    } else {
+        LOAD(out, "attn.out_proj.weight", HIDDEN, INNER);
+    }
+    int factored_mlp = rank[H3_HF_FC1] || rank[H3_HF_FC2];
+    h3_gpu_tensor *whole = NULL;
+    if (rank[H3_HF_FC1]) {
+        LOAD(fc1_down, "mlp.fc1.down.weight", rank[H3_HF_FC1], HIDDEN);
+        snprintf(name, sizeof(name), "%smlp.fc1.up.weight", prefix);
+        whole = bf2(dit, name, FFN * 2, rank[H3_HF_FC1], error, error_size);
+        int ok = whole && split_rows_bf16(dit, whole, FFN, rank[H3_HF_FC1],
+                                          &block->fc1_gate_up,
+                                          &block->fc1_value_up, name,
+                                          error, error_size);
+        free_tensor(&whole);
+        if (!ok) return 0;
+    } else if (factored_mlp) {
+        snprintf(name, sizeof(name), "%smlp.fc1.weight", prefix);
+        whole = bf2(dit, name, FFN * 2, HIDDEN, error, error_size);
+        int ok = whole && split_rows_bf16(dit, whole, FFN, HIDDEN,
+                                          &block->fc1_gate, &block->fc1_value,
+                                          name, error, error_size);
+        free_tensor(&whole);
+        if (!ok) return 0;
+    } else {
+        LOAD(fc1, "mlp.fc1.weight", FFN * 2, HIDDEN);
+    }
+    if (rank[H3_HF_FC2]) {
+        LOAD(fc2_down, "mlp.fc2.down.weight", rank[H3_HF_FC2], FFN);
+        LOAD(fc2_up, "mlp.fc2.up.weight", HIDDEN, rank[H3_HF_FC2]);
+    } else {
+        LOAD(fc2, "mlp.fc2.weight", HIDDEN, FFN);
+    }
+#undef LOAD
+    return 1;
 }
 
 static double stream_now(void) {
@@ -1742,7 +1875,7 @@ static unsigned next_active_block(const h3_dit *dit, unsigned current) {
 
 static void configure_gate_ranked_blocks(h3_dit *dit) {
     const char *policy = getenv("H3_DIT_LAYER_POLICY");
-    if ((policy && !strcmp(policy, "uniform")) ||
+    if ((policy && !strcmp(policy, "uniform")) || dit->hyperflow ||
         dit->active_block_count == H3_DIT_BLOCKS) return;
     typedef struct { unsigned block; double score; } block_score;
     /* The first two and final blocks establish/close the residual stream.
@@ -1786,7 +1919,20 @@ static int load_core(h3_dit *dit, h3_dit_progress progress, void *opaque,
         }
         char prefix[64];
         snprintf(prefix, sizeof(prefix), "blocks.%u.", index);
-        if (dit->ssd_streaming) {
+        if (dit->hyperflow && !dit->ssd_streaming) {
+            /* Resident. Dense parts are quantized like any block; factored
+             * ones (and a dense half of a factored MLP) stay BF16. */
+            h3_dit_block *block = &dit->blocks[index];
+            if (!load_hyperflow_block(dit, index, error, error_size))
+                return 0;
+            if (dit->int8_mlp && block->fc1 && block->fc2 &&
+                !quantize_block_mlp(dit, block, error, error_size)) return 0;
+            if (dit->int8_qkv && block->qkv &&
+                !quantize_block_qkv(dit, block, error, error_size)) return 0;
+            if (dit->int8_attention_out && block->out &&
+                !quantize_block_attention_out(dit, block, error, error_size))
+                return 0;
+        } else if (dit->ssd_streaming) {
             if (!load_block_norms(dit, &dit->blocks[index], prefix,
                                   error, error_size) ||
                 !prepare_stream_layer(dit, index, error, error_size))
@@ -2070,7 +2216,19 @@ static int allocate_activations(h3_dit *dit, char *error, size_t error_size) {
     if (!dit->fused_mlp) {
         dit->fc1 = h3_gpu_tensor_new_bf16(dit->gpu, sequence * FFN * 2);
     }
-    if (!dit->fused_mlp || dit->nax_mlp || dit->int8_mlp) {
+    if (dit->hyperflow && dit->hyperflow_info.factored_blocks) {
+        size_t width = dit->hyperflow_info.max_rank > HIDDEN ?
+            dit->hyperflow_info.max_rank : HIDDEN;
+        dit->lowrank_tmp = h3_gpu_tensor_new_bf16(dit->gpu, sequence * width);
+        if (!dit->lowrank_tmp) {
+            fail(error, error_size,
+                 "cannot allocate the factored-linear buffer: %s",
+                 h3_gpu_error(dit->gpu));
+            return 0;
+        }
+    }
+    if (!dit->fused_mlp || dit->nax_mlp || dit->int8_mlp ||
+        dit->lowrank_tmp) {
         dit->activated = h3_gpu_tensor_new_bf16(dit->gpu, sequence * FFN);
         if ((!dit->fused_mlp && !dit->fc1) || !dit->activated) {
             fail(error, error_size,
@@ -2386,6 +2544,35 @@ static h3_dit *load_dit(const char *weight_directory,
     dit->sigmas = *sigmas;
     dit->weights = h3_weight_store_open(weight_directory, error, error_size);
     if (!dit->weights) goto failed;
+    if (!h3_hyperflow_inspect(dit->weights, &dit->hyperflow_info, error,
+                              error_size)) goto failed;
+    dit->hyperflow = dit->hyperflow_info.two_time;
+    if (dit->hyperflow) {
+        if (active_blocks != H3_DIT_BLOCKS || core_reuse_interval != 1 ||
+            token_reduction || lora_count) {
+            fail(error, error_size,
+                 "HyperFlow H3 Flash runs all of its blocks: layer skipping, "
+                 "core reuse, token reduction and LoRA are not available");
+            goto failed;
+        }
+        if (dit->ssd_streaming && dit->hyperflow_info.factored_blocks) {
+            fail(error, error_size,
+                 "SSD streaming of HyperFlow H3 Flash's factored blocks is "
+                 "not implemented yet; use resident mode");
+            goto failed;
+        }
+        /* Its blocks are renumbered without gaps; the ones after
+         * block_count do not exist. */
+        memset(dit->block_active, 0, sizeof(dit->block_active));
+        memset(dit->block_active, 1, dit->hyperflow_info.block_count);
+        dit->active_block_count = dit->hyperflow_info.block_count;
+        fprintf(stderr, "h3: HyperFlow H3 Flash: %u blocks (%u with factored "
+                "linears, largest rank %u), two-time AdaLN (gate %g)\n",
+                dit->hyperflow_info.block_count,
+                dit->hyperflow_info.factored_blocks,
+                dit->hyperflow_info.max_rank,
+                (double)dit->hyperflow_info.gate);
+    }
     dit->gpu = h3_gpu_create(shader_source_path, error, error_size);
     if (!dit->gpu) goto failed;
     if (lora_count) {
@@ -2434,6 +2621,14 @@ static h3_dit *load_dit(const char *weight_directory,
         snprintf(selected_cache_path, length, "%s/%s", attention_cache_dir,
                 name);
         attention_cache_path = selected_cache_path;
+    }
+    if (attention_cache_path && *attention_cache_path && dit->hyperflow) {
+        /* Caches are built from the 50 dense H3 blocks. */
+        fprintf(stderr, "h3: HyperFlow checkpoint; ignoring H3_ATTENTION_CACHE "
+                        "(resident blocks instead)\n");
+        attention_cache_path = NULL;
+        free(selected_cache_path);
+        selected_cache_path = NULL;
     }
     if (attention_cache_path && *attention_cache_path && dit->ssd_streaming) {
         /* --ssd-streaming was passed explicitly - H3_ATTENTION_CACHE is
@@ -2530,9 +2725,11 @@ static h3_dit *load_dit(const char *weight_directory,
      * of dense projections. It must have been built from this transformer.
      * Its identity goes into the schedule-cache key (bytes 16..31, unused by
      * the weight fingerprint), so dense and curve schedules never mix. */
-    const char *curve_path = getenv("H3_ADALN_CURVE");
+    const char *curve_path = dit->hyperflow ? NULL : getenv("H3_ADALN_CURVE");
     h3_adaln_curve *curve = NULL;
-    if (h3_adaln_curve_in_store(dit->weights)) {
+    if (dit->hyperflow) {
+        /* Two-time AdaLN; no curve form applies. */
+    } else if (h3_adaln_curve_in_store(dit->weights)) {
         /* A curve-form checkpoint has no dense AdaLN to fall back on. */
         curve_path = "the checkpoint itself";
         curve = h3_adaln_curve_from_store(dit->weights, error, error_size);
@@ -2566,7 +2763,13 @@ static h3_dit *load_dit(const char *weight_directory,
         if (dit->schedule) fprintf(stderr, "h3: AdaLN schedule cache hit\n");
     } else {
         if (prep) prep_clear_adaln(prep);
-        if (curve) {
+        if (dit->hyperflow) {
+            dit->schedule = h3_dit_schedule_precompute_two_time(
+                dit->weights, dit->gpu, sigmas, visual_condition,
+                audio_condition, dit->hyperflow_info.gate,
+                dit->hyperflow_info.time_dim, dit->hyperflow_info.block_count,
+                schedule_report, &schedule_state, error, error_size);
+        } else if (curve) {
             fprintf(stderr, "h3: AdaLN from curve %s (rank %u, grid %u)\n",
                     curve_path, h3_adaln_curve_rank(curve),
                     h3_adaln_curve_grid(curve));
@@ -3108,11 +3311,45 @@ static int run_block(h3_dit *dit, unsigned index, int step,
 #define OP(call, label) do {                                                    \
     if (!gpu_op(dit, (call), error, error_size, label)) return 0;               \
 } while (0)
+    int factored_qkv = weight->q_down != NULL;
+    int factored_out = weight->out_down != NULL;
+    int factored_mlp = weight->fc1_down || weight->fc2_down;
     if (!attention_adaln_ready)
         OP(h3_gpu_adaln_bf16(dit->gpu, dit->mod_attention, dit->hidden,
             weight->norm1, modulation, row_map, rows, HIDDEN, SLOTS,
             0, 1, 1e-5f), "DiT attention AdaLN");
-    if (dit->int8_qkv && !getenv("H3_DISABLE_INT8_QKV")) {
+    else if (factored_qkv && attention_input_quantized) {
+        fail(error, error_size, "DiT block %u: factored QKV needs the BF16 "
+             "AdaLN input, the previous block quantized it", index);
+        return 0;
+    }
+    if (factored_qkv) {
+        /* HyperFlow: Q, K, V each up(down(x)). The raw Q goes to the qkv
+         * buffer and the raw K to the MLP's activated buffer (both free
+         * until the attention output / MLP), V straight to value. */
+        OP(h3_gpu_linear_bf16(dit->gpu, dit->lowrank_tmp, dit->mod_attention,
+            weight->q_down, NULL, rows, HIDDEN, weight->rank[H3_HF_Q]),
+           "HyperFlow Q down");
+        OP(h3_gpu_linear_bf16(dit->gpu, dit->qkv, dit->lowrank_tmp,
+            weight->q_up, NULL, rows, weight->rank[H3_HF_Q], INNER),
+           "HyperFlow Q up");
+        OP(h3_gpu_linear_bf16(dit->gpu, dit->lowrank_tmp, dit->mod_attention,
+            weight->k_down, NULL, rows, HIDDEN, weight->rank[H3_HF_K]),
+           "HyperFlow K down");
+        OP(h3_gpu_linear_bf16(dit->gpu, dit->activated, dit->lowrank_tmp,
+            weight->k_up, NULL, rows, weight->rank[H3_HF_K], INNER),
+           "HyperFlow K up");
+        OP(h3_gpu_linear_bf16(dit->gpu, dit->lowrank_tmp, dit->mod_attention,
+            weight->v_down, NULL, rows, HIDDEN, weight->rank[H3_HF_V]),
+           "HyperFlow V down");
+        OP(h3_gpu_linear_bf16(dit->gpu, dit->value, dit->lowrank_tmp,
+            weight->v_up, NULL, rows, weight->rank[H3_HF_V], INNER),
+           "HyperFlow V up");
+        OP(h3_gpu_qk_rope_split_bf16(dit->gpu, dit->query, dit->key, dit->qkv,
+            dit->activated, weight->q_norm, weight->k_norm, rope_cos,
+            rope_sin, rows, HEADS, HEAD_DIM, ROPE_HALF, 1e-5f),
+           "HyperFlow Q/K norm/RoPE");
+    } else if (dit->int8_qkv && !getenv("H3_DISABLE_INT8_QKV")) {
         OP(h3_gpu_grouped_qkv_linear_rope_int8(
             dit->gpu, dit->query, dit->key, dit->value,
             dit->int8_activation, dit->int8_activation_scales,
@@ -3132,7 +3369,7 @@ static int run_block(h3_dit *dit, unsigned index, int step,
             1e-5f), "DiT QKV projection/norm/RoPE");
     }
     debug_dump_attention_qkv(dit, index, step, rows);
-    int int8_attention_output = dit->int8_attention_out &&
+    int int8_attention_output = dit->int8_attention_out && !factored_out &&
         !getenv("H3_DISABLE_INT8_ATTENTION_OUT");
     int head_major_attention_output = int8_attention_output &&
         !dit->use_slower_row_major_attention_output &&
@@ -3178,7 +3415,15 @@ static int run_block(h3_dit *dit, unsigned index, int step,
            "DiT full attention");
     debug_dump_attention_output(dit, index, step, rows,
                                 head_major_attention_output);
-    if (int8_attention_output) {
+    if (factored_out) {
+        OP(h3_gpu_linear_bf16(dit->gpu, dit->lowrank_tmp,
+            dit->attention_heads, weight->out_down, NULL, rows, INNER,
+            weight->rank[H3_HF_OUT]), "HyperFlow attention output down");
+        OP(h3_gpu_linear_bf16(dit->gpu, dit->attention_output,
+            dit->lowrank_tmp, weight->out_up, NULL, rows,
+            weight->rank[H3_HF_OUT], HIDDEN),
+           "HyperFlow attention output up");
+    } else if (int8_attention_output) {
         if (head_major_attention_output)
             OP(h3_gpu_linear_int8_head_major_bf16(
                 dit->gpu, dit->attention_output, dit->int8_activation,
@@ -3197,7 +3442,7 @@ static int run_block(h3_dit *dit, unsigned index, int step,
             dit->attention_heads, weight->out, NULL, rows, INNER, HIDDEN),
            "DiT attention output");
     }
-    int fused_int8_mlp_input = dit->int8_mlp &&
+    int fused_int8_mlp_input = dit->int8_mlp && !factored_mlp &&
         !dit->use_slower_unfused_int8_inputs &&
         !getenv("H3_DISABLE_FUSED_INT8_MLP_INPUT") &&
         !getenv("H3_INT8_MLP_STAGE");
@@ -3227,7 +3472,46 @@ static int run_block(h3_dit *dit, unsigned index, int step,
     }
     h3_gpu_tensor *mlp_output = dit->activation_aliases ?
         dit->attention_output : dit->mlp_output;
-    if (dit->int8_mlp &&
+    if (factored_mlp) {
+        /* HyperFlow: gate and up halves of FC1 separately, then SwiGLU in
+         * place on the up half (in activated), then FC2. The gate half goes
+         * to the qkv buffer, which holds mod_mlp when activations alias,
+         * so its input is read first: through FC1's down factor, or copied
+         * to lowrank_tmp for a dense FC1. */
+        const h3_gpu_tensor *fc1_input = dit->mod_mlp;
+        uint32_t fc1_width = HIDDEN;
+        const h3_gpu_tensor *gate_weight = weight->fc1_gate;
+        const h3_gpu_tensor *value_weight = weight->fc1_value;
+        if (weight->fc1_down) {
+            OP(h3_gpu_linear_bf16(dit->gpu, dit->lowrank_tmp, dit->mod_mlp,
+                weight->fc1_down, NULL, rows, HIDDEN,
+                weight->rank[H3_HF_FC1]), "HyperFlow FC1 down");
+            fc1_width = weight->rank[H3_HF_FC1];
+            gate_weight = weight->fc1_gate_up;
+            value_weight = weight->fc1_value_up;
+        } else {
+            OP(h3_gpu_copy_bf16(dit->gpu, dit->lowrank_tmp, 0, dit->mod_mlp,
+                0, (size_t)rows * HIDDEN), "HyperFlow FC1 input copy");
+        }
+        fc1_input = dit->lowrank_tmp;
+        OP(h3_gpu_linear_bf16(dit->gpu, dit->activated, fc1_input,
+            value_weight, NULL, rows, fc1_width, FFN), "HyperFlow FC1 up half");
+        OP(h3_gpu_linear_bf16(dit->gpu, dit->qkv, fc1_input, gate_weight,
+            NULL, rows, fc1_width, FFN), "HyperFlow FC1 gate half");
+        OP(h3_gpu_swiglu_split_bf16(dit->gpu, dit->activated, dit->qkv,
+            dit->activated, rows * FFN), "HyperFlow SwiGLU");
+        if (weight->fc2_down) {
+            OP(h3_gpu_linear_bf16(dit->gpu, dit->lowrank_tmp, dit->activated,
+                weight->fc2_down, NULL, rows, FFN, weight->rank[H3_HF_FC2]),
+               "HyperFlow FC2 down");
+            OP(h3_gpu_linear_bf16(dit->gpu, mlp_output, dit->lowrank_tmp,
+                weight->fc2_up, NULL, rows, weight->rank[H3_HF_FC2], HIDDEN),
+               "HyperFlow FC2 up");
+        } else {
+            OP(h3_gpu_linear_bf16(dit->gpu, mlp_output, dit->activated,
+                weight->fc2, NULL, rows, FFN, HIDDEN), "HyperFlow FC2");
+        }
+    } else if (dit->int8_mlp &&
         (!getenv("H3_DISABLE_INT8_MLP") ||
          !weight->fc1 || !weight->fc2)) {
         OP(h3_gpu_mlp_int8_bf16(
@@ -3261,7 +3545,7 @@ static int run_block(h3_dit *dit, unsigned index, int step,
         h3_dit_block *next_weight = &dit->blocks[next_index];
         const h3_gpu_tensor *next_modulation = h3_dit_schedule_block(
             dit->schedule, next_index);
-        int fuse_int8_qkv_input = dit->int8_qkv &&
+        int fuse_int8_qkv_input = dit->int8_qkv && !next_weight->q_down &&
             !dit->use_slower_unfused_int8_inputs &&
             !getenv("H3_DISABLE_INT8_QKV") &&
             !getenv("H3_DISABLE_FUSED_INT8_QKV_INPUT");
@@ -4583,6 +4867,7 @@ void h3_dit_free(h3_dit *dit) {
     FREE(token_pool_pairs); FREE(token_baseline_indices);
     FREE(token_expand_parents); FREE(token_original); FREE(mod_mlp); FREE(fc1);
     FREE(activated); FREE(mlp_output); FREE(int8_activation);
+    FREE(lowrank_tmp);
     FREE(int8_activation_scales); FREE(final_audio_input);
     FREE(final_video_input); FREE(final_audio_inverse);
     FREE(final_video_inverse); FREE(final_audio_norm); FREE(final_video_norm);

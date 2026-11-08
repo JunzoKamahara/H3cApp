@@ -200,6 +200,37 @@ int h3_serving_schedule_build_shifted(int evaluations, float audio_shift,
     return 1;
 }
 
+/* The base grids of HyperFlow H3 Flash's schedule.py (Apache-2.0). */
+static const float hyperflow_grid4[] = {
+    1.0f, 0.681872f, 0.205019f, 0.036496f, 0.0f
+};
+static const float hyperflow_grid6[] = {
+    1.0f, 0.825217f, 0.471725f, 0.147401f, 0.049626f, 0.015517f, 0.0f
+};
+static const float hyperflow_grid8[] = {
+    1.0f, 0.931506f, 0.839236f, 0.703462f, 0.5f, 0.296538f, 0.160764f,
+    0.068494f, 0.0f
+};
+
+int h3_hyperflow_schedule_build(int steps, h3_sigma_schedule *schedule) {
+    const float *grid = steps == 4 ? hyperflow_grid4 :
+                        steps == 6 ? hyperflow_grid6 :
+                        steps == 8 ? hyperflow_grid8 : NULL;
+    if (!schedule || !grid) return 0;
+    memset(schedule, 0, sizeof(*schedule));
+    schedule->steps = steps;
+    const float video_shift = (float)H3_VIDEO_SIGMA_SHIFT;
+    const float audio_shift = (float)H3_AUDIO_SIGMA_SHIFT;
+    for (int index = 0; index <= steps; index++) {
+        float base = grid[index];
+        schedule->video[index] = video_shift * base /
+            (1.0f + (video_shift - 1.0f) * base);
+        schedule->audio[index] = audio_shift * base /
+            (1.0f + (audio_shift - 1.0f) * base);
+    }
+    return 1;
+}
+
 typedef struct {
     h3_layout *layout;
     size_t position_capacity;

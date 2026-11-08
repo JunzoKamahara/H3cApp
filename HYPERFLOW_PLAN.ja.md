@@ -129,3 +129,28 @@ fl2va `minimax_h3_fl2va_hyperflow_flash_14b-Q4_K_M.gguf`（9.05 GB、647 テン�
 
 ## 7. 対象外
 INT8 convrot（safetensors）版、7B、LoRA の低ランク層への適用、HyperFlow 用の注意キャッシュ、既定モデルの変更、ComfyUI ノードのコード流用。
+
+## 付録 A. 進捗
+
+### A.1 2026-11-08 フェーズ 1 と フェーズ 2 の重みなしで書ける部分（ブランチ hyperflow-schedule）
+
+GGUF 本体（9.05 GB）はディスクの空きを作るまで取得しない。その間に、実物ヘッダと小さなテンソルだけで確かめられる部分を実装した。
+
+実装したもの:
+- `h3_hyperflow.c/.h`: 検出（`h3_hyperflow_inspect`）。2 時刻の埋め込み、`hyperflow_gate`、`hyperflow_sigmas`、詰めた番号のブロック数、ブロックごとの dense/因子化とランクを、テンソルヘッダから読む。食い違う形（Q/K/V の一部だけ因子化、dense と因子化の両方がある、番号の穴）は拒否。
+- `h3_host.c`: `h3_hyperflow_schedule_build`（4/6/8 の基準格子に映像 shift 12・音声 shift 3）。
+- `h3_dit_schedule.c`: `h3_dit_schedule_precompute_two_time` と `h3_dit_two_time_rows`。行は (t, r) の組で重複を除く。E_t と E_r を F32 で計算し、混合 → SiLU → [96768, 16] の投影（曲線形と同じ F32 の投影関数を共用）。ブロック数ぶんだけ作り、残りは NULL。書き出し・読み戻し（AdaLN キャッシュ）は NULL のブロックを許す。
+- `h3_dit.c`: 因子化ブロックの常駐読み込み（`load_hyperflow_block`）と実行。Q/K/V はそれぞれ down → up、Q と K は新カーネルで RMS norm + RoPE、V は value に直接。出力射影と MLP も down → up。FC1 の up は SwiGLU の gate/up の半分に分けて持ち、[seq, 2·FFN] のバッファを使わない。dense な部分は今までどおり int8 化。次のブロックが因子化 QKV のときは、前のブロックの int8 量子化の融合をしない。47/49 ブロックは `block_active` で表し、ゲート順位の層削減はしない。注意キャッシュは無視（警告）、層削減・コア再利用・トークン削減・LoRA は拒否、因子化ブロックの SSD ストリーミングは「未実装」と拒否。
+- `h3.c`: GGUF の Transformer なら検出し、ステップ 4/6/8 以外・LoRA・再ノイズ・各種再利用・層数変更・独自 σ・音声 shift 変更を理由付きで拒否。HyperFlow の格子を使う。
+- `h3_gguf.c`: `h3_gguf_info` に `hyperflow`・`dit_blocks`・`factored_blocks`（取り込み画面用）。
+- `h3_shaders.metal` / `h3_gpu.m`: `h3_qk_rope_split_bf16_coop`（既存の協調カーネルを入力だけ分けて機械的に派生）と `h3_swiglu_split_bf16`。
+
+確かめたこと:
+- `tests/test_hyperflow.c`（`make test` に追加）: 格子が公式 README の `--sigmas` と 1e-6 で一致。(t, r) 行の配置（6 ステップ・条件あり 14 行、音声を固定したとき 7 行）。新カーネル 2 つが既存の融合カーネルと bit 一致。ランク 768/256 の down → up が CPU 参照と一致。
+- 実物の GGUF の「疎なコピー」（ヘッダ全体と、時間埋め込み・AdaLN・gate・sigmas の 173 MB だけをバイト範囲で取得し、残りは穴）で、FL2VA と Ref2VA の両方について: 検出（47/49 ブロック、因子化 18/19 ブロック、最大ランク 3328、gate 0.25、16 次元）、`hyperflow_sigmas` が自前の 6 ステップ格子と 1e-6 で一致、2 時刻 AdaLN が倍精度の CPU 参照と rel-L2 1.65e-3（BF16 の丸めの範囲）で一致、AdaLN キャッシュの書き出し・読み戻し。`H3_HYPERFLOW_DIR` で実行する。
+- 通常の H3 への影響なし: 取り込み済みの GGUF（曲線形 AdaLN）で 256×256・25 フレーム・4 ステップを main と比べ、注意キャッシュ・SSD ストリーミング・常駐 int8 の 3 経路とも出力フレームが bit 一致。
+
+まだ確かめていないこと:
+- **因子化ブロックを含む DiT の順伝播を実物の重みで動かしていない。** 部品（カーネル、行列積、読み込みの形の検査）は確かめたが、配線の正しさは GGUF 本体と参照ダンプ（フェーズ 0）が要る。
+- AdaLN 投影の前に SiLU を掛ける（元の H3 と同じ）とした点は推定のまま。参照ダンプで確定する。
+- 常駐時のメモリ（dense 30 ブロックの int8 と因子化部分の BF16 で約 15 GiB の見込み）は未測定。

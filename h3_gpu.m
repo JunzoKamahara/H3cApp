@@ -493,6 +493,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_rms_inverse_bf16", @"h3_adaln_linear_bf16",
             @"h3_gate_adaln_bf16", @"h3_gate_adaln_bf16_exact_simd",
             @"h3_qkv_rope_bf16", @"h3_qkv_rope_bf16_coop",
+            @"h3_qk_rope_split_bf16_coop", @"h3_swiglu_split_bf16",
             @"h3_qkv_rope_bf16_coop_uncached",
             @"h3_swiglu_bf16",
             @"h3_layer_norm_bf16", @"h3_gelu_bf16",
@@ -5872,6 +5873,87 @@ int h3_gpu_swiglu_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
             [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
             [encoder setBytes:&args length:sizeof(args) atIndex:2];
         });
+}
+
+int h3_gpu_swiglu_split_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *gate,
+                             const h3_gpu_tensor *up, uint32_t count) {
+    H3GPU *gpu = GPU(opaque);
+    if (!h3_gpu_require_bf16(gpu, gate, count, @"SwiGLU gate") ||
+        !h3_gpu_require_bf16(gpu, up, count, @"SwiGLU up") ||
+        !h3_gpu_require_bf16(gpu, output, count, @"SwiGLU output")) return 0;
+    return h3_gpu_dispatch_1d(gpu, @"h3_swiglu_split_bf16", count,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(gate).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(up).buffer offset:0 atIndex:1];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:2];
+            [encoder setBytes:&count length:sizeof(count) atIndex:3];
+        });
+}
+
+int h3_gpu_qk_rope_split_bf16(h3_gpu *opaque, h3_gpu_tensor *query,
+                              h3_gpu_tensor *key,
+                              const h3_gpu_tensor *q_input,
+                              const h3_gpu_tensor *k_input,
+                              const h3_gpu_tensor *q_norm,
+                              const h3_gpu_tensor *k_norm,
+                              const h3_gpu_tensor *rope_cos,
+                              const h3_gpu_tensor *rope_sin,
+                              uint32_t sequence, uint32_t heads,
+                              uint32_t head_dim, uint32_t rope_half,
+                              float epsilon) {
+    H3GPU *gpu = GPU(opaque);
+    size_t count = (size_t)sequence * heads * head_dim;
+    size_t rope_count = (size_t)sequence * rope_half;
+    if (head_dim != 128 || heads % 4 || rope_half * 2 > head_dim) {
+        h3_gpu_set_error(gpu, @"split Q/K RoPE needs 128-wide heads in "
+                              "groups of 4");
+        return 0;
+    }
+    if (!h3_gpu_require_bf16(gpu, q_input, count, @"split Q input") ||
+        !h3_gpu_require_bf16(gpu, k_input, count, @"split K input") ||
+        !h3_gpu_require_bf16(gpu, q_norm, head_dim, @"Q norm") ||
+        !h3_gpu_require_bf16(gpu, k_norm, head_dim, @"K norm") ||
+        (rope_half &&
+         (!h3_gpu_require_bf16(gpu, rope_cos, rope_count, @"RoPE cosine") ||
+          !h3_gpu_require_bf16(gpu, rope_sin, rope_count, @"RoPE sine"))) ||
+        !h3_gpu_require_bf16(gpu, query, count, @"query") ||
+        !h3_gpu_require_bf16(gpu, key, count, @"key") ||
+        !h3_gpu_require_command(gpu)) return 0;
+    /* The outputs are the ordinary row-major attention inputs. */
+    gpu.headMajorSDPAInputs = NO;
+    qkv_args args = {sequence, heads, head_dim, rope_half, 0, epsilon};
+    id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(
+        gpu, @"h3_qk_rope_split_bf16_coop");
+    if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < head_dim) {
+        if (pipeline)
+            h3_gpu_set_error(gpu, @"split Q/K RoPE needs a 128-thread "
+                                  "threadgroup");
+        return 0;
+    }
+    const h3_gpu_tensor *cos_tensor = rope_half ? rope_cos : q_norm;
+    const h3_gpu_tensor *sin_tensor = rope_half ? rope_sin : q_norm;
+    @autoreleasepool {
+        id<MTLComputeCommandEncoder> encoder =
+            [gpu.command computeCommandEncoder];
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:TENSOR(q_input).buffer offset:0 atIndex:0];
+        [encoder setBuffer:TENSOR(q_norm).buffer offset:0 atIndex:1];
+        [encoder setBuffer:TENSOR(k_norm).buffer offset:0 atIndex:2];
+        [encoder setBuffer:TENSOR(cos_tensor).buffer offset:0 atIndex:3];
+        [encoder setBuffer:TENSOR(sin_tensor).buffer offset:0 atIndex:4];
+        [encoder setBuffer:TENSOR(query).buffer offset:0 atIndex:5];
+        [encoder setBuffer:TENSOR(key).buffer offset:0 atIndex:6];
+        [encoder setBuffer:TENSOR(k_input).buffer offset:0 atIndex:7];
+        [encoder setBytes:&args length:sizeof(args) atIndex:8];
+        [encoder dispatchThreadgroups:MTLSizeMake(heads / 4, sequence, 1)
+                 threadsPerThreadgroup:MTLSizeMake(head_dim, 1, 1)];
+        [encoder endEncoding];
+    }
+    h3_gpu_stats stats = gpu.stats;
+    stats.direct_dispatches++;
+    gpu.stats = stats;
+    return 1;
 }
 
 int h3_gpu_embedding_bf16(h3_gpu *opaque, h3_gpu_tensor *output,

@@ -448,7 +448,8 @@ int h3_gguf_inspect(const char *path, h3_gguf_info *info,
     if (arch) snprintf(info->architecture, sizeof(info->architecture), "%s", arch);
     if (name) snprintf(info->name, sizeof(info->name), "%s", name);
     uint64_t by_type[16] = {0};
-    int dit = 0, text = 0, vision = 0, max_layer = -1;
+    int dit = 0, text = 0, vision = 0, max_layer = -1, max_block = -1;
+    uint8_t factored[256] = {0};
     for (size_t index = 0; index < header.tensor_count; index++) {
         const h3_st_tensor *tensor = &header.tensors[index];
         uint64_t bytes = tensor->data_end - tensor->data_begin;
@@ -457,6 +458,18 @@ int h3_gguf_inspect(const char *path, h3_gguf_info *info,
         const char *n = tensor->name;
         if (!strcmp(n, "video_patch_proj.weight")) dit = 1;
         if (!strcmp(n, "adaln_t_table")) info->curve_adaln = 1;
+        if (!strcmp(n, "endpoint_time_embedder.proj_in.weight"))
+            info->hyperflow = 1;
+        if (has_prefix(n, "blocks.")) {
+            char *end = NULL;
+            long block = strtol(n + 7, &end, 10);
+            if (end && *end == '.' && block >= 0 && block < 256) {
+                if (block > max_block) max_block = (int)block;
+                size_t length = strlen(end);
+                if (length > 12 && !strcmp(end + length - 12, ".down.weight"))
+                    factored[block] = 1;
+            }
+        }
         if (!strcmp(n, "blocks.0.adaln_proj.linear.weight") &&
             tensor->ndim == 2 && tensor->shape[1] == 2688)
             info->dense_adaln = 1;
@@ -468,6 +481,14 @@ int h3_gguf_inspect(const char *path, h3_gguf_info *info,
             text = 1;
             if (layer > max_layer) max_layer = layer;
         }
+    }
+    if (dit) {
+        info->role = H3_GGUF_DIT;
+        info->dit_blocks = max_block + 1;
+        for (int block = 0; block <= max_block; block++)
+            info->factored_blocks += factored[block];
+    } else {
+        info->hyperflow = 0;
     }
     if (dit) info->role = H3_GGUF_DIT;
     else if (text) info->role = H3_GGUF_TEXT_ENCODER;

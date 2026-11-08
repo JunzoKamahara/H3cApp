@@ -128,6 +128,10 @@ int h3_serving_schedule_build(int evaluations, h3_sigma_schedule *schedule);
 /* Same grid with another audio shift (the video shift stays 12). */
 int h3_serving_schedule_build_shifted(int evaluations, float audio_shift,
                                       h3_sigma_schedule *schedule);
+/* HyperFlow H3 Flash's distilled sampler: one of its fixed, unevenly
+ * spaced base grids (steps 4, 6 or 8; anything else fails) with the video
+ * shift 12 and the audio shift 3 applied to the same grid. */
+int h3_hyperflow_schedule_build(int steps, h3_sigma_schedule *schedule);
 
 int h3_layout_build(const h3_layout_spec *spec, h3_layout *layout,
                     char *error, size_t error_size);
