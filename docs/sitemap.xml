@@ -112,4 +112,16 @@
     <loc>https://junzokamahara.github.io/H3cApp/joined-example.html</loc>
     <lastmod>2026-10-17</lastmod>
   </url>
+  <url>
+    <loc>https://junzokamahara.github.io/H3cApp/hyperflow.html</loc>
+    <lastmod>2026-11-09</lastmod>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/hyperflow.html"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/hyperflow.html"/>
+  </url>
+  <url>
+    <loc>https://junzokamahara.github.io/H3cApp/en/hyperflow.html</loc>
+    <lastmod>2026-11-09</lastmod>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/hyperflow.html"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/hyperflow.html"/>
+  </url>
 </urlset>

@@ -978,3 +978,8 @@ summary {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* Landscape (7:4) examples, e.g. the HyperFlow page's clips with sound. */
+.examples-wide .example .media {
+  aspect-ratio: 7 / 4;
+}

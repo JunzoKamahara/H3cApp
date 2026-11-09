@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en" data-alt-href="../hyperflow.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="../assets/js/lang.js"></script>
+  <title>HyperFlow H3 Flash (a few-step model) — H3cApp</title>
+  <meta name="description" content="HyperFlow H3 Flash, a MiniMax H3 derivative that generates in 4, 6 or 8 steps, now supported experimentally in H3cApp: side-by-side clips against the Turbo LoRA, DMAD and regular 20-step runs, timings, how to use it and its limits.">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/hyperflow.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/hyperflow.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/hyperflow.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/hyperflow.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:locale:alternate" content="ja_JP">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="HyperFlow H3 Flash (a few-step model) — H3cApp">
+  <meta property="og:description" content="A MiniMax H3 derivative that makes video and sound in 4, 6 or 8 steps, compared with Turbo, DMAD and 20 steps.">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/hyperflow.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="../assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="../assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="../assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="Site">
+        <ul>
+          <li><a href="./#examples">Examples</a></li>
+          <li><a href="./#requirements">Requirements</a></li>
+          <li><a href="getting-started.html">Getting started</a></li>
+          <li><a href="guide.html">Guide</a></li>
+          <li><a href="gguf.html" aria-current="page">GGUF</a></li>
+          <li><a href="faq.html">Troubleshooting</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="../hyperflow.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>HyperFlow H3 Flash (a few-step model)</h1>
+      <p class="lead">HyperFlow H3 Flash is a derivative of MiniMax H3 by Video Rebirth: the video part of the model (the DiT) is distilled and compressed so that it finishes in 4, 6 or 8 steps. H3cApp now supports its GGUF files <strong>experimentally</strong>. With the same prompts and seeds you can <a href="#compare">compare it</a> with the Turbo LoRA, DMAD and regular 20-step runs.</p>
+      <nav class="toc" aria-label="On this page">
+        <p>On this page</p>
+        <ol>
+          <li><a href="#compare">Compare the results</a></li>
+          <li><a href="#numbers">Times and scores</a></li>
+          <li><a href="#sound">Watch with sound</a></li>
+          <li><a href="#what">What the model is</a></li>
+          <li><a href="#choose">HyperFlow or Turbo</a></li>
+          <li><a href="#use">How to use it</a></li>
+          <li><a href="#limits">What it cannot do</a></li>
+          <li><a href="#method">How we compared</a></li>
+          <li><a href="#license">Weights and license</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section compare-section" id="compare" aria-labelledby="compare-title">
+      <h2 id="compare-title">Compare the results</h2>
+      <p>Three prompts, each generated once with six methods (672x384, 5 s, seed 42). Choose a clip and a method for each side, then use “<span class="ui">Still</span>” (frame 60) for detail and “<span class="ui">Video</span>” for motion. The page opens with the Turbo LoRA (4 steps) on the left and HyperFlow (6 steps) on the right.</p>
+      <noscript><p>This comparison needs JavaScript.</p></noscript>
+      <div id="compare-panel" data-base="../assets/hyperflow/" hidden>
+        <div class="compare-choices">
+          <label>Clip
+            <select id="compare-clip">
+              <option value="cat" data-note="Cat: look at the fur and the yarn. Turbo is the crispest, with the strongest contrast, and also flickers the most in brightness. HyperFlow at 4 and 6 steps gives slightly softer fur, and at 6 steps the paw and the yarn blur into each other near the end. At 8 steps the stripes are about as clear as Turbo's. DMAD looks hazy overall.">Cat (yarn and fur)</option>
+              <option value="guitar" data-note="Guitar: look at the windows, the player and the guitar. HyperFlow keeps the player and the guitar intact at 4, 6 and 8 steps. 6 and 8 steps give very similar framing; only 4 steps became a close-up of a seated player. The regular 20-step run is darker overall.">Guitar (plaza at dusk)</option>
+              <option value="talk" data-note="Talking: look at the face, the hair and the collar. No method breaks the face. HyperFlow gives almost the same person and framing at 4, 6 and 8 steps, so changing the step count changes little of the look.">Talking (in a hallway)</option>
+            </select>
+          </label>
+          <label>Left
+            <select id="compare-left">
+              <option value="r20">Regular, 20 steps</option>
+              <option value="t4" selected>Turbo LoRA, 4 steps</option>
+              <option value="d4">DMAD LoRA, 4 steps</option>
+              <option value="hf4">HyperFlow, 4 steps</option>
+              <option value="hf6">HyperFlow, 6 steps</option>
+              <option value="hf8">HyperFlow, 8 steps</option>
+            </select>
+          </label>
+          <label>Right
+            <select id="compare-right">
+              <option value="r20">Regular, 20 steps</option>
+              <option value="t4">Turbo LoRA, 4 steps</option>
+              <option value="d4">DMAD LoRA, 4 steps</option>
+              <option value="hf4">HyperFlow, 4 steps</option>
+              <option value="hf6" selected>HyperFlow, 6 steps</option>
+              <option value="hf8">HyperFlow, 8 steps</option>
+            </select>
+          </label>
+        </div>
+        <div class="compare-buttons">
+          <button type="button" data-mode="still" aria-pressed="true">Still</button>
+          <button type="button" data-mode="video" aria-pressed="false">Video</button>
+          <span class="compare-video-controls" id="compare-video-controls" hidden>
+            <button type="button" id="compare-play">Pause</button>
+            <button type="button" data-speed="1" aria-pressed="true">Normal speed</button>
+            <button type="button" data-speed="0.25" aria-pressed="false">Quarter speed</button>
+          </span>
+        </div>
+        <div class="compare-panes">
+          <figure data-pane="left"><img src="../assets/hyperflow/cat/t4.jpg" width="672" height="384" alt=""><video width="672" height="384" muted playsinline preload="auto" hidden></video><figcaption></figcaption></figure>
+          <figure data-pane="right"><img src="../assets/hyperflow/cat/hf6.jpg" width="672" height="384" alt=""><video width="672" height="384" muted playsinline preload="auto" hidden></video><figcaption></figcaption></figure>
+        </div>
+        <p class="compare-note" id="compare-note" aria-live="polite"></p>
+      </div>
+      <p>Different methods give different scenes even with the same seed. What to compare is not the same detail in the same place, but how clean a picture each method produces. At “<span class="ui">Quarter speed</span>” it is easier to see whether fur or the background wobbles.</p>
+      <details>
+        <summary>Prompts used</summary>
+        <ul>
+          <li><strong>Cat</strong>: A small orange cat plays with a ball of yarn on a wooden floor in soft afternoon light. Static camera, gentle movement. Soft room ambience, no speech, no music.</li>
+          <li><strong>Guitar</strong>: A street musician plays an acoustic guitar in a quiet stone plaza at dusk, warm lights in the windows behind him. Slow push-in camera. Gentle guitar melody, distant footsteps, no speech.</li>
+          <li><strong>Talking</strong>: A young woman with short black hair, wearing a navy blazer, stands in a bright university hallway and speaks directly to the camera with a friendly smile, saying: "Welcome to our campus. Let me show you around." Medium close-up, static camera. Clear voice, quiet indoor ambience, no music.</li>
+        </ul>
+      </details>
+      <p class="small muted">Every clip was generated from text alone in H3cApp (2026-11-09, M5 with 24 GB). The videos were re-compressed for this page, so fine grain is lower than in the actual output.</p>
+    </section>
+
+    <section class="section section-narrow" id="numbers" aria-labelledby="numbers-title">
+      <h2 id="numbers-title">Times and scores</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Method</th><th scope="col">Time</th><th scope="col">Quality estimate (MUSIQ)</th><th scope="col">Prompt match (CLIPScore)</th><th scope="col">Flicker</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Regular, 20 steps</th><td>10 min 45 s</td><td class="num">64.6</td><td class="num">0.914</td><td class="num">0.82</td></tr>
+            <tr><th scope="row">Turbo LoRA, 4 steps</th><td>3 min 02 s</td><td class="num">68.1</td><td class="num">0.858</td><td class="num">1.97</td></tr>
+            <tr><th scope="row">DMAD LoRA, 4 steps</th><td>3 min 02 s</td><td class="num">64.3</td><td class="num">0.831</td><td class="num">1.40</td></tr>
+            <tr><th scope="row">HyperFlow, 4 steps</th><td>2 min 50 s</td><td class="num">65.9</td><td class="num">0.866</td><td class="num">0.96</td></tr>
+            <tr><th scope="row">HyperFlow, 6 steps</th><td>3 min 36 s</td><td class="num">67.5</td><td class="num">0.877</td><td class="num">1.13</td></tr>
+            <tr><th scope="row">HyperFlow, 8 steps</th><td>4 min 24 s</td><td class="num">68.7</td><td class="num">0.853</td><td class="num">1.22</td></tr>
+          </tbody>
+          <caption>Mean of the three prompts (672x384, 5 s, M5 with 24 GB, measured in the app). MUSIQ estimates picture quality (higher is better). CLIPScore measures how well the video matches the prompt. Flicker is the mean brightness change between neighbouring frames (0-255); lower is steadier.</caption>
+        </table>
+      </div>
+      <ul>
+        <li><strong>Quality</strong>: HyperFlow at 6 and 8 steps is about on par with Turbo at 4 steps: about one point apart in MUSIQ, a slightly better prompt match and about half the flicker.</li>
+        <li><strong>Time</strong>: on the M5, HyperFlow at 4 steps takes about as long as Turbo, about 1.2 times as long at 6 steps and about 1.45 times at 8. It is not faster on the M5.</li>
+        <li><strong>Memory</strong>: on the M5 (24 GB) it runs resident (int8) and peaked at 17-18 GiB. With SSD streaming it peaked at 8.5 GiB and reads 7.8 GiB per step, against 10.1 GiB for the regular GGUF (Q4_K).</li>
+      </ul>
+      <p class="small muted">The differences between prompts are larger than those between methods; the scores are a rough guide from three clips each. Averages over six clips each, adding seed 314 for Turbo, DMAD and HyperFlow at 6 steps, show the same pattern.</p>
+    </section>
+
+    <section class="section" id="sound" aria-labelledby="sound-title">
+      <h2 id="sound-title">Watch with sound</h2>
+      <p>Like the regular MiniMax H3, HyperFlow makes the video and its sound together. These are HyperFlow 6-step results as generated, with sound (press play; nothing plays by itself).</p>
+      <div class="examples examples-wide">
+        <figure class="example">
+          <div class="media">
+            <video controls playsinline preload="none" width="672" height="384" poster="../assets/hyperflow/cat/hf6.jpg" aria-label="HyperFlow, 6 steps: a cat playing with a ball of yarn on a wooden floor">
+              <source src="../assets/hyperflow/cat/hf6-sound.mp4" type="video/mp4">
+              <a href="../assets/hyperflow/cat/hf6-sound.mp4">Open the video file</a>
+            </video>
+          </div>
+          <figcaption>
+            <p class="spec">Cat, HyperFlow 6 steps</p>
+            <p class="small muted">672x384, 5 s, seed 42. Generated in 3 min 53 s (M5, 24 GB)</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media">
+            <video controls playsinline preload="none" width="672" height="384" poster="../assets/hyperflow/guitar/hf6.jpg" aria-label="HyperFlow, 6 steps: a guitarist in a plaza at dusk">
+              <source src="../assets/hyperflow/guitar/hf6-sound.mp4" type="video/mp4">
+              <a href="../assets/hyperflow/guitar/hf6-sound.mp4">Open the video file</a>
+            </video>
+          </div>
+          <figcaption>
+            <p class="spec">Guitar, HyperFlow 6 steps</p>
+            <p class="small muted">672x384, 5 s, seed 42. Generated in 3 min 26 s (M5, 24 GB)</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media">
+            <video controls playsinline preload="none" width="672" height="384" poster="../assets/hyperflow/talk/hf6.jpg" aria-label="HyperFlow, 6 steps: a woman talking to the camera in a hallway">
+              <source src="../assets/hyperflow/talk/hf6-sound.mp4" type="video/mp4">
+              <a href="../assets/hyperflow/talk/hf6-sound.mp4">Open the video file</a>
+            </video>
+          </div>
+          <figcaption>
+            <p class="spec">Talking, HyperFlow 6 steps</p>
+            <p class="small muted">672x384, 5 s, seed 42. Generated in 3 min 31 s (M5, 24 GB)</p>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="what" aria-labelledby="what-title">
+      <h2 id="what-title">What the model is</h2>
+      <ul>
+        <li><strong>A video part rebuilt for few steps</strong>: MiniMax H3's video part (the DiT), distilled to finish in few steps. It uses no CFG (no comparison with a negative prompt) and generates with the model's own time schedules for 4, 6 and 8 steps.</li>
+        <li><strong>Smaller weights</strong>: FL2VA (from text, or from first and last frames) has 13.7B parameters (47 blocks, 18 of them with low-rank factored linears) and Ref2VA 13.9B (49 blocks). At GGUF Q4_K_M the FL2VA DiT is 9.05 GB.</li>
+        <li><strong>The other parts are the same</strong>: the text encoder and the video and audio VAEs are MiniMax H3's own.</li>
+        <li><strong>How it differs from the Turbo LoRA</strong>: the Turbo LoRA is an add-on for the regular model; HyperFlow replaces the model itself. So the features made for the regular model, such as LoRAs, do not work with HyperFlow (<a href="#limits">what it cannot do</a>).</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="choose" aria-labelledby="choose-title">
+      <h2 id="choose-title">HyperFlow or Turbo</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">You want</th><th scope="col">Choose</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">The fastest, crispest picture</th><td>Turbo LoRA, 4 steps (or HyperFlow, 4 steps)</td></tr>
+            <tr><th scope="row">Few steps with less flicker</th><td>HyperFlow, 6 steps</td></tr>
+            <tr><th scope="row">Few steps with Turbo-level detail</th><td>HyperFlow, 8 steps</td></tr>
+            <tr><th scope="row">To combine LoRAs or reference images</th><td>The regular model (plus the Turbo LoRA)</td></tr>
+            <tr><th scope="row">To read less from the SSD on an M1-M4</th><td>HyperFlow (about 80 % of the reads per step)</td></tr>
+            <tr><th scope="row">The most faithful result, however long it takes</th><td>Regular, 20 steps</td></tr>
+          </tbody>
+          <caption>Goals and what to choose. Which one suits you depends on the scene.</caption>
+        </table>
+      </div>
+      <p>With HyperFlow the same seed often keeps a similar composition across step counts (almost the same in the "Talking" clip above). You can look for a good take at 4 steps and remake the seed you like at 8. Sometimes, as with the guitar, 4 steps gives a different scene.</p>
+    </section>
+
+    <section class="section section-narrow" id="use" aria-labelledby="use-title">
+      <h2 id="use-title">How to use it</h2>
+      <div class="note"><p><strong>This comes with the next release.</strong> The current release (v0.7.11) does not include it yet.</p></div>
+      <ol class="steps">
+        <li><strong>Have a regular MiniMax H3 model ready.</strong> HyperFlow's text encoder and VAEs are cloned from an imported MiniMax H3 model (<a href="gguf.html">Using GGUF</a>).</li>
+        <li><strong>Import the HyperFlow GGUF.</strong> In the download wizard, set the DiT (FL2VA) source to <code>VideoRebirthAI/hyperflow-h3-flash</code> and pick a file from <code>fl2va_gguf/</code> (Q4_K_M is the tested one), or import a file you have with “<span class="ui">Import GGUF…</span>”. H3cApp recognizes HyperFlow from the file's contents and shows it in the model details (ⓘ).</li>
+        <li><strong>Switch to the HyperFlow model and generate.</strong> Choose 4, 6 or 8 steps (6 by default). Settings that do not apply, such as the speed presets and LoRAs, are hidden in the advanced settings. Switching back to a regular model restores your settings.</li>
+      </ol>
+      <p>The app's API (<code>POST /api/generate</code>) works the same way. With a HyperFlow model, <code>steps</code> accepts only 4, 6 and 8, and settings that do not apply get a <code>400</code> with the reason.</p>
+    </section>
+
+    <section class="section section-narrow" id="limits" aria-labelledby="limits-title">
+      <h2 id="limits-title">What it cannot do</h2>
+      <ul>
+        <li><strong>Support is experimental.</strong> The default model stays the regular MiniMax H3.</li>
+        <li><strong>Not available</strong>: step counts other than 4, 6 and 8, speed presets, denoiser reuse, the layer count, add-on models (LoRA), re-noise and Open-H3 regeneration. No int8 cache is built.</li>
+        <li><strong>Compute mode</strong>: on an M5 with at least 24 GB it runs resident (int8) with “<span class="ui">int8 cache</span>” selected (peak 17-18 GiB). Other Macs use SSD streaming.</li>
+        <li><strong>What has been checked</strong>: generation from text with the FL2VA Q4_K_M. Generation from first and last frames, and importing and generating with HyperFlow's Ref2VA (from reference images, video and audio), have not been checked yet.</li>
+        <li><strong>Records</strong>: the video's record (<code>.json</code>) has <code>modelFamily: "hyperflow"</code> and its XMP AISystemUsed says "HyperFlow H3 Flash (MiniMax H3 derivative)".</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="method" aria-labelledby="method-title">
+      <h2 id="method-title">How we compared</h2>
+      <ul>
+        <li>All six methods were generated through H3cApp's API with the same prompts, the same seed (42) and the same size (672x384, 5 s). The Turbo LoRA was v1.2; the DMAD LoRA used its per-LoRA automatic sampler (re-noise); the regular model was the GGUF (Q4_K) running with the int8 cache.</li>
+        <li>The quality estimate (MUSIQ) and the prompt match (CLIPScore) are means over every 8th frame. Flicker was measured over all frames.</li>
+        <li>Besides the scores, four frames of each clip (first, 40, 80, last) were checked by eye at full size. The sound was not compared by ear.</li>
+        <li>The regular model's runs overlapped with a large file copy, so their times may be a few seconds long.</li>
+        <li>Block by block against the reference implementation (ComfyUI on CUDA), the engine's final output differs by 3-8 % resident (int8) and 2-5 % with SSD streaming (BF16).</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="license-title">
+      <h2 id="license-title">Weights and license</h2>
+      <ul>
+        <li>Video Rebirth publishes the HyperFlow H3 Flash weights on <a href="https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash">Hugging Face</a>. They are a Model Derivative of MiniMax H3 and come under the MiniMax H3 Community License. It is not an official MiniMax model (Powered by MiniMax H3).</li>
+        <li>H3cApp does not include the weights. Check the source's license and notices before downloading. Whether a given use is permitted is for you to judge.</li>
+        <li>H3cApp's HyperFlow support was written independently, from the published model description and from the outputs of the reference implementation run as a tool.</li>
+      </ul>
+      <p>See also <a href="gguf.html#license">the GGUF license notes</a> and <a href="faq.html#license">Licenses</a>.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">Report a problem (Issues)</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md">README</a></li>
+        <li><a href="faq.html#license">License</a></li>
+        <li><a href="../hyperflow.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+      </ul>
+      <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). Videos are generated with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>, a video generation model by MiniMax, which comes under its own license, the MiniMax H3 Community License.</p>
+    </div>
+  </footer>
+  <script src="../assets/js/compare.js" defer></script>
+  <script src="../assets/js/main.js" defer></script>
+</body>
+</html>

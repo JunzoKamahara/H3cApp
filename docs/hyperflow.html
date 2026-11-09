@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="ja" data-alt-href="en/hyperflow.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="assets/js/lang.js"></script>
+  <title>HyperFlow H3 Flash（少ないステップのモデル） — H3cApp</title>
+  <meta name="description" content="H3cAppが試験的に対応したHyperFlow H3 Flash（MiniMax H3の派生モデル、4・6・8ステップ）の紹介。Turbo LoRA・DMAD・通常の20ステップと同じプロンプトで見比べた映像、時間、使い方、制限。">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/hyperflow.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/hyperflow.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/hyperflow.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/hyperflow.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="HyperFlow H3 Flash（少ないステップのモデル） — H3cApp">
+  <meta property="og:description" content="4・6・8ステップで動画と音声を作るMiniMax H3の派生モデル。Turbo・DMAD・20ステップとの見比べ。">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/hyperflow.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へ移動</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="サイト内">
+        <ul>
+          <li><a href="./#examples">生成例</a></li>
+          <li><a href="./#requirements">動作条件</a></li>
+          <li><a href="getting-started.html">はじめ方</a></li>
+          <li><a href="guide.html">使い方</a></li>
+          <li><a href="gguf.html" aria-current="page">GGUF</a></li>
+          <li><a href="faq.html">困ったとき</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="en/hyperflow.html?lang=en" hreflang="en" lang="en">English</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>HyperFlow H3 Flash（少ないステップのモデル）</h1>
+      <p class="lead">HyperFlow H3 Flashは、Video RebirthがMiniMax H3の動画の部分（DiT）を、4・6・8ステップで生成できるように蒸留・圧縮した派生モデルです。H3cAppは、このモデルのGGUF版に<strong>試験的に</strong>対応しました。同じプロンプトとシードで、Turbo LoRA・DMAD・通常の20ステップと<a href="#compare">見比べられます</a>。</p>
+      <nav class="toc" aria-label="このページの目次">
+        <p>このページの内容</p>
+        <ol>
+          <li><a href="#compare">仕上がりを見比べる</a></li>
+          <li><a href="#numbers">時間と数値</a></li>
+          <li><a href="#sound">音声付きで見る</a></li>
+          <li><a href="#what">どんなモデルか</a></li>
+          <li><a href="#choose">Turboとの使い分け</a></li>
+          <li><a href="#use">使い方</a></li>
+          <li><a href="#limits">使えない機能と注意</a></li>
+          <li><a href="#method">比べ方</a></li>
+          <li><a href="#license">重みとライセンス</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section compare-section" id="compare" aria-labelledby="compare-title">
+      <h2 id="compare-title">仕上がりを見比べる</h2>
+      <p>3つのプロンプトを、6つの方法でそれぞれ1回ずつ生成しました（672×384・5秒・シード42）。映像と左右の方法を選び、「<span class="ui">静止画</span>」（60フレーム目）で細部を、「<span class="ui">動画</span>」で動きを見てください。最初は左にTurbo LoRA（4ステップ）、右にHyperFlow（6ステップ）を並べています。</p>
+      <noscript><p>この比較にはJavaScriptが必要です。</p></noscript>
+      <div id="compare-panel" data-base="assets/hyperflow/" hidden>
+        <div class="compare-choices">
+          <label>映像
+            <select id="compare-clip">
+              <option value="cat" data-note="猫：見るところは毛並みと毛糸です。Turboはいちばんくっきりしてコントラストが強く、そのぶん明るさのちらつきも大きくなります。HyperFlowの4・6ステップは毛並みが少し柔らかく、6ステップでは最後のほうで前足と毛糸がぶれて混ざります。8ステップは毛の縞がTurboと同じくらいはっきりします。DMADは全体がかすみがちです。">猫（毛糸と毛並み）</option>
+              <option value="guitar" data-note="ギター：見るところは建物の窓、人物、ギターです。HyperFlowは4・6・8ステップとも人物とギターの形が保たれます。6と8ステップは構図がよく似ていて、4ステップだけ座った人のアップになりました。通常の20ステップは画面全体が暗めです。">ギター（夕暮れの広場）</option>
+              <option value="talk" data-note="話す人：見るところは顔、髪、襟元です。どの方法も顔は崩れません。HyperFlowは4・6・8ステップでほぼ同じ人物・同じ構図になり、ステップ数を変えても見た目が大きく変わりません。">話す人（廊下で話す）</option>
+            </select>
+          </label>
+          <label>左の方法
+            <select id="compare-left">
+              <option value="r20">通常 20ステップ</option>
+              <option value="t4" selected>Turbo LoRA 4ステップ</option>
+              <option value="d4">DMAD LoRA 4ステップ</option>
+              <option value="hf4">HyperFlow 4ステップ</option>
+              <option value="hf6">HyperFlow 6ステップ</option>
+              <option value="hf8">HyperFlow 8ステップ</option>
+            </select>
+          </label>
+          <label>右の方法
+            <select id="compare-right">
+              <option value="r20">通常 20ステップ</option>
+              <option value="t4">Turbo LoRA 4ステップ</option>
+              <option value="d4">DMAD LoRA 4ステップ</option>
+              <option value="hf4">HyperFlow 4ステップ</option>
+              <option value="hf6" selected>HyperFlow 6ステップ</option>
+              <option value="hf8">HyperFlow 8ステップ</option>
+            </select>
+          </label>
+        </div>
+        <div class="compare-buttons">
+          <button type="button" data-mode="still" aria-pressed="true">静止画</button>
+          <button type="button" data-mode="video" aria-pressed="false">動画</button>
+          <span class="compare-video-controls" id="compare-video-controls" hidden>
+            <button type="button" id="compare-play">一時停止</button>
+            <button type="button" data-speed="1" aria-pressed="true">等速</button>
+            <button type="button" data-speed="0.25" aria-pressed="false">4分の1の速さ</button>
+          </span>
+        </div>
+        <div class="compare-panes">
+          <figure data-pane="left"><img src="assets/hyperflow/cat/t4.jpg" width="672" height="384" alt=""><video width="672" height="384" muted playsinline preload="auto" hidden></video><figcaption></figcaption></figure>
+          <figure data-pane="right"><img src="assets/hyperflow/cat/hf6.jpg" width="672" height="384" alt=""><video width="672" height="384" muted playsinline preload="auto" hidden></video><figcaption></figcaption></figure>
+        </div>
+        <p class="compare-note" id="compare-note" aria-live="polite"></p>
+      </div>
+      <p>方法が違うと、同じシードでも別の場面になります。ここで見るのは「同じ場面の細部」ではなく、それぞれの方法がどのくらい整った映像を出すかです。動きは「<span class="ui">4分の1の速さ</span>」にすると、毛並みや背景が揺れないかを見比べやすくなります。</p>
+      <details>
+        <summary>使ったプロンプト</summary>
+        <ul>
+          <li><strong>猫</strong>：<span lang="en">A small orange cat plays with a ball of yarn on a wooden floor in soft afternoon light. Static camera, gentle movement. Soft room ambience, no speech, no music.</span></li>
+          <li><strong>ギター</strong>：<span lang="en">A street musician plays an acoustic guitar in a quiet stone plaza at dusk, warm lights in the windows behind him. Slow push-in camera. Gentle guitar melody, distant footsteps, no speech.</span></li>
+          <li><strong>話す人</strong>：<span lang="en">A young woman with short black hair, wearing a navy blazer, stands in a bright university hallway and speaks directly to the camera with a friendly smile, saying: "Welcome to our campus. Let me show you around." Medium close-up, static camera. Clear voice, quiet indoor ambience, no music.</span></li>
+        </ul>
+      </details>
+      <p class="small muted">どのクリップもH3cAppで文章だけから生成した動画です（2026年11月9日、M5・24GB）。ページ用に圧縮し直しているので、細かな粒状感は実際の出力より減っています。</p>
+    </section>
+
+    <section class="section section-narrow" id="numbers" aria-labelledby="numbers-title">
+      <h2 id="numbers-title">時間と数値</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">方法</th><th scope="col">生成時間</th><th scope="col">画質の推定（MUSIQ）</th><th scope="col">プロンプトとの一致（CLIPScore）</th><th scope="col">ちらつき</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">通常 20ステップ</th><td>10分45秒</td><td class="num">64.6</td><td class="num">0.914</td><td class="num">0.82</td></tr>
+            <tr><th scope="row">Turbo LoRA 4ステップ</th><td>3分02秒</td><td class="num">68.1</td><td class="num">0.858</td><td class="num">1.97</td></tr>
+            <tr><th scope="row">DMAD LoRA 4ステップ</th><td>3分02秒</td><td class="num">64.3</td><td class="num">0.831</td><td class="num">1.40</td></tr>
+            <tr><th scope="row">HyperFlow 4ステップ</th><td>2分50秒</td><td class="num">65.9</td><td class="num">0.866</td><td class="num">0.96</td></tr>
+            <tr><th scope="row">HyperFlow 6ステップ</th><td>3分36秒</td><td class="num">67.5</td><td class="num">0.877</td><td class="num">1.13</td></tr>
+            <tr><th scope="row">HyperFlow 8ステップ</th><td>4分24秒</td><td class="num">68.7</td><td class="num">0.853</td><td class="num">1.22</td></tr>
+          </tbody>
+          <caption>3つのプロンプトの平均（672×384・5秒、M5・24GB、アプリでの実測）。MUSIQは画質の推定値で、大きいほど良いとされます。CLIPScoreは映像とプロンプトの合い方です。ちらつきは隣り合うフレームの明るさの差の平均（0〜255）で、小さいほど落ち着いています。</caption>
+        </table>
+      </div>
+      <ul>
+        <li><strong>画質</strong>：HyperFlowの6・8ステップは、Turboの4ステップとほぼ同じです。MUSIQの差は1点ほどで、プロンプトとの一致は少し高く、ちらつきは約半分でした。</li>
+        <li><strong>時間</strong>：M5では、HyperFlowの4ステップがTurboとほぼ同じで、6ステップで約1.2倍、8ステップで約1.45倍かかります。M5では速くなるわけではありません。</li>
+        <li><strong>メモリ</strong>：M5（24GB）では常駐（int8）で動き、ピークは17〜18GiBでした。SSDストリーミングでは8.5GiBで、1ステップに読み込む量は通常のGGUF（Q4_K）の10.1GiBに対して7.8GiBです。</li>
+      </ul>
+      <p class="small muted">プロンプトごとの差は、方法どうしの差より大きく出ます。数値は3本ずつの目安です。シード314でも作ったTurbo・DMAD・HyperFlow 6ステップを含めた6本ずつの平均でも、傾向は同じでした。</p>
+    </section>
+
+    <section class="section" id="sound" aria-labelledby="sound-title">
+      <h2 id="sound-title">音声付きで見る</h2>
+      <p>HyperFlowは、通常のMiniMax H3と同じく映像と音声を一緒に作ります。下はHyperFlow 6ステップの生成そのものです（音声付き、再生ボタンを押すと音も流れます）。</p>
+      <div class="examples examples-wide">
+        <figure class="example">
+          <div class="media">
+            <video controls playsinline preload="none" width="672" height="384" poster="assets/hyperflow/cat/hf6.jpg" aria-label="HyperFlow 6ステップ：木の床で毛糸玉と遊ぶ猫">
+              <source src="assets/hyperflow/cat/hf6-sound.mp4" type="video/mp4">
+              <a href="assets/hyperflow/cat/hf6-sound.mp4">動画ファイルを開く</a>
+            </video>
+          </div>
+          <figcaption>
+            <p class="spec">猫・HyperFlow 6ステップ</p>
+            <p class="small muted">672×384・5秒・シード42。生成時間 3分53秒（M5・24GB）</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media">
+            <video controls playsinline preload="none" width="672" height="384" poster="assets/hyperflow/guitar/hf6.jpg" aria-label="HyperFlow 6ステップ：夕暮れの広場でギターを弾く人">
+              <source src="assets/hyperflow/guitar/hf6-sound.mp4" type="video/mp4">
+              <a href="assets/hyperflow/guitar/hf6-sound.mp4">動画ファイルを開く</a>
+            </video>
+          </div>
+          <figcaption>
+            <p class="spec">ギター・HyperFlow 6ステップ</p>
+            <p class="small muted">672×384・5秒・シード42。生成時間 3分26秒（M5・24GB）</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media">
+            <video controls playsinline preload="none" width="672" height="384" poster="assets/hyperflow/talk/hf6.jpg" aria-label="HyperFlow 6ステップ：廊下でカメラに話しかける人">
+              <source src="assets/hyperflow/talk/hf6-sound.mp4" type="video/mp4">
+              <a href="assets/hyperflow/talk/hf6-sound.mp4">動画ファイルを開く</a>
+            </video>
+          </div>
+          <figcaption>
+            <p class="spec">話す人・HyperFlow 6ステップ</p>
+            <p class="small muted">672×384・5秒・シード42。生成時間 3分31秒（M5・24GB）</p>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="what" aria-labelledby="what-title">
+      <h2 id="what-title">どんなモデルか</h2>
+      <ul>
+        <li><strong>少ないステップ用に作り直した動画の部分</strong>：MiniMax H3の動画の部分（DiT）を、少ないステップで仕上がるように蒸留したモデルです。CFG（ネガティブプロンプトとの比較）を使わず、モデル自身が持つ4・6・8ステップ用の時間の並びで生成します。</li>
+        <li><strong>小さくした重み</strong>：FL2VA（文章から・最初と最後の画像から）は13.7B（47ブロック、うち18ブロックの線形を低ランクに分解）、Ref2VAは13.9B（49ブロック）です。GGUFのQ4_K_Mで、FL2VAのDiTは9.05GBです。</li>
+        <li><strong>ほかの部品は同じ</strong>：文章の部分（テキストエンコーダー）と映像・音声のVAEは、MiniMax H3のものをそのまま使います。</li>
+        <li><strong>Turbo LoRAとの違い</strong>：Turbo LoRAは通常のモデルに足す追加モデルで、HyperFlowはモデルそのものの置き換えです。そのためHyperFlowには、LoRAなど通常のモデル向けの機能が使えません（<a href="#limits">使えない機能</a>）。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="choose" aria-labelledby="choose-title">
+      <h2 id="choose-title">Turboとの使い分け</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">やりたいこと</th><th scope="col">選ぶもの</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">いちばん早く、くっきりした絵がほしい</th><td>Turbo LoRA 4ステップ（またはHyperFlow 4ステップ）</td></tr>
+            <tr><th scope="row">少ないステップで、ちらつきを抑えたい</th><td>HyperFlow 6ステップ</td></tr>
+            <tr><th scope="row">少ないステップで、細部もTurbo並みにほしい</th><td>HyperFlow 8ステップ</td></tr>
+            <tr><th scope="row">LoRAや参照画像を組み合わせたい</th><td>通常のモデル（＋Turbo LoRA）</td></tr>
+            <tr><th scope="row">M1〜M4で、SSDから読む量を減らしたい</th><td>HyperFlow（1ステップの読み込みが約8割）</td></tr>
+            <tr><th scope="row">時間をかけても、いちばん素直な仕上がりにしたい</th><td>通常の20ステップ</td></tr>
+          </tbody>
+          <caption>目的と選ぶもの。どれが好みに合うかは映像によって変わります。</caption>
+        </table>
+      </div>
+      <p>HyperFlowでは、同じシードならステップ数を変えても構図が似ることがよくあります（上の「話す人」ではほぼ同じでした）。4ステップで当たりを探し、気に入ったシードを8ステップで作り直す、という使い方もできます。ただし、ギターのように4ステップだけ違う場面になることもあります。</p>
+    </section>
+
+    <section class="section section-narrow" id="use" aria-labelledby="use-title">
+      <h2 id="use-title">使い方</h2>
+      <div class="note"><p><strong>この機能は次のリリースから使えます。</strong>今の公開版（v0.7.11）にはまだ入っていません。</p></div>
+      <ol class="steps">
+        <li><strong>通常のMiniMax H3のモデルを用意しておきます。</strong>HyperFlowの文章の部分とVAEは、取り込み済みのMiniMax H3のモデルから複製します（<a href="gguf.html">GGUFを使う</a>）。</li>
+        <li><strong>HyperFlowのGGUFを取り込みます。</strong>ダウンロードウィザードでDiT（FL2VA）の配布元を<code>VideoRebirthAI/hyperflow-h3-flash</code>にして<code>fl2va_gguf/</code>のファイル（動作確認済みはQ4_K_M）を選ぶか、手元のファイルを「<span class="ui">GGUFを取り込む…</span>」で取り込みます。中身からHyperFlowだと判定し、モデルの詳細（ⓘ）にHyperFlowと表示されます。</li>
+        <li><strong>使うモデルをHyperFlowに切り替えて生成します。</strong>ステップ数は4・6・8から選びます（既定は6）。速度プリセット・LoRAなど使えない設定は詳細設定から隠れます。通常のモデルに戻すと、元の設定に戻ります。</li>
+      </ol>
+      <p>アプリのAPI（<code>POST /api/generate</code>）でも同じように使えます。HyperFlowのモデルでは、<code>steps</code>は4・6・8だけを受け付け、使えない設定には理由付きの<code>400</code>を返します。</p>
+    </section>
+
+    <section class="section section-narrow" id="limits" aria-labelledby="limits-title">
+      <h2 id="limits-title">使えない機能と注意</h2>
+      <ul>
+        <li><strong>試験的な対応です。</strong>既定のモデルは通常のMiniMax H3のままです。</li>
+        <li><strong>使えない機能</strong>：4・6・8以外のステップ数、速度プリセット、ノイズ除去の再利用、層数の変更、追加モデル（LoRA）、再ノイズ、Open-H3 再生成。int8キャッシュも作りません。</li>
+        <li><strong>計算方式</strong>：24GB以上のメモリを持つM5では、「<span class="ui">int8キャッシュ</span>」を選んだまま常駐（int8）で動きます（ピーク17〜18GiB）。それ以外のMacではSSDストリーミングで動きます。</li>
+        <li><strong>確かめた範囲</strong>：動作を確かめたのは、FL2VAのQ4_K_Mでの文章からの生成です。最初と最後の画像からの生成と、HyperFlowのRef2VA（参照画像・動画・音声から）の取り込みと生成は、まだ確かめていません。</li>
+        <li><strong>記録</strong>：動画の記録（<code>.json</code>）に<code>modelFamily: "hyperflow"</code>が、XMPのAISystemUsedに「HyperFlow H3 Flash (MiniMax H3 derivative)」が入ります。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="method" aria-labelledby="method-title">
+      <h2 id="method-title">比べ方</h2>
+      <ul>
+        <li>H3cAppのAPIから、6つの方法を同じプロンプト・同じシード（42）・同じ大きさ（672×384・5秒）で生成しました。Turbo LoRAはv1.2、DMAD LoRAはLoRAごとの自動サンプラー（再ノイズ）を使い、通常のモデルはGGUF（Q4_K）をint8キャッシュで動かしています。</li>
+        <li>画質の推定（MUSIQ）とプロンプトとの一致（CLIPScore）は、8フレームごとに測った平均です。ちらつきは全フレームで測りました。</li>
+        <li>数値のほかに、全フレームのうち4枚（最初・40・80・最後）を原寸で並べて目で確かめています。音は聞き比べていません。</li>
+        <li>通常のモデルの生成は、別の大きなファイルのコピーと重なったため、時間が数秒ずつ長めに出ている可能性があります。</li>
+        <li>エンジンの計算は、参照の実装（ComfyUI、CUDA）とブロックごとに比べて、常駐（int8）で最終出力の差3〜8%、SSDストリーミング（BF16）で2〜5%でした。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="license-title">
+      <h2 id="license-title">重みとライセンス</h2>
+      <ul>
+        <li>HyperFlow H3 Flashの重みは、Video Rebirthが<a href="https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash">Hugging Face</a>で公開しています。MiniMax H3の派生モデル（Model Derivative）で、MiniMax H3 Community Licenseが適用されます。MiniMaxの公式のモデルではありません（Powered by MiniMax H3）。</li>
+        <li>H3cAppには重みを含めていません。ダウンロードの前に、配布元のライセンスと注意書きを確認してください。どの条件が自分の利用に当てはまるかは、利用者が判断してください。</li>
+        <li>H3cAppのHyperFlow対応は、公開されているモデルの説明と、参照の実装をツールとして動かした出力をもとに、独自に書いたものです。</li>
+      </ul>
+      <p>詳しくは<a href="gguf.html#license">GGUFのライセンス</a>と<a href="faq.html#license">ライセンス</a>をご覧ください。</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">不具合の報告（Issues）</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.ja.md">README</a></li>
+        <li><a href="faq.html#license">ライセンス</a></li>
+        <li><a href="en/hyperflow.html?lang=en" hreflang="en" lang="en">English</a></li>
+      </ul>
+      <p>H3cApp：大阪成蹊大学データサイエンス学部 鎌原淳三／Junzo Kamahara</p>
+      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画の生成にはMiniMaxの動画生成モデル<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>を使っています。モデルにはMiniMax H3独自のライセンス（MiniMax H3 Community License）が適用されます。</p>
+    </div>
+  </footer>
+  <script src="assets/js/compare.js" defer></script>
+  <script src="assets/js/main.js" defer></script>
+</body>
+</html>
