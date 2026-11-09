@@ -357,6 +357,7 @@ struct h3_dit {
      * [rows, rank] middle (and a copy of the MLP input for a dense FC1 in a
      * factored MLP): [sequence, max(max rank, HIDDEN)]. */
     int hyperflow;
+    int factored_tensor_ops;
     h3_hyperflow_info hyperflow_info;
     h3_gpu_tensor *lowrank_tmp;
 };
@@ -2746,14 +2747,9 @@ static h3_dit *load_dit(const char *weight_directory,
     }
     dit->gpu = h3_gpu_create(shader_source_path, error, error_size);
     if (!dit->gpu) goto failed;
-    /* HyperFlow's factored linears come in ~200 distinct (rank, width)
-     * shapes; MPSGraph builds a graph per shape on first use (about 37 s at
-     * 512x512), the M5 TensorOps kernel takes any shape (ranks are 256
-     * multiples) and is also ~10 % faster per step. H3_HYPERFLOW_MPSGRAPH=1
-     * keeps MPSGraph. */
-    if (dit->hyperflow && h3_gpu_has_tensor_ops(dit->gpu) &&
-        !getenv("H3_HYPERFLOW_MPSGRAPH"))
-        h3_gpu_set_nax_linear_generic(dit->gpu, 1);
+    /* factored_linear; H3_HYPERFLOW_MPSGRAPH=1 keeps MPSGraph. */
+    dit->factored_tensor_ops = dit->hyperflow &&
+        h3_gpu_has_tensor_ops(dit->gpu) && !getenv("H3_HYPERFLOW_MPSGRAPH");
     if (lora_count) {
         dit->loras = h3_lora_set_load(dit->gpu, loras, lora_count, error,
                                       error_size);
@@ -3468,6 +3464,32 @@ static void debug_dump_attention_output(h3_dit *dit, unsigned index, int step,
     free(bf16); free(f16);
 }
 
+/* HyperFlow factored linears come in ~200 distinct (rank, width) shapes.
+ * MPSGraph builds a graph per shape on first use (about 37 s at 512x512),
+ * so on M5 they take the TensorOps kernel, which accepts any shape (ranks
+ * are multiples of 256). Dense BF16 matrices (SSD streaming) keep the
+ * default dispatch, where MPSGraph is faster for them. */
+static int factored_linear(h3_dit *dit, h3_gpu_tensor *output,
+                           const h3_gpu_tensor *input,
+                           const h3_gpu_tensor *weight,
+                           const h3_gpu_tensor *bias, uint32_t rows,
+                           uint32_t input_dim, uint32_t output_dim) {
+    if (dit->factored_tensor_ops) h3_gpu_set_nax_linear_generic(dit->gpu, 1);
+    int ok = h3_gpu_linear_bf16(dit->gpu, output, input, weight, bias, rows,
+                                input_dim, output_dim);
+    if (dit->factored_tensor_ops) h3_gpu_set_nax_linear_generic(dit->gpu, 0);
+    return ok;
+}
+
+static int dense_linear(h3_dit *dit, h3_gpu_tensor *output,
+                        const h3_gpu_tensor *input,
+                        const h3_gpu_tensor *weight,
+                        const h3_gpu_tensor *bias, uint32_t rows,
+                        uint32_t input_dim, uint32_t output_dim) {
+    return h3_gpu_linear_bf16(dit->gpu, output, input, weight, bias, rows,
+                              input_dim, output_dim);
+}
+
 /* Writes the BF16 hidden state [sequence, HIDDEN] to <prefix>.blockNN.bf16,
  * waiting for the queued work first (H3_DUMP_BLOCK_HIDDEN). */
 static int dump_block_hidden(h3_dit *dit, const char *prefix, unsigned block,
@@ -3528,22 +3550,22 @@ static int run_block(h3_dit *dit, unsigned index, int step,
         /* HyperFlow: Q, K, V each up(down(x)). The raw Q goes to the qkv
          * buffer and the raw K to the MLP's activated buffer (both free
          * until the attention output / MLP), V straight to value. */
-        OP(h3_gpu_linear_bf16(dit->gpu, dit->lowrank_tmp, dit->mod_attention,
+        OP(factored_linear(dit, dit->lowrank_tmp, dit->mod_attention,
             weight->q_down, NULL, rows, HIDDEN, weight->rank[H3_HF_Q]),
            "HyperFlow Q down");
-        OP(h3_gpu_linear_bf16(dit->gpu, dit->qkv, dit->lowrank_tmp,
+        OP(factored_linear(dit, dit->qkv, dit->lowrank_tmp,
             weight->q_up, NULL, rows, weight->rank[H3_HF_Q], INNER),
            "HyperFlow Q up");
-        OP(h3_gpu_linear_bf16(dit->gpu, dit->lowrank_tmp, dit->mod_attention,
+        OP(factored_linear(dit, dit->lowrank_tmp, dit->mod_attention,
             weight->k_down, NULL, rows, HIDDEN, weight->rank[H3_HF_K]),
            "HyperFlow K down");
-        OP(h3_gpu_linear_bf16(dit->gpu, dit->activated, dit->lowrank_tmp,
+        OP(factored_linear(dit, dit->activated, dit->lowrank_tmp,
             weight->k_up, NULL, rows, weight->rank[H3_HF_K], INNER),
            "HyperFlow K up");
-        OP(h3_gpu_linear_bf16(dit->gpu, dit->lowrank_tmp, dit->mod_attention,
+        OP(factored_linear(dit, dit->lowrank_tmp, dit->mod_attention,
             weight->v_down, NULL, rows, HIDDEN, weight->rank[H3_HF_V]),
            "HyperFlow V down");
-        OP(h3_gpu_linear_bf16(dit->gpu, dit->value, dit->lowrank_tmp,
+        OP(factored_linear(dit, dit->value, dit->lowrank_tmp,
             weight->v_up, NULL, rows, weight->rank[H3_HF_V], INNER),
            "HyperFlow V up");
         OP(h3_gpu_qk_rope_split_bf16(dit->gpu, dit->query, dit->key, dit->qkv,
@@ -3617,10 +3639,10 @@ static int run_block(h3_dit *dit, unsigned index, int step,
     debug_dump_attention_output(dit, index, step, rows,
                                 head_major_attention_output);
     if (factored_out) {
-        OP(h3_gpu_linear_bf16(dit->gpu, dit->lowrank_tmp,
+        OP(factored_linear(dit, dit->lowrank_tmp,
             dit->attention_heads, weight->out_down, NULL, rows, INNER,
             weight->rank[H3_HF_OUT]), "HyperFlow attention output down");
-        OP(h3_gpu_linear_bf16(dit->gpu, dit->attention_output,
+        OP(factored_linear(dit, dit->attention_output,
             dit->lowrank_tmp, weight->out_up, NULL, rows,
             weight->rank[H3_HF_OUT], HIDDEN),
            "HyperFlow attention output up");
@@ -3683,8 +3705,12 @@ static int run_block(h3_dit *dit, unsigned index, int step,
         uint32_t fc1_width = HIDDEN;
         const h3_gpu_tensor *gate_weight = weight->fc1_gate;
         const h3_gpu_tensor *value_weight = weight->fc1_value;
+        int (*fc1_linear)(h3_dit *, h3_gpu_tensor *, const h3_gpu_tensor *,
+                          const h3_gpu_tensor *, const h3_gpu_tensor *,
+                          uint32_t, uint32_t, uint32_t) =
+            weight->fc1_down ? factored_linear : dense_linear;
         if (weight->fc1_down) {
-            OP(h3_gpu_linear_bf16(dit->gpu, dit->lowrank_tmp, dit->mod_mlp,
+            OP(factored_linear(dit, dit->lowrank_tmp, dit->mod_mlp,
                 weight->fc1_down, NULL, rows, HIDDEN,
                 weight->rank[H3_HF_FC1]), "HyperFlow FC1 down");
             fc1_width = weight->rank[H3_HF_FC1];
@@ -3695,17 +3721,17 @@ static int run_block(h3_dit *dit, unsigned index, int step,
                 0, (size_t)rows * HIDDEN), "HyperFlow FC1 input copy");
         }
         fc1_input = dit->lowrank_tmp;
-        OP(h3_gpu_linear_bf16(dit->gpu, dit->activated, fc1_input,
+        OP(fc1_linear(dit, dit->activated, fc1_input,
             value_weight, NULL, rows, fc1_width, FFN), "HyperFlow FC1 up half");
-        OP(h3_gpu_linear_bf16(dit->gpu, dit->qkv, fc1_input, gate_weight,
+        OP(fc1_linear(dit, dit->qkv, fc1_input, gate_weight,
             NULL, rows, fc1_width, FFN), "HyperFlow FC1 gate half");
         OP(h3_gpu_swiglu_split_bf16(dit->gpu, dit->activated, dit->qkv,
             dit->activated, rows * FFN), "HyperFlow SwiGLU");
         if (weight->fc2_down) {
-            OP(h3_gpu_linear_bf16(dit->gpu, dit->lowrank_tmp, dit->activated,
+            OP(factored_linear(dit, dit->lowrank_tmp, dit->activated,
                 weight->fc2_down, NULL, rows, FFN, weight->rank[H3_HF_FC2]),
                "HyperFlow FC2 down");
-            OP(h3_gpu_linear_bf16(dit->gpu, mlp_output, dit->lowrank_tmp,
+            OP(factored_linear(dit, mlp_output, dit->lowrank_tmp,
                 weight->fc2_up, NULL, rows, weight->rank[H3_HF_FC2], HIDDEN),
                "HyperFlow FC2 up");
         } else {
