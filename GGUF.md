@@ -242,8 +242,29 @@ Measured on an M5 (24 GB), 672x384, 5 s, 6 steps (2026-11-09):
 
 Against the reference implementation (ComfyUI on CUDA), block by block,
 the final output differs by 3-8 % resident (int8) and 2-5 % with SSD
-streaming (BF16). Picture quality has not yet been compared with the Turbo
-LoRA or regular 20-step runs.
+streaming (BF16).
+
+Picture quality (experimental support): with the same three prompts and
+seeds, compared with the Turbo LoRA (4 steps), DMAD and regular 20-step runs
+(M5, 672x384, 5 s, 2026-11-09). HyperFlow at 6 and 8 steps matches Turbo at
+4 steps, follows the prompt slightly better (CLIPScore) and flickers about
+half as much between frames. At 6 steps fine fur can come out a little
+softer than with Turbo. It takes about as long as Turbo at 4 steps, about
+1.2 times as long at 6 and about 1.45 times at 8.
+
+| Configuration (mean of 3 prompts) | Time | MUSIQ | CLIPScore | Flicker |
+|---|---|---|---|---|
+| Regular, 20 steps | 645 s | 64.6 | 0.914 | 0.82 |
+| Turbo LoRA, 4 steps | 182 s | 68.1 | 0.858 | 1.97 |
+| DMAD LoRA, 4 steps | 182 s | 64.3 | 0.831 | 1.40 |
+| HyperFlow, 4 steps | 170 s | 65.9 | 0.866 | 0.96 |
+| HyperFlow, 6 steps | 216 s | 67.5 | 0.877 | 1.13 |
+| HyperFlow, 8 steps | 264 s | 68.7 | 0.853 | 1.22 |
+
+MUSIQ estimates picture quality (higher is better); flicker is the mean
+brightness change between neighbouring frames. The differences between
+prompts are larger than those between configurations, so read these as a
+rough guide.
 
 ## Deleting models and disk space
 
