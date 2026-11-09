@@ -30,6 +30,9 @@ struct ModelImportManifest: Codable {
     var importedAt: Date
     var baseModel: String
     var parts: [Part]
+    /// "hyperflow" when the DiT is HyperFlow H3 Flash (H3ModelFamily);
+    /// absent for plain H3 and in imports from before 0.8.
+    var family: String? = nil
 
     static let fileName = "h3c-import.json"
 
@@ -51,11 +54,13 @@ struct ModelImportManifest: Codable {
 
     /// e.g. "DiT Q8_0・文章 Q8_0" for the model list.
     var summary: String {
-        parts.filter { $0.role != "vision" }.map { part in
+        let list = parts.filter { $0.role != "vision" }.map { part in
             let label = part.role == "textEncoder" ? String(localized: "文章") :
                 part.role == "ref2va" ? "Ref2VA" : "DiT"
             return "\(label) \(part.type)"
-        }.joined(separator: itemSeparator)
+        }
+        return ((family == H3ModelFamily.hyperflow.rawValue ? ["HyperFlow"] : []) + list)
+            .joined(separator: itemSeparator)
     }
 }
 
@@ -298,7 +303,9 @@ final class ModelImporter: ObservableObject {
                                bytes: ref.info?.fileBytes ?? 0))
         }
 
-        try ModelImportManifest(importedAt: Date(), baseModel: request.base.name, parts: parts)
+        try ModelImportManifest(importedAt: Date(), baseModel: request.base.name, parts: parts,
+                                family: request.dit.info?.hyperflow == true
+                                    ? H3ModelFamily.hyperflow.rawValue : nil)
             .save(modelPath: root)
     }
 
@@ -591,6 +598,11 @@ struct ImportPlan {
         if let info = textEncoder?.info, info.textLayers < 50 {
             problems.append(String(localized: "\(label(textEncoder!))：文章の部分の層が足りません（50層が必要です）"))
         }
+        // The app sets the generation form from the FL2VA DiT's family; a
+        // Ref2VA DiT of the other family would run with the wrong steps.
+        if let fl2va = dit?.info, let ref = ref2vaDit?.info, fl2va.hyperflow != ref.hyperflow {
+            problems.append(String(localized: "FL2VAとRef2VAのDiTは、どちらもHyperFlow H3 Flashか、どちらも通常のMiniMax-H3にしてください。"))
+        }
         if base == nil {
             problems.append(String(localized: "複製元にできるモデルがありません。公式のモデルか取り込み済みのモデルのフォルダを登録するか、共通部品をダウンロードしてください。"))
         }
@@ -599,7 +611,11 @@ struct ImportPlan {
             ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
         }
         func describe(_ file: ImportPick) -> String {
-            "\(label(file))\(itemSeparator)\(file.info?.mainType ?? "")\(itemSeparator)\(size(file.info?.fileBytes ?? 0))"
+            var text = "\(label(file))\(itemSeparator)\(file.info?.mainType ?? "")\(itemSeparator)\(size(file.info?.fileBytes ?? 0))"
+            if let info = file.info, info.hyperflow {
+                text += "\n" + String(localized: "HyperFlow H3 Flash（\(info.ditBlocks)ブロック、うち\(info.factoredBlocks)ブロックが低ランク）。4・6・8ステップで生成し、LoRAと速度の設定は使いません。")
+            }
+            return text
         }
         /// The detail line, prefixed with the duplicate notice when several
         /// files compete for the part.
@@ -725,7 +741,7 @@ struct ImportPlan {
         if let ref = ref2vaDit, let info = ref.info {
             let q2k = isPlainQ2KDiT(mainType: info.mainType, fileName: ref.fileName)
             items.append(item("ref2va", String(localized: "DiT（Ref2VA）"),
-                              info.curveAdaLN && !q2k ? .ok : .warning,
+                              (info.curveAdaLN || info.hyperflow) && !q2k ? .ok : .warning,
                               describe(ref) + (q2k ? "\n" + q2kWarning : ""), part: .ref2va, chosen: ref))
         } else {
             items.append(item("ref2va", String(localized: "DiT（Ref2VA）"), .info,
@@ -1209,9 +1225,11 @@ struct ModelImportView: View {
                         Button("ゴミ箱に入れる") { trashDownloadedSources() }.controlSize(.small)
                     }
                 }
-                Text("M5の高速モードで使うときは、切り替えたあと詳細設定の「キャッシュを作成…」でint8キャッシュを作ってください。")
-                    .font(.caption).foregroundStyle(palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if plan.dit?.info?.hyperflow != true {
+                    Text("M5の高速モードで使うときは、切り替えたあと詳細設定の「キャッシュを作成…」でint8キャッシュを作ってください。")
+                        .font(.caption).foregroundStyle(palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             if let message = importer.errorMessage {
                 Text(message).font(.caption).foregroundStyle(palette.errorColor)

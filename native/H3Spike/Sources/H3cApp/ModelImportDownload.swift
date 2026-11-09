@@ -62,7 +62,7 @@ enum ImportDownloadKind: String, Identifiable, CaseIterable {
         case .dit, .ref2va:
             return ["unsloth/MiniMax-H3-GGUF", "Abiray/MiniMax-H3-Pruned-GGUF", "Abiray/MiniMax-H3-GGUF",
                     "leejet/MiniMax-H3-GGUF", "molbal/MiniMax-H3-GGUF", "realrebelai/MiniMax-H3_GGUFs",
-                    "joeygambino/MiniMax-H3-x-Z-Image-GGUF"]
+                    "joeygambino/MiniMax-H3-x-Z-Image-GGUF", "VideoRebirthAI/hyperflow-h3-flash"]
         case .textEncoder:
             return ["Qwen/Qwen3-VL-32B-Instruct-GGUF", "unsloth/MiniMax-H3-GGUF", "leejet/MiniMax-H3-GGUF",
                     "Abiray/MiniMax-H3-GGUF", "realrebelai/MiniMax-H3_GGUFs",
@@ -125,6 +125,7 @@ struct ImportDownloadChoice: Identifiable, Hashable {
         "Qwen/Qwen3-VL-32B-Instruct-GGUF/Qwen3VL-32B-Instruct-Q8_0.gguf",
         "Qwen/Qwen3-VL-32B-Instruct-GGUF/mmproj-Qwen3VL-32B-Instruct-F16.gguf",
         "unsloth/MiniMax-H3-GGUF/vae/minimax_h3_video_vae_fp16.safetensors",
+        "VideoRebirthAI/hyperflow-h3-flash/fl2va_gguf/minimax_h3_fl2va_hyperflow_flash_14b-Q4_K_M.gguf",
     ]
 
     private static func size(_ bytes: Int64) -> String {
@@ -158,8 +159,12 @@ struct ImportDownloadChoice: Identifiable, Hashable {
         var writes: Int64 = 0
         switch kind {
         case .dit, .ref2va:
-            notes.append(file.curveAdaLN ? String(localized: "AdaLNは曲線形")
-                         : String(localized: "AdaLNは密な形"))
+            if file.hyperflow == true {
+                notes.append(String(localized: "HyperFlow H3 Flash（4・6・8ステップ）"))
+            } else {
+                notes.append(file.curveAdaLN ? String(localized: "AdaLNは曲線形")
+                             : String(localized: "AdaLNは密な形"))
+            }
             if isPlainQ2KDiT(mainType: file.mainType, fileName: file.fileName) {
                 notes.append(String(localized: "画質が大きく崩れます（Q2_K）"))
             }
@@ -656,6 +661,10 @@ struct ModelLicenseNotice: View {
                      ? "MiniMax H3のモデル（公式のもの、unslothのGGUF）には「MiniMax H3 Community License Agreement」が、Qwenの文章の部分・画像の部分には「Apache License 2.0」が適用されます。ダウンロードと利用の前に各ライセンスを読み、その条件に従ってください。"
                      : "MiniMax H3のモデルには「MiniMax H3 Community License Agreement」が適用されます。ダウンロードと利用の前にライセンスを読み、その条件に従ってください。")
                     .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("HyperFlow H3 Flash（VideoRebirthAI）はMiniMax H3の派生モデルで、同じライセンスに従います。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: H3Spacing.md) {
                     Link("MiniMax H3のライセンス",

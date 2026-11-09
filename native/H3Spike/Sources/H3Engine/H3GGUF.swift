@@ -19,6 +19,12 @@ public struct H3GGUFInfo: Sendable, Equatable {
     public let mainType: String
     public let architecture: String
     public let name: String
+    /// DiT: HyperFlow H3 Flash (a distilled 4/6/8-step H3 derivative with
+    /// factored linears and pruned blocks), its block count and how many
+    /// blocks have factored linears.
+    public var hyperflow = false
+    public var ditBlocks = 0
+    public var factoredBlocks = 0
 
     public static func inspect(path: String) throws -> H3GGUFInfo {
         var info = h3_gguf_info()
@@ -39,11 +45,42 @@ public struct H3GGUFInfo: Sendable, Equatable {
                 String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
             }
         }
-        return H3GGUFInfo(
+        var result = H3GGUFInfo(
             role: role, curveAdaLN: info.curve_adaln != 0, denseAdaLN: info.dense_adaln != 0,
             textLayers: Int(info.text_layers), hasVision: info.has_vision != 0,
             fileBytes: info.file_bytes, mainType: text(info.main_type),
             architecture: text(info.architecture), name: text(info.name))
+        result.hyperflow = info.hyperflow != 0
+        result.ditBlocks = Int(info.dit_blocks)
+        result.factoredBlocks = Int(info.factored_blocks)
+        return result
+    }
+}
+
+/// Which kind of transformer a model folder runs. HyperFlow H3 Flash only
+/// samples in 4, 6 or 8 steps with its own schedule, and takes none of the
+/// H3 speed-ups, LoRAs, the re-noise sampler or the int8 attention cache
+/// (h3.c refuses them).
+public enum H3ModelFamily: String, Codable, Sendable {
+    case h3
+    case hyperflow
+
+    public static let hyperflowSteps = [4, 6, 8]
+    public static let hyperflowDefaultSteps = 6
+
+    /// From the FL2VA transformer's GGUF header (a folder of safetensors is
+    /// always plain H3). Reads only the tensor table.
+    public static func detect(modelDirectory: String) -> H3ModelFamily {
+        let transformer = (modelDirectory as NSString)
+            .appendingPathComponent("FL2VA/transformer")
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: transformer)) ?? []
+        for file in files.sorted() where file.lowercased().hasSuffix(".gguf") {
+            let path = (transformer as NSString).appendingPathComponent(file)
+            if let info = try? H3GGUFInfo.inspect(path: path), info.role == .dit {
+                return info.hyperflow ? .hyperflow : .h3
+            }
+        }
+        return .h3
     }
 }
 

@@ -129,7 +129,11 @@ extension GenerationViewModel {
             }
             let path = entry.path
             let detail = await Task.detached { ModelDetail.inspect(path: path, id: id) }.value
+            let family = await Task.detached { H3ModelFamily.detect(modelDirectory: path) }.value
             return .json(200, ["name": entry.name, "path": path, "total_bytes": detail.totalBytes,
+                               "family": family.rawValue,
+                               "steps": family == .hyperflow ? H3ModelFamily.hyperflowSteps as Any
+                                                             : ["min": stepsRange.lowerBound, "max": stepsRange.upperBound],
                                "sections": detail.sections.map { section in
                                    ["title": section.title, "note": section.note ?? NSNull(),
                                     "rows": section.rows.map { row in
@@ -955,10 +959,20 @@ extension GenerationViewModel {
         // otherwise be accepted and silently run a different step count.
         var requestedSteps: Int?
         if let stepsValue = json["steps"] {
+            if isHyperFlow {
+                guard let value = jsonInteger(stepsValue), H3ModelFamily.hyperflowSteps.contains(value) else {
+                    return .error(400, "\"steps\" must be 4, 6 or 8 for the active HyperFlow H3 Flash model")
+                }
+            }
             guard let value = jsonInteger(stepsValue), stepsRange.contains(value) else {
                 return .error(400, "\"steps\" must be an integer from \(stepsRange.lowerBound) to \(stepsRange.upperBound)")
             }
             requestedSteps = value
+        }
+        // HyperFlow H3 Flash runs its own 4/6/8-step schedule on every
+        // block; say so instead of quietly dropping what it cannot use.
+        if isHyperFlow, let problem = hyperFlowRequestProblem(json) {
+            return .error(400, "the active model is HyperFlow H3 Flash: \(problem)")
         }
 
         // Every field below is set from this request (defaulting when
@@ -1100,7 +1114,7 @@ extension GenerationViewModel {
             }
             denoiseReuse = reuse
         } else {
-            denoiseReuse = defaultReuse
+            denoiseReuse = isHyperFlow ? 1 : defaultReuse
         }
 
         if let layers = json["dit_layers"] {
@@ -1275,7 +1289,8 @@ extension GenerationViewModel {
         // to its recommended steps (followTurboLoRASteps), which an explicit
         // "steps" in the request still overrides.
         let turboSteps = library.enabledLoRAs.first { $0.recommendedSteps != nil }?.recommendedSteps
-        steps = requestedSteps ?? turboSteps ?? defaultStepsForAPI
+        steps = requestedSteps ?? (isHyperFlow ? H3ModelFamily.hyperflowDefaultSteps
+                                               : turboSteps ?? defaultStepsForAPI)
 
         // "sampler" ("auto", "euler", "renoise") and "audio_shift" (0 =
         // auto) override, for this one generation, the step rule and audio
@@ -1315,6 +1330,26 @@ extension GenerationViewModel {
 /// h3.h's own default - kept here rather than importing CH3 into this
 /// small API file just for one constant.
 private let defaultStepsForAPI = 20
+
+extension GenerationViewModel {
+    /// What a /api/generate body asks for that HyperFlow H3 Flash cannot do
+    /// (h3.c would refuse it), or nil.
+    func hyperFlowRequestProblem(_ json: [String: Any]) -> String? {
+        func number(_ key: String) -> Double? { (json[key] as? NSNumber)?.doubleValue }
+        if let speed = json["speed_mode"] as? String, speed != SpeedMode.quality.rawValue {
+            return "\"speed_mode\" must be quality (it runs every block at every step)"
+        }
+        if let reuse = number("reuse"), reuse != 1 { return "\"reuse\" must be 1" }
+        if let layers = number("dit_layers"), Int(layers) != defaultDitLayers {
+            return "\"dit_layers\" must be omitted or \(defaultDitLayers)"
+        }
+        if let list = json["loras"] as? [Any], !list.isEmpty { return "LoRAs do not apply to it" }
+        if let name = json["lora_name"] as? String, !name.isEmpty { return "LoRAs do not apply to it" }
+        if (json["sampler"] as? String) == "renoise" { return "it has no re-noise sampler" }
+        if let shift = number("audio_shift"), shift > 0, shift != 3 { return "its audio shift is fixed at 3" }
+        return nil
+    }
+}
 
 /// A JSON number as an Int. JSONSerialization hands booleans back as
 /// NSNumber too, and `true as? Int` succeeds as 1 - so without this check

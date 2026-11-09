@@ -143,6 +143,32 @@ final class GenerationViewModel: ObservableObject {
     // not its marketing name. Set from the real device in loadModel().
     @Published private(set) var supportsInt8Cache = true
     var defaultComputeMode: ComputeMode { supportsInt8Cache ? .attentionCache : .ssdStreaming }
+    /// What the active model's transformer is (set in loadModel()).
+    /// HyperFlow H3 Flash samples only in 4, 6 or 8 steps with its own
+    /// schedule and takes no LoRA, speed preset, re-noise, denoiser reuse,
+    /// layer count or attention cache - the form keeps its settings but
+    /// sends HyperFlow-safe ones (effective* below) and shows why.
+    @Published private(set) var modelFamily: H3ModelFamily = .h3
+    var isHyperFlow: Bool { modelFamily == .hyperflow }
+    /// The step choices for the active model, for the 詳細設定 picker.
+    var availableSteps: [Int] { isHyperFlow ? H3ModelFamily.hyperflowSteps : Array(stepsRange) }
+    /// Steps sent to the engine: HyperFlow's nearest allowed count.
+    var effectiveSteps: Int {
+        guard isHyperFlow else { return steps.clamped(to: stepsRange) }
+        return H3ModelFamily.hyperflowSteps.min { abs($0 - steps) < abs($1 - steps) }
+            ?? H3ModelFamily.hyperflowDefaultSteps
+    }
+    /// HyperFlow has no int8 attention cache: the cache choice runs it
+    /// resident (int8, about 17 GiB measured at 672x384 5 s on M5) where
+    /// the Mac has at least 24 GB, else streamed from the SSD (about 9 GiB).
+    var effectiveComputeMode: ComputeMode {
+        guard isHyperFlow, computeMode == .attentionCache else { return computeMode }
+        let physicalGiB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        return supportsInt8Cache && physicalGiB >= 23.5 ? .resident : .ssdStreaming
+    }
+    /// Steps the user had before a HyperFlow model moved them to 6, restored
+    /// when a plain H3 model is loaded again.
+    private var stepsBeforeHyperFlow: Int?
     @Published var speedMode: SpeedMode = .quality
     /// 全体設定 > 生成 (curve-form AdaLN, 途中の様子), shared with every
     /// other window.
@@ -159,7 +185,8 @@ final class GenerationViewModel: ObservableObject {
     /// measured at reuse 1 - so they run at 1 whatever denoiseReuse holds.
     /// The re-noise step rule evaluates every step, so it runs at 1 too.
     var effectiveDenoiseReuse: Int {
-        speedMode == .quality && !samplingSettings.renoise ? denoiseReuse.clamped(to: reuseRange) : 1
+        guard !isHyperFlow else { return 1 }
+        return speedMode == .quality && !samplingSettings.renoise ? denoiseReuse.clamped(to: reuseRange) : 1
     }
 
     struct SamplingSettings: Equatable {
@@ -177,6 +204,8 @@ final class GenerationViewModel: ObservableObject {
     /// for one generation (A/B tests).
     var samplingSettings: SamplingSettings {
         var settings = SamplingSettings()
+        // HyperFlow: its own Euler schedule, audio shift fixed at 3.
+        guard !isHyperFlow else { return settings }
         for entry in library.enabledLoRAs {
             let wanted = library.sampling(for: entry)
             if wanted.renoise { settings.renoise = true }
@@ -231,6 +260,7 @@ final class GenerationViewModel: ObservableObject {
     /// the engine rejects combining the two.
     var speedSettings: SpeedSettings {
         var settings = SpeedSettings()
+        guard !isHyperFlow else { return settings } // all blocks, every step
         // The layer count is its own advanced setting, not part of a preset.
         settings.ditLayers = Int32(ditLayers.clamped(to: ditLayersRange))
         guard speedMode != .quality else { return settings }
@@ -332,7 +362,8 @@ final class GenerationViewModel: ObservableObject {
     /// (entries switched on there or in the form) and applies in every
     /// compute mode.
     var effectiveLoRAs: [ResolvedLoRA] {
-        library.enabledLoRAs.map { ResolvedLoRA(name: $0.name, path: $0.path, strength: $0.strength) }
+        guard !isHyperFlow else { return [] }
+        return library.enabledLoRAs.map { ResolvedLoRA(name: $0.name, path: $0.path, strength: $0.strength) }
     }
 
     /// Where the active model's attention cache files live. Isolated per
@@ -405,11 +436,12 @@ final class GenerationViewModel: ObservableObject {
     var draftEstimatedSeconds: Double? {
         if isChained { return chainEstimatedSeconds }
         let frames = Int(h3AlignedFrameCount(seconds: Double(seconds.clamped(to: secondsRange))))
-        let calibration = TimingCalibration.load(for: computeMode, speed: speedMode,
+        let calibration = TimingCalibration.load(for: effectiveComputeMode, speed: isHyperFlow ? .quality : speedMode,
                                                  fastAttention: useFastAttention,
-                                                 ditLayers: ditLayers.clamped(to: ditLayersRange))
+                                                 ditLayers: isHyperFlow ? defaultDitLayers : ditLayers.clamped(to: ditLayersRange),
+                                                 family: modelFamily)
         let shape = progressShape(sizeProfile: sizeProfile, frames: frames,
-                                  steps: steps.clamped(to: stepsRange), reuse: effectiveDenoiseReuse,
+                                  steps: effectiveSteps, reuse: effectiveDenoiseReuse,
                                   plan: currentGenerationPlan)
         let now = Date()
         return ProgressEstimator(shape: shape, calibration: calibration, start: now)
@@ -467,6 +499,10 @@ final class GenerationViewModel: ObservableObject {
     var isLowMemoryForResident: Bool {
         guard computeMode == .resident else { return false }
         let physicalGiB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+        // HyperFlow's blocks are smaller: about 17 GiB in all measured
+        // resident int8 on a 24 GB M5 (2026-11-09); ~27 GB of BF16 weights
+        // elsewhere.
+        if isHyperFlow { return physicalGiB < (supportsInt8Cache ? 23.5 : 48.0) }
         return physicalGiB < (supportsInt8Cache ? 32.0 : 64.0)
     }
 
@@ -511,10 +547,10 @@ final class GenerationViewModel: ObservableObject {
         params.renderWidth = dimensions.renderWidth
         params.renderHeight = dimensions.renderHeight
         params.frames = h3AlignedFrameCount(seconds: Double(min(requestedSeconds, secondsRange.upperBound)))
-        params.steps = Int32(steps.clamped(to: stepsRange))
+        params.steps = Int32(effectiveSteps)
         params.references = referenceImages
-        params.ssdStreaming = computeMode == .ssdStreaming
-        params.attentionCachePath = computeMode == .attentionCache ? currentAttentionCachePath : nil
+        params.ssdStreaming = effectiveComputeMode == .ssdStreaming
+        params.attentionCachePath = effectiveComputeMode == .attentionCache ? currentAttentionCachePath : nil
         params.continueLatentPath = continuation?.latentURL.path
         params.continueFrames = Int32(clamping: continuation?.frames ?? continuationFrames)
         return params
@@ -715,7 +751,7 @@ final class GenerationViewModel: ObservableObject {
             .removeDuplicates()
             .scan((previous: Int?.none, current: Int?.none)) { ($0.current, $1) }
             .sink { [weak self] change in
-                guard let self else { return }
+                guard let self, !self.isHyperFlow else { return }
                 if let steps = change.current {
                     self.steps = steps
                 } else if let previous = change.previous, self.steps == previous {
@@ -759,6 +795,7 @@ final class GenerationViewModel: ObservableObject {
         do {
             let engine = try H3Engine(modelDirectory: modelDir)
             self.engine = engine
+            adoptModelFamily(H3ModelFamily.detect(modelDirectory: modelDir))
             if let device = engine.device {
                 deviceLine = "\(device.name) · \(device.architecture)"
                 supportsInt8Cache = device.hasTensorHardware
@@ -770,6 +807,25 @@ final class GenerationViewModel: ObservableObject {
         } catch {
             deviceLine = String(localized: "モデルの読み込みに失敗しました")
             engineState = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Moves the draft's steps onto the new model's choices: a HyperFlow
+    /// model starts at its default 6 (remembering the previous count), and a
+    /// plain model gets that count back if the steps were not changed since.
+    private func adoptModelFamily(_ family: H3ModelFamily) {
+        let previous = modelFamily
+        modelFamily = family
+        if family == .hyperflow, previous != .hyperflow {
+            if !H3ModelFamily.hyperflowSteps.contains(steps) {
+                stepsBeforeHyperFlow = steps
+                steps = H3ModelFamily.hyperflowDefaultSteps
+            }
+        } else if family == .h3, previous == .hyperflow {
+            if let before = stepsBeforeHyperFlow, steps == H3ModelFamily.hyperflowDefaultSteps {
+                steps = before
+            }
+            stepsBeforeHyperFlow = nil
         }
     }
 
@@ -960,7 +1016,7 @@ final class GenerationViewModel: ObservableObject {
         if let forcedAudioPath, !FileManager.default.fileExists(atPath: forcedAudioPath) {
             return String(localized: "合わせる音声のファイルが見つかりません: \(URL(fileURLWithPath: forcedAudioPath).lastPathComponent)")
         }
-        for lora in library.enabledLoRAs {
+        for lora in library.enabledLoRAs where !isHyperFlow {
             if !FileManager.default.fileExists(atPath: lora.path) {
                 return String(localized: "追加モデル「\(lora.name)」のファイルが見つかりません。モデル管理で確認してください")
             }
@@ -968,7 +1024,7 @@ final class GenerationViewModel: ObservableObject {
                 return String(localized: "追加モデル「\(lora.name)」はMiniMax-H3用として読み込めません。モデル管理で確認してください")
             }
         }
-        if computeMode == .attentionCache {
+        if effectiveComputeMode == .attentionCache {
             if !supportsInt8Cache {
                 return String(localized: "このGPUではint8キャッシュを使えません。詳細設定の「計算方式」でSSDストリーミングを選んでください")
             }
@@ -1019,6 +1075,8 @@ final class GenerationViewModel: ObservableObject {
     /// the form mid-batch doesn't change the rest of the batch.
     struct GenerationRequest {
         var params: H3GenerationParams
+        /// The model family that runs it (from the draft it records).
+        var family: H3ModelFamily { H3ModelFamily(rawValue: draft.modelFamily ?? "") ?? .h3 }
         var prompt: String
         var creationMethod: CreationMethod
         var imageInputMode: ImageInputMode?
@@ -1114,7 +1172,7 @@ final class GenerationViewModel: ObservableObject {
             let now = Date()
             let calibration = TimingCalibration.load(for: request.computeMode, speed: request.speedMode,
                                                      fastAttention: request.params.fastAttention,
-                                                     ditLayers: request.ditLayers)
+                                                     ditLayers: request.ditLayers, family: request.family)
             planned = ProgressEstimator(shape: request.shape, calibration: calibration, start: now)
                 .snapshot(now: now).remaining.map { Array(repeating: $0, count: total) }
         }
@@ -1146,14 +1204,16 @@ final class GenerationViewModel: ObservableObject {
         params.renderWidth = dimensions.renderWidth
         params.renderHeight = dimensions.renderHeight
         params.frames = Int32(requestedFrames)
-        params.steps = Int32(steps.clamped(to: stepsRange))
+        params.steps = Int32(effectiveSteps)
         params.denoiseReuse = Int32(effectiveDenoiseReuse)
         params.firstFrame = effectiveFirstFrame
         params.lastFrame = effectiveLastFrame
         params.references = effectiveReferences
+        let computeMode = effectiveComputeMode
         params.ssdStreaming = computeMode == .ssdStreaming
         params.attentionCachePath = computeMode == .attentionCache ? currentAttentionCachePath : nil
-        params.adalnCurveDirectory = preferences.useAdaLNCurve
+        // HyperFlow's AdaLN is its own two-time projection (no curve file).
+        params.adalnCurveDirectory = preferences.useAdaLNCurve && !isHyperFlow
             ? library.activeModel.map { attentionCacheDirectory(for: $0) } : nil
         let loras = effectiveLoRAs
         params.loras = loras.map { H3LoRAInput(path: $0.path, strength: $0.strength) }
@@ -1195,6 +1255,17 @@ final class GenerationViewModel: ObservableObject {
             draft = draft.mappingClipPaths { ProjectFiles.stored($0, in: projectURL) }
         }
         draft.fastAttention = params.fastAttention
+        if isHyperFlow {
+            // What actually ran: the form keeps its own values for when a
+            // plain H3 model is used again.
+            draft.modelFamily = H3ModelFamily.hyperflow.rawValue
+            draft.steps = effectiveSteps
+            draft.denoiseReuse = 1
+            draft.speedMode = SpeedMode.quality.rawValue
+            draft.ditLayers = defaultDitLayers
+            draft.computeMode = computeMode.rawValue
+            draft.loras = []
+        }
         // Kept in the project for when the length is chained again, but not
         // in the record of a video they didn't shape.
         if !isChained {
@@ -1218,18 +1289,18 @@ final class GenerationViewModel: ObservableObject {
             sizeProfile: sizeProfile,
             requestedSeconds: requestedSeconds,
             requestedFrames: requestedFrames,
-            steps: steps.clamped(to: stepsRange),
-            denoiseReuse: denoiseReuse.clamped(to: reuseRange),
+            steps: effectiveSteps,
+            denoiseReuse: isHyperFlow ? 1 : denoiseReuse.clamped(to: reuseRange),
             effectiveDenoiseReuse: effectiveDenoiseReuse,
-            ditLayers: ditLayers.clamped(to: ditLayersRange),
+            ditLayers: isHyperFlow ? defaultDitLayers : ditLayers.clamped(to: ditLayersRange),
             computeMode: computeMode,
-            speedMode: speedMode,
+            speedMode: isHyperFlow ? .quality : speedMode,
             loras: loras,
             sampling: sampling,
             referenceNames: referenceNames(draft),
             deviceLine: deviceLine,
             shape: progressShape(sizeProfile: sizeProfile, frames: requestedFrames,
-                                 steps: steps.clamped(to: stepsRange), reuse: effectiveDenoiseReuse,
+                                 steps: effectiveSteps, reuse: effectiveDenoiseReuse,
                                  plan: currentGenerationPlan),
             projectURL: project?.url,
             draft: draft,
@@ -1266,7 +1337,7 @@ final class GenerationViewModel: ObservableObject {
             shape: request.shape,
             calibration: TimingCalibration.load(for: request.computeMode, speed: request.speedMode,
                                                 fastAttention: request.params.fastAttention,
-                                                ditLayers: request.ditLayers),
+                                                ditLayers: request.ditLayers, family: request.family),
             start: Date())
         publishTiming()
         startElapsedTimer()
@@ -1351,7 +1422,7 @@ final class GenerationViewModel: ObservableObject {
             // with it off.
             .save(for: request.computeMode, speed: request.speedMode,
                   fastAttention: result.ccvAttentionCalls > 0,
-                  ditLayers: request.ditLayers)
+                  ditLayers: request.ditLayers, family: request.family)
         let completedAt = Date()
         let generationSeconds = completedAt.timeIntervalSince(startedAt)
         var url = URL(fileURLWithPath: result.outputPath)
@@ -1430,7 +1501,8 @@ final class GenerationViewModel: ObservableObject {
             forcedAudio: request.params.forcedAudioPath.map { URL(fileURLWithPath: $0).lastPathComponent },
             forcedAudioOffset: request.params.forcedAudioOffset,
             continuedFrom: request.draft.continueFrom.map { URL(fileURLWithPath: $0).lastPathComponent },
-            continueFrames: request.draft.continueFrames ?? continuationFrames)
+            continueFrames: request.draft.continueFrames ?? continuationFrames,
+            modelFamily: request.draft.modelFamily)
         loadActualDuration(for: url)
     }
 

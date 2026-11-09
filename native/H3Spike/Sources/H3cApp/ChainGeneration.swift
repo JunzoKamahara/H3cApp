@@ -134,9 +134,10 @@ extension GenerationViewModel {
 
     /// Each clip's estimate, in plan order (see chainEstimatedSeconds).
     func chainClipEstimates(plan: [Int]) -> [Double]? {
-        let calibration = TimingCalibration.load(for: computeMode, speed: speedMode,
+        let calibration = TimingCalibration.load(for: effectiveComputeMode, speed: isHyperFlow ? .quality : speedMode,
                                                  fastAttention: useFastAttention,
-                                                 ditLayers: ditLayers.clamped(to: ditLayersRange))
+                                                 ditLayers: isHyperFlow ? defaultDitLayers : ditLayers.clamped(to: ditLayersRange),
+                                                 family: modelFamily)
         let now = Date()
         var estimates: [Double] = []
         for (index, frames) in plan.enumerated() {

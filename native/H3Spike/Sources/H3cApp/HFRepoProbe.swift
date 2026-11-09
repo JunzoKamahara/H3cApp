@@ -72,6 +72,8 @@ struct HFProbedFile: Codable, Sendable, Equatable {
     var denseAdaLN = false
     var textLayers = 0
     var hasVision = false
+    /// A HyperFlow H3 Flash DiT (nil in caches from before it was probed).
+    var hyperflow: Bool? = nil
     /// Why the app can't use it; nil when it can. Kept as a reason, not
     /// text, so the cached result reads in whatever language the app is in.
     var problem: Problem?
@@ -208,6 +210,7 @@ enum HFRepoProbe {
         file.denseAdaLN = info.denseAdaLN
         file.textLayers = info.textLayers
         file.hasVision = info.hasVision
+        file.hyperflow = info.hyperflow
     }
 
     /// ggml type ids the engine expands (see h3_quant_from_ggml).

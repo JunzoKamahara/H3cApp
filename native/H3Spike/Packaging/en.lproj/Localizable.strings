@@ -1227,3 +1227,31 @@
 "プロジェクトが開いていません。" = "No project is open.";
 "無題のプロジェクト" = "Untitled Project";
 "無題のプロジェクト %lld" = "Untitled Project %lld";
+
+/* HyperFlow H3 Flash (0.8) */
+
+/* AdvancedSettingsView.swift */
+"HyperFlow H3 Flashは4・6・8ステップで生成します（既定は6）。" = "HyperFlow H3 Flash generates in 4, 6 or 8 steps (6 by default).";
+"HyperFlow H3 Flashはint8キャッシュを使いません。このMacでは常駐（int8）で生成します。" = "HyperFlow H3 Flash does not use the int8 cache. On this Mac it generates resident (int8).";
+"HyperFlow H3 Flashはint8キャッシュを使いません。このMacではSSDストリーミングで生成します。" = "HyperFlow H3 Flash does not use the int8 cache. On this Mac it generates with SSD streaming.";
+"HyperFlow H3 Flash" = "HyperFlow H3 Flash";
+"少ないステップ用に蒸留されたモデルのため、速度・再利用・層数の設定と追加モデル（LoRA）は使いません。これらの設定は、通常のMiniMax-H3モデルに切り替えると元どおり使えます。" = "This model is distilled for few steps, so the speed, reuse and layer settings and add-on models (LoRA) are not used. They work again as before when you switch to a regular MiniMax-H3 model.";
+
+/* GenerationModels.swift */
+"モデル: HyperFlow H3 Flash（4・6・8ステップ用）" = "Model: HyperFlow H3 Flash (for 4, 6 or 8 steps)";
+
+/* ModelDetailView.swift */
+"少ないステップ用に蒸留された派生モデルです。4・6・8ステップで生成します。" = "A derivative model distilled for few steps. It generates in 4, 6 or 8 steps.";
+"int8キャッシュ・追加モデル（LoRA）・速度の設定は使いません。M5では常駐（int8）、それ以外ではSSDストリーミングで動きます。" = "It does not use the int8 cache, add-on models (LoRA) or the speed settings. It runs resident (int8) on M5 and with SSD streaming elsewhere.";
+"HyperFlow H3 Flash（%lldブロック、うち%lldブロックが低ランク）" = "HyperFlow H3 Flash (%lld blocks, %lld of them low-rank)";
+
+/* ModelImport.swift */
+"FL2VAとRef2VAのDiTは、どちらもHyperFlow H3 Flashか、どちらも通常のMiniMax-H3にしてください。" = "Use HyperFlow H3 Flash for both the FL2VA and the Ref2VA DiT, or regular MiniMax-H3 for both.";
+"HyperFlow H3 Flash（%lldブロック、うち%lldブロックが低ランク）。4・6・8ステップで生成し、LoRAと速度の設定は使いません。" = "HyperFlow H3 Flash (%lld blocks, %lld of them low-rank). It generates in 4, 6 or 8 steps and does not use LoRAs or the speed settings.";
+
+/* ModelImportDownload.swift */
+"HyperFlow H3 Flash（4・6・8ステップ）" = "HyperFlow H3 Flash (4, 6 or 8 steps)";
+"HyperFlow H3 Flash（VideoRebirthAI）はMiniMax H3の派生モデルで、同じライセンスに従います。" = "HyperFlow H3 Flash (VideoRebirthAI) is a derivative of MiniMax H3 and follows the same license.";
+
+/* OpenH3Regenerate.swift */
+"Open-H3 再生成は通常のMiniMax-H3モデルで動きます。モデル管理で通常のモデルに切り替えると使えます。" = "Open-H3 regeneration runs on a regular MiniMax-H3 model. Switch to one in Model Management to use it.";

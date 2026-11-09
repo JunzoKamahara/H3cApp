@@ -65,17 +65,26 @@ struct ModelDetail: Sendable {
                        lines: [size > 0 ? bytes(size) : String(localized: "まだ作られていません")])
         }
         let int8Ready = cacheRows.first?.status == .ok
-        features.append(Row(title: String(localized: "高速モード（M5のint8キャッシュ）"),
-                            status: int8Ready ? .ok : .info,
-                            lines: [int8Ready ? String(localized: "キャッシュがあるので使えます")
-                                              : String(localized: "詳細設定の「キャッシュを作成…」で作ると使えます（M5のみ）")]))
+        if fl2va.hyperflow {
+            features.append(Row(title: "HyperFlow H3 Flash", status: .ok, lines: [
+                String(localized: "少ないステップ用に蒸留された派生モデルです。4・6・8ステップで生成します。"),
+                String(localized: "int8キャッシュ・追加モデル（LoRA）・速度の設定は使いません。M5では常駐（int8）、それ以外ではSSDストリーミングで動きます。"),
+            ]))
+        } else {
+            features.append(Row(title: String(localized: "高速モード（M5のint8キャッシュ）"),
+                                status: int8Ready ? .ok : .info,
+                                lines: [int8Ready ? String(localized: "キャッシュがあるので使えます")
+                                                  : String(localized: "詳細設定の「キャッシュを作成…」で作ると使えます（M5のみ）")]))
+        }
 
         detail.sections.append(Section(title: String(localized: "このモデルでできること"), note: nil, rows: features))
         detail.sections.append(Section(title: "FL2VA", note: String(localized: "文章から・最初と最後の画像からの生成に使います"),
                                        rows: fl2va.rows))
         detail.sections.append(Section(title: "Ref2VA", note: String(localized: "参照画像・動画・音声を使う生成に使います"),
                                        rows: ref2va.rows))
-        detail.sections.append(Section(title: String(localized: "キャッシュ"), note: cache, rows: cacheRows))
+        if !fl2va.hyperflow {
+            detail.sections.append(Section(title: String(localized: "キャッシュ"), note: cache, rows: cacheRows))
+        }
 
         if let manifest = ModelImportManifest.load(modelPath: path) {
             let formatter = DateFormatter()
@@ -122,6 +131,8 @@ struct ModelDetail: Sendable {
         var vision = false
         /// The DiT carries its own curve-form AdaLN (no curve file needed).
         var curveInFile = false
+        /// The DiT is HyperFlow H3 Flash (no cache or curve files at all).
+        var hyperflow = false
     }
 
     private static func inspectPartition(_ dir: String, required: Bool) -> Partition {
@@ -140,9 +151,12 @@ struct ModelDetail: Sendable {
         if let gguf = files(transformer, ".gguf").first, let info = try? H3GGUFInfo.inspect(path: gguf) {
             dit = true
             part.curveInFile = info.curveAdaLN
+            part.hyperflow = info.hyperflow
             part.rows.append(Row(title: String(localized: "DiT"), status: .ok, lines: [
                 "GGUF\(itemSeparator)\(info.mainType)\(itemSeparator)\(bytes(Int64(info.fileBytes)))",
-                info.curveAdaLN ? String(localized: "AdaLNは曲線形（近似を含む）") : String(localized: "AdaLNは密な形"),
+                info.hyperflow
+                    ? String(localized: "HyperFlow H3 Flash（\(info.ditBlocks)ブロック、うち\(info.factoredBlocks)ブロックが低ランク）")
+                    : info.curveAdaLN ? String(localized: "AdaLNは曲線形（近似を含む）") : String(localized: "AdaLNは密な形"),
             ]))
         } else if let st = SafetensorsSummary(dir: transformer) {
             dit = true

@@ -432,6 +432,8 @@ struct ResolvedResult {
     var clipReferences: [Bool]? = nil
     /// カスタムクリップ: each clip's own settings.
     var customClips: [ChainClipSpec]? = nil
+    /// "hyperflow" when HyperFlow H3 Flash made it (ProjectDraft.modelFamily).
+    var modelFamily: String? = nil
 
     var seedDecimalString: String { String(seed) }
 
@@ -475,6 +477,14 @@ struct ResolvedResult {
             String(localized: "生成時間: \(formatElapsed(generationSeconds))"),
             seedLine,
         ]
+        if modelFamily == "hyperflow" { // H3ModelFamily.hyperflow
+            // Its own schedule on all of its blocks: no reuse, layer count
+            // or speed preset to report.
+            let hidden: Set<String> = [reuseLine, String(localized: "使用する層数: \(ditLayers) / 50"),
+                                       String(localized: "速度: \(speedMode.label)")]
+            lines.removeAll { hidden.contains($0) }
+            lines.insert(String(localized: "モデル: HyperFlow H3 Flash（4・6・8ステップ用）"), at: min(4, lines.count))
+        }
         if let upscaledFrom {
             lines.insert(String(localized: "あとから拡大: \(upscaledFrom)を\((upscaleFactor ?? .two).label)に拡大（\((upscaler ?? .standard).label)）。下の設定は元の動画のものです"), at: 0)
             if let upscaleStrength {

@@ -1,4 +1,5 @@
 import Foundation
+import H3Engine
 
 /// A named set of generation settings: the composer's shape / size / length
 /// and everything in 詳細設定 (LoRAs included). The prompt and the creation
@@ -237,7 +238,11 @@ extension GenerationViewModel {
         seedFixed = preset.seedFixed
         applyLoRAs(preset.loras.map { ($0.path, $0.strength) })
         // After the LoRAs: enabling a Turbo LoRA moves steps to its
-        // recommended count, and the preset's own value should win.
+        // recommended count, and the preset's own value should win - unless
+        // a HyperFlow model is active, which only takes 4/6/8.
         steps = preset.steps.clamped(to: stepsRange)
+        if isHyperFlow, !H3ModelFamily.hyperflowSteps.contains(steps) {
+            steps = H3ModelFamily.hyperflowDefaultSteps
+        }
     }
 }

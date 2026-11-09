@@ -109,6 +109,11 @@ extension GenerationViewModel {
         guard let record = video.record else {
             return String(localized: "Open-H3 再生成は、このアプリで生成した動画（記録と潜在ファイルのあるもの）にだけ使えます。")
         }
+        // It runs the plain H3 transformer with its two LoRAs and its own
+        // sigmas, none of which HyperFlow H3 Flash accepts.
+        if isHyperFlow {
+            return String(localized: "Open-H3 再生成は通常のMiniMax-H3モデルで動きます。モデル管理で通常のモデルに切り替えると使えます。")
+        }
         guard record.upscaledFrom == nil || continuationLatent(of: video) != nil else {
             return String(localized: "拡大した動画は、その元の動画から再生成してください。")
         }

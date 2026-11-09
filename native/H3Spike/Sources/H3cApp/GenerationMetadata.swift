@@ -1,4 +1,5 @@
 import Foundation
+import H3Engine
 
 // What made a video, inside the video: an XMP packet in the MP4 (Adobe's
 // top-level 'uuid' box, which exiftool and Adobe's tools read) with
@@ -36,7 +37,7 @@ enum GenerationMetadata {
             ("xmp:CreatorTool", "H3cApp \(record.appVersion)"),
             ("xmp:CreateDate", ISO8601DateFormatter().string(from: record.completedAt)),
             ("Iptc4xmpExt:DigitalSourceType", "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"),
-            ("Iptc4xmpExt:AISystemUsed", "MiniMax H3"),
+            ("Iptc4xmpExt:AISystemUsed", systemName([record] + clips)),
             ("Iptc4xmpExt:AISystemVersionUsed", variants.joined(separator: ", ")),
         ]
         var elements = """
@@ -121,6 +122,13 @@ enum GenerationMetadata {
         }
     }
 
+    /// The model that made it: HyperFlow H3 Flash is a distilled derivative
+    /// of MiniMax H3 (same text encoder and VAEs).
+    private static func systemName(_ records: [ProjectVideoRecord]) -> String {
+        records.contains { $0.draft.modelFamily == H3ModelFamily.hyperflow.rawValue }
+            ? "HyperFlow H3 Flash (MiniMax H3 derivative)" : "MiniMax H3"
+    }
+
     /// FL2VA, or Ref2VA when references shaped it.
     private static func variant(_ record: ProjectVideoRecord) -> String {
         let draft = record.draft
@@ -160,7 +168,7 @@ enum GenerationMetadata {
                 return value
             }
         }
-        var root: [String: Any] = ["schema": "h3capp.generation/1", "model": "MiniMax H3"]
+        var root: [String: Any] = ["schema": "h3capp.generation/1", "model": systemName([record] + clips)]
         if let main = object(record) { root["record"] = scrub(main) }
         if !clips.isEmpty { root["clips"] = clips.compactMap(object).map(scrub) }
         guard let data = try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys, .withoutEscapingSlashes]) else {

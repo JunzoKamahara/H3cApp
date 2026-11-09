@@ -1,4 +1,5 @@
 import Foundation
+import H3Engine
 
 // Stages of one generation, in the order libh3.a actually runs them. The
 // mapping from event names to stages comes from a timestamped trace of a
@@ -112,13 +113,16 @@ struct TimingCalibration: Codable {
     // mode keeps the original key so existing calibration carries over.
     // Fast mode (ccv attention) likewise keeps separate history.
     // So does a reduced layer count.
+    // HyperFlow H3 Flash (fewer blocks, factored linears) has its own too.
     private static func defaultsKey(_ mode: ComputeMode, _ speed: SpeedMode,
-                                    _ fastAttention: Bool, _ ditLayers: Int) -> String {
+                                    _ fastAttention: Bool, _ ditLayers: Int,
+                                    _ family: H3ModelFamily) -> String {
         let base = mode == .attentionCache ? "h3c-app.timingCalibration.v2"
                                            : "h3c-app.timingCalibration.v2.\(mode.rawValue)"
         var key = speed == .quality ? base : base + ".speed.\(speed.rawValue)"
         if fastAttention { key += ".fastAttention" }
         if ditLayers != 50 { key += ".layers\(ditLayers)" }
+        if family == .hyperflow { key += ".hyperflow" }
         return key
     }
     private static let keep = 12
@@ -129,8 +133,18 @@ struct TimingCalibration: Codable {
     /// checkpoint each step: 6.24s (22 frames @256x256) and 43.0s (124
     /// frames @512x512) vs 3.64s / 31.3s with the int8 cache. VAE decode and
     /// encode are the same code either way, so they share the seeds.
-    static func initial(for mode: ComputeMode) -> TimingCalibration {
+    /// HyperFlow's seeds are its 2026-11-09 M5 runs: 14.5 s per step at
+    /// 512x512 x 73 frames and 28.0 s at 672x384 x 121 resident (int8), 39.0 s
+    /// at 672x384 x 121 streamed.
+    static func initial(for mode: ComputeMode, family: H3ModelFamily = .h3) -> TimingCalibration {
         var value = TimingCalibration()
+        if family == .hyperflow {
+            value.denoisePerStep = mode == .ssdStreaming
+                ? [TimingSample(units: 121.0 * 672 * 384, seconds: 39.0)]
+                : [TimingSample(units: 73.0 * 512 * 512, seconds: 14.5),
+                   TimingSample(units: 121.0 * 672 * 384, seconds: 28.0)]
+            return value
+        }
         if mode == .ssdStreaming {
             value.denoisePerStep = [
                 TimingSample(units: 22.0 * 256 * 256, seconds: 6.24),
@@ -141,18 +155,19 @@ struct TimingCalibration: Codable {
     }
 
     static func load(for mode: ComputeMode, speed: SpeedMode = .quality,
-                     fastAttention: Bool = false, ditLayers: Int = 50) -> TimingCalibration {
-        guard let data = UserDefaults.standard.data(forKey: defaultsKey(mode, speed, fastAttention, ditLayers)),
+                     fastAttention: Bool = false, ditLayers: Int = 50,
+                     family: H3ModelFamily = .h3) -> TimingCalibration {
+        guard let data = UserDefaults.standard.data(forKey: defaultsKey(mode, speed, fastAttention, ditLayers, family)),
               let value = try? JSONDecoder().decode(TimingCalibration.self, from: data) else {
-            return initial(for: mode)
+            return initial(for: mode, family: family)
         }
         return value
     }
 
     func save(for mode: ComputeMode, speed: SpeedMode = .quality, fastAttention: Bool = false,
-              ditLayers: Int = 50) {
+              ditLayers: Int = 50, family: H3ModelFamily = .h3) {
         if let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: Self.defaultsKey(mode, speed, fastAttention, ditLayers))
+            UserDefaults.standard.set(data, forKey: Self.defaultsKey(mode, speed, fastAttention, ditLayers, family))
         }
     }
 

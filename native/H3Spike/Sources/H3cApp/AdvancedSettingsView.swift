@@ -30,21 +30,30 @@ struct AdvancedSettingsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("生成ステップ数").font(.caption).foregroundStyle(palette.textSecondary)
                         Picker("生成ステップ数", selection: $viewModel.steps) {
-                            ForEach(stepsRange, id: \.self) { value in
+                            ForEach(viewModel.availableSteps, id: \.self) { value in
                                 Text("\(value)").tag(value)
                             }
                         }
                         .pickerStyle(.menu)
                         .labelsHidden()
                         .frame(maxWidth: 120)
+                        if viewModel.isHyperFlow {
+                            Text("HyperFlow H3 Flashは4・6・8ステップで生成します（既定は6）。")
+                                .font(.caption)
+                                .foregroundStyle(palette.textSecondary)
+                        }
                     }
                     computeModeSection
-                    speedSection
-                    reuseSection
-                    layersSection
+                    if viewModel.isHyperFlow {
+                        hyperFlowNote
+                    } else {
+                        speedSection
+                        reuseSection
+                        layersSection
+                    }
                     chainSection
                     seedSection
-                    loraSection
+                    if !viewModel.isHyperFlow { loraSection }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(H3Spacing.lg)
@@ -172,21 +181,27 @@ struct AdvancedSettingsView: View {
             .pickerStyle(.menu)
             .labelsHidden()
             .frame(maxWidth: 260)
-            switch viewModel.computeMode {
-            case .attentionCache:
+            switch viewModel.isHyperFlow && viewModel.computeMode == .attentionCache ? nil : viewModel.computeMode {
+            case nil:
+                Text(viewModel.effectiveComputeMode == .resident
+                     ? "HyperFlow H3 Flashはint8キャッシュを使いません。このMacでは常駐（int8）で生成します。"
+                     : "HyperFlow H3 Flashはint8キャッシュを使いません。このMacではSSDストリーミングで生成します。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+            case .attentionCache?:
                 Text("事前に作ったint8キャッシュを読みながら計算します。速く動作します。キャッシュと、Tensor演算ユニットを搭載したGPU（M5以降）が必要です。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
-            case .resident:
+            case .resident?:
                 Text("キャッシュファイルを作らず、起動のたびにモデル全体をメモリ上に展開して計算します。Tensor演算ユニット搭載GPU（M5以降）ではint8に量子化して常駐、それ以外ではBF16のまま常駐するため、大容量メモリのMac向けです。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
-            case .ssdStreaming:
+            case .ssdStreaming?:
                 Text("元のBF16モデルを、必要なブロックだけSSDから読みながら計算します。メモリは少なくて済みますが遅くなります。キャッシュは使いません。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
             }
-            if viewModel.supportsInt8Cache && viewModel.computeMode == .attentionCache {
+            if viewModel.supportsInt8Cache && viewModel.computeMode == .attentionCache && !viewModel.isHyperFlow {
                 attentionCacheBuildSection
             }
             if viewModel.isHeavySsdStreamingConfig {
@@ -199,6 +214,19 @@ struct AdvancedSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(palette.errorColor)
             }
+        }
+    }
+
+    /// Why the speed, reuse, layer and LoRA settings are gone for a
+    /// HyperFlow model (h3.c refuses them; the form keeps them for a plain
+    /// H3 model).
+    private var hyperFlowNote: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("HyperFlow H3 Flash").font(.caption).foregroundStyle(palette.textSecondary)
+            Text("少ないステップ用に蒸留されたモデルのため、速度・再利用・層数の設定と追加モデル（LoRA）は使いません。これらの設定は、通常のMiniMax-H3モデルに切り替えると元どおり使えます。")
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

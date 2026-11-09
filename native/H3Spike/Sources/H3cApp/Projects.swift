@@ -78,6 +78,9 @@ struct ProjectDraft: Codable, Equatable {
     /// the video starts (seconds). Absent in drafts from before 0.5.
     var forcedAudio: String? = nil
     var forcedAudioOffset: Double? = nil
+    /// "hyperflow" for a video made by HyperFlow H3 Flash (H3ModelFamily);
+    /// absent for plain MiniMax H3 and in drafts from before 0.8.
+    var modelFamily: String? = nil
     /// The project video this one continues, and how many of its last
     /// frames were carried over. Absent in drafts from before 0.5.
     var continueFrom: String? = nil
@@ -588,7 +591,9 @@ extension GenerationViewModel {
             ditLayers: ditLayers,
             seedFixed: seedFixed,
             seed: seedText,
-            loras: effectiveLoRAs.map { .init(path: $0.path, strength: $0.strength) },
+            // The form's stack, even while a HyperFlow model ignores it
+            // (makeRequest records what actually ran).
+            loras: library.enabledLoRAs.map { .init(path: $0.path, strength: $0.strength) },
             forcedAudio: forcedAudioPath,
             forcedAudioOffset: forcedAudioPath == nil ? nil : forcedAudioOffset,
             continueFrom: continuation?.videoURL.path,
@@ -647,8 +652,15 @@ extension GenerationViewModel {
         let missing = draft.loras.filter { library.loraEntry(forPath: $0.path) == nil }.map(\.path)
         applyLoRAs(draft.loras.map { ($0.path, $0.strength) })
         // After the LoRAs: a Turbo LoRA moves steps to its own count, and
-        // the draft's value should win.
-        steps = draft.steps.clamped(to: stepsRange)
+        // the draft's value should win. A HyperFlow model only takes 4/6/8;
+        // a HyperFlow draft's few steps would ruin a plain H3 run, so the
+        // current count stays then.
+        if isHyperFlow {
+            steps = H3ModelFamily.hyperflowSteps.contains(draft.steps)
+                ? draft.steps : H3ModelFamily.hyperflowDefaultSteps
+        } else if draft.modelFamily != H3ModelFamily.hyperflow.rawValue {
+            steps = draft.steps.clamped(to: stepsRange)
+        }
         activePresetID = nil
         return missing
     }
@@ -1325,7 +1337,8 @@ extension ResolvedResult {
             chainClipFrames: (draft.chained ?? false) ? (draft.chainClipFrames ?? defaultChainClipLength.frames) : nil,
             clipPrompts: (draft.chained ?? false) ? draft.clipPrompts : nil,
             clipReferences: (draft.chained ?? false) ? draft.clipReferences : nil,
-            customClips: (draft.chained ?? false) && (draft.chainCustom ?? false) ? draft.customClips : nil)
+            customClips: (draft.chained ?? false) && (draft.chainCustom ?? false) ? draft.customClips : nil,
+            modelFamily: draft.modelFamily)
     }
 }
 
