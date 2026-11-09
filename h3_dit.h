@@ -153,6 +153,12 @@ int h3_dit_reset_run(h3_dit *dit,
                      size_t condition_audio_elements,
                      char *error, size_t error_size);
 
+/* Testing: replace the refined text rows (BF16 [text tokens, 5376]) that
+ * later forwards pack, e.g. with a reference model's refined context. */
+int h3_dit_debug_set_refined_text(h3_dit *dit, const uint16_t *rows,
+                                  size_t count, char *error,
+                                  size_t error_size);
+
 size_t h3_dit_video_elements(const h3_dit *dit);
 size_t h3_dit_audio_elements(const h3_dit *dit);
 

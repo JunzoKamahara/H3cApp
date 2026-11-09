@@ -2575,6 +2575,14 @@ static h3_dit *load_dit(const char *weight_directory,
     }
     dit->gpu = h3_gpu_create(shader_source_path, error, error_size);
     if (!dit->gpu) goto failed;
+    /* HyperFlow's factored linears come in ~200 distinct (rank, width)
+     * shapes; MPSGraph builds a graph per shape on first use (about 37 s at
+     * 512x512), the M5 TensorOps kernel takes any shape (ranks are 256
+     * multiples) and is also ~10 % faster per step. H3_HYPERFLOW_MPSGRAPH=1
+     * keeps MPSGraph. */
+    if (dit->hyperflow && h3_gpu_has_tensor_ops(dit->gpu) &&
+        !getenv("H3_HYPERFLOW_MPSGRAPH"))
+        h3_gpu_set_nax_linear_generic(dit->gpu, 1);
     if (lora_count) {
         dit->loras = h3_lora_set_load(dit->gpu, loras, lora_count, error,
                                       error_size);
@@ -3290,6 +3298,29 @@ static void debug_dump_attention_output(h3_dit *dit, unsigned index, int step,
     free(bf16); free(f16);
 }
 
+/* Writes the BF16 hidden state [sequence, HIDDEN] to <prefix>.blockNN.bf16,
+ * waiting for the queued work first (H3_DUMP_BLOCK_HIDDEN). */
+static int dump_block_hidden(h3_dit *dit, const char *prefix, unsigned block,
+                             char *error, size_t error_size) {
+    size_t count = (size_t)dit->sequence * HIDDEN;
+    if (!gpu_op(dit, h3_gpu_submit(dit->gpu), error, error_size,
+                "submit before block dump")) return 0;
+    uint16_t *values = malloc(count * sizeof(*values));
+    char path[1024];
+    snprintf(path, sizeof(path), "%s.block%02u.bf16", prefix, block);
+    FILE *file = values ? fopen(path, "wb") : NULL;
+    int ok = file && h3_gpu_tensor_read_bf16(dit->hidden, values, count) &&
+        fwrite(values, sizeof(*values), count, file) == count;
+    if (file && fclose(file) != 0) ok = 0;
+    free(values);
+    if (!ok) {
+        fail(error, error_size, "cannot write block dump %s", path);
+        return 0;
+    }
+    return gpu_op(dit, h3_gpu_begin(dit->gpu), error, error_size,
+                  "continue after block dump");
+}
+
 static int run_block(h3_dit *dit, unsigned index, int step,
                      h3_dit_block *weight,
                      int attention_adaln_ready,
@@ -3706,6 +3737,11 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
             ? 0 : command_block_interval(dit);
         if (dit->ssd_streaming || dit->attention_stream) command_blocks = 0;
         unsigned completed_blocks = 0;
+        /* Testing (tests/test_hyperflow_real.c): the hidden state after each
+         * block of step 0, resident weights only. */
+        const char *dump_prefix = getenv("H3_DUMP_BLOCK_HIDDEN");
+        if (dump_prefix && (!*dump_prefix || dit->ssd_streaming ||
+                            dit->attention_stream)) dump_prefix = NULL;
         int carried_attention_adaln = 0;
         int carried_attention_input_quantized = 0;
         for (unsigned block = 0; block < H3_DIT_BLOCKS; block++) {
@@ -3850,6 +3886,9 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
                 return 0;
             }
             completed_blocks++;
+            if (dump_prefix && step == 0 &&
+                !dump_block_hidden(dit, dump_prefix, block, error,
+                                   error_size)) return 0;
             if (command_blocks &&
                 completed_blocks < dit->active_block_count &&
                 completed_blocks % command_blocks == 0)
@@ -4993,4 +5032,20 @@ int h3_dit_unpack_audio(const float *rows, int channels, int time,
                 latent[output] = rows[input++];
             }
     return input == latent_elements;
+}
+
+int h3_dit_debug_set_refined_text(h3_dit *dit, const uint16_t *rows,
+                                  size_t count, char *error,
+                                  size_t error_size) {
+    if (!dit || !rows || !dit->refined_text ||
+        count != (size_t)dit->text_rows * HIDDEN) {
+        fail(error, error_size, "refined text override needs %zu values",
+             dit ? (size_t)dit->text_rows * HIDDEN : (size_t)0);
+        return 0;
+    }
+    if (!h3_gpu_tensor_write_bf16(dit->refined_text, rows, count)) {
+        fail(error, error_size, "cannot write the refined text override");
+        return 0;
+    }
+    return 1;
 }
