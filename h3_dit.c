@@ -81,8 +81,30 @@ enum {
     STREAM_OUT,
     STREAM_FC1,
     STREAM_FC2,
-    STREAM_MATRICES
+    STREAM_MATRICES,
+    /* HyperFlow factored linears and the halves of a dense FC1 next to a
+     * factored FC2 (h3_dit_block). */
+    STREAM_Q_DOWN = STREAM_MATRICES,
+    STREAM_Q_UP,
+    STREAM_K_DOWN,
+    STREAM_K_UP,
+    STREAM_V_DOWN,
+    STREAM_V_UP,
+    STREAM_OUT_DOWN,
+    STREAM_OUT_UP,
+    STREAM_FC1_DOWN,
+    STREAM_FC1_GATE_UP,
+    STREAM_FC1_VALUE_UP,
+    STREAM_FC1_GATE,
+    STREAM_FC1_VALUE,
+    STREAM_FC2_DOWN,
+    STREAM_FC2_UP,
+    STREAM_FIELDS
 };
+/* Most matrices one streamed block can have: a fully factored HyperFlow
+ * block (6 attention factors, 2 output factors, FC1 down and its two up
+ * halves, 2 FC2 factors). */
+#define STREAM_MAX_SOURCES 13u
 
 typedef struct {
     const char *path;
@@ -101,7 +123,15 @@ typedef struct {
 } h3_dit_stream_source;
 
 typedef struct {
-    h3_dit_stream_source sources[STREAM_MATRICES];
+    h3_dit_stream_source sources[STREAM_MAX_SOURCES];
+    unsigned count;
+    /* Per slot: each source's BF16 matrix and (quantized sources) its raw
+     * staging, as page-aligned windows of the slot's two arenas. */
+    h3_gpu_tensor *target[2][STREAM_MAX_SOURCES];
+    h3_gpu_tensor *raw[2][STREAM_MAX_SOURCES];
+    /* The tensors above are borrowed from an earlier block with the same
+     * matrices (every plain H3 block, every dense HyperFlow block). */
+    int borrowed;
 } h3_dit_stream_layer;
 
 /* H3_ATTENTION_CACHE: an alternative to --ssd-streaming. QKV/attention-
@@ -236,10 +266,13 @@ struct h3_dit {
     h3_gpu_tensor *audio_patch_w;
     h3_gpu_tensor *audio_patch_b;
     h3_dit_block blocks[H3_DIT_BLOCKS];
-    h3_dit_block stream_slots[2];
     /* Raw quantized bytes per slot and matrix (field order), allocated only
      * when some streamed source is block-quantized (stream_quantized). */
-    h3_gpu_tensor *stream_raw[2][STREAM_MATRICES];
+    /* SSD streaming: per slot, one BF16 arena and one raw-staging arena,
+     * each as large as the largest block needs; every block's matrices are
+     * aliases into them (h3_dit_stream_layer). */
+    h3_gpu_tensor *stream_arena[2];
+    h3_gpu_tensor *stream_raw_arena[2];
     int stream_quantized;
     h3_dit_stream_layer stream_layers[H3_DIT_BLOCKS];
     unsigned stream_ready_layer;
@@ -912,11 +945,14 @@ static int compare_stream_sources(const void *left, const void *right) {
     return a->file_offset > b->file_offset;
 }
 
-static int prepare_stream_source(h3_dit *dit,
-                                 h3_dit_stream_source *source,
-                                 const char *name, uint64_t rows,
-                                 uint64_t columns, unsigned field,
-                                 char *error, size_t error_size) {
+/* rows x columns is the tensor's full shape; [row_begin, row_begin +
+ * row_count) the rows this source streams (all of them, or one SwiGLU half
+ * of an FC1 weight). */
+static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
+                               const char *name, uint64_t rows,
+                               uint64_t columns, uint64_t row_begin,
+                               uint64_t row_count, unsigned field,
+                               char *error, size_t error_size) {
     const h3_st_header *header = NULL;
     const h3_st_tensor *tensor = h3_weight_find(dit->weights, name, &header);
     if (!tensor) {
@@ -928,8 +964,9 @@ static int prepare_stream_source(h3_dit *dit,
     int quantized = tensor->dtype != H3_DTYPE_BF16 && quant != H3_QUANT_NONE &&
                     quant != H3_QUANT_F32 && quant != H3_QUANT_BF16;
     uint32_t qkv_inner = 0, qkv_head_dim = 0;
-    if (h3_weight_qkv_reorder(dit->weights, name, tensor, &qkv_inner,
-                              &qkv_head_dim) &&
+    int whole = row_begin == 0 && row_count == rows;
+    if (whole && h3_weight_qkv_reorder(dit->weights, name, tensor,
+                                       &qkv_inner, &qkv_head_dim) &&
         !quantized && tensor->dtype == H3_DTYPE_BF16) {
         /* A BF16 [Q; K; V] weight streams through the staging buffer too,
          * so the expansion can reorder its rows. */
@@ -938,18 +975,22 @@ static int prepare_stream_source(h3_dit *dit,
     }
     uint64_t bytes = quantized ? h3_quant_bytes(quant, rows * columns) :
                                  rows * columns * sizeof(uint16_t);
+    uint64_t row_bytes = quantized ? h3_quant_bytes(quant, columns) :
+                                     columns * sizeof(uint16_t);
     if (!header || (tensor->dtype != H3_DTYPE_BF16 && !quantized) ||
         tensor->ndim != 2 ||
         tensor->shape[0] != rows || tensor->shape[1] != columns ||
-        rows > SIZE_MAX / columns || !bytes ||
+        rows > SIZE_MAX / columns || !bytes || !row_count ||
+        row_begin + row_count > rows || row_bytes * rows != bytes ||
         bytes != tensor->data_end - tensor->data_begin) {
         fail(error, error_size, "streaming weight has the wrong schema: %s",
              name);
         return 0;
     }
     source->path = header->path;
-    source->file_offset = tensor->file_offset;
-    source->elements = (size_t)(rows * columns);
+    source->file_offset = tensor->file_offset + row_begin * row_bytes;
+    source->elements = (size_t)(row_count * columns);
+    bytes = row_count * row_bytes;
     source->field = field;
     source->quant = quantized ? (uint32_t)quant : 0;
     source->bytes = bytes;
@@ -963,47 +1004,203 @@ static int prepare_stream_layer(h3_dit *dit, unsigned layer,
                                 char *error, size_t error_size) {
     char name[160];
     h3_dit_stream_layer *stream = &dit->stream_layers[layer];
-#define SOURCE(index, suffix, rows, columns, field) do {                        \
-    snprintf(name, sizeof(name), "blocks.%u.%s", layer, suffix);              \
-    if (!prepare_stream_source(dit, &stream->sources[index], name,             \
-                               rows, columns, field, error, error_size))        \
+    static const uint32_t no_rank[H3_HF_LINEARS] = {0};
+    const uint32_t *rank = dit->hyperflow ?
+        dit->hyperflow_info.rank[layer] : no_rank;
+    stream->count = 0;
+#define ROWS(suffix_, rows_, columns_, begin_, count_, field_) do {          \
+    snprintf(name, sizeof(name), "blocks.%u.%s", layer, suffix_);             \
+    if (stream->count >= STREAM_MAX_SOURCES ||                                 \
+        !prepare_stream_rows(dit, &stream->sources[stream->count], name,       \
+                             rows_, columns_, begin_, count_, field_, error,   \
+                             error_size))                                      \
         return 0;                                                               \
+    stream->count++;                                                            \
 } while (0)
-    SOURCE(0, "attn.qkv_proj.weight", INNER * 3, HIDDEN, STREAM_QKV);
-    SOURCE(1, "attn.out_proj.weight", HIDDEN, INNER, STREAM_OUT);
-    SOURCE(2, "mlp.fc1.weight", FFN * 2, HIDDEN, STREAM_FC1);
-    SOURCE(3, "mlp.fc2.weight", HIDDEN, FFN, STREAM_FC2);
+#define SOURCE(suffix_, rows_, columns_, field_)                               \
+    ROWS(suffix_, rows_, columns_, 0, rows_, field_)
+    if (rank[H3_HF_Q]) {
+        SOURCE("attn.q_proj.down.weight", rank[H3_HF_Q], HIDDEN, STREAM_Q_DOWN);
+        SOURCE("attn.q_proj.up.weight", INNER, rank[H3_HF_Q], STREAM_Q_UP);
+        SOURCE("attn.k_proj.down.weight", rank[H3_HF_K], HIDDEN, STREAM_K_DOWN);
+        SOURCE("attn.k_proj.up.weight", INNER, rank[H3_HF_K], STREAM_K_UP);
+        SOURCE("attn.v_proj.down.weight", rank[H3_HF_V], HIDDEN, STREAM_V_DOWN);
+        SOURCE("attn.v_proj.up.weight", INNER, rank[H3_HF_V], STREAM_V_UP);
+    } else {
+        SOURCE("attn.qkv_proj.weight", INNER * 3, HIDDEN, STREAM_QKV);
+    }
+    if (rank[H3_HF_OUT]) {
+        SOURCE("attn.out_proj.down.weight", rank[H3_HF_OUT], INNER,
+               STREAM_OUT_DOWN);
+        SOURCE("attn.out_proj.up.weight", HIDDEN, rank[H3_HF_OUT],
+               STREAM_OUT_UP);
+    } else {
+        SOURCE("attn.out_proj.weight", HIDDEN, INNER, STREAM_OUT);
+    }
+    /* A factored MLP keeps FC1's SwiGLU halves apart (gate rows first);
+     * each half is a contiguous row range of the checkpoint tensor. */
+    if (rank[H3_HF_FC1]) {
+        SOURCE("mlp.fc1.down.weight", rank[H3_HF_FC1], HIDDEN,
+               STREAM_FC1_DOWN);
+        ROWS("mlp.fc1.up.weight", FFN * 2, rank[H3_HF_FC1], 0, FFN,
+             STREAM_FC1_GATE_UP);
+        ROWS("mlp.fc1.up.weight", FFN * 2, rank[H3_HF_FC1], FFN, FFN,
+             STREAM_FC1_VALUE_UP);
+    } else if (rank[H3_HF_FC2]) {
+        ROWS("mlp.fc1.weight", FFN * 2, HIDDEN, 0, FFN, STREAM_FC1_GATE);
+        ROWS("mlp.fc1.weight", FFN * 2, HIDDEN, FFN, FFN, STREAM_FC1_VALUE);
+    } else {
+        SOURCE("mlp.fc1.weight", FFN * 2, HIDDEN, STREAM_FC1);
+    }
+    if (rank[H3_HF_FC2]) {
+        SOURCE("mlp.fc2.down.weight", rank[H3_HF_FC2], FFN, STREAM_FC2_DOWN);
+        SOURCE("mlp.fc2.up.weight", HIDDEN, rank[H3_HF_FC2], STREAM_FC2_UP);
+    } else {
+        SOURCE("mlp.fc2.weight", HIDDEN, FFN, STREAM_FC2);
+    }
 #undef SOURCE
-    qsort(stream->sources, STREAM_MATRICES, sizeof(stream->sources[0]),
+#undef ROWS
+    qsort(stream->sources, stream->count, sizeof(stream->sources[0]),
           compare_stream_sources);
     return 1;
 }
 
-static int allocate_stream_slot(h3_dit *dit, h3_dit_block *slot,
-                                char *error, size_t error_size) {
-    slot->qkv = h3_gpu_tensor_new_bf16(
-        dit->gpu, (size_t)INNER * 3 * HIDDEN);
-    slot->out = h3_gpu_tensor_new_bf16(
-        dit->gpu, (size_t)HIDDEN * INNER);
-    slot->fc1 = h3_gpu_tensor_new_bf16(
-        dit->gpu, (size_t)FFN * 2 * HIDDEN);
-    slot->fc2 = h3_gpu_tensor_new_bf16(
-        dit->gpu, (size_t)HIDDEN * FFN);
-    if (!slot->qkv || !slot->out || !slot->fc1 || !slot->fc2) {
-        fail(error, error_size, "cannot allocate BF16 SSD layer slot: %s",
-             h3_gpu_error(dit->gpu));
-        return 0;
+/* The slot member a streamed field lands in. */
+static h3_gpu_tensor **stream_slot_field(h3_dit_block *slot, unsigned field) {
+    switch (field) {
+    case STREAM_QKV: return &slot->qkv;
+    case STREAM_OUT: return &slot->out;
+    case STREAM_FC1: return &slot->fc1;
+    case STREAM_FC2: return &slot->fc2;
+    case STREAM_Q_DOWN: return &slot->q_down;
+    case STREAM_Q_UP: return &slot->q_up;
+    case STREAM_K_DOWN: return &slot->k_down;
+    case STREAM_K_UP: return &slot->k_up;
+    case STREAM_V_DOWN: return &slot->v_down;
+    case STREAM_V_UP: return &slot->v_up;
+    case STREAM_OUT_DOWN: return &slot->out_down;
+    case STREAM_OUT_UP: return &slot->out_up;
+    case STREAM_FC1_DOWN: return &slot->fc1_down;
+    case STREAM_FC1_GATE_UP: return &slot->fc1_gate_up;
+    case STREAM_FC1_VALUE_UP: return &slot->fc1_value_up;
+    case STREAM_FC1_GATE: return &slot->fc1_gate;
+    case STREAM_FC1_VALUE: return &slot->fc1_value;
+    case STREAM_FC2_DOWN: return &slot->fc2_down;
+    case STREAM_FC2_UP: return &slot->fc2_up;
+    default: return NULL;
     }
+}
+
+static size_t page_round(uint64_t bytes) {
+    size_t page = h3_gpu_page_bytes();
+    return (size_t)((bytes + page - 1) / page * page);
+}
+
+/* Two slots alternate between the block being computed and the one being
+ * read. A block's matrices sit back to back (page-aligned) in its slot's
+ * arenas, so each arena only has to hold the largest single block: HyperFlow
+ * blocks mix dense and factored linears of different ranks, and separate
+ * per-kind buffers would hold both kinds at once. Plain H3 blocks all have
+ * the same four matrices. */
+static int allocate_stream_slots(h3_dit *dit, char *error,
+                                 size_t error_size) {
+    size_t arena = 0, raw_arena = 0;
+    for (unsigned block = 0; block < H3_DIT_BLOCKS; block++) {
+        if (!dit->block_active[block]) continue;
+        const h3_dit_stream_layer *layer = &dit->stream_layers[block];
+        size_t total = 0, raw_total = 0;
+        for (unsigned index = 0; index < layer->count; index++) {
+            const h3_dit_stream_source *source = &layer->sources[index];
+            total += page_round((uint64_t)source->elements * sizeof(uint16_t));
+            if (source->quant) raw_total += page_round(source->bytes);
+        }
+        if (total > arena) arena = total;
+        if (raw_total > raw_arena) raw_arena = raw_total;
+    }
+    for (unsigned slot = 0; slot < 2; slot++) {
+        dit->stream_arena[slot] =
+            h3_gpu_tensor_new_bf16(dit->gpu, arena / sizeof(uint16_t));
+        if (raw_arena)
+            dit->stream_raw_arena[slot] = h3_gpu_tensor_new_i8(dit->gpu,
+                                                               raw_arena);
+        if (!dit->stream_arena[slot] ||
+            (raw_arena && !dit->stream_raw_arena[slot])) {
+            fail(error, error_size, "cannot allocate the SSD layer slots: %s",
+                 h3_gpu_error(dit->gpu));
+            return 0;
+        }
+        for (unsigned block = 0; block < H3_DIT_BLOCKS; block++) {
+            if (!dit->block_active[block]) continue;
+            h3_dit_stream_layer *layer = &dit->stream_layers[block];
+            const h3_dit_stream_layer *same = NULL;
+            for (unsigned earlier = 0; earlier < block && !same; earlier++) {
+                const h3_dit_stream_layer *other = &dit->stream_layers[earlier];
+                if (!dit->block_active[earlier] || other->borrowed ||
+                    other->count != layer->count) continue;
+                int equal = 1;
+                for (unsigned index = 0; index < layer->count; index++) {
+                    const h3_dit_stream_source *a = &layer->sources[index];
+                    const h3_dit_stream_source *b = &other->sources[index];
+                    if (a->field != b->field || a->elements != b->elements ||
+                        a->quant != b->quant || a->bytes != b->bytes)
+                        equal = 0;
+                }
+                if (equal) same = other;
+            }
+            if (same) {
+                memcpy(layer->target[slot], same->target[slot],
+                       sizeof(layer->target[slot]));
+                memcpy(layer->raw[slot], same->raw[slot],
+                       sizeof(layer->raw[slot]));
+                layer->borrowed = 1;
+                continue;
+            }
+            size_t offset = 0, raw_offset = 0;
+            for (unsigned index = 0; index < layer->count; index++) {
+                const h3_dit_stream_source *source = &layer->sources[index];
+                layer->target[slot][index] = h3_gpu_tensor_alias_bf16(
+                    dit->stream_arena[slot], offset, source->elements);
+                offset += page_round(
+                    (uint64_t)source->elements * sizeof(uint16_t));
+                if (source->quant) {
+                    layer->raw[slot][index] = h3_gpu_tensor_alias_i8(
+                        dit->stream_raw_arena[slot], raw_offset,
+                        (size_t)source->bytes);
+                    raw_offset += page_round(source->bytes);
+                }
+                if (!layer->target[slot][index] ||
+                    (source->quant && !layer->raw[slot][index])) {
+                    fail(error, error_size,
+                         "cannot place block %u in the SSD slot", block);
+                    return 0;
+                }
+            }
+        }
+    }
+    fprintf(stderr, "h3: SSD stream slots 2 x (%.0f MiB BF16 + %.0f MiB raw)\n",
+            (double)arena / 1048576.0, (double)raw_arena / 1048576.0);
     return 1;
 }
 
-static h3_gpu_tensor *stream_slot_target(h3_dit_block *slot,
-                                         unsigned field) {
-    if (field == STREAM_QKV) return slot->qkv;
-    if (field == STREAM_OUT) return slot->out;
-    if (field == STREAM_FC1) return slot->fc1;
-    if (field == STREAM_FC2) return slot->fc2;
-    return NULL;
+static void free_stream_slots(h3_dit *dit) {
+    for (unsigned block = 0; block < H3_DIT_BLOCKS; block++) {
+        h3_dit_stream_layer *layer = &dit->stream_layers[block];
+        for (unsigned slot = 0; slot < 2; slot++)
+            for (unsigned index = 0; index < STREAM_MAX_SOURCES; index++) {
+                if (layer->borrowed) {
+                    layer->target[slot][index] = NULL;
+                    layer->raw[slot][index] = NULL;
+                } else {
+                    free_tensor(&layer->target[slot][index]);
+                    free_tensor(&layer->raw[slot][index]);
+                }
+            }
+        layer->borrowed = 0;
+    }
+    for (unsigned slot = 0; slot < 2; slot++) {
+        free_tensor(&dit->stream_arena[slot]);
+        free_tensor(&dit->stream_raw_arena[slot]);
+    }
 }
 
 typedef struct {
@@ -1028,7 +1225,7 @@ static void *read_stream_matrix_thread(void *opaque) {
     h3_dit_matrix_job *job = opaque;
     job->error[0] = '\0';
     if (job->source->quant) {
-        if (!job->target || !h3_gpu_tensor_stream_file_i8(
+        if (!job->target || !h3_gpu_tensor_stream_file_prefix_i8(
                 job->target, job->source->path, job->source->file_offset,
                 (size_t)job->source->bytes, job->error, sizeof(job->error))) {
             if (!job->error[0])
@@ -1041,7 +1238,7 @@ static void *read_stream_matrix_thread(void *opaque) {
         job->bytes = job->source->bytes;
         return NULL;
     }
-    if (!job->target || !h3_gpu_tensor_stream_file_bf16(
+    if (!job->target || !h3_gpu_tensor_stream_file_prefix_bf16(
             job->target, job->source->path, job->source->file_offset,
             job->source->elements, job->error, sizeof(job->error))) {
         if (!job->error[0])
@@ -1062,18 +1259,16 @@ static void *read_stream_matrix_thread(void *opaque) {
    raises the outstanding request count instead. */
 static int read_stream_layer(h3_dit_stream_job *job) {
     h3_dit_stream_layer *layer = &job->dit->stream_layers[job->layer];
-    h3_dit_block *slot = &job->dit->stream_slots[job->slot];
     double started = stream_now();
 
-    h3_dit_matrix_job matrix_jobs[STREAM_MATRICES];
-    pthread_t matrix_threads[STREAM_MATRICES];
-    int started_thread[STREAM_MATRICES] = {0};
+    h3_dit_matrix_job matrix_jobs[STREAM_MAX_SOURCES];
+    pthread_t matrix_threads[STREAM_MAX_SOURCES];
+    int started_thread[STREAM_MAX_SOURCES] = {0};
 
-    for (unsigned index = 0; index < STREAM_MATRICES; index++) {
+    for (unsigned index = 0; index < layer->count; index++) {
         matrix_jobs[index].source = &layer->sources[index];
         matrix_jobs[index].target = layer->sources[index].quant ?
-            job->dit->stream_raw[job->slot][layer->sources[index].field] :
-            stream_slot_target(slot, layer->sources[index].field);
+            layer->raw[job->slot][index] : layer->target[job->slot][index];
         matrix_jobs[index].ok = 0;
         matrix_jobs[index].bytes = 0;
         if (pthread_create(&matrix_threads[index], NULL,
@@ -1088,7 +1283,7 @@ static int read_stream_layer(h3_dit_stream_job *job) {
     job->ok = 1;
     job->bytes = 0;
     job->error[0] = '\0';
-    for (unsigned index = 0; index < STREAM_MATRICES; index++) {
+    for (unsigned index = 0; index < layer->count; index++) {
         if (started_thread[index])
             pthread_join(matrix_threads[index], NULL);
         if (!matrix_jobs[index].ok) {
@@ -1937,6 +2132,10 @@ static int load_core(h3_dit *dit, h3_dit_progress progress, void *opaque,
                                   error, error_size) ||
                 !prepare_stream_layer(dit, index, error, error_size))
                 return 0;
+            if (dit->hyperflow)
+                memcpy(dit->blocks[index].rank,
+                       dit->hyperflow_info.rank[index],
+                       sizeof(dit->blocks[index].rank));
         } else if (dit->attention_stream && dit->mlp_stream) {
             /* QKV/OUT/FC1/FC2 are all streamed; only norms stay resident. */
             if (!load_block_norms(dit, &dit->blocks[index], prefix,
@@ -1965,34 +2164,12 @@ static int load_core(h3_dit *dit, h3_dit_progress progress, void *opaque,
                H3_DIT_BLOCKS);
     }
     if (dit->ssd_streaming) {
-        if (!allocate_stream_slot(dit, &dit->stream_slots[0],
-                                  error, error_size) ||
-            !allocate_stream_slot(dit, &dit->stream_slots[1],
-                                  error, error_size)) return 0;
         unsigned first = first_active_block(dit);
         if (first == H3_DIT_BLOCKS) {
             fail(error, error_size, "SSD stream has no active DiT block");
             return 0;
         }
-        if (dit->stream_quantized) {
-            /* Every block quantizes each matrix the same way, so the first
-             * active block's sizes fit all of them. */
-            const h3_dit_stream_layer *layer = &dit->stream_layers[first];
-            for (unsigned slot = 0; slot < 2; slot++) {
-                for (unsigned index = 0; index < STREAM_MATRICES; index++) {
-                    const h3_dit_stream_source *source = &layer->sources[index];
-                    if (!source->quant) continue;
-                    dit->stream_raw[slot][source->field] =
-                        h3_gpu_tensor_new_i8(dit->gpu, (size_t)source->bytes);
-                    if (!dit->stream_raw[slot][source->field]) {
-                        fail(error, error_size,
-                             "cannot allocate quantized stream staging: %s",
-                             h3_gpu_error(dit->gpu));
-                        return 0;
-                    }
-                }
-            }
-        }
+        if (!allocate_stream_slots(dit, error, error_size)) return 0;
         h3_dit_stream_job job = {
             .dit = dit, .layer = first, .slot = 0
         };
@@ -2555,12 +2732,6 @@ static h3_dit *load_dit(const char *weight_directory,
                  "core reuse, token reduction and LoRA are not available");
             goto failed;
         }
-        if (dit->ssd_streaming && dit->hyperflow_info.factored_blocks) {
-            fail(error, error_size,
-                 "SSD streaming of HyperFlow H3 Flash's factored blocks is "
-                 "not implemented yet; use resident mode");
-            goto failed;
-        }
         /* Its blocks are renumbered without gaps; the ones after
          * block_count do not exist. */
         memset(dit->block_active, 0, sizeof(dit->block_active));
@@ -3038,18 +3209,17 @@ static int leave_token_reduction_adaln(h3_dit *dit, unsigned block,
  * slot's staging buffers; expand them into the slot's BF16 matrices ahead
  * of the block's own work, in the same command. */
 static int expand_streamed(h3_dit *dit, unsigned block, unsigned slot_index,
-                           h3_dit_block *slot, char *error,
-                           size_t error_size) {
+                           char *error, size_t error_size) {
     if (!dit->stream_quantized) return 1;
     const h3_dit_stream_layer *layer = &dit->stream_layers[block];
-    for (unsigned index = 0; index < STREAM_MATRICES; index++) {
+    for (unsigned index = 0; index < layer->count; index++) {
         const h3_dit_stream_source *source = &layer->sources[index];
         if (!source->quant) continue;
         h3_quant_type quant = (h3_quant_type)source->quant;
         uint32_t per_block = h3_quant_block_elements(quant);
         if (!gpu_op(dit, h3_gpu_dequantize(
-                dit->gpu, stream_slot_target(slot, source->field),
-                dit->stream_raw[slot_index][source->field], source->quant,
+                dit->gpu, layer->target[slot_index][index],
+                layer->raw[slot_index][index], source->quant,
                 (uint32_t)(source->elements / per_block), per_block,
                 h3_quant_block_bytes(quant),
                 (uint32_t)(source->elements / (source->qkv_inner ?
@@ -3738,10 +3908,10 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
         if (dit->ssd_streaming || dit->attention_stream) command_blocks = 0;
         unsigned completed_blocks = 0;
         /* Testing (tests/test_hyperflow_real.c): the hidden state after each
-         * block of step 0, resident weights only. */
+         * block of step 0 (resident or SSD-streamed weights). */
         const char *dump_prefix = getenv("H3_DUMP_BLOCK_HIDDEN");
-        if (dump_prefix && (!*dump_prefix || dit->ssd_streaming ||
-                            dit->attention_stream)) dump_prefix = NULL;
+        if (dump_prefix && (!*dump_prefix || dit->attention_stream))
+            dump_prefix = NULL;
         int carried_attention_adaln = 0;
         int carried_attention_input_quantized = 0;
         for (unsigned block = 0; block < H3_DIT_BLOCKS; block++) {
@@ -3794,16 +3964,20 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
                          block, dit->stream_ready_layer);
                     return 0;
                 }
-                h3_dit_block *slot =
-                    &dit->stream_slots[dit->stream_ready_slot];
+                /* Norms and ranks from the resident block, each streamed
+                 * matrix from the slot; fields this block does not stream
+                 * stay NULL, which selects its dense/factored paths. */
                 streamed_weight = dit->blocks[block];
-                streamed_weight.qkv = slot->qkv;
-                streamed_weight.out = slot->out;
-                streamed_weight.fc1 = slot->fc1;
-                streamed_weight.fc2 = slot->fc2;
+                const h3_dit_stream_layer *layer =
+                    &dit->stream_layers[block];
+                for (unsigned index = 0; index < layer->count; index++) {
+                    unsigned field = layer->sources[index].field;
+                    *stream_slot_field(&streamed_weight, field) =
+                        layer->target[dit->stream_ready_slot][index];
+                }
                 weight = &streamed_weight;
                 if (!expand_streamed(dit, block, dit->stream_ready_slot,
-                                     slot, error, error_size) ||
+                                     error, error_size) ||
                     !patch_streamed_bf16(dit, block, weight, error,
                                          error_size)) return 0;
 
@@ -4880,11 +5054,7 @@ void h3_dit_free(h3_dit *dit) {
     free_tensor(&dit->audio_patch_w); free_tensor(&dit->audio_patch_b);
     for (unsigned block = 0; block < H3_DIT_BLOCKS; block++)
         free_block(&dit->blocks[block]);
-    free_block(&dit->stream_slots[0]);
-    free_block(&dit->stream_slots[1]);
-    for (unsigned slot = 0; slot < 2; slot++)
-        for (unsigned index = 0; index < STREAM_MATRICES; index++)
-            h3_gpu_tensor_free(dit->stream_raw[slot][index]);
+    free_stream_slots(dit);
     free_attention_slot(&dit->attention_slots[0]);
     free_attention_slot(&dit->attention_slots[1]);
     free(dit->attention_cache_path);

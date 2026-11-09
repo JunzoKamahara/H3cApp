@@ -27,6 +27,8 @@
 @property(nonatomic, strong) MPSGraphTensorData *graphData;
 @property(nonatomic, strong) NSArray<NSNumber *> *graphDataShape;
 @property(nonatomic) MPSDataType graphDataType;
+/* h3_gpu_tensor_alias_*: a window of `parent`'s memory, kept alive here. */
+@property(nonatomic, strong) id<MTLBuffer> aliasParent;
 @end
 @implementation H3Tensor
 @end
@@ -717,6 +719,56 @@ h3_gpu_tensor *h3_gpu_tensor_new_i8(h3_gpu *gpu, size_t elements) {
     return h3_gpu_tensor_new(gpu, NULL, elements, sizeof(int8_t), H3_GPU_I8);
 }
 
+size_t h3_gpu_page_bytes(void) {
+    return (size_t)getpagesize();
+}
+
+static h3_gpu_tensor *h3_gpu_tensor_alias(h3_gpu_tensor *parent_opaque,
+                                          size_t byte_offset,
+                                          size_t elements, size_t item_size,
+                                          h3_gpu_dtype dtype) {
+    if (!parent_opaque || !elements || elements > SIZE_MAX / item_size)
+        return NULL;
+    H3Tensor *parent = TENSOR(parent_opaque);
+    H3GPU *gpu = parent.owner;
+    size_t page = h3_gpu_page_bytes();
+    size_t bytes = elements * item_size;
+    size_t length = (bytes + page - 1) / page * page;
+    id<MTLBuffer> base = parent.aliasParent ? nil : parent.buffer;
+    if (!gpu || !base || byte_offset % page ||
+        byte_offset > base.length || length > base.length - byte_offset)
+        return NULL;
+    H3Tensor *tensor = [[H3Tensor alloc] init];
+    tensor.elements = elements;
+    tensor.bytes = 0; /* the parent owns (and counts) the memory */
+    tensor.dtype = dtype;
+    tensor.buffer = [gpu.device
+        newBufferWithBytesNoCopy:(char *)base.contents + byte_offset
+                          length:length
+                         options:MTLResourceStorageModeShared
+                     deallocator:nil];
+    if (!tensor.buffer) {
+        h3_gpu_set_error(gpu, @"cannot alias %zu bytes of a Metal buffer",
+                         length);
+        return NULL;
+    }
+    tensor.aliasParent = base;
+    tensor.owner = gpu;
+    return (__bridge_retained h3_gpu_tensor *)tensor;
+}
+
+h3_gpu_tensor *h3_gpu_tensor_alias_bf16(h3_gpu_tensor *parent,
+                                        size_t byte_offset, size_t elements) {
+    return h3_gpu_tensor_alias(parent, byte_offset, elements,
+                               sizeof(uint16_t), H3_GPU_BF16);
+}
+
+h3_gpu_tensor *h3_gpu_tensor_alias_i8(h3_gpu_tensor *parent,
+                                      size_t byte_offset, size_t elements) {
+    return h3_gpu_tensor_alias(parent, byte_offset, elements, sizeof(int8_t),
+                               H3_GPU_I8);
+}
+
 h3_gpu_tensor *h3_gpu_tensor_from_f32(h3_gpu *gpu, const float *values,
                                       size_t elements) {
     return h3_gpu_tensor_new(gpu, values, elements, sizeof(float), H3_GPU_F32);
@@ -865,10 +917,14 @@ static int h3_gpu_tensor_read_file_mode(
                                  size_t item_size, h3_gpu_dtype dtype,
                                  const char *label, int uncached,
                                  char *error, size_t error_size) {
+    /* uncached bit 1: the read may fill only the leading elements. */
+    int prefix = (uncached & 2) != 0;
+    uncached &= 1;
     if (error && error_size) error[0] = '\0';
     if (!opaque || !path || !*path ||
         TENSOR(opaque).dtype != dtype ||
-        elements != TENSOR(opaque).elements ||
+        (prefix ? !elements || elements > TENSOR(opaque).elements :
+                  elements != TENSOR(opaque).elements) ||
         elements > SIZE_MAX / item_size || file_offset > INT64_MAX) {
         if (error && error_size)
             snprintf(error, error_size, "invalid %s file read request", label);
@@ -947,6 +1003,26 @@ int h3_gpu_tensor_stream_file_i8(h3_gpu_tensor *opaque, const char *path,
         "I8", 1, error, error_size);
 }
 
+int h3_gpu_tensor_stream_file_prefix_bf16(h3_gpu_tensor *opaque,
+                                          const char *path,
+                                          uint64_t file_offset,
+                                          size_t elements, char *error,
+                                          size_t error_size) {
+    return h3_gpu_tensor_read_file_mode(
+        opaque, path, file_offset, elements, sizeof(uint16_t), H3_GPU_BF16,
+        "BF16", 3, error, error_size);
+}
+
+int h3_gpu_tensor_stream_file_prefix_i8(h3_gpu_tensor *opaque,
+                                        const char *path,
+                                        uint64_t file_offset,
+                                        size_t elements, char *error,
+                                        size_t error_size) {
+    return h3_gpu_tensor_read_file_mode(
+        opaque, path, file_offset, elements, sizeof(int8_t), H3_GPU_I8,
+        "I8", 3, error, error_size);
+}
+
 int h3_gpu_tensor_read_file_f32(h3_gpu_tensor *opaque, const char *path,
                                 uint64_t file_offset, size_t elements,
                                 char *error, size_t error_size) {
@@ -974,8 +1050,10 @@ void h3_gpu_tensor_free(h3_gpu_tensor *tensor) {
                 stats.live_bytes - object.bytes : 0;
             owner.stats = stats;
         }
-        [object.buffer setPurgeableState:MTLPurgeableStateEmpty];
+        if (!object.aliasParent)
+            [object.buffer setPurgeableState:MTLPurgeableStateEmpty];
         object.buffer = nil;
+        object.aliasParent = nil;
     }
 }
 

@@ -5,8 +5,10 @@
  * H3_HYPERFLOW_DIR      transformer directory with model.gguf (FL2VA)
  * H3_HYPERFLOW_FIXTURE  t2v_fixture.safetensors
  * H3_HYPERFLOW_STRICT=1 missing inputs fail instead of skipping
- * H3_HYPERFLOW_INT8=1   run the production int8 resident path instead of
- *                       BF16 matrices (reports, looser bounds)
+ * H3_HYPERFLOW_INT8=1   the production int8 resident path (looser bounds)
+ * H3_HYPERFLOW_SSD=1    SSD streaming: BF16 matrices expanded per block, the
+ *                       only BF16 path that fits a 24 GB Mac
+ * Without either, BF16 resident (about 27 GB of weights).
  *
  * The refined text is taken from the dump (ComfyUI refines it outside the
  * hooked module), so this checks the patch projections, the two-time AdaLN,
@@ -126,6 +128,8 @@ int main(void) {
         return 0;
     }
     int int8 = getenv("H3_HYPERFLOW_INT8") && strcmp(getenv("H3_HYPERFLOW_INT8"), "0");
+    int ssd = getenv("H3_HYPERFLOW_SSD") && strcmp(getenv("H3_HYPERFLOW_SSD"), "0");
+    if (ssd) int8 = 0;
     char error[1024];
     h3_st_header fx;
     if (!h3_st_read_header(fixture_path, &fx, error, sizeof(error))) die(error);
@@ -191,7 +195,7 @@ int main(void) {
     }
     int bf16 = !int8;
     h3_dit *dit = h3_dit_load_t2va(
-        dir, "h3_shaders.metal", &text, &layout, &sigmas, 50, 1, 0, 0, 1.0f,
+        dir, "h3_shaders.metal", &text, &layout, &sigmas, 50, 1, 0, ssd, 1.0f,
         bf16, bf16, bf16, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL, NULL, NULL,
         error, sizeof(error));
     if (!dit) die(error);
@@ -199,10 +203,15 @@ int main(void) {
         die("latent geometry");
     if (!h3_dit_debug_set_refined_text(dit, context, (size_t)TEXT * HIDDEN,
                                        error, sizeof(error))) die(error);
-    printf("mode: %s\n", int8 ? "int8 resident (production)" : "BF16 matrices");
+    printf("mode: %s\n", int8 ? "int8 resident (production)" :
+           ssd ? "SSD streaming (BF16 matrices)" : "BF16 resident");
 
-    double head_bound = int8 ? 0.15 : 0.05;
-    double block_bound = int8 ? 0.15 : 0.05;
+    /* Measured 2026-11-09 (plan appendix A.3/A.4): BF16 streaming worst
+     * 5.2 % (block 46) and 5.4 % (step-1 audio head), int8 resident 8.9 %
+     * and 7.9 %. BF16 rounding of the residual stream alone grows to a few
+     * percent over 47 blocks; the released H3 parity test allows 25 %. */
+    double head_bound = int8 ? 0.15 : 0.08;
+    double block_bound = int8 ? 0.15 : 0.08;
     float *vel_v = malloc(VE * sizeof(float)), *vel_a = malloc(AE * sizeof(float));
     float *rows_v = malloc(VIDEO_ROWS * 96u * sizeof(float));
     float *rows_a = malloc(AUDIO_ROWS * 32u * sizeof(float));

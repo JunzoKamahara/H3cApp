@@ -91,6 +91,30 @@ int h3_gpu_tensor_read_file_i8(h3_gpu_tensor *tensor, const char *path,
 int h3_gpu_tensor_stream_file_i8(h3_gpu_tensor *tensor, const char *path,
                                  uint64_t file_offset, size_t elements,
                                  char *error, size_t error_size);
+/* A tensor over [byte_offset, byte_offset + elements * size) of `parent`'s
+ * memory, no copy (Apple silicon shared memory). byte_offset must be a
+ * multiple of h3_gpu_page_bytes() and the window, rounded up to a page, must
+ * lie inside the parent; the parent must not itself be an alias. Free the
+ * aliases before or after the parent - each keeps the memory alive. Writes
+ * through one alias are not ordered against reads through an overlapping
+ * one inside the same command buffer. */
+size_t h3_gpu_page_bytes(void);
+h3_gpu_tensor *h3_gpu_tensor_alias_bf16(h3_gpu_tensor *parent,
+                                        size_t byte_offset, size_t elements);
+h3_gpu_tensor *h3_gpu_tensor_alias_i8(h3_gpu_tensor *parent,
+                                      size_t byte_offset, size_t elements);
+/* Streaming reads that fill only the leading `elements` of a larger tensor
+ * (a slot sized for the largest of several matrices). */
+int h3_gpu_tensor_stream_file_prefix_bf16(h3_gpu_tensor *tensor,
+                                          const char *path,
+                                          uint64_t file_offset,
+                                          size_t elements, char *error,
+                                          size_t error_size);
+int h3_gpu_tensor_stream_file_prefix_i8(h3_gpu_tensor *tensor,
+                                        const char *path,
+                                        uint64_t file_offset,
+                                        size_t elements, char *error,
+                                        size_t error_size);
 int h3_gpu_tensor_read_file_f32(h3_gpu_tensor *tensor, const char *path,
                                 uint64_t file_offset, size_t elements,
                                 char *error, size_t error_size);
