@@ -252,3 +252,32 @@ RTX PRO 4000 Blackwell（24 GB）の ComfyUI で取った記録。
 - M1〜M4 相当の模擬は 2026-11-02 と同じ方法（作業用の複製で TensorOps を切り、GPU ファミリーを 8 に抑え、シェーダーを MSL 3.2 で作る）。時間は M5 の GPU のもので、実機の M1〜M4 の時間ではない。全体が長いのは VAE デコードが TensorOps なしで遅いため。ピークの 10.9 GiB も VAE デコードの時点。映像は M5 の出力とほぼ同じで、破綻なし。
 - **計測のぶれ。** NAS への移動（rsync）が裏で SSD を読んでいたため、1 回きりの計測は ±2 s/ステップほどぶれた。512×512・4 ステップで「因子化分だけ TensorOps」「全部 TensorOps」「模擬」を交互に 2 回ずつ測ると、ストリーミングは 19.0〜20.8 s、常駐は 13.7〜14.0 s で、差はぶれの範囲だった（常駐の 1 回だけ 20.3 s の外れ）。表の時間も同じ程度の幅で読むこと。
 - **残り。** 16 GB 機でのストリーミングの可否は、ピーク（M5 で 8.5 GiB、模擬で VAE デコード時 10.9 GiB）から見て収まる見込み。実機では確かめていない。
+
+### A.5 2026-11-09 フェーズ 4: アプリ（ブランチ hyperflow-app）
+
+- **エンジン。** 生成前の見積りが、HyperFlow の常駐メモリをブロック構成から数える（int8 の dense と BF16 の低ランク）。672×384・5秒で 23.9 → 19.6 GiB（実測 16.5 GiB）、スワップの警告は出なくなった。注意キャッシュは前提にしない。
+- **判定。** `H3ModelFamily.detect` が FL2VA の DiT の GGUF ヘッダから `hyperflow` を読む（`H3GGUFInfo` に `hyperflow`・`ditBlocks`・`factoredBlocks` を追加）。
+- **生成画面。** HyperFlow のとき:
+  - ステップは 4/6/8（既定 6）。通常モデルに戻すと元のステップ数に戻る。
+  - 速度・再利用・層数・LoRA の欄を隠し、理由を表示する。
+  - 計算方式「int8 キャッシュ」は、24 GB 以上の M5 で常駐（int8）、それ以外で SSD ストリーミングとして動く。
+  - AdaLN 曲線と Open-H3 再生成は使わない。
+  - 送る値は `effective*` で HyperFlow 用に置き換える。フォームの値は通常モデル用に残す。プロジェクトの下書き・プリセット・結果の読み込みでも、20 ステップや LoRA は入らない。
+- **API。** `POST /api/generate` は、4/6/8 以外のステップ、LoRA、速度プリセット、reuse、層数、再ノイズ、3 以外の audio shift に理由付きの 400 を返す。既定は 6 ステップ・reuse 1。`GET /api/models/detail` は `family` と `steps` を返す。
+- **記録。**
+  - `ProjectDraft.modelFamily`、結果の要約（「モデル: HyperFlow H3 Flash」。層数・速度・再利用の行は出さない）。
+  - XMP の `AISystemUsed`、進捗の較正キー `.hyperflow`（初期値は M5 の実測）。
+- **取り込み。**
+  - ウィザード・Hugging Face の下見に種別を表示する。FL2VA と Ref2VA の種別の混在は止める。
+  - `h3c-import.json` に `family` を残す。
+  - 既知の配布元に VideoRebirthAI/hyperflow-h3-flash を加え、FL2VA Q4_K_M を動作確認済みにした。ライセンスの 1 行も足した。
+  - `transformer/config.json` は通常どおり基本モデルから複製する（中身は読まれない）。
+- **確認（API 経由、M5）。** 次の順に確かめた。
+  1. 取り込みの dry run と実際の取り込み（manifest に `family`）。
+  2. 詳細表示。
+  3. 拒否 5 種。
+  4. 672×384・5 秒の既定設定の生成: 6 ステップ・常駐・309 s。映像は破綻なし、音声 −41 dB、記録と XMP も正しい。
+  5. 通常モデルへの戻し（ステップの規則も 3〜40 に戻る）。
+  - 詳細設定の画面そのものは目で確かめていない。
+- **文書。** GGUF.ja/.md に「HyperFlow H3 Flash」の節、README、API、THIRD_PARTY_NOTICES を更新した。サイト（docs/）は公開時に更新する。
+- **残り（フェーズ 5）。** Turbo 4・DMAD・標準 20 ステップとの画質の比較。Ref2VA の HyperFlow（49 ブロック）は取り込み・生成とも未確認。

@@ -90,7 +90,7 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `prompt` | — | 必須。 |
 | `size_profile` | `"square"` | プリセット`<形>-<大きさ>`（形は`square`・`landscape`・`portrait`、大きさは`small`・`medium`・`large`）。2倍に拡大した出力は末尾に`-x2`（例: `landscape-large-x2`は960×544を1920×1088に拡大）。または完成サイズを表す`custom-<幅>x<高さ>`／`custom-<幅>x<高さ>-x2`（32の倍数。`-x2`はその半分で生成するため64の倍数）。生成するサイズは60万ピクセル以下で1辺256〜1344。以前の名前`smallSquare`、`square`、`landscapeNative`、`landscapeUpscaled`、`portraitNative`、`portraitUpscaled`もそのまま使え、対応する小・中のプリセットを表します（[GenerationModels.swift](native/H3Spike/Sources/H3cApp/GenerationModels.swift)の`SizeProfile`参照）。 |
 | `seconds` | `5` | 1〜15。 |
-| `steps` | `20`、またはオンにした最初のTurbo LoRAの推奨ステップ数 | 3〜40。 |
+| `steps` | `20`、またはオンにした最初のTurbo LoRAの推奨ステップ数。HyperFlow H3 Flash のモデルでは `6` | 3〜40。使用中のモデルが HyperFlow H3 Flash（[GGUF](GGUF.ja.md#hyperflow-h3-flash)）のときは 4・6・8 だけで、LoRA、`quality` 以外の速度、1 以外の `reuse`、50 以外の `dit_layers`、`sampler: "renoise"`、3 以外の `audio_shift` には理由付きの `400` を返します。 |
 | `reuse` | `2` | 1〜3。高速・最速ではこの値にかかわらず1で動く。 |
 | `compute_mode` | このGPUでのアプリの既定値 | `attentionCache`、`resident`、`ssdStreaming`のいずれか。 |
 | `speed_mode` | `"quality"` | `quality`、`fast`、`fastest`のいずれか（[速度モード](TECHNICAL.ja.md#速度モード)参照）。 |

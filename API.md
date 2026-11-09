@@ -90,7 +90,7 @@ language should read the file and set the header in its own code.
 | `prompt` | — | Required. |
 | `size_profile` | `"square"` | A preset `<shape>-<size>` with shape `square`, `landscape` or `portrait` and size `small`, `medium` or `large`, plus `-x2` for the 2x upscaled output (e.g. `landscape-large-x2`: 960x544 upscaled to 1920x1088); or `custom-<W>x<H>` / `custom-<W>x<H>-x2` for a finished size of W x H (multiples of 32, or of 64 with `-x2`, which generates at half that size); the generated size must be at most 600,000 pixels with 256-1344 per side. The older names `smallSquare`, `square`, `landscapeNative`, `landscapeUpscaled`, `portraitNative` and `portraitUpscaled` still work and stand for the matching small/medium presets (see `SizeProfile` in [GenerationModels.swift](native/H3Spike/Sources/H3cApp/GenerationModels.swift)). |
 | `seconds` | `5` | 1–15. |
-| `steps` | `20`, or the first enabled Turbo LoRA's recommended steps | 3–40. |
+| `steps` | `20`, or the first enabled Turbo LoRA's recommended steps; `6` with a HyperFlow H3 Flash model | 3–40; 4, 6 or 8 when the active model is HyperFlow H3 Flash ([GGUF](GGUF.md#hyperflow-h3-flash)), which also answers `400` with the reason for LoRAs, a speed preset other than `quality`, `reuse` other than 1, `dit_layers` other than 50, `sampler: "renoise"` and an `audio_shift` other than 3. |
 | `reuse` | `2` | 1–3. The faster speed modes run at 1 whatever this is. |
 | `compute_mode` | the app's own default for this GPU | `attentionCache`, `resident`, or `ssdStreaming`. |
 | `speed_mode` | `"quality"` | `quality`, `fast`, or `fastest` (see [Speed modes](TECHNICAL.md#speed-modes)). |

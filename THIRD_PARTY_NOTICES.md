@@ -218,6 +218,31 @@ Base model notice, as the repository's `NOTICE` states it: "MiniMax H3 is
 licensed under the MiniMax H3 Community License Agreement, Copyright © 2026
 MiniMax. All Rights Reserved."
 
+## HyperFlow H3 Flash (a model family the app can import; no weights bundled)
+
+H3cApp runs the GGUF files of [VideoRebirthAI/hyperflow-h3-flash](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash)
+(checked at revision `9e9ed14b8be4b751d7517b8ca58dd199d509720c`; the FL2VA
+Q4_K_M file has SHA-256
+`ee251661dffdebfa4a8c2555d2967b642f0efe9f2e350830a6e5c691935e23c3`) with
+the engine's own C/Metal code (`h3_hyperflow.c`, the factored and two-time
+AdaLN paths in `h3_dit.c` / `h3_dit_schedule.c`). The tensor layout,
+schedule and timestep mixing were taken from the repository's README and
+the Apache-2.0 [Video-Rebirth/hyperflow-h3-flash](https://github.com/Video-Rebirth/hyperflow-h3-flash)
+sources, and checked against reference dumps of the ComfyUI implementation
+run as a tool; no code from those projects ships in the app.
+
+The weights are **not bundled**; the user downloads or imports them. The
+repository's model card declares `license: other` /
+`license_name: minimax-h3-community-license-agreement`. Its `NOTICE`
+states that the weights are a Model Derivative of MiniMax-H3 created by
+Video Rebirth (Copyright 2026 Video Rebirth) and distributed under the
+[MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/6818f6c32d12b210915e44ad56a4228c2608f160/LICENSE),
+that HyperFlow H3 Flash is not an official MiniMax product and is not
+affiliated with or endorsed by MiniMax, and ends "Powered by MiniMax H3."
+The app shows the license line in its download sheets and records the model
+in each video's metadata. Which conditions apply to a use is the user's
+judgement; the app records facts and labels nothing "commercial".
+
 ## RefMod file format (ComfyUI-MiniMaxH3Mod)
 
 The RefMod files the app reads and writes (`h3_refmod.c`) follow the format

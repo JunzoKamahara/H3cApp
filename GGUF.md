@@ -144,6 +144,7 @@ With GGUF files already on disk, use Model Manager's "Import GGUF…".
 | [joeygambino/MiniMax-H3-x-Z-Image-GGUF](https://huggingface.co/joeygambino/MiniMax-H3-x-Z-Image-GGUF) | DiT | a merge with Z-Image; `curve` files are curve-form |
 | [nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF](https://huggingface.co/nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF) | text encoder (50 layers), mmproj | IQ types unsupported |
 | [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) | VAEs | the int8 one is unsupported |
+| [VideoRebirthAI/hyperflow-h3-flash](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash) | DiT (`fl2va_gguf/`, `ref2va_gguf/`) | HyperFlow H3 Flash (section below); the int8_convrot files are unsupported |
 
 These are sorted by reading the files' headers in the download screens. Every
 source has been checked to make a short video with a typical file around Q4
@@ -206,6 +207,44 @@ all Q2_K, 27.7% relative error against Q8_0 (15.6% for Q3_K, 7.4% for Q4_K).
 Use Q3_K_M or better; H3cApp marks such files with a warning. Q2_K text encoders
 work, and mixes such as "UD-Q2_K_XL" are untested.
 
+## HyperFlow H3 Flash
+
+[HyperFlow H3 Flash](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash) (Video Rebirth)
+is a derivative of MiniMax H3 whose DiT is distilled and compressed for few
+steps: FL2VA has 13.7B parameters (47 blocks, 18 of them with low-rank
+factored linears), Ref2VA 13.9B (49 blocks). The text encoder and the VAEs
+are MiniMax H3's own. H3cApp supports the GGUF files (`fl2va_gguf/`,
+`ref2va_gguf/`).
+
+- **Importing**: like any other DiT, through the wizard or from GGUF files
+  you have. The shared parts and the text encoder are cloned from an
+  imported MiniMax-H3 model (the DiT alone is about 9 GB at Q4_K_M). Use
+  HyperFlow for both FL2VA and Ref2VA (the import stops on a mix).
+- **Generating**: 4, 6 or 8 steps only (6 by default), with the model's own
+  sigma schedule and Euler, no CFG. The speed presets, denoiser reuse, the
+  layer count, add-on models (LoRA), re-noise and Open-H3 regeneration do
+  not apply (hidden in the advanced settings; the API answers `400` with the
+  reason). They come back when a regular MiniMax-H3 model is active.
+- **Compute mode**: no int8 cache. With the "int8 cache" choice it runs
+  resident (int8) on an M5 with at least 24 GB, and with SSD streaming
+  elsewhere.
+- **Records**: the video's record (`.json`) has `modelFamily: "hyperflow"`
+  and its XMP `AISystemUsed` says "HyperFlow H3 Flash (MiniMax H3 derivative)".
+
+Measured on an M5 (24 GB), 672x384, 5 s, 6 steps (2026-11-09):
+
+| Mode | Per step | Whole run | Peak memory |
+|---|---|---|---|
+| HyperFlow, resident (int8) | about 30 s | 256 s (309 s in the app) | 16.5 GiB |
+| HyperFlow, SSD streaming | about 39 s (7.8 GiB read per step) | 303 s | 8.5 GiB |
+| Regular H3 GGUF (Q4_K_M), int8 cache | about 44 s | 327 s | 15.7 GiB |
+| Regular H3 GGUF (Q4_K_M), SSD streaming | about 52 s (10.1 GiB) | 378 s | 8.9 GiB |
+
+Against the reference implementation (ComfyUI on CUDA), block by block,
+the final output differs by 3-8 % resident (int8) and 2-5 % with SSD
+streaming (BF16). Picture quality has not yet been compared with the Turbo
+LoRA or regular 20-step runs.
+
 ## Deleting models and disk space
 
 A GGUF import places files as APFS clones on the same disk, so importing takes
@@ -250,7 +289,7 @@ the API token (see [API](API.md#api)).
 |---|---|
 | `GET /api/models/import/downloads?kind=dit&repo=…` | download choices for a part (`dit`, `ref2va`, `textEncoder`, `vision`, `shared`); `repo` takes a name or URL. `403` when a web page on another site sends it (a foreign `Origin`, or `Sec-Fetch-Site: cross-site` / `same-site`); scripts and `curl` are unaffected |
 | `POST /api/models/import` | imports GGUF files: `files` or `folder`, `base_model` or `base_path`, `name`, `dry_run` |
-| `GET /api/models/detail?id=…` | what a model holds (the details screen) |
+| `GET /api/models/detail?id=…` | what a model holds (the details screen), plus its `family` (`h3` or `hyperflow`) and the `steps` it takes |
 | `POST /api/models/remove` | unregisters (caches deleted); `delete_files` also moves the files to the Trash, `dry_run` only computes |
 | `POST /api/models/add` | registers a folder as a model |
 | `POST /api/models/add_ref2va` | adds Ref2VA to a model without it: `file` (the Ref2VA DiT) for a GGUF model, `dry_run` for the plan only (an official model's only as a plan) |
@@ -260,6 +299,9 @@ the API token (see [API](API.md#api)).
 - The MiniMax H3 model (the official one and GGUF conversions such as
   unsloth's) is under the
   [MiniMax H3 Community License Agreement](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE).
+- HyperFlow H3 Flash (Video Rebirth) is distributed as a Model Derivative
+  of MiniMax H3 under the same MiniMax H3 Community License Agreement. It
+  is not an official MiniMax product.
 - Qwen's text and image parts (Qwen3-VL-32B-Instruct) are under the
   [Apache License 2.0](https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF).
 - Check each source's own license as well. Read each license before

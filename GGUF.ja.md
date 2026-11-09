@@ -138,6 +138,7 @@ VAE も GGUF では配られていませんが、unsloth と Comfy-Org が単体
 | [joeygambino/MiniMax-H3-x-Z-Image-GGUF](https://huggingface.co/joeygambino/MiniMax-H3-x-Z-Image-GGUF) | DiT | Z-Image との合成モデル。`curve` 付きが曲線形 |
 | [nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF](https://huggingface.co/nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF) | 文章の部分（50層）、mmproj | IQ 系は未対応 |
 | [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) | VAE | int8 版は未対応 |
+| [VideoRebirthAI/hyperflow-h3-flash](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash) | DiT（`fl2va_gguf/`・`ref2va_gguf/`） | HyperFlow H3 Flash（下の節）。int8_convrot 版は未対応 |
 
 いずれも、ダウンロードの画面で先頭を読んだ結果に基づく分類です。どの配布元も、
 Q4 前後の代表的なファイルで短い動画を作れることを確かめています（下の
@@ -197,6 +198,40 @@ Q2_K で、Q8_0 との相対誤差が 27.7%（Q3_K は 15.6%、Q4_K は 7.4%）�
 以上を使ってください。H3cApp はこうしたファイルに警告を出します。Q2_K の文章の部分は
 問題なく使え、「UD-Q2_K_XL」のような混在は確かめていません。
 
+## HyperFlow H3 Flash
+
+[HyperFlow H3 Flash](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash)（Video Rebirth）は、
+MiniMax H3 の DiT を少ないステップ用に蒸留・圧縮した派生モデルです。FL2VA は 13.7B（47ブロック、
+うち18ブロックの線形が低ランクに分解）、Ref2VA は 13.9B（49ブロック）。文章の部分と VAE は
+MiniMax H3 と同じものを使います。H3cApp は GGUF 版（`fl2va_gguf/`・`ref2va_gguf/`）に対応して
+います。
+
+- **取り込み**：ほかの DiT と同じく、ウィザードか手元の GGUF から取り込みます。共通部品と
+  文章の部分は、取り込み済みの MiniMax-H3 のモデルから複製します（DiT だけで約 9GB、
+  Q4_K_M の場合）。FL2VA と Ref2VA は、どちらも HyperFlow にしてください（混在は取り込みで
+  止めます）。
+- **生成**：4・6・8 ステップだけで生成します（既定は 6）。モデル自身のσの並びと Euler を
+  使い、CFG はありません。速度プリセット・ノイズ除去の再利用・層数・追加モデル（LoRA）・
+  再ノイズ・Open-H3 再生成は使いません（詳細設定では隠れ、API は理由付きの `400`）。
+  通常の MiniMax-H3 のモデルに切り替えると、これらの設定は元どおり使えます。
+- **計算方式**：int8 キャッシュは使いません。M5 で24GB以上のメモリがあれば「int8 キャッシュ」の
+  選択のまま常駐（int8）で、それ以外は SSD ストリーミングで動きます。
+- **記録**：動画の記録（`.json`）に `modelFamily: "hyperflow"`、XMP の `AISystemUsed` に
+  「HyperFlow H3 Flash (MiniMax H3 derivative)」が入ります。
+
+M5（24GB）で測った値（672×384・5秒・6ステップ、2026年11月9日）：
+
+| 計算方式 | 1ステップ | 全体 | ピークのメモリ |
+|---|---|---|---|
+| HyperFlow、常駐（int8） | 約 30 秒 | 256 秒（アプリでは 309 秒） | 16.5 GiB |
+| HyperFlow、SSD ストリーミング | 約 39 秒（1ステップに 7.8 GiB 読み込み） | 303 秒 | 8.5 GiB |
+| 通常の H3 GGUF（Q4_K_M）、int8 キャッシュ | 約 44 秒 | 327 秒 | 15.7 GiB |
+| 通常の H3 GGUF（Q4_K_M）、SSD ストリーミング | 約 52 秒（10.1 GiB） | 378 秒 | 8.9 GiB |
+
+参照の実装（ComfyUI、CUDA）の各ブロックの出力と比べ、常駐（int8）で最終出力の差が 3〜8%、
+SSD ストリーミング（BF16）で 2〜5% でした。画質を Turbo LoRA や通常の 20 ステップと比べた
+評価はまだです。
+
 ## モデルの削除とディスク容量
 
 GGUF の取り込みは、同じディスク上のファイルを APFS の複製（クローン）で置くので、
@@ -240,7 +275,7 @@ GGUF の取り込みは、同じディスク上のファイルを APFS の複製
 |---|---|
 | `GET /api/models/import/downloads?kind=dit&repo=…` | 部品（`dit`・`ref2va`・`textEncoder`・`vision`・`shared`）のダウンロード候補。`repo` にはリポジトリ名か URL。別のサイトの Web ページから送られたもの（別の `Origin`、または `Sec-Fetch-Site: cross-site`/`same-site`）には `403` を返します。スクリプトや `curl` は影響を受けません |
 | `POST /api/models/import` | GGUF の取り込み。`files` または `folder`、`base_model` か `base_path`、`name`、`dry_run` |
-| `GET /api/models/detail?id=…` | モデルの中身（詳細画面と同じ内容） |
+| `GET /api/models/detail?id=…` | モデルの中身（詳細画面と同じ内容）。`family`（`h3` か `hyperflow`）と、選べる `steps` も返します |
 | `POST /api/models/remove` | 登録を外す（キャッシュは削除）。`delete_files` でファイルもゴミ箱へ、`dry_run` で計算だけ |
 | `POST /api/models/add` | フォルダをモデルとして登録 |
 | `POST /api/models/add_ref2va` | Ref2VA のないモデルに Ref2VA を加える。GGUF のモデルは `file`（Ref2VA の DiT）、`dry_run` で計画だけ（公式のモデルの分は計画のみ） |
@@ -250,6 +285,9 @@ GGUF の取り込みは、同じディスク上のファイルを APFS の複製
 - MiniMax H3 のモデル（公式のもの、unsloth などの GGUF）には
   [MiniMax H3 Community License Agreement](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE)
   が適用されます。
+- HyperFlow H3 Flash（Video Rebirth）は MiniMax H3 の派生モデルとして、同じ
+  MiniMax H3 Community License Agreement で配布されています。MiniMax の公式の製品では
+  ありません。
 - Qwen の文章の部分・画像の部分（Qwen3-VL-32B-Instruct）には
   [Apache License 2.0](https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF) が適用されます。
 - それぞれの配布元のライセンスも確認してください。ダウンロードと利用の前に各ライセンスを
