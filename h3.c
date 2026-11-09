@@ -1788,6 +1788,48 @@ static int h3_plan_full_sdpa(const h3_ctx *ctx) {
     return 0;
 }
 
+/* Resident DiT block bytes of a HyperFlow H3 Flash transformer (0 for
+ * any other checkpoint), the way h3_dit.c loads it: dense linears int8 on a
+ * GPU with tensor units (BF16 elsewhere), factored linears and the dense
+ * half of a half-factored MLP in BF16. Matches the 18 GiB plain-H3 figure,
+ * which also counts block weights only. */
+static uint64_t h3_hyperflow_resident_bytes(const h3_ctx *ctx, int ref2va) {
+    if (!h3_dir_has_gguf(ctx->model_dir, ref2va ? "Ref2VA/transformer"
+                                                : "FL2VA/transformer"))
+        return 0;
+    char *path = h3_path(ctx->model_dir, ref2va ? "Ref2VA/transformer"
+                                                : "FL2VA/transformer");
+    char detail[512];
+    h3_weight_store *store = path ?
+        h3_weight_store_open(path, detail, sizeof(detail)) : NULL;
+    free(path);
+    h3_hyperflow_info info;
+    int ok = store && h3_hyperflow_inspect(store, &info, detail,
+                                           sizeof(detail)) && info.two_time;
+    h3_weight_store_free(store);
+    if (!ok) return 0;
+    enum { HIDDEN = 5376, INNER = 7168, FFN = 14336 };
+    static const uint64_t in[H3_HF_LINEARS] = {
+        HIDDEN, HIDDEN, HIDDEN, INNER, HIDDEN, FFN};
+    static const uint64_t out[H3_HF_LINEARS] = {
+        INNER, INNER, INNER, HIDDEN, 2 * FFN, HIDDEN};
+    uint64_t dense = h3_device(ctx)->apple_gpu_family >= 10 ? 1 : 2;
+    uint64_t bytes = 0;
+    for (uint32_t block = 0; block < info.block_count; block++) {
+        const uint32_t *rank = info.rank[block];
+        int mixed_mlp = rank[H3_HF_FC1] || rank[H3_HF_FC2];
+        for (int linear = 0; linear < H3_HF_LINEARS; linear++) {
+            int mlp = linear == H3_HF_FC1 || linear == H3_HF_FC2;
+            if (rank[linear])
+                bytes += 2ull * rank[linear] * (in[linear] + out[linear]);
+            else
+                bytes += (mlp && mixed_mlp ? 2 : dense) *
+                         in[linear] * out[linear];
+        }
+    }
+    return bytes;
+}
+
 int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
                        const h3_params *params, h3_plan *plan) {
     if (!plan) return 0;
@@ -2065,7 +2107,11 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
     const char *cache = getenv("H3_ATTENTION_CACHE");
     int cached = params->plan_attention_cache ?
         params->plan_attention_cache > 0 : (cache && *cache);
+    uint64_t hyperflow_resident = h3_hyperflow_resident_bytes(ctx, ref2va);
+    /* HyperFlow never uses the attention cache (h3_dit.c ignores it). */
+    if (hyperflow_resident) cached = 0;
     uint64_t resident = params->ssd_streaming || cached ? 0 :
+        hyperflow_resident ? hyperflow_resident :
         h3_device(ctx)->apple_gpu_family >= 10 ? 18ull << 30 : 37ull << 30;
     h3_plan_input input = {
         h3_device(ctx)->physical_memory, params->ssd_streaming,
