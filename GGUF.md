@@ -266,6 +266,21 @@ brightness change between neighbouring frames. The differences between
 prompts are larger than those between configurations, so read these as a
 rough guide.
 
+Ref2VA (Q4_K_M, 9.22 GB) was also checked: it generates from a reference
+image, a reference video, and a reference image plus reference audio
+(2026-11-10, M5 with 24 GB, 672x384, 5 s, one clip per kind of reference).
+
+| Reference | Regular model, 20 steps | HyperFlow, 6 steps | HyperFlow peak memory |
+|---|---|---|---|
+| One image | 638 s | 225 s (4 steps 184 s, 8 steps 280 s) | 17-18 GiB |
+| One image + audio | 698 s | 249 s | 17 GiB |
+| One video | 2,285 s | 1,180 s | 19 GiB |
+
+By eye, the person in the reference was kept by both models, and the pitch of the
+reference voice was followed by both. HyperFlow's Ref2VA sound comes out
+about 5 dB louder than the regular model's. Ref2VA with SSD streaming has
+not been checked yet.
+
 ## Deleting models and disk space
 
 A GGUF import places files as APFS clones on the same disk, so importing takes
