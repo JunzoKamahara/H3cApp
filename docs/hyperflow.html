@@ -66,7 +66,7 @@
 
     <section class="section compare-section" id="compare" aria-labelledby="compare-title">
       <h2 id="compare-title">仕上がりを見比べる</h2>
-      <p>3つのプロンプトを、6つの方法でそれぞれ1回ずつ生成しました（672×384・5秒・シード42）。映像と左右の方法を選び、「<span class="ui">静止画</span>」（60フレーム目）で細部を、「<span class="ui">動画</span>」で動きを見てください。最初は左にTurbo LoRA（4ステップ）、右にHyperFlow（6ステップ）を並べています。</p>
+      <p><strong>このページの映像と音声は、すべてAIで生成したものです</strong>（H3cAppで、MiniMax H3と、その派生モデルのHyperFlow H3 Flashを使用）。3つのプロンプトを、6つの方法でそれぞれ1回ずつ生成しました（672×384・5秒・シード42）。映像と左右の方法を選び、「<span class="ui">静止画</span>」（60フレーム目）で細部を、「<span class="ui">動画</span>」で動きを見てください。最初は左にTurbo LoRA（4ステップ）、右にHyperFlow（6ステップ）を並べています。</p>
       <noscript><p>この比較にはJavaScriptが必要です。</p></noscript>
       <div id="compare-panel" data-base="assets/hyperflow/" hidden>
         <div class="compare-choices">
@@ -122,7 +122,7 @@
           <li><strong>話す人</strong>：<span lang="en">A young woman with short black hair, wearing a navy blazer, stands in a bright university hallway and speaks directly to the camera with a friendly smile, saying: "Welcome to our campus. Let me show you around." Medium close-up, static camera. Clear voice, quiet indoor ambience, no music.</span></li>
         </ul>
       </details>
-      <p class="small muted">どのクリップもH3cAppで文章だけから生成した動画です（2026年11月9日、M5・24GB）。ページ用に圧縮し直しているので、細かな粒状感は実際の出力より減っています。</p>
+      <p class="small muted">どのクリップも、H3cAppで文章だけからAIで生成した動画です（2026年11月9日、M5・24GB）。ページ用に圧縮し直しているので、細かな粒状感は実際の出力より減っています。</p>
     </section>
 
     <section class="section section-narrow" id="numbers" aria-labelledby="numbers-title">
@@ -151,7 +151,7 @@
 
     <section class="section" id="sound" aria-labelledby="sound-title">
       <h2 id="sound-title">音声付きで見る</h2>
-      <p>HyperFlowは、通常のMiniMax H3と同じく映像と音声を一緒に作ります。下はHyperFlow 6ステップの生成そのものです（音声付き、再生ボタンを押すと音も流れます）。</p>
+      <p>HyperFlowは、通常のMiniMax H3と同じく映像と音声を一緒に作ります。下はHyperFlow 6ステップでAIが生成した動画そのものです（音声付き、再生ボタンを押すと音も流れます）。</p>
       <div class="examples examples-wide">
         <figure class="example">
           <div class="media">
@@ -258,6 +258,7 @@
       <h2 id="license-title">重みとライセンス</h2>
       <ul>
         <li>HyperFlow H3 Flashの重みは、Video Rebirthが<a href="https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash">Hugging Face</a>で公開しています。MiniMax H3の派生モデル（Model Derivative）で、MiniMax H3 Community Licenseが適用されます。MiniMaxの公式のモデルではありません（Powered by MiniMax H3）。</li>
+        <li>ライセンス本文はMiniMax H3のものとまったく同じで、追加の条件はありません。通常のMiniMax H3と同じ条件がそのまま適用されます。主な点は、対象の地域（EU・英国・韓国・米国は対象外）、利用方針で禁止された使い方、生成した動画を公開するときのAI生成の明示、ほかのAIモデルの改善に使わないこと、商用の条件（一定以上の売上での事前の許可、画面への「MiniMax H3」の表示）です。</li>
         <li>H3cAppには重みを含めていません。ダウンロードの前に、配布元のライセンスと注意書きを確認してください。どの条件が自分の利用に当てはまるかは、利用者が判断してください。</li>
         <li>H3cAppのHyperFlow対応は、公開されているモデルの説明と、参照の実装をツールとして動かした出力をもとに、独自に書いたものです。</li>
       </ul>

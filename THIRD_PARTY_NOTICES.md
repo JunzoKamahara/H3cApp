@@ -239,6 +239,11 @@ Video Rebirth (Copyright 2026 Video Rebirth) and distributed under the
 [MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/6818f6c32d12b210915e44ad56a4228c2608f160/LICENSE),
 that HyperFlow H3 Flash is not an official MiniMax product and is not
 affiliated with or endorsed by MiniMax, and ends "Powered by MiniMax H3."
+Rechecked at revision `61f1311bb1c8fac290d1c5121f4ebbb44525f446`
+(2026-11-09): `LICENSE` is byte-identical to MiniMax-H3's own (SHA-256
+`59b99642b95ea21630e311198ddbfffbfe05aadba0c2f5d884cbdf4efcc90f44`), the
+README states no additional terms, the `NOTICE` only adds the new ComfyUI
+INT8 folders, and the FL2VA Q4_K_M file is unchanged.
 The app shows the license line in its download sheets and records the model
 in each video's metadata. Which conditions apply to a use is the user's
 judgement; the app records facts and labels nothing "commercial".
