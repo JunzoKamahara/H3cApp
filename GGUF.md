@@ -278,9 +278,10 @@ image, a reference video, and a reference image plus reference audio
 
 By eye, the person in the reference was kept by both models, and the pitch of the
 reference voice was followed by both. HyperFlow's Ref2VA sound comes out
-about 5 dB louder than the regular model's; in the one clip with reference
-audio that was listened to, the voice was slightly distorted (just about
-acceptable). Ref2VA with SSD streaming has
+about 5 dB louder than the regular model's; listening to every clip, the
+voice in the one with reference audio was slightly distorted (just about
+acceptable). With a reference video, both models made the speech fast,
+but not to the point of being a problem. Ref2VA with SSD streaming has
 not been checked yet.
 
 ## Deleting models and disk space
