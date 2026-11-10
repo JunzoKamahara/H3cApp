@@ -218,7 +218,7 @@ steps: FL2VA has 13.7B parameters (47 blocks, 18 of them with low-rank
 factored linears), Ref2VA 13.9B (49 blocks). The text encoder and the VAEs
 are MiniMax H3's own. H3cApp supports the GGUF files (`fl2va_gguf/`,
 `ref2va_gguf/`); the int8 file made for ComfyUI
-[can be imported too](#the-int8-file-comfyui-safetensors) (checked with FL2VA).
+[can be imported too](#the-int8-file-comfyui-safetensors) (checked with FL2VA and Ref2VA).
 
 - **Importing**: like any other DiT, through the wizard or from GGUF files
   you have. The shared parts and the text encoder are cloned from an
@@ -300,8 +300,8 @@ M1-M4 Macs have not been tried yet.
 
 ### The int8 file (ComfyUI safetensors)
 
-The single-file version in the source's `fl2va_int8_convrot_comfyui/`
-(16.0 GB) can be imported as well. Its 120 ordinary linears are int8 with
+The single-file versions in the source's `fl2va_int8_convrot_comfyui/`
+(16.0 GB) and `ref2va_int8_convrot_comfyui/` (16.4 GB) can be imported as well. Its 120 ordinary linears are int8 with
 ConvRot; the low-rank factored linears stay BF16. It is read like any
 [ComfyUI int8 DiT](#comfyui-int8-convrot-dits): the plain weights are
 restored as the file loads, and generation runs the same path as the GGUF
@@ -331,18 +331,45 @@ the generation until denoising begins):
   detail (PSNR 19-23 dB): the same kind of person and composition, no
   breakage seen in either. Which is better was not judged.
 - Weights: every unquantized tensor is identical to the GGUF's, the int8
-  matrices agree within 2-8% and the low-rank products within 2.5-7.5% (the
-  size of Q4_K's quantization error). SSD streaming reads the int8 FC1 of
+  matrices agree within 2-8% and the low-rank products within 2.5-14% (the
+  GGUF has both up and down in Q4_K, so a product differs more than a single
+  matrix; measured on 6 FL2VA and 15 Ref2VA layers). SSD streaming reads the int8 FC1 of
   FL2VA's last block in two halves; a unit test checks that restoring the
   halves gives the same bits as restoring the whole and splitting it.
 - Against the ComfyUI reference dump the int8 file differs more (20% at the
   last block, Q4_K_M 5%). The dump was made with the Q4_K_M weights, so this
   does not mean the int8 file is less accurate. How close either is to the
   BF16 output was not measured in H3cApp.
-- Only FL2VA text-to-video was checked. The Ref2VA int8 file (16.4 GB) has
-  the same format, but no generation was run with it, so it is not claimed
-  as supported. Not checked on M1-M4 either. The audio has not been checked
-  by listening.
+- With FL2VA only text-to-video was checked. Not checked on M1-M4. The audio
+  has not been checked by listening.
+
+The Ref2VA int8 file (`ref2va_int8_convrot_comfyui/`, 16.4 GB, 49 blocks) was
+checked under the same conditions (November 11, 2026, M5 with 24 GB; the same
+references and prompts as the GGUF Ref2VA check):
+
+| Reference, compute mode | int8 file, total | of which denoising | Peak memory | GGUF Q4_K_M total, peak |
+|---|---|---|---|---|
+| Image, resident (int8) | 230 s | 156 s | 16 GiB | 234 s, 17 GiB (same day); 225 s, 18 GiB (the day before) |
+| Image + audio, resident (int8) | 244 s | 172 s | 17 GiB | 249 s, 17 GiB (the day before) |
+| Video, resident (int8) | 1,187 s | 449 s | 18 GiB | 1,180 s, 19 GiB (the day before) |
+| Image, SSD streaming | 305 s | 241 s | 7.0 GiB | 305 s, 6.8 GiB (the day before) |
+
+- All four generated without errors, and the person in the reference (face,
+  hair, necklace) carried over as with the GGUF. No breakage was seen in
+  full-size frames. With a reference voice the median pitch was 177.8 Hz
+  (reference 172 Hz, GGUF 181.8 Hz), so the voice was followed.
+- Time and memory are about the same as the GGUF's. The int8 file's lead seen
+  with FL2VA (10-20 s) is not clear with Ref2VA (4 s on the same-day image
+  run, one run each).
+- At the same seed the pictures differ in detail from the GGUF's (PSNR
+  15-19 dB: clothes and background change, the person is the same). Which is
+  better was not judged.
+- With the video reference the int8 file's sound came out about 6 dB louder
+  than the GGUF's (mean -17.6 dB against -23.1 dB). The other three are
+  within 1 dB. The audio has not been checked by listening.
+- The weights compare as for FL2VA (unquantized tensors identical, int8
+  matrices within 8.1%). M1-M4 (real or emulated) and 4 and 8 steps were not
+  checked.
 
 ## ComfyUI int8 (ConvRot) DiTs
 
