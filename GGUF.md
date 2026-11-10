@@ -281,8 +281,14 @@ reference voice was followed by both. HyperFlow's Ref2VA sound comes out
 about 5 dB louder than the regular model's; listening to every clip, the
 voice in the one with reference audio was slightly distorted (just about
 acceptable). With a reference video, both models made the speech fast,
-but not to the point of being a problem. Ref2VA with SSD streaming has
-not been checked yet.
+but not to the point of being a problem. Ref2VA also works with SSD
+streaming for all three kinds of reference (measured on the M5 with the
+compute mode set to SSD streaming, 6 steps): 305 s with an image, 324 s
+with an image and audio, 1,426 s with a video (1.2-1.35 times resident),
+with a peak of 6.8-9.3 GiB. Resident (int8) and SSD streaming (BF16)
+compute at different precision, so with the same seed the background
+details change; the person and the framing stay the same. Actual M1-M4
+Macs have not been tried yet.
 
 ## Deleting models and disk space
 

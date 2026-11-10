@@ -238,7 +238,7 @@
         <li><strong>Support is experimental.</strong> The default model stays the regular MiniMax H3.</li>
         <li><strong>Not available</strong>: step counts other than 4, 6 and 8, speed presets, denoiser reuse, the layer count, add-on models (LoRA), re-noise and Open-H3 regeneration. No int8 cache is built.</li>
         <li><strong>Compute mode</strong>: on an M5 with at least 24 GB it runs resident (int8) with “<span class="ui">int8 cache</span>” selected (peak 17-18 GiB). Other Macs use SSD streaming.</li>
-        <li><strong>What has been checked</strong>: generation from text with the FL2VA Q4_K_M, and generation from a reference image, a reference video and reference audio with the Ref2VA Q4_K_M (one clip per kind of reference). Generation from first and last frames, and Ref2VA with SSD streaming, have not been checked yet.</li>
+        <li><strong>What has been checked</strong>: generation from text with the FL2VA Q4_K_M, and generation from a reference image, a reference video and reference audio with the Ref2VA Q4_K_M (one clip per kind of reference, both resident and with SSD streaming). Generation from first and last frames, and running on actual M1-M4 Macs, have not been checked yet.</li>
         <li><strong>Records</strong>: the video's record (<code>.json</code>) has <code>modelFamily: "hyperflow"</code> and its XMP AISystemUsed says "HyperFlow H3 Flash (MiniMax H3 derivative)".</li>
       </ul>
     </section>
