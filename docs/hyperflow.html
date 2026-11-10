@@ -238,7 +238,7 @@
         <li><strong>試験的な対応です。</strong>既定のモデルは通常のMiniMax H3のままです。</li>
         <li><strong>使えない機能</strong>：4・6・8以外のステップ数、速度プリセット、ノイズ除去の再利用、層数の変更、追加モデル（LoRA）、再ノイズ、Open-H3 再生成。int8キャッシュも作りません。</li>
         <li><strong>計算方式</strong>：24GB以上のメモリを持つM5では、「<span class="ui">int8キャッシュ</span>」を選んだまま常駐（int8）で動きます（ピーク17〜18GiB）。それ以外のMacではSSDストリーミングで動きます。</li>
-        <li><strong>確かめた範囲</strong>：動作を確かめたのは、FL2VAのQ4_K_Mでの文章からの生成と、Ref2VAのQ4_K_Mでの参照画像・参照動画・参照音声からの生成です（Ref2VAは、参照の種類ごとに1本ずつ、常駐とSSDストリーミングの両方で）。最初と最後の画像からの生成と、M1〜M4の実機での動作は、まだ確かめていません。</li>
+        <li><strong>確かめた範囲</strong>：動作を確かめたのは、FL2VAのQ4_K_Mでの文章からの生成と、Ref2VAのQ4_K_Mでの参照画像・参照動画・参照音声からの生成です（Ref2VAは、参照の種類ごとに1本ずつ、常駐とSSDストリーミングの両方で）。M1〜M4での動作は、M5でM1〜M4相当に機能を落とした模擬で確かめました（Ref2VAの3本）。最初と最後の画像からの生成と、M1〜M4の実機での動作は、まだ確かめていません。</li>
         <li><strong>記録</strong>：動画の記録（<code>.json</code>）に<code>modelFamily: "hyperflow"</code>が、XMPのAISystemUsedに「HyperFlow H3 Flash (MiniMax H3 derivative)」が入ります。</li>
       </ul>
     </section>

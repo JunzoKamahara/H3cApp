@@ -287,8 +287,12 @@ compute mode set to SSD streaming, 6 steps): 305 s with an image, 324 s
 with an image and audio, 1,426 s with a video (1.2-1.35 times resident),
 with a peak of 6.8-9.3 GiB. Resident (int8) and SSD streaming (BF16)
 compute at different precision, so with the same seed the background
-details change; the person and the framing stay the same. Actual M1-M4
-Macs have not been tried yet.
+details change; the person and the framing stay the same. Emulating an M1-M4 on the M5
+(TensorOps and the newer GPU features turned off), all three kinds also
+work with a peak of 10-11 GiB; denoising takes about as long as on the M5
+and the VAE decode about three times as long (425 s in all with an image
+reference; these are the M5 GPU's times, not a real M1-M4's). Actual
+M1-M4 Macs have not been tried yet.
 
 ## Deleting models and disk space
 
