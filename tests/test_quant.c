@@ -313,12 +313,255 @@ static void test_gpu_matches_reference(h3_gpu *gpu) {
     }
 }
 
+/* --- ComfyUI int8 + ConvRot ------------------------------------------- */
+
+static uint32_t lcg_state = 12345u;
+static float lcg_float(void) { /* about [-1, 1) */
+    lcg_state = lcg_state * 1664525u + 1013904223u;
+    return (float)(lcg_state >> 8) / 8388608.0f - 1.0f;
+}
+
+/* H_group built the slow way: the Kronecker power of H4 as a dense matrix. */
+static void dense_hadamard(double *h, uint32_t group) {
+    static const double h4[4][4] = {{.5, .5, .5, -.5}, {.5, .5, -.5, .5},
+                                    {.5, -.5, .5, .5}, {-.5, .5, .5, .5}};
+    for (uint32_t row = 0; row < group; row++) {
+        for (uint32_t column = 0; column < group; column++) {
+            double value = 1.0;
+            for (uint32_t r = row, c = column, size = group; size > 1; size /= 4) {
+                value *= h4[r % 4][c % 4];
+                r /= 4;
+                c /= 4;
+            }
+            h[row * group + column] = value;
+        }
+    }
+}
+
+static void test_convrot_reference(void) {
+    enum { GROUP = 256, COUNT = 512 };
+    double *h = malloc(sizeof(double) * GROUP * GROUP);
+    CHECK(h != NULL);
+    dense_hadamard(h, GROUP);
+    /* H is symmetric and its own inverse. */
+    for (uint32_t row = 0; row < GROUP; row += 37) {
+        for (uint32_t column = 0; column < GROUP; column += 29) {
+            double sum = 0.0;
+            for (uint32_t k = 0; k < GROUP; k++)
+                sum += h[row * GROUP + k] * h[k * GROUP + column];
+            CHECK(fabs(sum - (row == column ? 1.0 : 0.0)) < 1e-12);
+            CHECK(h[row * GROUP + column] == h[column * GROUP + row]);
+        }
+    }
+    float values[COUNT], rotated[COUNT];
+    for (int i = 0; i < COUNT; i++) rotated[i] = values[i] = lcg_float();
+    CHECK(h3_convrot_rotate(rotated, COUNT, GROUP));
+    double worst = 0.0;
+    for (uint32_t i = 0; i < COUNT; i++) {
+        /* (w H)[i] within the group i belongs to */
+        uint32_t base = i / GROUP * GROUP;
+        double sum = 0.0;
+        for (uint32_t k = 0; k < GROUP; k++)
+            sum += (double)values[base + k] * h[k * GROUP + (i - base)];
+        worst = fmax(worst, fabs(sum - rotated[i]));
+    }
+    CHECK(worst < 1e-5);
+    CHECK(h3_convrot_rotate(rotated, COUNT, GROUP)); /* and back */
+    for (int i = 0; i < COUNT; i++) CHECK(fabsf(rotated[i] - values[i]) < 1e-5f);
+    CHECK(!h3_convrot_rotate(rotated, COUNT, 128)); /* not a power of 4 */
+    CHECK(!h3_convrot_rotate(rotated, 300, GROUP)); /* partial group */
+    float four[4] = {1.0f, 0.0f, 0.0f, 0.0f}; /* first column of H4 */
+    CHECK(h3_convrot_rotate(four, 4, 4));
+    CHECK(four[0] == 0.5f && four[1] == 0.5f && four[2] == 0.5f && four[3] == -0.5f);
+    int8_t q[8] = {1, -2, 3, -4, 5, -6, 7, -8};
+    float row[8];
+    CHECK(h3_comfy_int8_dequantize_row(q, 0.5f, 8, 0, row));
+    CHECK(row[0] == 0.5f && row[7] == -4.0f);
+    CHECK(h3_comfy_int8_dequantize_row(q, 0.5f, 8, 4, row));
+    /* (0.5, -1, 1.5, -2): t = -0.5 -> (1.5, -2, 0.5, -1) */
+    CHECK(row[0] == 1.5f && row[1] == -2.0f && row[2] == 0.5f && row[3] == -1.0f);
+    free(h);
+}
+
+typedef struct {
+    const char *name, *dtype;
+    uint64_t shape[2];
+    int ndim;
+    const void *data;
+    size_t bytes;
+} st_entry;
+
+static void write_safetensors(const char *path, const st_entry *entries,
+                              size_t count) {
+    char json[4096];
+    size_t used = (size_t)snprintf(json, sizeof(json),
+                                   "{\"__metadata__\":{\"format\":\"pt\"}");
+    uint64_t offset = 0;
+    for (size_t i = 0; i < count; i++) {
+        char shape[64];
+        if (entries[i].ndim == 2)
+            snprintf(shape, sizeof(shape), "%llu,%llu",
+                     (unsigned long long)entries[i].shape[0],
+                     (unsigned long long)entries[i].shape[1]);
+        else
+            snprintf(shape, sizeof(shape), "%llu",
+                     (unsigned long long)entries[i].shape[0]);
+        used += (size_t)snprintf(json + used, sizeof(json) - used,
+            ",\"%s\":{\"dtype\":\"%s\",\"shape\":[%s],\"data_offsets\":[%llu,%llu]}",
+            entries[i].name, entries[i].dtype, shape, (unsigned long long)offset,
+            (unsigned long long)(offset + entries[i].bytes));
+        offset += entries[i].bytes;
+        CHECK(used < sizeof(json) - 16);
+    }
+    json[used++] = '}';
+    while (used % 8) json[used++] = ' ';
+    FILE *file = fopen(path, "wb");
+    CHECK(file != NULL);
+    write_u64(file, used);
+    write_bytes(file, json, used);
+    for (size_t i = 0; i < count; i++)
+        write_bytes(file, entries[i].data, entries[i].bytes);
+    CHECK(fclose(file) == 0);
+}
+
+static float bf16_value(uint16_t bits) {
+    uint32_t widened = (uint32_t)bits << 16;
+    float value;
+    memcpy(&value, &widened, sizeof(value));
+    return value;
+}
+
+/* A ComfyUI-layout checkpoint (curve AdaLN table, so fused QKV rows are
+ * [Q; K; V]) with a ConvRot QKV weight, a ConvRot FC2 weight and a plain
+ * int8 weight with one scale, read through the weight store: the loads
+ * must return the weights that were rotated and quantized, QKV reordered
+ * per head. */
+static void test_comfy_int8(h3_gpu *gpu) {
+    enum { QKV_ROWS = 768, QKV_COLUMNS = 256, FC_ROWS = 6, FC_COLUMNS = 512,
+           PLAIN_ROWS = 3, PLAIN_COLUMNS = 8 };
+    static const char convrot[] =
+        "{\"format\": \"int8_tensorwise\", \"convrot\": true, \"convrot_groupsize\": 256}";
+    static const char plain[] = "{\"format\": \"int8_tensorwise\"}";
+    static const struct { const char *weight, *scale, *quant; uint32_t rows, columns, group; int one_scale; } layers[3] = {
+        {"blocks.0.attn.qkv_proj.weight", "blocks.0.attn.qkv_proj.weight_scale",
+         "blocks.0.attn.qkv_proj.comfy_quant", QKV_ROWS, QKV_COLUMNS, 256, 0},
+        {"blocks.0.mlp.fc2.weight", "blocks.0.mlp.fc2.weight_scale",
+         "blocks.0.mlp.fc2.comfy_quant", FC_ROWS, FC_COLUMNS, 256, 0},
+        {"condition_proj.weight", "condition_proj.weight_scale",
+         "condition_proj.comfy_quant", PLAIN_ROWS, PLAIN_COLUMNS, 0, 1},
+    };
+    float *original[3];
+    int8_t *quantized[3];
+    float *scales[3];
+    float table[8] = {0};
+    st_entry entries[10];
+    size_t count = 0;
+    entries[count++] = (st_entry){"adaln_t_table", "F32", {1, 8}, 2, table, sizeof(table)};
+    for (int l = 0; l < 3; l++) {
+        uint32_t rows = layers[l].rows, columns = layers[l].columns;
+        original[l] = malloc(sizeof(float) * rows * columns);
+        quantized[l] = malloc((size_t)rows * columns);
+        scales[l] = malloc(sizeof(float) * rows);
+        float *rotated = malloc(sizeof(float) * columns);
+        CHECK(original[l] && quantized[l] && scales[l] && rotated);
+        float tensor_peak = 0.0f;
+        for (uint32_t i = 0; i < rows * columns; i++) {
+            original[l][i] = lcg_float() * (1.0f + (float)(i / columns % 5));
+            tensor_peak = fmaxf(tensor_peak, fabsf(original[l][i]));
+        }
+        for (uint32_t row = 0; row < rows; row++) {
+            memcpy(rotated, original[l] + (size_t)row * columns, sizeof(float) * columns);
+            if (layers[l].group) CHECK(h3_convrot_rotate(rotated, columns, layers[l].group));
+            float peak = 0.0f;
+            for (uint32_t c = 0; c < columns; c++) peak = fmaxf(peak, fabsf(rotated[c]));
+            float scale = (layers[l].one_scale ? tensor_peak : peak) / 127.0f;
+            scales[l][row] = scale;
+            for (uint32_t c = 0; c < columns; c++)
+                quantized[l][(size_t)row * columns + c] = (int8_t)lrintf(rotated[c] / scale);
+        }
+        free(rotated);
+        entries[count++] = (st_entry){layers[l].weight, "I8", {rows, columns}, 2,
+                                      quantized[l], (size_t)rows * columns};
+        entries[count++] = layers[l].one_scale ?
+            (st_entry){layers[l].scale, "F32", {1, 0}, 1, scales[l], sizeof(float)} :
+            (st_entry){layers[l].scale, "F32", {rows, 1}, 2, scales[l], sizeof(float) * rows};
+        const char *json = layers[l].group ? convrot : plain;
+        entries[count++] = (st_entry){layers[l].quant, "U8", {strlen(json), 0}, 1,
+                                      json, strlen(json)};
+    }
+    char root[] = "/tmp/h3_comfy_int8_XXXXXX";
+    CHECK(mkdtemp(root) != NULL);
+    char path[256];
+    snprintf(path, sizeof(path), "%s/model.safetensors", root);
+    write_safetensors(path, entries, count);
+    char error[512] = "";
+    h3_weight_store *store = h3_weight_store_open(root, error, sizeof(error));
+    CHECK(store != NULL);
+    const h3_st_tensor *qkv = h3_weight_find(store, layers[0].weight, NULL);
+    CHECK(qkv && h3_weight_is_comfy_int8(store, qkv));
+    CHECK(!h3_weight_is_comfy_int8(store, h3_weight_find(store, "adaln_t_table", NULL)));
+    for (int l = 0; gpu && l < 3; l++) {
+        uint32_t rows = layers[l].rows, columns = layers[l].columns;
+        size_t elements = (size_t)rows * columns;
+        uint64_t shape[2] = {rows, columns};
+        h3_gpu_tensor *bf16 = h3_weight_load_bf16(store, gpu, layers[l].weight, 2,
+                                                  shape, error, sizeof(error));
+        h3_gpu_tensor *f32 = h3_weight_load_f32(store, gpu, layers[l].weight, 2,
+                                                shape, error, sizeof(error));
+        if (!bf16 || !f32) fprintf(stderr, "%s\n", error);
+        CHECK(bf16 && f32);
+        uint16_t *got16 = malloc(elements * sizeof(*got16));
+        float *got = malloc(elements * sizeof(*got));
+        CHECK(got16 && got && h3_gpu_tensor_read_bf16(bf16, got16, elements) &&
+              h3_gpu_tensor_read_f32(f32, got, elements));
+        double worst = 0.0, peak = 0.0;
+        for (uint32_t row = 0; row < rows; row++) {
+            uint32_t destination = row;
+            if (l == 0) { /* [Q; K; V] with 128 rows a head -> per-head [q; k; v] */
+                uint32_t inner = rows / 3, part = row / inner, within = row % inner;
+                destination = within / 128 * 384 + part * 128 + within % 128;
+            }
+            /* quantization error of one row is at most its scale / 2 a value
+             * before the rotation; the rotation keeps the row's L2 norm */
+            double square = 0.0;
+            for (uint32_t c = 0; c < columns; c++) {
+                float want = original[l][(size_t)row * columns + c];
+                float have = got[(size_t)destination * columns + c];
+                square += ((double)want - have) * ((double)want - have);
+                peak = fmax(peak, fabs((double)want));
+                float rounded = bf16_value(got16[(size_t)destination * columns + c]);
+                CHECK(fabsf(rounded - have) <= fabsf(have) / 128.0f + 1e-30f);
+            }
+            double bound = 0.5 * scales[l][row] * sqrt((double)columns);
+            CHECK(sqrt(square) <= bound * 1.001 + 1e-6);
+            worst = fmax(worst, sqrt(square / columns));
+        }
+        printf("comfy int8 %-30s rms error %.3e (peak value %.2f)\n",
+               layers[l].weight, worst, peak);
+        CHECK(worst < peak / 100.0);
+        free(got16);
+        free(got);
+        h3_gpu_tensor_free(bf16);
+        h3_gpu_tensor_free(f32);
+    }
+    h3_weight_store_free(store);
+    for (int l = 0; l < 3; l++) {
+        free(original[l]);
+        free(quantized[l]);
+        free(scales[l]);
+    }
+    CHECK(unlink(path) == 0);
+    CHECK(rmdir(root) == 0);
+}
+
 int main(void) {
     test_reference();
+    test_convrot_reference();
     char error[512];
     h3_gpu *gpu = h3_gpu_create("h3_shaders.metal", error, sizeof(error));
     if (!gpu) fprintf(stderr, "skip: no Metal device (%s)\n", error);
     test_gguf(gpu);
+    test_comfy_int8(gpu);
     if (gpu) {
         test_gpu_matches_reference(gpu);
         h3_gpu_free(gpu);

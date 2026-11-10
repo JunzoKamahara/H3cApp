@@ -412,3 +412,37 @@ int h3_mlx_dequantize_row(const uint32_t *packed, const uint16_t *scales,
     }
     return 1;
 }
+
+/* --- ComfyUI int8 + ConvRot ------------------------------------------- */
+
+int h3_convrot_rotate(float *values, uint32_t count, uint32_t group) {
+    uint32_t power = 4;
+    while (power < group && power < 4096) power *= 4;
+    if (!values || power != group || count % group) return 0;
+    /* H4 on each base-4 digit of the index within a group: with
+     * t = (a + b + c + d) / 2 the four outputs are t - d, t - c, t - b,
+     * t - a. */
+    for (uint32_t stride = 1; stride < group; stride *= 4) {
+        for (uint32_t base = 0; base < count; base += 4 * stride) {
+            for (uint32_t index = base; index < base + stride; index++) {
+                float a = values[index], b = values[index + stride];
+                float c = values[index + 2 * stride];
+                float d = values[index + 3 * stride];
+                float t = 0.5f * (a + b + c + d);
+                values[index] = t - d;
+                values[index + stride] = t - c;
+                values[index + 2 * stride] = t - b;
+                values[index + 3 * stride] = t - a;
+            }
+        }
+    }
+    return 1;
+}
+
+int h3_comfy_int8_dequantize_row(const int8_t *source, float scale,
+                                 uint32_t columns, uint32_t group, float *out) {
+    if (!source || !out) return 0;
+    for (uint32_t column = 0; column < columns; column++)
+        out[column] = (float)source[column] * scale;
+    return group ? h3_convrot_rotate(out, columns, group) : 1;
+}

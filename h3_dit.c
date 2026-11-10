@@ -961,6 +961,12 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
              name);
         return 0;
     }
+    if (h3_weight_is_comfy_int8(dit->weights, tensor)) {
+        fail(error, error_size,
+             "SSD streaming does not read ComfyUI int8 weights (%s); use the "
+             "attention cache or resident mode", name);
+        return 0;
+    }
     h3_quant_type quant = (h3_quant_type)tensor->quant;
     int quantized = tensor->dtype != H3_DTYPE_BF16 && quant != H3_QUANT_NONE &&
                     quant != H3_QUANT_F32 && quant != H3_QUANT_BF16;

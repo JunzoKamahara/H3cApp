@@ -60,6 +60,24 @@ int h3_mlx_dequantize_row(const uint32_t *packed, const uint16_t *scales,
                           const uint16_t *biases, uint32_t columns,
                           uint32_t bits, uint32_t group_size, float *out);
 
+/* ComfyUI's quantized linear weights ("comfy_quant" format int8_*): int8
+ * values times an F32 scale (one per row, or one for the tensor). With
+ * ConvRot ("convrot": true) every run of `group` columns of the weight was
+ * multiplied by the regular Hadamard matrix H_group before quantizing, and
+ * ComfyUI rotates the layer's input the same way at run time. H_group is
+ * the Kronecker power of
+ *   H4 = 1/2 [[1,1,1,-1],[1,1,-1,1],[1,-1,1,1],[-1,1,1,1]],
+ * symmetric and its own inverse, so the same transform undoes it: the
+ * engine restores the plain weight once at load and runs its usual
+ * kernels.
+ *
+ * Rotates `count` values in place, group by group. Returns 0 unless group
+ * is a power of 4 (4..4096) that divides count. */
+int h3_convrot_rotate(float *values, uint32_t count, uint32_t group);
+/* One row: out[c] = source[c] * scale, then un-rotated when group != 0. */
+int h3_comfy_int8_dequantize_row(const int8_t *source, float scale,
+                                 uint32_t columns, uint32_t group, float *out);
+
 float h3_half_to_float(uint16_t half);
 /* IEEE half from float, round to nearest even; out-of-range values become
  * infinities, NaN stays NaN. */
