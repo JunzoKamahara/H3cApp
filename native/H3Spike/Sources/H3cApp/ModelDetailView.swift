@@ -66,7 +66,7 @@ struct ModelDetail: Sendable {
         }
         let int8Ready = cacheRows.first?.status == .ok
         if fl2va.hyperflow {
-            features.append(Row(title: "HyperFlow H3 Flash", status: .ok, lines: [
+            features.append(Row(title: String(localized: "HyperFlow H3 Flash（試験的）"), status: .ok, lines: [
                 String(localized: "少ないステップ用に蒸留された派生モデルです。4・6・8ステップで生成します。"),
                 String(localized: "int8キャッシュ・追加モデル（LoRA）・速度の設定は使いません。M5では常駐（int8）、それ以外ではSSDストリーミングで動きます。"),
             ]))

@@ -160,7 +160,7 @@ struct ImportDownloadChoice: Identifiable, Hashable {
         switch kind {
         case .dit, .ref2va:
             if file.hyperflow == true {
-                notes.append(String(localized: "HyperFlow H3 Flash（4・6・8ステップ）"))
+                notes.append(String(localized: "HyperFlow H3 Flash（4・6・8ステップ・試験的）"))
             } else {
                 notes.append(file.curveAdaLN ? String(localized: "AdaLNは曲線形")
                              : String(localized: "AdaLNは密な形"))

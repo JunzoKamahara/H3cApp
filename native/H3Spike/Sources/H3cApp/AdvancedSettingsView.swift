@@ -222,7 +222,7 @@ struct AdvancedSettingsView: View {
     /// H3 model).
     private var hyperFlowNote: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("HyperFlow H3 Flash").font(.caption).foregroundStyle(palette.textSecondary)
+            Text("HyperFlow H3 Flash（試験的）").font(.caption).foregroundStyle(palette.textSecondary)
             Text("少ないステップ用に蒸留されたモデルのため、速度・再利用・層数の設定と追加モデル（LoRA）は使いません。これらの設定は、通常のMiniMax-H3モデルに切り替えると元どおり使えます。")
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)

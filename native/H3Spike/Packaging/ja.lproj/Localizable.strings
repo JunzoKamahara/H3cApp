@@ -1234,7 +1234,7 @@
 "HyperFlow H3 Flashは4・6・8ステップで生成します（既定は6）。" = "HyperFlow H3 Flashは4・6・8ステップで生成します（既定は6）。";
 "HyperFlow H3 Flashはint8キャッシュを使いません。このMacでは常駐（int8）で生成します。" = "HyperFlow H3 Flashはint8キャッシュを使いません。このMacでは常駐（int8）で生成します。";
 "HyperFlow H3 Flashはint8キャッシュを使いません。このMacではSSDストリーミングで生成します。" = "HyperFlow H3 Flashはint8キャッシュを使いません。このMacではSSDストリーミングで生成します。";
-"HyperFlow H3 Flash" = "HyperFlow H3 Flash";
+"HyperFlow H3 Flash（試験的）" = "HyperFlow H3 Flash（試験的）";
 "少ないステップ用に蒸留されたモデルのため、速度・再利用・層数の設定と追加モデル（LoRA）は使いません。これらの設定は、通常のMiniMax-H3モデルに切り替えると元どおり使えます。" = "少ないステップ用に蒸留されたモデルのため、速度・再利用・層数の設定と追加モデル（LoRA）は使いません。これらの設定は、通常のMiniMax-H3モデルに切り替えると元どおり使えます。";
 
 /* GenerationModels.swift */
@@ -1250,7 +1250,7 @@
 "HyperFlow H3 Flash（%lldブロック、うち%lldブロックが低ランク）。4・6・8ステップで生成し、LoRAと速度の設定は使いません。" = "HyperFlow H3 Flash（%lldブロック、うち%lldブロックが低ランク）。4・6・8ステップで生成し、LoRAと速度の設定は使いません。";
 
 /* ModelImportDownload.swift */
-"HyperFlow H3 Flash（4・6・8ステップ）" = "HyperFlow H3 Flash（4・6・8ステップ）";
+"HyperFlow H3 Flash（4・6・8ステップ・試験的）" = "HyperFlow H3 Flash（4・6・8ステップ・試験的）";
 "HyperFlow H3 Flash（VideoRebirthAI）はMiniMax H3の派生モデルで、同じライセンスに従います。" = "HyperFlow H3 Flash（VideoRebirthAI）はMiniMax H3の派生モデルで、同じライセンスに従います。";
 
 /* OpenH3Regenerate.swift */
