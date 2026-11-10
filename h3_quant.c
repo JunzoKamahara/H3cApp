@@ -6,6 +6,7 @@
 #include "h3_quant.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum { QK = 32, QK_K = 256 };
@@ -415,6 +416,30 @@ int h3_mlx_dequantize_row(const uint32_t *packed, const uint16_t *scales,
 
 /* --- ComfyUI int8 + ConvRot ------------------------------------------- */
 
+int h3_comfy_quant_parse(const char *json, uint32_t *group) {
+    if (!json || !group) return 0;
+    *group = 0;
+    const char *format = strstr(json, "\"format\"");
+    if (!format) return 0;
+    format = strchr(format + 8, ':');
+    if (!format) return 0;
+    format += 1 + strspn(format + 1, " \t\r\n");
+    if (strncmp(format, "\"int8", 5)) return 0;
+    const char *convrot = strstr(json, "\"convrot\"");
+    if (convrot) {
+        convrot = strchr(convrot + 9, ':');
+        if (!convrot) return 0;
+        convrot += 1 + strspn(convrot + 1, " \t\r\n");
+    }
+    if (!convrot || strncmp(convrot, "true", 4)) return 1;
+    const char *size = strstr(json, "\"convrot_groupsize\"");
+    if (!size || !(size = strchr(size, ':'))) return 0;
+    long value = strtol(size + 1, NULL, 10);
+    if (value < 4 || value > 4096) return 0;
+    *group = (uint32_t)value;
+    return 1;
+}
+
 int h3_convrot_rotate(float *values, uint32_t count, uint32_t group) {
     uint32_t power = 4;
     while (power < group && power < 4096) power *= 4;
@@ -442,7 +467,13 @@ int h3_convrot_rotate(float *values, uint32_t count, uint32_t group) {
 int h3_comfy_int8_dequantize_row(const int8_t *source, float scale,
                                  uint32_t columns, uint32_t group, float *out) {
     if (!source || !out) return 0;
+    /* Rotate the integers first: every sum and halving is exact in float
+     * (|value| <= 127 * 16 for a 256-wide group, in sixteenths), so the one
+     * rounding is the multiply by the scale - which the GPU expansion
+     * (h3_comfy_int8_expand) then reproduces bit for bit. */
     for (uint32_t column = 0; column < columns; column++)
-        out[column] = (float)source[column] * scale;
-    return group ? h3_convrot_rotate(out, columns, group) : 1;
+        out[column] = (float)source[column];
+    if (group && !h3_convrot_rotate(out, columns, group)) return 0;
+    for (uint32_t column = 0; column < columns; column++) out[column] *= scale;
+    return 1;
 }

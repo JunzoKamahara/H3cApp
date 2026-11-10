@@ -11,8 +11,14 @@ import UniformTypeIdentifiers
 // and stay valid if it is deleted later. The text encoder is rewritten
 // with only the 50 layers the engine reads, and a text encoder without a
 // vision tower gets the base model's (extracted, about 1.1 GB).
+// The DiT can also be a single ComfyUI safetensors file with int8 (+
+// ConvRot) linears - the engine restores the plain weights as it reads
+// them - placed as model.safetensors.
 
 let ggufTypes: [UTType] = [UTType(filenameExtension: "gguf") ?? .data]
+/// What the import's file pickers offer: GGUF, and safetensors for a
+/// ComfyUI int8 DiT.
+let importFileTypes: [UTType] = ggufTypes + [UTType(filenameExtension: "safetensors") ?? .data]
 
 /// Where imported models go: beside the default model folder, outside the
 /// folders macOS asks permission for.
@@ -83,6 +89,15 @@ struct ImportPick: Equatable, Identifiable {
     }
 
     var fileName: String { (path as NSString).lastPathComponent }
+    var isSafetensors: Bool { path.lowercased().hasSuffix(".safetensors") }
+    /// The name a DiT file gets in a model's transformer folder (the
+    /// engine tells the formats apart by it).
+    var transformerFileName: String { isSafetensors ? "model.safetensors" : "model.gguf" }
+    /// Why a file that could not be inspected is left out.
+    var unreadableReason: String {
+        isSafetensors ? String(localized: "ComfyUIのint8形式のDiTではないので使いません（safetensorsで取り込めるのはこの形式だけです）")
+                      : String(localized: "GGUFとして読めないので使いません")
+    }
 
     /// A DiT file's own guess at which transformer it is: the two have the
     /// same tensors, so only the file name or general.name tells them apart.
@@ -219,8 +234,9 @@ final class ModelImporter: ObservableObject {
         try checkCancelled()
 
         step = String(localized: "DiTを置いています")
-        try fm.copyItem(atPath: request.dit.path, toPath: fl2va + "/transformer/model.gguf")
-        parts.append(.init(role: "dit", file: "FL2VA/transformer/model.gguf",
+        let ditFile = request.dit.transformerFileName
+        try fm.copyItem(atPath: request.dit.path, toPath: fl2va + "/transformer/" + ditFile)
+        parts.append(.init(role: "dit", file: "FL2VA/transformer/" + ditFile,
                            source: request.dit.fileName, type: request.dit.info?.mainType ?? "",
                            bytes: request.dit.info?.fileBytes ?? 0))
         try checkCancelled()
@@ -296,9 +312,12 @@ final class ModelImporter: ObservableObject {
             }
             try fm.copyItem(atPath: refSource("transformer/config.json"),
                             toPath: ref2va + "/transformer/config.json")
-            try fm.copyItem(atPath: ref.path, toPath: ref2va + "/transformer/model.gguf")
+            // A merge serving as both transformers is the FL2VA file again
+            // (a clone on the same disk).
+            let refFile = ref.transformerFileName
+            try fm.copyItem(atPath: ref.path, toPath: ref2va + "/transformer/" + refFile)
             try fm.copyItem(atPath: textEncoder, toPath: ref2va + "/text_encoder")
-            parts.append(.init(role: "ref2va", file: "Ref2VA/transformer/model.gguf",
+            parts.append(.init(role: "ref2va", file: "Ref2VA/transformer/" + refFile,
                                source: ref.fileName, type: ref.info?.mainType ?? "",
                                bytes: ref.info?.fileBytes ?? 0))
         }
@@ -407,7 +426,8 @@ func unregisteredImportBase(path: String, registered: [H3ModelEntry]) -> H3Model
 
 /// The GGUF files in a folder the user picked (and its subfolders, a few
 /// levels down) that are MiniMax H3 parts, and the names of the ones that
-/// are not (unreadable, other models, split shards).
+/// are not (unreadable, other models, split shards). A safetensors file
+/// counts only when it is a ComfyUI int8 DiT.
 func importableGGUFs(in folder: String) -> (picks: [ImportPick], skipped: [String]) {
     // Walked by hand to follow linked folders too (a model folder of
     // links, as made for trying a layout), a few levels down; each file
@@ -425,7 +445,7 @@ func importableGGUFs(in folder: String) -> (picks: [ImportPick], skipped: [Strin
             guard fm.fileExists(atPath: path, isDirectory: &isDir) else { continue }
             if isDir.boolValue {
                 if !name.hasSuffix(".app") { walk(path, depth: depth + 1) }
-            } else if name.lowercased().hasSuffix(".gguf"),
+            } else if name.lowercased().hasSuffix(".gguf") || name.lowercased().hasSuffix(".safetensors"),
                       seenFiles.insert((path as NSString).resolvingSymlinksInPath).inserted {
                 paths.append(path)
             }
@@ -437,6 +457,10 @@ func importableGGUFs(in folder: String) -> (picks: [ImportPick], skipped: [Strin
         let pick = ImportPick(path: path)
         if pick.info.map({ $0.role != .unknown }) == true {
             picks.append(pick)
+        } else if pick.isSafetensors {
+            // A model folder is full of safetensors that are not DiTs
+            // (VAEs, text-encoder shards): passed over without a word.
+            continue
         } else {
             skipped.append(String(path.dropFirst(min(path.count, folder.count + 1))))
         }
@@ -543,8 +567,10 @@ struct ImportPlan {
         var candidates: [Part: [ImportPick]] = [:]
         for file in files {
             guard file.info != nil else {
-                notes.append(String(localized: "\(label(file)) はGGUFとして読めないので使いません"))
-                unused[file.path] = String(localized: "GGUFとして読めないので使いません")
+                notes.append(file.isSafetensors
+                    ? String(localized: "\(label(file)) はComfyUIのint8形式のDiTではないので使いません")
+                    : String(localized: "\(label(file)) はGGUFとして読めないので使いません"))
+                unused[file.path] = file.unreadableReason
                 continue
             }
             guard let part = Self.part(of: file, ref2vaPaths: ref2vaPaths) else {
@@ -568,6 +594,13 @@ struct ImportPlan {
         }
         dit = pick(.dit)
         ref2vaDit = pick(.ref2va)
+        // A merge that says it serves as both transformers fills Ref2VA
+        // too, unless a file was picked for it.
+        var sharedRef2VA = false
+        if ref2vaDit == nil, let dit, dit.info?.bothTransformers == true {
+            ref2vaDit = dit
+            sharedRef2VA = true
+        }
         textEncoder = pick(.textEncoder)
         let chosenVision = pick(.vision)
         // The files that lost to another for the same part.
@@ -614,6 +647,9 @@ struct ImportPlan {
             var text = "\(label(file))\(itemSeparator)\(file.info?.mainType ?? "")\(itemSeparator)\(size(file.info?.fileBytes ?? 0))"
             if let info = file.info, info.hyperflow {
                 text += "\n" + String(localized: "HyperFlow H3 Flash（\(info.ditBlocks)ブロック、うち\(info.factoredBlocks)ブロックが低ランク）。4・6・8ステップで生成し、LoRAと速度の設定は使いません。")
+            }
+            if let info = file.info, info.comfyInt8 {
+                text += "\n" + String(localized: "ComfyUIのint8形式（safetensors）です。読み込むときに通常の重みに戻して使います。")
             }
             return text
         }
@@ -738,7 +774,10 @@ struct ImportPlan {
         }
 
         // Ref2VA
-        if let ref = ref2vaDit, let info = ref.info {
+        if sharedRef2VA, let ref = ref2vaDit {
+            items.append(item("ref2va", String(localized: "DiT（Ref2VA）"), .ok,
+                              String(localized: "DiT（FL2VA）と同じファイル（\(label(ref))）を使います。FL2VAとRef2VAを兼ねる融合モデルです（同じディスクなら容量は増えません）。")))
+        } else if let ref = ref2vaDit, let info = ref.info {
             let q2k = isPlainQ2KDiT(mainType: info.mainType, fileName: ref.fileName)
             items.append(item("ref2va", String(localized: "DiT（Ref2VA）"),
                               (info.curveAdaLN || info.hyperflow) && !q2k ? .ok : .warning,
@@ -912,7 +951,7 @@ struct ModelImportView: View {
                 }
             }
             HStack {
-                Button("GGUFファイルを追加…") { addFiles() }
+                Button("モデルのファイルを追加…") { addFiles() }
                 Button("フォルダから追加…") { addFolder() }
                 Spacer()
             }
@@ -1029,7 +1068,9 @@ struct ModelImportView: View {
 
     private func fileDescription(_ file: ImportPick) -> String {
         guard let info = file.info else {
-            return String(localized: "GGUFとして読めません")
+            return file.isSafetensors
+                ? String(localized: "ComfyUIのint8形式のDiTではありません")
+                : String(localized: "GGUFとして読めません")
         }
         let size = ByteCountFormatter.string(fromByteCount: Int64(info.fileBytes), countStyle: .file)
         var parts: [String]
@@ -1051,7 +1092,7 @@ struct ModelImportView: View {
     }
 
     private func addFiles() {
-        for path in chooseFiles(allowedContentTypes: ggufTypes)
+        for path in chooseFiles(allowedContentTypes: importFileTypes)
             where !files.contains(where: { $0.path == path }) {
             let file = ImportPick(path: path)
             files.append(file)
@@ -1100,7 +1141,7 @@ struct ModelImportView: View {
                     Text("選んだファイル（\(files.count)）").font(.callout.weight(.semibold))
                 }
                 HStack {
-                    Button("GGUFファイルを追加…") { addFiles() }
+                    Button("モデルのファイルを追加…") { addFiles() }
                     Button("フォルダから追加…") { addFolder() }
                     Spacer()
                 }

@@ -482,7 +482,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_linear_f32_tiled_bf16_map",
             @"h3_cast_f32_to_bf16",
             @"h3_cast_bf16_to_f32",
-            @"h3_dequantize",
+            @"h3_dequantize", @"h3_comfy_int8_expand",
             @"h3_cast_bf16_to_f32_bias",
             @"h3_cast_bf16_to_f16_qkv", @"h3_cast_f16_to_bf16_flat",
             @"h3_lora_add_rows_bf16", @"h3_lora_add_int8",
@@ -1580,6 +1580,45 @@ int h3_gpu_dequantize(h3_gpu *opaque, h3_gpu_tensor *output,
         ^(id<MTLComputeCommandEncoder> encoder) {
             [encoder setBuffer:TENSOR(raw).buffer offset:0 atIndex:0];
             [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:1];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:2];
+            [encoder setBytes:&args length:sizeof(args) atIndex:3];
+        });
+}
+
+int h3_gpu_comfy_int8_expand(h3_gpu *opaque, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *raw,
+                             const h3_gpu_tensor *scales, uint32_t rows,
+                             uint32_t columns, uint32_t group,
+                             uint32_t qkv_inner, uint32_t qkv_head_dim) {
+    H3GPU *gpu = GPU(opaque);
+    size_t values = (size_t)rows * columns;
+    if (!h3_gpu_require_elements(gpu, raw, values, @"int8 expand input") ||
+        TENSOR(raw).dtype != H3_GPU_I8 ||
+        !h3_gpu_require_elements(gpu, scales, rows, @"int8 expand scales") ||
+        TENSOR(scales).dtype != H3_GPU_F32 ||
+        !h3_gpu_require_elements(gpu, output, values, @"int8 expand output") ||
+        TENSOR(output).dtype != H3_GPU_BF16) return 0;
+    uint32_t power = 4;
+    while (power < group) power *= 4;
+    if (!rows || !columns ||
+        (group && (group > 256 || power != group || columns % group))) {
+        h3_gpu_set_error(gpu, @"invalid ConvRot group for the int8 expansion");
+        return 0;
+    }
+    if (qkv_inner && (!qkv_head_dim || qkv_inner % qkv_head_dim ||
+                      rows != 3 * qkv_inner)) {
+        h3_gpu_set_error(gpu, @"invalid QKV row reorder");
+        return 0;
+    }
+    struct {
+        uint32_t rows, columns, group, chunk, qkv_inner, qkv_head_dim;
+    } args = {rows, columns, group, group ? group : 256u, qkv_inner,
+              qkv_head_dim};
+    uint32_t chunks = (columns + args.chunk - 1) / args.chunk;
+    return h3_gpu_dispatch_2d(gpu, @"h3_comfy_int8_expand", chunks, rows,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(raw).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(scales).buffer offset:0 atIndex:1];
             [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:2];
             [encoder setBytes:&args length:sizeof(args) atIndex:3];
         });

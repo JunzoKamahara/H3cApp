@@ -568,32 +568,8 @@ static h3_gpu_tensor *load_split_patch_embed(const h3_weight_store *store,
  * (h3_quant.h has the arithmetic). The engine restores the plain weight
  * on the CPU as it loads - a few hundred milliseconds a matrix - so every
  * resident path and the int8 cache build read these files as they read a
- * BF16 one. */
-
-/* Sets *group to the ConvRot group size (0 without ConvRot); 0 for JSON
- * that is not an int8 format this reads. */
-static int parse_comfy_quant(const char *json, uint32_t *group) {
-    *group = 0;
-    const char *format = strstr(json, "\"format\"");
-    if (!format) return 0;
-    format = strchr(format + 8, ':');
-    if (!format) return 0;
-    format += 1 + strspn(format + 1, " \t\r\n");
-    if (strncmp(format, "\"int8", 5)) return 0;
-    const char *convrot = strstr(json, "\"convrot\"");
-    if (convrot) {
-        convrot = strchr(convrot + 9, ':');
-        if (!convrot) return 0;
-        convrot += 1 + strspn(convrot + 1, " \t\r\n");
-    }
-    if (!convrot || strncmp(convrot, "true", 4)) return 1;
-    const char *size = strstr(json, "\"convrot_groupsize\"");
-    if (!size || !(size = strchr(size, ':'))) return 0;
-    long value = strtol(size + 1, NULL, 10);
-    if (value < 4 || value > 4096) return 0;
-    *group = (uint32_t)value;
-    return 1;
-}
+ * BF16 one. SSD streaming reads the int8 payload as it is and restores it
+ * on the GPU (h3_gpu_comfy_int8_expand), with the same arithmetic. */
 
 typedef struct {
     const int8_t *source;
@@ -669,12 +645,12 @@ int h3_weight_is_comfy_int8(const h3_weight_store *store,
            comfy_companion(store, tensor, "weight_scale", NULL) != NULL;
 }
 
-static h3_gpu_tensor *load_comfy_int8(const h3_weight_store *store,
-                                      h3_gpu *gpu, const h3_st_header *header,
-                                      const h3_st_tensor *tensor,
-                                      h3_dtype dtype, uint32_t qkv_inner,
-                                      uint32_t qkv_head_dim, char *error,
-                                      size_t error_size) {
+/* Reads a ComfyUI int8 weight's ConvRot group (0: none) and its scales,
+ * one per row (a single tensor-wide scale is repeated); the caller frees
+ * *scales. */
+static int comfy_int8_layout(const h3_weight_store *store,
+                             const h3_st_tensor *tensor, uint32_t *group,
+                             float **scales, char *error, size_t error_size) {
     const h3_st_header *scale_header = NULL, *quant_header = NULL;
     const h3_st_tensor *scale_tensor =
         comfy_companion(store, tensor, "weight_scale", &scale_header);
@@ -686,30 +662,79 @@ static h3_gpu_tensor *load_comfy_int8(const h3_weight_store *store,
         quant_tensor->data_end - quant_tensor->data_begin : 0;
     char json[1024] = "";
     char detail[256] = "";
-    uint32_t group = 0;
+    *group = 0;
+    *scales = NULL;
     if (!scale_tensor || scale_tensor->dtype != H3_DTYPE_F32 ||
         (scale_count != rows && scale_count != 1) || !quant_tensor ||
         quant_tensor->dtype != H3_DTYPE_U8 || !json_bytes ||
         json_bytes >= sizeof(json) || !rows || !columns ||
-        columns > UINT32_MAX || rows > SIZE_MAX / columns / sizeof(float) ||
+        columns > UINT32_MAX || rows > UINT32_MAX ||
+        rows > SIZE_MAX / columns / sizeof(float) ||
         tensor->data_end - tensor->data_begin != rows * columns) {
         fail(error, error_size,
              "weight %s is int8 without a usable weight_scale / comfy_quant",
              tensor->name);
-        return NULL;
+        return 0;
     }
     if (!h3_st_read_data(quant_header, quant_tensor, json, (size_t)json_bytes,
                          detail, sizeof(detail)) ||
-        !parse_comfy_quant(json, &group) || (group && columns % group)) {
+        !h3_comfy_quant_parse(json, group) || (*group && columns % *group)) {
         fail(error, error_size, "weight %s: unsupported comfy_quant %s",
              tensor->name, detail[0] ? detail : json);
-        return NULL;
+        return 0;
     }
+    float *values = malloc((size_t)rows * sizeof(*values));
+    if (!values || !h3_st_read_data(scale_header, scale_tensor, values,
+                                    (size_t)scale_count * sizeof(*values),
+                                    detail, sizeof(detail))) {
+        fail(error, error_size, "cannot read the scales of %s: %s",
+             tensor->name, values ? detail : "out of memory");
+        free(values);
+        return 0;
+    }
+    if (scale_count == 1)
+        for (uint64_t row = 1; row < rows; row++) values[row] = values[0];
+    *scales = values;
+    return 1;
+}
+
+int h3_weight_comfy_int8_scales(const h3_weight_store *store, h3_gpu *gpu,
+                                const h3_st_tensor *tensor, uint32_t *group,
+                                h3_gpu_tensor **scales,
+                                char *error, size_t error_size) {
+    float *values = NULL;
+    uint32_t found = 0;
+    if (!store || !gpu || !tensor || !group || !scales ||
+        !h3_weight_is_comfy_int8(store, tensor) ||
+        !comfy_int8_layout(store, tensor, &found, &values, error, error_size))
+        return 0;
+    *scales = h3_gpu_tensor_from_f32(gpu, values, (size_t)tensor->shape[0]);
+    free(values);
+    if (!*scales) {
+        fail(error, error_size, "cannot keep the scales of %s: %s",
+             tensor->name, h3_gpu_error(gpu));
+        return 0;
+    }
+    *group = found;
+    return 1;
+}
+
+static h3_gpu_tensor *load_comfy_int8(const h3_weight_store *store,
+                                      h3_gpu *gpu, const h3_st_header *header,
+                                      const h3_st_tensor *tensor,
+                                      h3_dtype dtype, uint32_t qkv_inner,
+                                      uint32_t qkv_head_dim, char *error,
+                                      size_t error_size) {
+    uint64_t rows = tensor->shape[0], columns = tensor->shape[1];
+    char detail[256] = "";
+    uint32_t group = 0;
+    float *scales = NULL;
+    if (!comfy_int8_layout(store, tensor, &group, &scales, error, error_size))
+        return NULL;
     size_t elements = (size_t)(rows * columns);
     int8_t *source = malloc(elements);
-    float *scales = malloc((size_t)scale_count * sizeof(*scales));
     comfy_int8_job job = {
-        .source = source, .scales = scales, .scale_count = (size_t)scale_count,
+        .source = source, .scales = scales, .scale_count = (size_t)rows,
         .rows = (size_t)rows, .rows_per_job = 64, .columns = (uint32_t)columns,
         .group = group, .qkv_inner = qkv_inner, .qkv_head_dim = qkv_head_dim,
     };
@@ -717,11 +742,8 @@ static h3_gpu_tensor *load_comfy_int8(const h3_weight_store *store,
     else job.f32 = malloc(elements * sizeof(*job.f32));
     atomic_init(&job.failed, 0);
     h3_gpu_tensor *result = NULL;
-    int ok = source && scales && (job.bf16 || job.f32) &&
+    int ok = source && (job.bf16 || job.f32) &&
         h3_st_read_data(header, tensor, source, elements, detail,
-                        sizeof(detail)) &&
-        h3_st_read_data(scale_header, scale_tensor, scales,
-                        (size_t)scale_count * sizeof(*scales), detail,
                         sizeof(detail));
     if (ok) {
         dispatch_apply_f((job.rows + job.rows_per_job - 1) / job.rows_per_job,

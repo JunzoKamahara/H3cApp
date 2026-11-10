@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 
 enum {
@@ -435,10 +436,87 @@ static int is_output_head(const char *name) {
            !strcmp(name, "model.language_model.norm.weight");
 }
 
+static void set_error(char *error, size_t error_size, const char *message) {
+    if (error && error_size) snprintf(error, error_size, "%s", message);
+}
+
+static int contains_nocase(const char *text, const char *word) {
+    size_t length = strlen(word);
+    for (; *text; text++)
+        if (!strncasecmp(text, word, length)) return 1;
+    return 0;
+}
+
+/* A single-file ComfyUI safetensors DiT with int8 (+ ConvRot) block
+ * linears (h3_quant.h; h3_weights.c restores them). */
+static int inspect_comfy_dit(const char *path, h3_gguf_info *info,
+                             char *error, size_t error_size) {
+    h3_st_header header;
+    if (!h3_st_read_header(path, &header, error, error_size)) return 0;
+    info->file_bytes = header.file_size;
+    info->tensors = header.tensor_count;
+    int dit = 0, hyperflow = 0, max_block = -1;
+    for (size_t index = 0; index < header.tensor_count; index++) {
+        const h3_st_tensor *tensor = &header.tensors[index];
+        info->tensor_bytes += tensor->data_end - tensor->data_begin;
+        const char *n = tensor->name;
+        if (!strcmp(n, "video_patch_proj.weight")) dit = 1;
+        if (!strcmp(n, "adaln_t_table")) info->curve_adaln = 1;
+        if (!strcmp(n, "endpoint_time_embedder.proj_in.weight")) hyperflow = 1;
+        if (!strcmp(n, "blocks.0.adaln_proj.linear.weight") &&
+            tensor->ndim == 2 && tensor->shape[1] == 2688)
+            info->dense_adaln = 1;
+        if (has_prefix(n, "blocks.")) {
+            char *end = NULL;
+            long block = strtol(n + 7, &end, 10);
+            if (end && *end == '.' && block > max_block && block < 256)
+                max_block = (int)block;
+        }
+    }
+    const h3_st_tensor *weight = h3_st_find(&header, "blocks.0.attn.qkv_proj.weight");
+    const h3_st_tensor *scale = h3_st_find(&header, "blocks.0.attn.qkv_proj.weight_scale");
+    const h3_st_tensor *quant = h3_st_find(&header, "blocks.0.attn.qkv_proj.comfy_quant");
+    char json[1024] = "";
+    uint32_t group = 0;
+    uint64_t json_bytes = quant ? quant->data_end - quant->data_begin : 0;
+    int ok = 0;
+    if (!dit) {
+        set_error(error, error_size,
+                  "this safetensors file is not a MiniMax H3 DiT");
+    } else if (hyperflow) {
+        set_error(error, error_size,
+                  "a HyperFlow DiT is imported as GGUF, not as safetensors");
+    } else if (!weight || weight->dtype != H3_DTYPE_I8 || !scale || !quant ||
+               !json_bytes || json_bytes >= sizeof(json) ||
+               !h3_st_read_data(&header, quant, json, (size_t)json_bytes,
+                                NULL, 0) ||
+               !h3_comfy_quant_parse(json, &group)) {
+        set_error(error, error_size,
+                  "a safetensors DiT is imported only in ComfyUI's int8 "
+                  "format (with or without ConvRot)");
+    } else {
+        ok = 1;
+        info->role = H3_GGUF_DIT;
+        info->dit_blocks = max_block + 1;
+        info->comfy_int8 = group ? 2 : 1;
+        snprintf(info->main_type, sizeof(info->main_type), "%s",
+                 group ? "INT8 ConvRot" : "INT8");
+        const char *merge = h3_st_metadata(&header, "merge_strategy");
+        info->both_transformers = merge && contains_nocase(merge, "fl2va") &&
+                                  contains_nocase(merge, "ref2va");
+    }
+    h3_st_free_header(&header);
+    return ok;
+}
+
 int h3_gguf_inspect(const char *path, h3_gguf_info *info,
                     char *error, size_t error_size) {
     if (!info) return 0;
     memset(info, 0, sizeof(*info));
+    size_t path_length = path ? strlen(path) : 0;
+    if (path_length > 12 &&
+        !strcasecmp(path + path_length - 12, ".safetensors"))
+        return inspect_comfy_dit(path, info, error, error_size);
     h3_st_header header;
     if (!h3_gguf_read_header(path, &header, error, error_size)) return 0;
     info->file_bytes = header.file_size;

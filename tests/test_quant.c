@@ -395,7 +395,8 @@ static void write_safetensors(const char *path, const st_entry *entries,
                               size_t count) {
     char json[4096];
     size_t used = (size_t)snprintf(json, sizeof(json),
-                                   "{\"__metadata__\":{\"format\":\"pt\"}");
+        "{\"__metadata__\":{\"format\":\"pt\","
+        "\"merge_strategy\":\"FL2VA_Ref2VA_Hybrid_test\"}");
     uint64_t offset = 0;
     for (size_t i = 0; i < count; i++) {
         char shape[64];
@@ -454,9 +455,10 @@ static void test_comfy_int8(h3_gpu *gpu) {
     int8_t *quantized[3];
     float *scales[3];
     float table[8] = {0};
-    st_entry entries[10];
+    st_entry entries[11];
     size_t count = 0;
     entries[count++] = (st_entry){"adaln_t_table", "F32", {1, 8}, 2, table, sizeof(table)};
+    entries[count++] = (st_entry){"video_patch_proj.weight", "F32", {1, 8}, 2, table, sizeof(table)};
     for (int l = 0; l < 3; l++) {
         uint32_t rows = layers[l].rows, columns = layers[l].columns;
         original[l] = malloc(sizeof(float) * rows * columns);
@@ -500,6 +502,12 @@ static void test_comfy_int8(h3_gpu *gpu) {
     const h3_st_tensor *qkv = h3_weight_find(store, layers[0].weight, NULL);
     CHECK(qkv && h3_weight_is_comfy_int8(store, qkv));
     CHECK(!h3_weight_is_comfy_int8(store, h3_weight_find(store, "adaln_t_table", NULL)));
+    /* What the importer sees in the same file. */
+    h3_gguf_info info;
+    CHECK(h3_gguf_inspect(path, &info, error, sizeof(error)));
+    CHECK(info.role == H3_GGUF_DIT && info.comfy_int8 == 2 && info.curve_adaln &&
+          info.both_transformers && info.dit_blocks == 1 &&
+          !strcmp(info.main_type, "INT8 ConvRot"));
     for (int l = 0; gpu && l < 3; l++) {
         uint32_t rows = layers[l].rows, columns = layers[l].columns;
         size_t elements = (size_t)rows * columns;
@@ -536,6 +544,28 @@ static void test_comfy_int8(h3_gpu *gpu) {
             CHECK(sqrt(square) <= bound * 1.001 + 1e-6);
             worst = fmax(worst, sqrt(square / columns));
         }
+        /* The SSD-streaming route - the int8 payload as it is in the file,
+         * restored on the GPU - gives the same bits as the load. */
+        const h3_st_tensor *tensor = h3_weight_find(store, layers[l].weight, NULL);
+        h3_gpu_tensor *scale_tensor = NULL;
+        uint32_t group = 99;
+        CHECK(h3_weight_comfy_int8_scales(store, gpu, tensor, &group, &scale_tensor,
+                                          error, sizeof(error)));
+        CHECK(group == layers[l].group);
+        h3_gpu_tensor *raw = h3_gpu_tensor_from_i8(gpu, quantized[l], elements);
+        h3_gpu_tensor *expanded = h3_gpu_tensor_new_bf16(gpu, elements);
+        CHECK(raw && expanded);
+        CHECK(h3_gpu_begin(gpu));
+        CHECK(h3_gpu_comfy_int8_expand(gpu, expanded, raw, scale_tensor, rows, columns,
+                                       group, l == 0 ? rows / 3 : 0, l == 0 ? 128 : 0));
+        CHECK(h3_gpu_submit(gpu));
+        uint16_t *streamed = malloc(elements * sizeof(*streamed));
+        CHECK(streamed && h3_gpu_tensor_read_bf16(expanded, streamed, elements));
+        CHECK(memcmp(streamed, got16, elements * sizeof(*streamed)) == 0);
+        free(streamed);
+        h3_gpu_tensor_free(raw);
+        h3_gpu_tensor_free(expanded);
+        h3_gpu_tensor_free(scale_tensor);
         printf("comfy int8 %-30s rms error %.3e (peak value %.2f)\n",
                layers[l].weight, worst, peak);
         CHECK(worst < peak / 100.0);

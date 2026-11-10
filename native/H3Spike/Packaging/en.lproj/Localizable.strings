@@ -501,7 +501,7 @@
 "FL2VA" = "FL2VA";
 "GGUFがないので、複製元のモデルから取り出します（約1.1GB）" = "No GGUF for it, so it is extracted from the base model (about 1.1 GB)";
 "GGUFで用意するなら：Qwen/Qwen3-VL-32B-Instruct-GGUF にある mmproj-Qwen3VL-32B-Instruct-F16.gguf" = "As GGUF: mmproj-Qwen3VL-32B-Instruct-F16.gguf in Qwen/Qwen3-VL-32B-Instruct-GGUF";
-"GGUFファイルを追加…" = "Add GGUF Files…";
+"モデルのファイルを追加…" = "Add Model Files…";
 "M5の高速モードで使うときは、切り替えたあと詳細設定の「キャッシュを作成…」でint8キャッシュを作ってください。" = "To use it in the M5 fast mode, build its int8 cache with Build Cache… in the advanced settings after switching.";
 "Ref2VA" = "Ref2VA";
 "「%@」から複製します（容量は増えません）" = "Cloned from \"%@\" (no extra space)";
@@ -543,6 +543,11 @@
 "選んだファイル（%lld）" = "Chosen files (%lld)";
 "部品" = "Parts";
 "GGUFとして読めないので使いません" = "Cannot be read as GGUF, so it is not used";
+"ComfyUIのint8形式のDiTではないので使いません（safetensorsで取り込めるのはこの形式だけです）" = "Not a DiT in ComfyUI's int8 format, so it is not used (the only safetensors layout that can be imported)";
+"%@ はComfyUIのint8形式のDiTではないので使いません" = "%@ is not a DiT in ComfyUI's int8 format, so it is not used";
+"ComfyUIのint8形式（safetensors）です。読み込むときに通常の重みに戻して使います。" = "ComfyUI int8 format (safetensors). The weights are restored to their plain form as they are read.";
+"DiT（FL2VA）と同じファイル（%@）を使います。FL2VAとRef2VAを兼ねる融合モデルです（同じディスクなら容量は増えません）。" = "Uses the same file as the DiT (FL2VA): %@. It is a merged model that serves as both FL2VA and Ref2VA (no extra space on the same disk).";
+"ComfyUIのint8形式のDiTではありません" = "Not a DiT in ComfyUI's int8 format";
 "MiniMax H3の部品として認識できないので使いません" = "Not recognized as a MiniMax H3 part, so it is not used";
 "同じ部品の %@ を使うので使いません" = "%@ is used for the same part instead";
 "画像の部分は %@ にも入っているので使いません" = "The vision part is also in %@, so this is not used";
@@ -717,7 +722,7 @@
 "分割されたGGUF（%lldファイル）は未対応です" = "Split GGUF files (%lld parts) aren't supported";
 "未対応の量子化形式（%@）を含みます" = "Has unsupported quantization types (%@)";
 "未対応の数値形式（%@）を含みます" = "Has unsupported number formats (%@)";
-"safetensors形式です（取り込めるのはGGUF）" = "safetensors (only GGUF can be imported)";
+"safetensors形式です（取り込めるのはGGUFと、ComfyUIのint8形式のDiT）" = "safetensors (only GGUF and a DiT in ComfyUI's int8 format can be imported)";
 "先頭部分が大きすぎます" = "The header is too large";
 "先頭部分が読めません" = "Can't read the header";
 "URLを作れません" = "Can't make the URL";

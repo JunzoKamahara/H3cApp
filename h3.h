@@ -545,8 +545,18 @@ typedef struct {
     int hyperflow;
     int dit_blocks;
     int factored_blocks;
+    /* DiT in a ComfyUI int8 safetensors file: 1 plain int8, 2 with ConvRot
+     * (main_type "INT8" / "INT8 ConvRot"). 0 for a GGUF file. */
+    int comfy_int8;
+    /* DiT: the file says it serves as both transformers (a merge whose
+     * "merge_strategy" metadata names FL2VA and Ref2VA) - an importer can
+     * place the one file as both. */
+    int both_transformers;
 } h3_gguf_info;
 
+/* `path` is a GGUF file, or a single-file ComfyUI safetensors DiT whose
+ * block linears are int8 (+ ConvRot) weights - the one safetensors layout
+ * an importer takes; any other safetensors file is an error. */
 int h3_gguf_inspect(const char *path, h3_gguf_info *info,
                     char *error, size_t error_size);
 

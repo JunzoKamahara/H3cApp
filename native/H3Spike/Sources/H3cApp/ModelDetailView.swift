@@ -158,6 +158,17 @@ struct ModelDetail: Sendable {
                     ? String(localized: "HyperFlow H3 Flash（\(info.ditBlocks)ブロック、うち\(info.factoredBlocks)ブロックが低ランク）")
                     : info.curveAdaLN ? String(localized: "AdaLNは曲線形（近似を含む）") : String(localized: "AdaLNは密な形"),
             ]))
+        } else if let file = files(transformer, ".safetensors").first,
+                  files(transformer, ".safetensors").count == 1,
+                  let info = try? H3GGUFInfo.inspect(path: file), info.comfyInt8 {
+            // A single ComfyUI int8 file (the importer's other DiT format).
+            dit = true
+            part.curveInFile = info.curveAdaLN
+            part.rows.append(Row(title: String(localized: "DiT"), status: .ok, lines: [
+                "safetensors\(itemSeparator)\(info.mainType)\(itemSeparator)\(bytes(Int64(info.fileBytes)))",
+                String(localized: "ComfyUIのint8形式（safetensors）です。読み込むときに通常の重みに戻して使います。"),
+                info.curveAdaLN ? String(localized: "AdaLNは曲線形（近似を含む）") : String(localized: "AdaLNは密な形"),
+            ]))
         } else if let st = SafetensorsSummary(dir: transformer) {
             dit = true
             part.curveInFile = st.names.contains("adaln_t_table")

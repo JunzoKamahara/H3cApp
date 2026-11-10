@@ -2,7 +2,9 @@ import CH3
 import Foundation
 
 /// What a GGUF file holds, as the importer sorts files into a model's parts
-/// (h3_gguf_inspect in h3.h - reads only the tensor table).
+/// (h3_gguf_inspect in h3.h - reads only the tensor table). A ".safetensors"
+/// path is read too when it is a ComfyUI int8 DiT; any other safetensors
+/// file throws.
 public struct H3GGUFInfo: Sendable, Equatable {
     public enum Role: Sendable { case unknown, dit, textEncoder, vision }
     public let role: Role
@@ -25,6 +27,13 @@ public struct H3GGUFInfo: Sendable, Equatable {
     public var hyperflow = false
     public var ditBlocks = 0
     public var factoredBlocks = 0
+    /// DiT in a single ComfyUI safetensors file with int8 linears (the one
+    /// safetensors layout `inspect` reads); `convRot` when they are also
+    /// rotated (mainType "INT8 ConvRot").
+    public var comfyInt8 = false
+    public var convRot = false
+    /// DiT: the file says it is a merge serving as both FL2VA and Ref2VA.
+    public var bothTransformers = false
 
     public static func inspect(path: String) throws -> H3GGUFInfo {
         var info = h3_gguf_info()
@@ -53,6 +62,9 @@ public struct H3GGUFInfo: Sendable, Equatable {
         result.hyperflow = info.hyperflow != 0
         result.ditBlocks = Int(info.dit_blocks)
         result.factoredBlocks = Int(info.factored_blocks)
+        result.comfyInt8 = info.comfy_int8 != 0
+        result.convRot = info.comfy_int8 == 2
+        result.bothTransformers = info.both_transformers != 0
         return result
     }
 }

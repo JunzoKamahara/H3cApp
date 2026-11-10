@@ -16,6 +16,8 @@ importing GGUF files you already have, and how it works and what to watch for.
 - [After importing](#after-importing)
 - [Sources and supported formats](#sources-and-supported-formats)
 - [Combinations checked](#combinations-checked)
+- [HyperFlow H3 Flash](#hyperflow-h3-flash)
+- [ComfyUI int8 (ConvRot) DiTs](#comfyui-int8-convrot-dits)
 - [Deleting models and disk space](#deleting-models-and-disk-space)
 - [How it works](#how-it-works)
 - [API](#api)
@@ -94,7 +96,7 @@ can't be picked; see [Supported formats](#supported-formats).
 
 With GGUF files already on disk, use Model Manager's "Import GGUF…".
 
-1. **Choose files**: "Add GGUF Files…" adds files; "Add from Folder…" adds a
+1. **Choose files**: "Add Model Files…" adds files; "Add from Folder…" adds a
    folder's (three levels down, following linked folders). Each file is
    inspected and shown as a DiT, text encoder or vision part. FL2VA and Ref2VA
    DiTs have the same tensors, so a file whose name contains `ref2va` is taken
@@ -157,7 +159,8 @@ source has been checked to make a short video with a typical file around Q4
 - **Unsupported** (listed with the reason):
   - files with IQ types (IQ4_XS, IQ3_XXS, …), I8 and the like
   - split GGUF files (`-00001-of-00002`, …)
-  - safetensors DiTs and text encoders (only GGUF can be imported)
+  - safetensors DiTs and text encoders (only GGUF and
+    [a DiT in ComfyUI's int8 format](#comfyui-int8-convrot-dits) can be imported)
   - VAEs in number formats the app can't read (F8, int8, …)
   - text encoders with fewer than 50 layers
 - **AdaLN form**: DiT GGUFs come with curve-form AdaLN (ComfyUI's "pruned"
@@ -294,6 +297,63 @@ and the VAE decode about three times as long (425 s in all with an image
 reference; these are the M5 GPU's times, not a real M1-M4's). Actual
 M1-M4 Macs have not been tried yet.
 
+## ComfyUI int8 (ConvRot) DiTs
+
+An int8-quantized DiT distributed for ComfyUI can be imported too: a single
+`.safetensors` file that holds, for each linear layer, an int8 weight
+(`…weight`), a scale per row (`…weight_scale`) and a JSON describing the
+format (`…comfy_quant`). Files with "ConvRot" - the weight's columns rotated
+256 at a time by a Hadamard matrix before quantizing - are read as well.
+This is the only safetensors layout the import takes, and only for the DiT.
+
+- **Importing**: the same steps as a GGUF. Pick the file with "Add Model
+  Files…" or "Add from Folder…", or point the wizard's source at the
+  repository. The format shows as "INT8 ConvRot" ("INT8" without the
+  rotation). The text encoder, VAEs and configs come from other files or the
+  base model, as with a GGUF.
+- **One file for FL2VA and Ref2VA**: a merge whose metadata
+  (`merge_strategy`) names both FL2VA and Ref2VA is placed as both
+  transformers (a clone on the same disk, so no extra space). A file picked
+  for Ref2VA takes precedence.
+- **How it is read**: as it loads, the engine un-rotates the int8 values and
+  multiplies each row by its scale, restoring the plain weight. From there it
+  computes exactly as for an ordinary MiniMax H3: the int8 cache (M5) and
+  SSD streaming were checked; add-on models (LoRAs) and the speed settings
+  go through the same code but were not tried with this format. SSD
+  streaming reads the int8 values as they are and restores them on the GPU,
+  so a step reads half of what BF16 would (about 19 GB).
+- **The step count does not change by itself.** For a model with few-step
+  distillation merged in, set the steps it was made for in Advanced Settings.
+
+**Checked** (M5, 24 GB, 672×384, 5 s): the int8 file of
+[OliviaRossi/Minimax-H3-Hybrid-DMAD-PDMD](https://huggingface.co/OliviaRossi/Minimax-H3-Hybrid-DMAD-PDMD)
+(`Minimax-H3-Hybrid-DMAD-PDMD_int8.safetensors`, 20.3 GB, revision
+`474da26c`) - a merge that blends the FL2VA and Ref2VA AdaLN and folds the
+DMAD (8-step) and PDMD LoRAs into the weights. Generated with no extra
+LoRAs, 6 steps, Euler, audio shift 3.
+
+| Compute mode | Text to video | Reference image (Ref2VA) | Peak memory |
+|---|---|---|---|
+| int8 cache (M5) | 251 s | 261 s | 4.5-6.1 GiB |
+| SSD streaming | 400 s | 418 s | 6.7 GiB |
+
+- Decoding: the engine's result matches a separately written numpy
+  calculation (no difference on four matrices), and the GPU decoding
+  used by SSD streaming matches the CPU decoding bit for bit (unit test). All
+  208 matrices are within 7-8.4% of the FL2VA Q4_K weights (a wrong rotation
+  would give about 140%).
+- A dark Ref2VA scene was compared on two seeds against the ordinary model
+  at 20 steps and the ordinary model with the DMAD and PDMD LoRAs stacked at
+  6 steps. The merge rendered the face brighter and more evenly lit and
+  closest to the person in the reference image; it also followed the
+  prompt's "dim room lit only by a small lamp" the least (its background
+  drifts toward the reference photo's room). What causes the difference was
+  not isolated. The audio has not been checked by listening.
+- Limits: HyperFlow's int8 (safetensors) files, other quantizations such as
+  W6A8, and safetensors text encoders are not supported. A ConvRot group must
+  be a power of 4 (up to 256 for SSD streaming). Not yet checked on a real
+  M1-M4 Mac, at high resolution (1344×768) or at 8 steps.
+
 ## Deleting models and disk space
 
 A GGUF import places files as APFS clones on the same disk, so importing takes
@@ -324,7 +384,8 @@ Model Manager's "…" → "Delete…":
 - **Generation**: quantized GGUF weights are expanded to BF16 on the GPU (Metal)
   when used and computed with the existing matrix kernels; matrices are not
   multiplied in the quantized form. SSD streaming reads them still quantized,
-  so less is read.
+  so less is read. A ComfyUI int8 DiT is restored to plain weights as it
+  loads, on the CPU (on the GPU for SSD streaming).
 
 For the engine side see [curve-form AdaLN in the technical reference](TECHNICAL.md#curve-form-adaln-experimental-h3_adaln_curve)
 and `h3_gguf.c`, `h3_quant.c`, `h3_shaders.metal`.
@@ -337,7 +398,7 @@ the API token (see [API](API.md#api)).
 | Endpoint | What it does |
 |---|---|
 | `GET /api/models/import/downloads?kind=dit&repo=…` | download choices for a part (`dit`, `ref2va`, `textEncoder`, `vision`, `shared`); `repo` takes a name or URL. `403` when a web page on another site sends it (a foreign `Origin`, or `Sec-Fetch-Site: cross-site` / `same-site`); scripts and `curl` are unaffected |
-| `POST /api/models/import` | imports GGUF files: `files` or `folder`, `base_model` or `base_path`, `name`, `dry_run` |
+| `POST /api/models/import` | imports GGUF files (and a DiT in ComfyUI's int8 format): `files` or `folder`, `base_model` or `base_path`, `name`, `dry_run` |
 | `GET /api/models/detail?id=…` | what a model holds (the details screen), plus its `family` (`h3` or `hyperflow`) and the `steps` it takes |
 | `POST /api/models/remove` | unregisters (caches deleted); `delete_files` also moves the files to the Trash, `dry_run` only computes |
 | `POST /api/models/add` | registers a folder as a model |
@@ -351,6 +412,10 @@ the API token (see [API](API.md#api)).
 - HyperFlow H3 Flash (Video Rebirth) is distributed as a Model Derivative
   of MiniMax H3 under the same MiniMax H3 Community License Agreement. It
   is not an official MiniMax product.
+- Merges and quantized conversions made from the MiniMax H3 weights
+  (including ones in ComfyUI's int8 format) are Model Derivatives of
+  MiniMax H3 as well. Check the license their source states and those of
+  anything merged in, such as LoRAs.
 - Qwen's text and image parts (Qwen3-VL-32B-Instruct) are under the
   [Apache License 2.0](https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF).
 - Check each source's own license as well. Read each license before

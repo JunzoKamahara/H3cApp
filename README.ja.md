@@ -46,7 +46,7 @@ M1〜M4のMacでも、常駐かSSDストリーミングの計算方式を利用�
 
 M5で高速化用のキャッシュを作る場合は、**モデルごとに約19GB**の追加容量が必要です。Ref2VAも使う場合は、Ref2VA用のキャッシュとしてさらに約19GBが必要です。ダウンロード中のファイルや生成動画の保存用にも余裕を確保してください。モデルは外付けSSDにも保存できます。
 
-詳しくは[GGUFモデルの説明](GGUF.ja.md)を参照してください。4・6・8ステップで生成するMiniMax H3の派生モデル[HyperFlow H3 Flash](GGUF.ja.md#hyperflow-h3-flash)も取り込めます（DiTはQ4_K_Mで約9GB）。
+詳しくは[GGUFモデルの説明](GGUF.ja.md)を参照してください。4・6・8ステップで生成するMiniMax H3の派生モデル[HyperFlow H3 Flash](GGUF.ja.md#hyperflow-h3-flash)も取り込めます（DiTはQ4_K_Mで約9GB）。ComfyUI用のint8量子化（ConvRotを含む）のDiTも[取り込めます](GGUF.ja.md#comfyui-の-int8-形式convrotの-dit)。
 
 ## インストールと最初の動画
 

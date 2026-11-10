@@ -12,6 +12,12 @@
   Hugging Face（unsloth、Qwenほかの配布元、または任意のリポジトリやURL）から
   ダウンロードするか、手元のGGUFファイルを取り込んで、公式のモデルと同じように
   使えます。[GGUF.ja.md](GGUF.ja.md)を参照してください。
+- **ComfyUIのint8（ConvRot）のDiT**: ComfyUI用のint8量子化のDiT（1つのsafetensors。
+  int8の重み・行ごとのスケール・`comfy_quant`のJSON。列を256個ずつアダマール行列で
+  回転したConvRotを含む）を読みます。読み込み時にCPUで通常の重みに戻し
+  （`h3_weights.c`の`load_comfy_int8`、演算は`h3_quant.c`）、SSDストリーミングでは
+  int8のまま読んでGPUで戻します（`h3_gpu_comfy_int8_expand`。CPUとビット単位で一致）。
+  [GGUF.ja.md](GGUF.ja.md#comfyui-の-int8-形式convrotの-dit)を参照してください。
 - **テキストから動画+音声**（T2VA）: プロンプトだけで同期したHEVC（またはH.264）+AAC
   クリップを生成。
 - **最初・最後フレーム条件付け**（FL2VA）: 生成の開始・終了フレームを固定

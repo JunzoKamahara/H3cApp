@@ -12,6 +12,14 @@ Related documentation: [Local API](API.md) · [Building and testing](BUILD.md) �
   encoder from Hugging Face (unsloth, Qwen and other publishers, or any
   repository or URL) or import GGUF files you have, and use them like the
   official model — see [GGUF.md](GGUF.md).
+- **ComfyUI int8 (ConvRot) DiTs**: an int8-quantized DiT made for ComfyUI
+  (one safetensors file: int8 weights, a scale per row and a `comfy_quant`
+  JSON, including ConvRot, where columns are rotated 256 at a time by a
+  Hadamard matrix) is read. The plain weights are restored on the CPU as the
+  file loads (`load_comfy_int8` in `h3_weights.c`, arithmetic in
+  `h3_quant.c`); SSD streaming reads the int8 values as they are and
+  restores them on the GPU (`h3_gpu_comfy_int8_expand`, bit-identical to the
+  CPU) — see [GGUF.md](GGUF.md#comfyui-int8-convrot-dits).
 - **Text-to-video+audio** (T2VA): a prompt alone produces a synchronized
   HEVC (or H.264) + AAC clip.
 - **First/last-frame conditioning** (FL2VA): anchor a generation's opening

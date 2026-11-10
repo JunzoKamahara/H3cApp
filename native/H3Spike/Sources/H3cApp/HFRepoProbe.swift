@@ -95,7 +95,7 @@ struct HFProbedFile: Codable, Sendable, Equatable {
                 return String(localized: "未対応の量子化形式（\(names.joined(separator: itemSeparator))）を含みます")
             case .numberFormats(let names):
                 return String(localized: "未対応の数値形式（\(names.joined(separator: itemSeparator))）を含みます")
-            case .safetensorsPart: return String(localized: "safetensors形式です（取り込めるのはGGUF）")
+            case .safetensorsPart: return String(localized: "safetensors形式です（取り込めるのはGGUFと、ComfyUIのint8形式のDiT）")
             case .unknownPart: return String(localized: "MiniMax H3の部品として認識できません")
             }
         }
@@ -275,11 +275,44 @@ enum HFRepoProbe {
             if !others.isEmpty {
                 file.problem = .numberFormats(others.sorted())
             }
-        case .dit, .textEncoder, .vision:
+        case .dit:
+            // The one safetensors DiT the import takes: ComfyUI's int8
+            // layout (h3_gguf_inspect reads the same three tensors).
+            file.curveAdaLN = names.contains("adaln_t_table")
+            if let convRot = try await comfyInt8(header, headerBytes: Int64(length), file: file),
+               !names.contains("endpoint_time_embedder.proj_in.weight") {
+                file.mainType = convRot ? "INT8 ConvRot" : "INT8"
+            } else {
+                file.problem = .safetensorsPart
+            }
+        case .textEncoder, .vision:
             file.problem = .safetensorsPart
         case .other:
             file.problem = .unknownPart
         }
+    }
+
+    /// Whether a safetensors DiT's first block is a ComfyUI int8 linear
+    /// (I8 weight, weight_scale, and a comfy_quant JSON naming an int8
+    /// format): nil when not, else whether it is ConvRot-rotated.
+    private static func comfyInt8(_ header: [String: Any], headerBytes: Int64,
+                                  file: HFProbedFile) async throws -> Bool? {
+        let layer = "blocks.0.attn.qkv_proj."
+        guard (header[layer + "weight"] as? [String: Any])?["dtype"] as? String == "I8",
+              header[layer + "weight_scale"] != nil,
+              let quant = header[layer + "comfy_quant"] as? [String: Any],
+              let offsets = quant["data_offsets"] as? [NSNumber], offsets.count == 2 else { return nil }
+        let begin = offsets[0].int64Value, end = offsets[1].int64Value
+        guard begin >= 0, end > begin, end - begin < 1024 else { return nil }
+        let data = try await fetchRange(repo: file.repo, revision: file.revision, path: file.path,
+                                        from: 8 + headerBytes + begin, count: end - begin)
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let format = json["format"] as? String, format.hasPrefix("int8") else { return nil }
+        guard json["convrot"] as? Bool == true else { return false }
+        // Groups the engine un-rotates: powers of 4.
+        guard let group = (json["convrot_groupsize"] as? NSNumber)?.intValue,
+              [4, 16, 64, 256, 1024, 4096].contains(group) else { return nil }
+        return true
     }
 
     // MARK: HTTP
@@ -399,14 +432,14 @@ private struct GGUFScan {
     }
 }
 
-/// Probed files kept between runs (Application Support/H3cApp/hf-probe-cache-v2.json).
+/// Probed files kept between runs (Application Support/H3cApp/hf-probe-cache-v3.json).
 private actor ProbeCache {
     static let shared = ProbeCache()
     private var files: [String: HFProbedFile] = [:]
     private var loaded = false
     private var dirty = false
     // v2: reasons kept as codes (v1 kept localized text).
-    private let path = h3AppSupportDirectory + "/hf-probe-cache-v2.json"
+    private let path = h3AppSupportDirectory + "/hf-probe-cache-v3.json"
 
     private static func key(_ repo: String, _ path: String, _ size: Int64) -> String { "\(repo)/\(path)@\(size)" }
 

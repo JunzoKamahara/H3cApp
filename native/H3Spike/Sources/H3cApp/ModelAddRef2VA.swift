@@ -91,13 +91,15 @@ struct Ref2VAAddPlan {
         return plan
     }
 
-    /// A Ref2VA DiT GGUF picked from disk: where it is cloned to, and how
-    /// the import record names it. Nil when it is not a DiT.
+    /// A Ref2VA DiT picked from disk (a GGUF, or a ComfyUI int8
+    /// safetensors): where it is cloned to, and how the import record
+    /// names it. Nil when it is not a DiT.
     static func localDiT(_ pick: ImportPick, modelPath: String)
         -> (clone: (from: String, to: String), part: ModelImportManifest.Part)? {
         guard let info = pick.info, info.role == .dit else { return nil }
-        return ((pick.path, modelPath + "/" + ref2vaStagingFolderName + "/transformer/model.gguf"),
-                .init(role: "ref2va", file: "Ref2VA/transformer/model.gguf", source: pick.fileName,
+        let name = pick.transformerFileName
+        return ((pick.path, modelPath + "/" + ref2vaStagingFolderName + "/transformer/" + name),
+                .init(role: "ref2va", file: "Ref2VA/transformer/" + name, source: pick.fileName,
                       type: info.mainType, bytes: info.fileBytes))
     }
 
@@ -325,7 +327,7 @@ struct AddRef2VAView: View {
     }
 
     private func pickFile() {
-        guard let path = chooseFile(allowedContentTypes: ggufTypes) else { return }
+        guard let path = chooseFile(allowedContentTypes: importFileTypes) else { return }
         localPick = ImportPick(path: path)
     }
 

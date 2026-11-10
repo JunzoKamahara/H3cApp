@@ -481,8 +481,8 @@ extension GenerationViewModel {
         }
     }
 
-    /// POST /api/models/import: {"files": [GGUF paths]?, "folder"? (every H3
-    /// GGUF in it is added), "ref2va": [paths that are the Ref2VA DiT]?
+    /// POST /api/models/import: {"files": [GGUF paths - or a ComfyUI int8
+    /// safetensors DiT]?, "folder"? (every H3 GGUF in it is added), "ref2va": [paths that are the Ref2VA DiT]?
     /// (default: DiT files named ref2va), "name"?, "base_model"? (a
     /// registered model's id), "base_path"? (a folder, registered or not)} -
     /// the same import as Model Management's

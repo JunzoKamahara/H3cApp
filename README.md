@@ -46,7 +46,7 @@ These figures are **model storage sizes, not RAM requirements**. The GGUF config
 
 On supported M5 Macs, an optional speed-up cache uses about **19 GB of extra disk space per model**; using Ref2VA as well adds another cache of about 19 GB for it. Leave additional space for downloads, temporary files and generated videos. Models can be stored on an external SSD.
 
-See [GGUF model details](GGUF.md) for the available model combinations. [HyperFlow H3 Flash](GGUF.md#hyperflow-h3-flash), a 4/6/8-step derivative of MiniMax H3, can also be imported (its DiT is about 9 GB at Q4_K_M).
+See [GGUF model details](GGUF.md) for the available model combinations. [HyperFlow H3 Flash](GGUF.md#hyperflow-h3-flash), a 4/6/8-step derivative of MiniMax H3, can also be imported (its DiT is about 9 GB at Q4_K_M). A DiT in ComfyUI's int8 quantization (with or without ConvRot) [can be imported too](GGUF.md#comfyui-int8-convrot-dits).
 
 ## Install and create your first video
 

@@ -74,7 +74,13 @@ int h3_mlx_dequantize_row(const uint32_t *packed, const uint16_t *scales,
  * Rotates `count` values in place, group by group. Returns 0 unless group
  * is a power of 4 (4..4096) that divides count. */
 int h3_convrot_rotate(float *values, uint32_t count, uint32_t group);
-/* One row: out[c] = source[c] * scale, then un-rotated when group != 0. */
+/* Reads a layer's "comfy_quant" JSON, e.g.
+ *   {"format": "int8_tensorwise", "convrot": true, "convrot_groupsize": 256}
+ * Sets *group to the ConvRot group size (0 without ConvRot); returns 0 for
+ * JSON that is not an int8 format this reads. */
+int h3_comfy_quant_parse(const char *json, uint32_t *group);
+/* One row: the int8 values un-rotated (when group != 0), then times the
+ * scale - in that order, so the multiply is the only rounding. */
 int h3_comfy_int8_dequantize_row(const int8_t *source, float scale,
                                  uint32_t columns, uint32_t group, float *out);
 

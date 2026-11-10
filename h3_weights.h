@@ -47,11 +47,17 @@ int h3_weight_qkv_reorder(const h3_weight_store *store, const char *name,
 
 /* 1 when `tensor` is a ComfyUI int8 linear weight (I8 with a weight_scale
  * companion; possibly ConvRot-rotated), which h3_weight_load_bf16 / _f32
- * restore to the plain weight as they load. Its payload is not something
- * to stream or expand block by block. */
+ * restore to the plain weight as they load. */
 int h3_weight_is_comfy_int8(const h3_weight_store *store,
                             const h3_st_tensor *tensor);
-
+/* For a caller that reads such a weight's int8 payload itself (SSD
+ * streaming) and restores it with h3_gpu_comfy_int8_expand: its ConvRot
+ * group size (0: not rotated) and its scales as a new F32 tensor of one
+ * value per row. */
+int h3_weight_comfy_int8_scales(const h3_weight_store *store, h3_gpu *gpu,
+                                const h3_st_tensor *tensor, uint32_t *group,
+                                h3_gpu_tensor **scales,
+                                char *error, size_t error_size);
 /* Every tensor in the store, shard by shard (for tools that walk them). */
 size_t h3_weight_store_tensor_count(const h3_weight_store *store);
 const h3_st_tensor *h3_weight_store_tensor(const h3_weight_store *store,

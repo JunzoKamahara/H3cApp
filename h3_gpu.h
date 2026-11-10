@@ -198,6 +198,16 @@ int h3_gpu_dequantize(h3_gpu *gpu, h3_gpu_tensor *output,
                       uint32_t blocks, uint32_t block_elements,
                       uint32_t block_bytes, uint32_t columns,
                       uint32_t qkv_inner, uint32_t qkv_head_dim);
+/* Restores a ComfyUI int8 weight - rows x columns int8 values in an I8
+ * tensor, one F32 scale per row - into BF16 with
+ * h3_comfy_int8_dequantize_row's arithmetic (bit-identical): un-rotated
+ * per `group` columns when group != 0 (a power of 4 up to 256), then times
+ * the scale. qkv_inner / qkv_head_dim reorder rows as in h3_gpu_dequantize. */
+int h3_gpu_comfy_int8_expand(h3_gpu *gpu, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *raw,
+                             const h3_gpu_tensor *scales, uint32_t rows,
+                             uint32_t columns, uint32_t group,
+                             uint32_t qkv_inner, uint32_t qkv_head_dim);
 int h3_gpu_cast_bf16_to_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                             const h3_gpu_tensor *input, uint32_t elements);
 /* output[r, c] = F32(input[r, c]) + bias[c]; the epilogue for int8 linears

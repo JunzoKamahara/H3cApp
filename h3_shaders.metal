@@ -5158,6 +5158,59 @@ kernel void h3_silu_mul_bf16(device const ushort *gate [[buffer(0)]],
     output[gid] = h3_f32_to_bf16(value / (1.0f + exp(-value)) * other);
 }
 
+// --- ComfyUI int8 (+ ConvRot) weights (h3_quant.c) ------------------------
+// One thread restores one run of `chunk` columns of one row: the int8
+// values, un-rotated by the Hadamard transform of the ConvRot group (chunk
+// == group; every sum and halving of these small integers is exact), times
+// the row's scale - h3_comfy_int8_dequantize_row's arithmetic, bit for bit.
+// group == 0: no rotation, chunk is just the work unit. The QKV fields
+// reorder rows as h3_dequantize does.
+
+struct h3_comfy_int8_args {
+    uint rows;
+    uint columns;
+    uint group;
+    uint chunk;
+    uint qkv_inner;
+    uint qkv_head_dim;
+};
+
+kernel void h3_comfy_int8_expand(device const char *raw [[buffer(0)]],
+                                 device const float *scales [[buffer(1)]],
+                                 device ushort *output [[buffer(2)]],
+                                 constant h3_comfy_int8_args &args [[buffer(3)]],
+                                 uint2 gid [[thread_position_in_grid]]) {
+    ulong first = ulong(gid.x) * args.chunk;
+    if (gid.y >= args.rows || first >= args.columns) return;
+    uint count = min(args.chunk, uint(args.columns - first));
+    float v[256];
+    device const char *source = raw + ulong(gid.y) * args.columns + first;
+    for (uint i = 0; i < count; i++) v[i] = float(source[i]);
+    for (uint stride = 1; stride < args.group; stride *= 4) {
+        for (uint base = 0; base < count; base += 4 * stride) {
+            for (uint i = base; i < base + stride; i++) {
+                float a = v[i], b = v[i + stride];
+                float c = v[i + 2 * stride], d = v[i + 3 * stride];
+                float t = 0.5f * (a + b + c + d);
+                v[i] = t - d;
+                v[i + stride] = t - c;
+                v[i + 2 * stride] = t - b;
+                v[i + 3 * stride] = t - a;
+            }
+        }
+    }
+    ulong row = gid.y;
+    if (args.qkv_inner != 0) {
+        ulong part = row / args.qkv_inner, within = row % args.qkv_inner;
+        row = (within / args.qkv_head_dim) * 3 * args.qkv_head_dim +
+              part * args.qkv_head_dim + within % args.qkv_head_dim;
+    }
+    float scale = scales[gid.y];
+    device ushort *destination = output + row * args.columns + first;
+    for (uint i = 0; i < count; i++)
+        destination[i] = h3_f32_to_bf16(v[i] * scale);
+}
+
 // --- Block-quantized weights (GGUF/ggml layouts, see h3_quant.c) ---------
 // One thread expands one block into BF16 (out_f32 == 0) or F32. The layouts
 // and formulas mirror h3_quant.c's reference dequantizers, which the tests

@@ -15,6 +15,8 @@ H3cApp v0.6.0 から、公式のモデル（BF16、FL2VA だけで約134GiB）�
 - [取り込んだあと](#取り込んだあと)
 - [配布元と対応している形式](#配布元と対応している形式)
 - [動作を確かめた組み合わせ](#動作を確かめた組み合わせ)
+- [HyperFlow H3 Flash](#hyperflow-h3-flash)
+- [ComfyUI の int8 形式（ConvRot）の DiT](#comfyui-の-int8-形式convrotの-dit)
 - [モデルの削除とディスク容量](#モデルの削除とディスク容量)
 - [仕組み](#仕組み)
 - [API](#api)
@@ -90,7 +92,7 @@ VAE も GGUF では配られていませんが、unsloth と Comfy-Org が単体
 
 すでに GGUF ファイルを持っている場合は、モデル管理の「GGUFを取り込む…」を使います。
 
-1. **ファイルを選ぶ**：「GGUFファイルを追加…」でファイルを、「フォルダから追加…」で
+1. **ファイルを選ぶ**：「モデルのファイルを追加…」でファイルを、「フォルダから追加…」で
    フォルダごと（3階層下まで、リンクになったフォルダもたどる）追加します。
    追加したファイルは中身を調べて、DiT・文章の部分・画像の部分のどれかを表示します。
    DiT の FL2VA／Ref2VA は中身では区別できないので、名前に `ref2va` を含むものを
@@ -151,7 +153,8 @@ Q4 前後の代表的なファイルで短い動画を作れることを確か�
 - **未対応**（一覧に理由付きで出ます）：
   - IQ 系（IQ4_XS、IQ3_XXS など）、I8 などを含むファイル
   - 分割された GGUF（`-00001-of-00002` など）
-  - safetensors 形式の DiT・文章の部分（取り込めるのは GGUF だけ）
+  - safetensors 形式の DiT・文章の部分（取り込めるのは GGUF と、
+    [ComfyUI の int8 形式の DiT](#comfyui-の-int8-形式convrotの-dit)だけ）
   - 読めない数値形式（F8、int8 など）の VAE
   - 層が50に足りない文章の部分
 - **AdaLN の形**：DiT の GGUF には、AdaLN が「曲線形」（ComfyUI の pruned 形式。
@@ -270,6 +273,54 @@ M1〜M4 相当（M5 で TensorOps と新しい GPU 機能を切った模擬）�
 10〜11 GiB でした。ノイズ除去の時間は M5 とほぼ同じで、VAE デコードが約 3 倍かかります（画像の参照で
 全体 425 s。時間は M5 の GPU のもので、実機の時間ではありません）。M1〜M4 の実機では、まだ確かめていません。
 
+## ComfyUI の int8 形式（ConvRot）の DiT
+
+ComfyUI 用に配布されている int8 量子化の DiT も取り込めます。1 つの `.safetensors` に、
+線形層ごとに int8 の重み（`…weight`）、行ごとのスケール（`…weight_scale`）、形式を書いた
+JSON（`…comfy_quant`）の 3 つが入っている形です。重みの列を 256 個ずつアダマール行列で
+回転してから量子化する「ConvRot」付きのものも読めます。safetensors で取り込めるのは、
+DiT のこの形だけです。
+
+- **取り込み**：GGUF と同じ手順です。「モデルのファイルを追加…」か「フォルダから追加…」で
+  ファイルを選ぶか、ウィザードの配布元にそのリポジトリを指定します。形式は
+  「INT8 ConvRot」（回転なしは「INT8」）と表示されます。文章の部分・VAE・設定は GGUF の
+  ときと同じく、別のファイルか複製元のモデルから用意します。
+- **FL2VA と Ref2VA を兼ねるファイル**：ファイルのメタデータ（`merge_strategy`）に FL2VA と
+  Ref2VA の両方が書かれている融合モデルは、1 つのファイルを FL2VA と Ref2VA の両方に
+  置きます（同じディスクなら複製なので、容量は増えません）。Ref2VA に別のファイルを
+  選んだ場合は、そちらを使います。
+- **読み方**：読み込むときに、int8 の値を回転前に戻し、行ごとのスケールを掛けて、通常の重みに
+  戻します。そのあとは通常の MiniMax H3 と同じ計算です。int8 キャッシュ（M5）と
+  SSD ストリーミングで動作を確かめました。追加モデル（LoRA）と速度の設定も同じ処理を
+  通りますが、この形式では試していません。SSD ストリーミングでは int8 のまま読み込んで
+  GPU で戻すので、1 ステップに読む量は BF16 の半分（約 19GB）です。
+- **ステップ数は自動では変わりません**。少ないステップ用の蒸留が混ぜ込まれたモデルは、
+  詳細設定でそのモデルのステップ数に合わせてください。
+
+**確かめたもの**（M5・24GB、672×384・5 秒）：
+[OliviaRossi/Minimax-H3-Hybrid-DMAD-PDMD](https://huggingface.co/OliviaRossi/Minimax-H3-Hybrid-DMAD-PDMD)
+の int8 版（`Minimax-H3-Hybrid-DMAD-PDMD_int8.safetensors`、20.3GB、revision `474da26c`）。
+FL2VA と Ref2VA の AdaLN を混ぜ、DMAD（8 ステップ用）と PDMD の LoRA を重みに混ぜ込んだ
+融合モデルです。追加の LoRA なし、6 ステップ・Euler・音声シフト 3 で生成しました。
+
+| 計算方式 | 文章から | 参照画像（Ref2VA） | ピークメモリ |
+|---|---|---|---|
+| int8 キャッシュ（M5） | 251 s | 261 s | 4.5〜6.1 GiB |
+| SSD ストリーミング | 400 s | 418 s | 6.7 GiB |
+
+- 復号の確認：エンジンの復号は、別に書いた numpy の計算と一致しました（4 つの行列で
+  差 0）。SSD ストリーミング用の GPU の復号は、CPU の復号とビット単位で一致します
+  （テスト）。208 個の行列はすべて、FL2VA の Q4_K の重みとの差が 7〜8.4% でした（回転を
+  誤ると約 140% になります）。
+- 暗い場面の Ref2VA を、通常のモデルの 20 ステップ、通常のモデルに DMAD と PDMD の LoRA を
+  重ねた 6 ステップと、2 つの seed で見比べました。融合モデルは顔が明るく均一に写り、
+  参照画像の人物に最も近くなりました。その一方、「小さなランプだけの暗い部屋」という
+  指示には最も従いませんでした（背景が参照画像の部屋に寄ります）。違いの原因は
+  切り分けていません。音声は聞いて確かめていません。
+- 制限：HyperFlow の int8（safetensors）版、W6A8 などほかの量子化、safetensors の文章の部分は
+  未対応です。ConvRot の幅は 4 のべき乗（SSD ストリーミングは 256 まで）です。M1〜M4 の
+  実機では、まだ確かめていません。高解像度（1344×768）と 8 ステップも未確認です。
+
 ## モデルの削除とディスク容量
 
 GGUF の取り込みは、同じディスク上のファイルを APFS の複製（クローン）で置くので、
@@ -300,6 +351,8 @@ GGUF の取り込みは、同じディスク上のファイルを APFS の複製
 - **生成**：GGUF の量子化された重みは、使うときに GPU（Metal）で BF16 に展開してから、
   既存の行列演算で計算します。量子化のまま行列演算をするわけではありません。
   SSD ストリーミングでは量子化されたまま読み込むので、読み込む量が減ります。
+  ComfyUI の int8 形式の DiT は、読み込むときに CPU で（SSD ストリーミングでは GPU で）
+  通常の重みに戻します。
 
 エンジン側の詳細は [技術資料の曲線形の AdaLN](TECHNICAL.ja.md#曲線形のadaln試験的h3_adaln_curve) と
 `h3_gguf.c`・`h3_quant.c`・`h3_shaders.metal` を参照してください。
@@ -312,7 +365,7 @@ GGUF の取り込みは、同じディスク上のファイルを APFS の複製
 | エンドポイント | 内容 |
 |---|---|
 | `GET /api/models/import/downloads?kind=dit&repo=…` | 部品（`dit`・`ref2va`・`textEncoder`・`vision`・`shared`）のダウンロード候補。`repo` にはリポジトリ名か URL。別のサイトの Web ページから送られたもの（別の `Origin`、または `Sec-Fetch-Site: cross-site`/`same-site`）には `403` を返します。スクリプトや `curl` は影響を受けません |
-| `POST /api/models/import` | GGUF の取り込み。`files` または `folder`、`base_model` か `base_path`、`name`、`dry_run` |
+| `POST /api/models/import` | GGUF（と ComfyUI の int8 形式の DiT）の取り込み。`files` または `folder`、`base_model` か `base_path`、`name`、`dry_run` |
 | `GET /api/models/detail?id=…` | モデルの中身（詳細画面と同じ内容）。`family`（`h3` か `hyperflow`）と、選べる `steps` も返します |
 | `POST /api/models/remove` | 登録を外す（キャッシュは削除）。`delete_files` でファイルもゴミ箱へ、`dry_run` で計算だけ |
 | `POST /api/models/add` | フォルダをモデルとして登録 |
@@ -326,6 +379,9 @@ GGUF の取り込みは、同じディスク上のファイルを APFS の複製
 - HyperFlow H3 Flash（Video Rebirth）は MiniMax H3 の派生モデルとして、同じ
   MiniMax H3 Community License Agreement で配布されています。MiniMax の公式の製品では
   ありません。
+- MiniMax H3 の重みから作られた融合モデルや量子化版（ComfyUI の int8 形式のものを含む）も
+  MiniMax H3 の派生物です。配布元が示すライセンスと、混ぜ込まれた LoRA などのライセンスを
+  確かめてください。
 - Qwen の文章の部分・画像の部分（Qwen3-VL-32B-Instruct）には
   [Apache License 2.0](https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF) が適用されます。
 - それぞれの配布元のライセンスも確認してください。ダウンロードと利用の前に各ライセンスを

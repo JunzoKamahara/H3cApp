@@ -120,7 +120,15 @@ typedef struct {
      * expansion also restores the per-head row order. */
     uint32_t qkv_inner;
     uint32_t qkv_head_dim;
+    /* quant == STREAM_COMFY_INT8 (a ComfyUI int8 weight, h3_weights.h):
+     * the staging holds its int8 payload; its row scales stay resident
+     * here (owned) and comfy_group is its ConvRot group (0: none). */
+    h3_gpu_tensor *comfy_scales;
+    uint32_t comfy_group;
+    uint32_t comfy_rows;
 } h3_dit_stream_source;
+/* A source->quant beyond h3_quant_type's values. */
+#define STREAM_COMFY_INT8 0x100u
 
 typedef struct {
     h3_dit_stream_source sources[STREAM_MAX_SOURCES];
@@ -962,11 +970,43 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
         return 0;
     }
     if (h3_weight_is_comfy_int8(dit->weights, tensor)) {
-        fail(error, error_size,
-             "SSD streaming does not read ComfyUI int8 weights (%s); use the "
-             "attention cache or resident mode", name);
-        return 0;
+        /* The int8 payload streams as it is - half a BF16 weight's bytes -
+         * and expand_streamed restores it on the GPU. */
+        uint32_t inner = 0, head_dim = 0, group = 0;
+        if (!header || row_begin || row_count != rows ||
+            tensor->shape[0] != rows || tensor->shape[1] != columns ||
+            rows > UINT32_MAX || columns > UINT32_MAX ||
+            tensor->data_end - tensor->data_begin != rows * columns) {
+            fail(error, error_size,
+                 "streaming weight has the wrong schema: %s", name);
+            return 0;
+        }
+        free_tensor(&source->comfy_scales);
+        if (!h3_weight_comfy_int8_scales(dit->weights, dit->gpu, tensor,
+                                         &group, &source->comfy_scales,
+                                         error, error_size))
+            return 0;
+        if (group > 256) {
+            fail(error, error_size,
+                 "SSD streaming reads ConvRot groups up to 256 columns "
+                 "(%s has %u)", name, group);
+            return 0;
+        }
+        h3_weight_qkv_reorder(dit->weights, name, tensor, &inner, &head_dim);
+        source->path = header->path;
+        source->file_offset = tensor->file_offset;
+        source->elements = (size_t)(rows * columns);
+        source->field = field;
+        source->quant = STREAM_COMFY_INT8;
+        source->bytes = rows * columns;
+        source->qkv_inner = inner;
+        source->qkv_head_dim = head_dim;
+        source->comfy_group = group;
+        source->comfy_rows = (uint32_t)rows;
+        dit->stream_quantized = 1;
+        return 1;
     }
+    free_tensor(&source->comfy_scales);
     h3_quant_type quant = (h3_quant_type)tensor->quant;
     int quantized = tensor->dtype != H3_DTYPE_BF16 && quant != H3_QUANT_NONE &&
                     quant != H3_QUANT_F32 && quant != H3_QUANT_BF16;
@@ -1192,6 +1232,8 @@ static int allocate_stream_slots(h3_dit *dit, char *error,
 static void free_stream_slots(h3_dit *dit) {
     for (unsigned block = 0; block < H3_DIT_BLOCKS; block++) {
         h3_dit_stream_layer *layer = &dit->stream_layers[block];
+        for (unsigned index = 0; index < STREAM_MAX_SOURCES; index++)
+            free_tensor(&layer->sources[index].comfy_scales);
         for (unsigned slot = 0; slot < 2; slot++)
             for (unsigned index = 0; index < STREAM_MAX_SOURCES; index++) {
                 if (layer->borrowed) {
@@ -3217,6 +3259,18 @@ static int expand_streamed(h3_dit *dit, unsigned block, unsigned slot_index,
     for (unsigned index = 0; index < layer->count; index++) {
         const h3_dit_stream_source *source = &layer->sources[index];
         if (!source->quant) continue;
+        if (source->quant == STREAM_COMFY_INT8) {
+            if (!gpu_op(dit, h3_gpu_comfy_int8_expand(
+                    dit->gpu, layer->target[slot_index][index],
+                    layer->raw[slot_index][index], source->comfy_scales,
+                    source->comfy_rows,
+                    (uint32_t)(source->elements / source->comfy_rows),
+                    source->comfy_group, source->qkv_inner,
+                    source->qkv_head_dim),
+                    error, error_size, "expand int8 DiT block"))
+                return 0;
+            continue;
+        }
         h3_quant_type quant = (h3_quant_type)source->quant;
         uint32_t per_block = h3_quant_block_elements(quant);
         if (!gpu_op(dit, h3_gpu_dequantize(
