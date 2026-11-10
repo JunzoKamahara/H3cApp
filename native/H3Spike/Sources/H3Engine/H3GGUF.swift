@@ -80,13 +80,17 @@ public enum H3ModelFamily: String, Codable, Sendable {
     public static let hyperflowSteps = [4, 6, 8]
     public static let hyperflowDefaultSteps = 6
 
-    /// From the FL2VA transformer's GGUF header (a folder of safetensors is
-    /// always plain H3). Reads only the tensor table.
+    /// From the FL2VA transformer's header: a GGUF, or a single ComfyUI
+    /// int8 safetensors file (HyperFlow ships both; the released shards of
+    /// an official model are not inspected and are plain H3). Reads only
+    /// the tensor table.
     public static func detect(modelDirectory: String) -> H3ModelFamily {
         let transformer = (modelDirectory as NSString)
             .appendingPathComponent("FL2VA/transformer")
-        let files = (try? FileManager.default.contentsOfDirectory(atPath: transformer)) ?? []
-        for file in files.sorted() where file.lowercased().hasSuffix(".gguf") {
+        let files = ((try? FileManager.default.contentsOfDirectory(atPath: transformer)) ?? []).sorted()
+        let single = files.filter { $0.lowercased().hasSuffix(".safetensors") }
+        let candidates = files.filter { $0.lowercased().hasSuffix(".gguf") } + (single.count == 1 ? single : [])
+        for file in candidates {
             let path = (transformer as NSString).appendingPathComponent(file)
             if let info = try? H3GGUFInfo.inspect(path: path), info.role == .dit {
                 return info.hyperflow ? .hyperflow : .h3

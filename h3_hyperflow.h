@@ -4,7 +4,10 @@
 /* HyperFlow H3 Flash (Video Rebirth, a Model Derivative of MiniMax-H3
  * under the MiniMax H3 Community License): a 13.7B (FL2VA) / 13.9B (Ref2VA)
  * compression of the H3 transformer with its own 4/6/8-step sampler. Its
- * GGUF checkpoints use ComfyUI's H3 tensor names and differ in three ways:
+ * GGUF checkpoints - and its single-file ComfyUI int8 (ConvRot)
+ * safetensors, whose ordinary linears are int8 (h3_weights.c restores
+ * them) and whose factors are BF16 - use ComfyUI's H3 tensor names and
+ * differ in three ways:
  *
  *  - pruned blocks: the remaining blocks are renumbered without gaps
  *    (FL2VA keeps 47 of 50, Ref2VA 49), so blocks.N runs 0..count-1;

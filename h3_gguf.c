@@ -456,6 +456,7 @@ static int inspect_comfy_dit(const char *path, h3_gguf_info *info,
     info->file_bytes = header.file_size;
     info->tensors = header.tensor_count;
     int dit = 0, hyperflow = 0, max_block = -1;
+    uint8_t factored[256] = {0};
     for (size_t index = 0; index < header.tensor_count; index++) {
         const h3_st_tensor *tensor = &header.tensors[index];
         info->tensor_bytes += tensor->data_end - tensor->data_begin;
@@ -469,8 +470,12 @@ static int inspect_comfy_dit(const char *path, h3_gguf_info *info,
         if (has_prefix(n, "blocks.")) {
             char *end = NULL;
             long block = strtol(n + 7, &end, 10);
-            if (end && *end == '.' && block > max_block && block < 256)
-                max_block = (int)block;
+            if (end && *end == '.' && block >= 0 && block < 256) {
+                if (block > max_block) max_block = (int)block;
+                size_t length = strlen(end);
+                if (length > 12 && !strcmp(end + length - 12, ".down.weight"))
+                    factored[block] = 1;
+            }
         }
     }
     const h3_st_tensor *weight = h3_st_find(&header, "blocks.0.attn.qkv_proj.weight");
@@ -483,9 +488,6 @@ static int inspect_comfy_dit(const char *path, h3_gguf_info *info,
     if (!dit) {
         set_error(error, error_size,
                   "this safetensors file is not a MiniMax H3 DiT");
-    } else if (hyperflow) {
-        set_error(error, error_size,
-                  "a HyperFlow DiT is imported as GGUF, not as safetensors");
     } else if (!weight || weight->dtype != H3_DTYPE_I8 || !scale || !quant ||
                !json_bytes || json_bytes >= sizeof(json) ||
                !h3_st_read_data(&header, quant, json, (size_t)json_bytes,
@@ -498,6 +500,11 @@ static int inspect_comfy_dit(const char *path, h3_gguf_info *info,
         ok = 1;
         info->role = H3_GGUF_DIT;
         info->dit_blocks = max_block + 1;
+        /* HyperFlow H3 Flash's int8 file: block 0 is an ordinary int8
+         * block in both transformers; the factored linears stay BF16. */
+        info->hyperflow = hyperflow;
+        for (int block = 0; hyperflow && block <= max_block; block++)
+            info->factored_blocks += factored[block];
         info->comfy_int8 = group ? 2 : 1;
         snprintf(info->main_type, sizeof(info->main_type), "%s",
                  group ? "INT8 ConvRot" : "INT8");

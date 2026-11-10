@@ -134,14 +134,21 @@ h3_weight_store *h3_weight_store_open(const char *directory,
     free_paths(paths, count);
     /* ComfyUI-derived checkpoints are recognizable by its curve-form AdaLN
      * (adaln_t_table, no time embedder), and every GGUF DiT is one (they
-     * are made for ComfyUI-GGUF, dense AdaLN ones included);
+     * are made for ComfyUI-GGUF, dense AdaLN ones included), as is a DiT
+     * with ComfyUI's quantization records (<layer>.comfy_quant - e.g.
+     * HyperFlow's int8 file, which has a time embedder and no table);
      * H3_QKV_LAYOUT=split|interleaved overrides the guess. */
-    int gguf = 0;
-    for (size_t index = 0; index < count; index++)
-        if (has_suffix(store->headers[index].path, ".gguf")) gguf = 1;
+    int gguf = 0, comfy_quant = 0;
+    for (size_t index = 0; index < count; index++) {
+        const h3_st_header *header = &store->headers[index];
+        if (has_suffix(header->path, ".gguf")) gguf = 1;
+        for (size_t t = 0; t < header->tensor_count && !comfy_quant; t++)
+            comfy_quant = has_suffix(header->tensors[t].name, ".comfy_quant");
+    }
     store->qkv_split = (find_exact(store, "adaln_t_table", NULL) &&
                         !find_exact(store, "time_embedder.proj_in.weight", NULL)) ||
-                       (gguf && find_exact(store, "video_patch_proj.weight", NULL));
+                       ((gguf || comfy_quant) &&
+                        find_exact(store, "video_patch_proj.weight", NULL));
     const char *layout = getenv("H3_QKV_LAYOUT");
     if (layout && !strcmp(layout, "split")) store->qkv_split = 1;
     if (layout && !strcmp(layout, "interleaved")) store->qkv_split = 0;
@@ -699,16 +706,24 @@ static int comfy_int8_layout(const h3_weight_store *store,
 }
 
 int h3_weight_comfy_int8_scales(const h3_weight_store *store, h3_gpu *gpu,
-                                const h3_st_tensor *tensor, uint32_t *group,
-                                h3_gpu_tensor **scales,
+                                const h3_st_tensor *tensor,
+                                uint64_t row_begin, uint64_t row_count,
+                                uint32_t *group, h3_gpu_tensor **scales,
                                 char *error, size_t error_size) {
     float *values = NULL;
     uint32_t found = 0;
-    if (!store || !gpu || !tensor || !group || !scales ||
+    if (!store || !gpu || !tensor || !group || !scales || !row_count ||
         !h3_weight_is_comfy_int8(store, tensor) ||
-        !comfy_int8_layout(store, tensor, &found, &values, error, error_size))
+        row_begin > tensor->shape[0] ||
+        row_count > tensor->shape[0] - row_begin) {
+        fail(error, error_size, "invalid int8 scale request%s%s",
+             tensor ? " for " : "", tensor ? tensor->name : "");
         return 0;
-    *scales = h3_gpu_tensor_from_f32(gpu, values, (size_t)tensor->shape[0]);
+    }
+    if (!comfy_int8_layout(store, tensor, &found, &values, error, error_size))
+        return 0;
+    *scales = h3_gpu_tensor_from_f32(gpu, values + row_begin,
+                                     (size_t)row_count);
     free(values);
     if (!*scales) {
         fail(error, error_size, "cannot keep the scales of %s: %s",

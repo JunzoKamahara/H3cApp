@@ -279,9 +279,9 @@ enum HFRepoProbe {
             // The one safetensors DiT the import takes: ComfyUI's int8
             // layout (h3_gguf_inspect reads the same three tensors).
             file.curveAdaLN = names.contains("adaln_t_table")
-            if let convRot = try await comfyInt8(header, headerBytes: Int64(length), file: file),
-               !names.contains("endpoint_time_embedder.proj_in.weight") {
+            if let convRot = try await comfyInt8(header, headerBytes: Int64(length), file: file) {
                 file.mainType = convRot ? "INT8 ConvRot" : "INT8"
+                file.hyperflow = names.contains("endpoint_time_embedder.proj_in.weight")
             } else {
                 file.problem = .safetensorsPart
             }
@@ -432,14 +432,14 @@ private struct GGUFScan {
     }
 }
 
-/// Probed files kept between runs (Application Support/H3cApp/hf-probe-cache-v3.json).
+/// Probed files kept between runs (Application Support/H3cApp/hf-probe-cache-v4.json).
 private actor ProbeCache {
     static let shared = ProbeCache()
     private var files: [String: HFProbedFile] = [:]
     private var loaded = false
     private var dirty = false
     // v2: reasons kept as codes (v1 kept localized text).
-    private let path = h3AppSupportDirectory + "/hf-probe-cache-v3.json"
+    private let path = h3AppSupportDirectory + "/hf-probe-cache-v4.json"
 
     private static func key(_ repo: String, _ path: String, _ size: Int64) -> String { "\(repo)/\(path)@\(size)" }
 

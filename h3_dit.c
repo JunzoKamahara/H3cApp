@@ -971,9 +971,12 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
     }
     if (h3_weight_is_comfy_int8(dit->weights, tensor)) {
         /* The int8 payload streams as it is - half a BF16 weight's bytes -
-         * and expand_streamed restores it on the GPU. */
+         * and expand_streamed restores it on the GPU. Each row carries its
+         * own scale and rotation, so a row range (one SwiGLU half of FC1)
+         * streams and restores like a whole weight. */
         uint32_t inner = 0, head_dim = 0, group = 0;
-        if (!header || row_begin || row_count != rows ||
+        if (!header || !row_count || row_begin > rows ||
+            row_count > rows - row_begin ||
             tensor->shape[0] != rows || tensor->shape[1] != columns ||
             rows > UINT32_MAX || columns > UINT32_MAX ||
             tensor->data_end - tensor->data_begin != rows * columns) {
@@ -983,7 +986,8 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
         }
         free_tensor(&source->comfy_scales);
         if (!h3_weight_comfy_int8_scales(dit->weights, dit->gpu, tensor,
-                                         &group, &source->comfy_scales,
+                                         row_begin, row_count, &group,
+                                         &source->comfy_scales,
                                          error, error_size))
             return 0;
         if (group > 256) {
@@ -992,17 +996,19 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
                  "(%s has %u)", name, group);
             return 0;
         }
-        h3_weight_qkv_reorder(dit->weights, name, tensor, &inner, &head_dim);
+        if (row_count == rows)
+            h3_weight_qkv_reorder(dit->weights, name, tensor, &inner,
+                                  &head_dim);
         source->path = header->path;
-        source->file_offset = tensor->file_offset;
-        source->elements = (size_t)(rows * columns);
+        source->file_offset = tensor->file_offset + row_begin * columns;
+        source->elements = (size_t)(row_count * columns);
         source->field = field;
         source->quant = STREAM_COMFY_INT8;
-        source->bytes = rows * columns;
+        source->bytes = row_count * columns;
         source->qkv_inner = inner;
         source->qkv_head_dim = head_dim;
         source->comfy_group = group;
-        source->comfy_rows = (uint32_t)rows;
+        source->comfy_rows = (uint32_t)row_count;
         dit->stream_quantized = 1;
         return 1;
     }

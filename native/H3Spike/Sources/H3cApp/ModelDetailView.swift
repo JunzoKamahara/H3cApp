@@ -164,10 +164,13 @@ struct ModelDetail: Sendable {
             // A single ComfyUI int8 file (the importer's other DiT format).
             dit = true
             part.curveInFile = info.curveAdaLN
+            part.hyperflow = info.hyperflow
             part.rows.append(Row(title: String(localized: "DiT"), status: .ok, lines: [
                 "safetensors\(itemSeparator)\(info.mainType)\(itemSeparator)\(bytes(Int64(info.fileBytes)))",
                 String(localized: "ComfyUIのint8形式（safetensors）です。読み込むときに通常の重みに戻して使います。"),
-                info.curveAdaLN ? String(localized: "AdaLNは曲線形（近似を含む）") : String(localized: "AdaLNは密な形"),
+                info.hyperflow
+                    ? String(localized: "HyperFlow H3 Flash（\(info.ditBlocks)ブロック、うち\(info.factoredBlocks)ブロックが低ランク）")
+                    : info.curveAdaLN ? String(localized: "AdaLNは曲線形（近似を含む）") : String(localized: "AdaLNは密な形"),
             ]))
         } else if let st = SafetensorsSummary(dir: transformer) {
             dit = true

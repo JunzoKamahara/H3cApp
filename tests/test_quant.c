@@ -549,8 +549,8 @@ static void test_comfy_int8(h3_gpu *gpu) {
         const h3_st_tensor *tensor = h3_weight_find(store, layers[l].weight, NULL);
         h3_gpu_tensor *scale_tensor = NULL;
         uint32_t group = 99;
-        CHECK(h3_weight_comfy_int8_scales(store, gpu, tensor, &group, &scale_tensor,
-                                          error, sizeof(error)));
+        CHECK(h3_weight_comfy_int8_scales(store, gpu, tensor, 0, rows, &group,
+                                          &scale_tensor, error, sizeof(error)));
         CHECK(group == layers[l].group);
         h3_gpu_tensor *raw = h3_gpu_tensor_from_i8(gpu, quantized[l], elements);
         h3_gpu_tensor *expanded = h3_gpu_tensor_new_bf16(gpu, elements);
@@ -562,6 +562,32 @@ static void test_comfy_int8(h3_gpu *gpu) {
         uint16_t *streamed = malloc(elements * sizeof(*streamed));
         CHECK(streamed && h3_gpu_tensor_read_bf16(expanded, streamed, elements));
         CHECK(memcmp(streamed, got16, elements * sizeof(*streamed)) == 0);
+        /* A run of rows read on its own (SSD streaming reads the SwiGLU
+         * halves of an FC1 weight apart) equals those rows of the whole. */
+        if (l != 0) {
+            uint32_t begin = rows / 2, part_rows = rows - begin;
+            size_t part = (size_t)part_rows * columns;
+            h3_gpu_tensor *part_scales = NULL;
+            uint32_t part_group = 99;
+            CHECK(h3_weight_comfy_int8_scales(store, gpu, tensor, begin, part_rows, &part_group,
+                                              &part_scales, error, sizeof(error)));
+            CHECK(part_group == group);
+            CHECK(!h3_weight_comfy_int8_scales(store, gpu, tensor, begin, part_rows + 1,
+                                               &part_group, &part_scales, error, sizeof(error)));
+            h3_gpu_tensor *part_raw = h3_gpu_tensor_from_i8(
+                gpu, quantized[l] + (size_t)begin * columns, part);
+            h3_gpu_tensor *part_out = h3_gpu_tensor_new_bf16(gpu, part);
+            CHECK(part_raw && part_out && h3_gpu_begin(gpu));
+            CHECK(h3_gpu_comfy_int8_expand(gpu, part_out, part_raw, part_scales, part_rows,
+                                           columns, group, 0, 0));
+            CHECK(h3_gpu_submit(gpu));
+            CHECK(h3_gpu_tensor_read_bf16(part_out, streamed, part));
+            CHECK(memcmp(streamed, got16 + (size_t)begin * columns,
+                         part * sizeof(*streamed)) == 0);
+            h3_gpu_tensor_free(part_raw);
+            h3_gpu_tensor_free(part_out);
+            h3_gpu_tensor_free(part_scales);
+        }
         free(streamed);
         h3_gpu_tensor_free(raw);
         h3_gpu_tensor_free(expanded);

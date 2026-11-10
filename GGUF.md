@@ -217,7 +217,8 @@ is a derivative of MiniMax H3 whose DiT is distilled and compressed for few
 steps: FL2VA has 13.7B parameters (47 blocks, 18 of them with low-rank
 factored linears), Ref2VA 13.9B (49 blocks). The text encoder and the VAEs
 are MiniMax H3's own. H3cApp supports the GGUF files (`fl2va_gguf/`,
-`ref2va_gguf/`).
+`ref2va_gguf/`); the int8 file made for ComfyUI
+[can be imported too](#the-int8-file-comfyui-safetensors) (checked with FL2VA).
 
 - **Importing**: like any other DiT, through the wizard or from GGUF files
   you have. The shared parts and the text encoder are cloned from an
@@ -297,6 +298,52 @@ and the VAE decode about three times as long (425 s in all with an image
 reference; these are the M5 GPU's times, not a real M1-M4's). Actual
 M1-M4 Macs have not been tried yet.
 
+### The int8 file (ComfyUI safetensors)
+
+The single-file version in the source's `fl2va_int8_convrot_comfyui/`
+(16.0 GB) can be imported as well. Its 120 ordinary linears are int8 with
+ConvRot; the low-rank factored linears stay BF16. It is read like any
+[ComfyUI int8 DiT](#comfyui-int8-convrot-dits): the plain weights are
+restored as the file loads, and generation runs the same path as the GGUF
+(4, 6 or 8 steps, the model's own sigmas, the low-rank arithmetic). This is
+not ComfyUI's rotated int8 arithmetic, so ComfyUI's speed does not carry
+over. GGUF remains the standard choice; the int8 file is an alternative.
+
+Measured on an M5 (24 GB) against the Q4_K_M GGUF under the same conditions
+(672×384, 5 s, 6 steps, seed 42, 2026-11-11; "setup" is from the start of
+the generation until denoising begins):
+
+| Model, compute mode | Setup | Denoising | Total | Peak memory |
+|---|---|---|---|---|
+| int8 file, resident (int8) | 16 s | 158-162 s | 230-235 s | 15-16 GiB |
+| GGUF Q4_K_M, resident (int8) | 13 s | 173-184 s | 243-254 s | 18 GiB |
+| int8 file, SSD streaming | 9 s | 248 s | 314 s | 6.9 GiB |
+| GGUF Q4_K_M, SSD streaming | 9 s | 218 s | 285 s | 6.7 GiB |
+
+- Resident, the int8 file was 10-20 s faster and peaked 2-3 GiB lower (233 s
+  again when measured after the GGUF runs). The low-rank linears are padded
+  to multiples of 256 in the GGUF and of 64 in the int8 file, so its
+  matrices are smaller (block 1's FC1: 1792 against 1664) - which is our
+  reading of the difference. With SSD streaming the int8 file reads more per
+  step (about 16 GB against about 8 GB) and took 29 s longer. One or two
+  runs each.
+- At the same seed the int8 file and Q4_K_M give pictures that differ in
+  detail (PSNR 19-23 dB): the same kind of person and composition, no
+  breakage seen in either. Which is better was not judged.
+- Weights: every unquantized tensor is identical to the GGUF's, the int8
+  matrices agree within 2-8% and the low-rank products within 2.5-7.5% (the
+  size of Q4_K's quantization error). SSD streaming reads the int8 FC1 of
+  FL2VA's last block in two halves; a unit test checks that restoring the
+  halves gives the same bits as restoring the whole and splitting it.
+- Against the ComfyUI reference dump the int8 file differs more (20% at the
+  last block, Q4_K_M 5%). The dump was made with the Q4_K_M weights, so this
+  does not mean the int8 file is less accurate. How close either is to the
+  BF16 output was not measured in H3cApp.
+- Only FL2VA text-to-video was checked. The Ref2VA int8 file (16.4 GB) has
+  the same format, but no generation was run with it, so it is not claimed
+  as supported. Not checked on M1-M4 either. The audio has not been checked
+  by listening.
+
 ## ComfyUI int8 (ConvRot) DiTs
 
 An int8-quantized DiT distributed for ComfyUI can be imported too: a single
@@ -357,8 +404,9 @@ LoRAs, 6 steps, Euler, audio shift 3.
   the M5's result at the same seed (PSNR 35 dB and 29 dB), and the GPU
   decoding test passes in the emulation. The times are the M5 GPU's, not a
   real machine's; a real M1-M4 Mac has not been checked yet.
-- Limits: HyperFlow's int8 (safetensors) files, other quantizations such as
-  W6A8, and safetensors text encoders are not supported. A ConvRot group must
+- Limits: other quantizations such as W6A8 and safetensors text encoders
+  are not supported. For HyperFlow H3 Flash's int8 file see
+  [the section above](#the-int8-file-comfyui-safetensors). A ConvRot group must
   be a power of 4 (up to 256 for SSD streaming). Not yet checked at high
   resolution (1344×768) or at 8 steps.
 

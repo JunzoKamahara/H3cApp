@@ -468,3 +468,30 @@ RTX PRO 4000 Blackwell（24 GB）の ComfyUI で取った記録。
 - **残り。**
   - アプリでの「試験的」の表示。
   - サイト（docs/）の公開は次のリリースで行う。
+
+### A.10 2026-11-11 int8 ConvRot 版（ComfyUI 用 safetensors）の読み込み（ブランチ hyperflow-int8）
+
+7 節で対象外としていた int8 ConvRot 版を、ComfyUI の int8 形式の DiT の読み込み（GGUF.ja.md）を使って読めるようにした。標準は GGUF 版のまま。
+
+- **ファイル。** `fl2va_int8_convrot_comfyui/minimax_h3_fl2va_hyperflow_flash_14b-int8_convrot.safetensors`（16,005,009,056 B、revision `61f1311b`、SHA-256 `d38f0c0c…50710604` を配布元の値と照合）。ComfyUI のテンソル名で、削除ブロックを詰めた 47 ブロック、`hyperflow_gate`・`hyperflow_sigmas` 入り。int8 は通常の線形 120 個だけ（`{"format": "int8_tensorwise", "convrot": true, "convrot_groupsize": 256}`、スケールは行ごと）。低ランクの down / up、トークン精製器、AdaLN（[96768, 16]）は BF16。ランクは 64 の倍数に詰めてある（GGUF は 256 の倍数。例：ブロック 1 の FC1 は 1664 対 1792）。Ref2VA 版（16.4 GB）は 49 ブロックで int8 は同じく 120 個、int8 と低ランクの混ざる MLP はない。
+- **変更。**
+  - `h3_weights.c`：`<layer>.comfy_quant` を持つ DiT は ComfyUI の並び（QKV が [Q; K; V]）として読む（このファイルは曲線形の AdaLN 表がなく時間埋め込みがあるので、従来の判定では公式の並びになっていた）。
+  - `h3_weight_comfy_int8_scales` と SSD ストリーミングが行範囲を受ける。FL2VA のブロック 46 は int8 の FC1 と低ランクの FC2 の組で、FC1 を SwiGLU の半分ずつ読む。行ごとにスケールと回転が独立なので、ブロック 46 専用の分岐ではなく行範囲の読み込みとして扱う。
+  - `h3_gguf_inspect`：safetensors の HyperFlow を拒否せず、`hyperflow`・ブロック数・低ランクのブロック数を返す。アプリは取り込み・配布元の一覧・モデル詳細・ファミリー判定（`H3ModelFamily.detect`）で HyperFlow として扱う。
+- **照合。**
+  - 単体テスト（`h3_quant_tests`）：行範囲を GPU で戻した結果が、全体を戻して分けた結果とビット一致。
+  - 重み（`h3_weight_compare`、GGUF Q4_K_M 対 int8 版）：量子化されていないテンソルはすべて差 0。int8 の行列は QKV 8.0 %・OUT 7.2 %・FC1 7.5 %・FC2 2.1 % 以内（BF16 のトークン精製器と Q4_K の差 7.1 % と同じ大きさ）。低ランクは up×down の積で 2.5〜7.5 %、詰めた行は 0。
+  - 参照記録（A.2 のフィクスチャ、Q4_K_M の重みで作成）：int8 版はブロック 0 で 0.64 %、1〜5 で 2.3〜3.0 %、18 で 7.1 %、23 で 9.0 %、46 で 19.7 %、最終層は 12〜29 %（Q4_K_M は 0.38 %、0.54〜0.56 %、0.66 %、1.0 %、5.2 %、2〜5 %）。参照が Q4_K_M の重みなので、int8 版が許容差（8 %）を超えるのは重みの違いによるもの。このテストは int8 版の正しさの判定には使えない。
+- **生成（M5・24 GB、アプリ、672×384・5 秒・6 ステップ・seed 42）。**
+
+| モデル・計算方式 | 準備 | ノイズ除去 | デコード | 全体 | ピーク |
+|---|---|---|---|---|---|
+| int8 版、常駐（talk / cat / talk 再実行） | 16 s | 162 / 158 / 162 s | 58 s | 235 / 230 / 233 s | 15〜16 GiB |
+| Q4_K_M、常駐（talk / cat） | 13 s | 184 / 173 s | 58 s | 254 / 243 s | 18 GiB |
+| int8 版、SSD ストリーミング（talk） | 9 s | 248 s | 60 s | 314 s | 6.9 GiB |
+| Q4_K_M、SSD ストリーミング（talk） | 9 s | 218 s | 60 s | 285 s | 6.7 GiB |
+
+  - 常駐は int8 版が 10〜20 s 短く、ピークが 2〜3 GiB 少ない。低ランクの行列が小さい（64 の倍数詰め）ためと見ている（仮説）。ストリーミングは読む量が多い（約 16 GB 対 約 8 GB）ぶん 29 s 長い。
+  - int8 版と Q4_K_M の出力は同じ seed で PSNR 19〜23 dB。人物・構図の種類は同じ、細部は別。どちらにも崩れは見当たらない。優劣は判定していない。
+  - 記録は `h3c/hyperflow-int8-study/`、動画は `~/Movies/H3cApp/HyperFlow-int8-20261111/`。
+- **未確認。** Ref2VA の int8 版（未ダウンロード、生成未確認）、M1〜M4（実機・模擬）、4・8 ステップ、最初の画像からの生成、音声の聞き取り、Q8_0 との比較。

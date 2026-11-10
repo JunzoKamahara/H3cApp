@@ -52,11 +52,14 @@ int h3_weight_is_comfy_int8(const h3_weight_store *store,
                             const h3_st_tensor *tensor);
 /* For a caller that reads such a weight's int8 payload itself (SSD
  * streaming) and restores it with h3_gpu_comfy_int8_expand: its ConvRot
- * group size (0: not rotated) and its scales as a new F32 tensor of one
- * value per row. */
+ * group size (0: not rotated) and the scales of rows [row_begin,
+ * row_begin + row_count) as a new F32 tensor of one value per row. Rows
+ * are quantized and rotated one by one, so any run of whole rows restores
+ * on its own. */
 int h3_weight_comfy_int8_scales(const h3_weight_store *store, h3_gpu *gpu,
-                                const h3_st_tensor *tensor, uint32_t *group,
-                                h3_gpu_tensor **scales,
+                                const h3_st_tensor *tensor,
+                                uint64_t row_begin, uint64_t row_count,
+                                uint32_t *group, h3_gpu_tensor **scales,
                                 char *error, size_t error_size);
 /* Every tensor in the store, shard by shard (for tools that walk them). */
 size_t h3_weight_store_tensor_count(const h3_weight_store *store);
