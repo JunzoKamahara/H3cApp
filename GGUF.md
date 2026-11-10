@@ -348,11 +348,19 @@ LoRAs, 6 steps, Euler, audio shift 3.
   closest to the person in the reference image; it also followed the
   prompt's "dim room lit only by a small lamp" the least (its background
   drifts toward the reference photo's room). What causes the difference was
-  not isolated. The audio has not been checked by listening.
+  not isolated. The audio of the clips generated with the merge was
+  listened to and had no problems.
+- SSD streaming also ran in an emulation of M1-M4 (the M5 with TensorOps and
+  the newer GPU features turned off): text to video 527 s, reference image
+  543 s, peak memory 10.8 GiB. Denoising takes about as long as on the M5 and
+  the VAE decode about three times as long. The person and composition match
+  the M5's result at the same seed (PSNR 35 dB and 29 dB), and the GPU
+  decoding test passes in the emulation. The times are the M5 GPU's, not a
+  real machine's; a real M1-M4 Mac has not been checked yet.
 - Limits: HyperFlow's int8 (safetensors) files, other quantizations such as
   W6A8, and safetensors text encoders are not supported. A ConvRot group must
-  be a power of 4 (up to 256 for SSD streaming). Not yet checked on a real
-  M1-M4 Mac, at high resolution (1344×768) or at 8 steps.
+  be a power of 4 (up to 256 for SSD streaming). Not yet checked at high
+  resolution (1344×768) or at 8 steps.
 
 ## Deleting models and disk space
 
