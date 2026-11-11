@@ -140,7 +140,7 @@ VAE も GGUF では配られていませんが、unsloth と Comfy-Org が単体
 | [joeygambino/MiniMax-H3-x-Z-Image-GGUF](https://huggingface.co/joeygambino/MiniMax-H3-x-Z-Image-GGUF) | DiT | Z-Image との合成モデル。`curve` 付きが曲線形 |
 | [nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF](https://huggingface.co/nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF) | 文章の部分（50層）、mmproj | IQ 系は未対応 |
 | [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) | VAE | int8 版は未対応 |
-| [VideoRebirthAI/hyperflow-h3-flash](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash) | DiT（`fl2va_gguf/`・`ref2va_gguf/`） | HyperFlow H3 Flash（下の節）。int8_convrot 版は未対応 |
+| [VideoRebirthAI/hyperflow-h3-flash](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash) | DiT（`fl2va_gguf/`・`ref2va_gguf/`、`fl2va_int8_convrot_comfyui/`・`ref2va_int8_convrot_comfyui/`） | HyperFlow H3 Flash（下の節）。ComfyUI 用の int8 版（1 ファイル）も取り込めます。分割された diffusers 形式の int8 版（`fl2va_int8_convrot/`・`ref2va_int8_convrot/`）は未対応 |
 
 いずれも、ダウンロードの画面で先頭を読んだ結果に基づく分類です。どの配布元も、
 Q4 前後の代表的なファイルで短い動画を作れることを確かめています（下の

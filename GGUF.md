@@ -146,7 +146,7 @@ With GGUF files already on disk, use Model Manager's "Import GGUF…".
 | [joeygambino/MiniMax-H3-x-Z-Image-GGUF](https://huggingface.co/joeygambino/MiniMax-H3-x-Z-Image-GGUF) | DiT | a merge with Z-Image; `curve` files are curve-form |
 | [nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF](https://huggingface.co/nif0/Qwen3-VL-32B-Instruct-MiniMax-H3-GGUF) | text encoder (50 layers), mmproj | IQ types unsupported |
 | [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) | VAEs | the int8 one is unsupported |
-| [VideoRebirthAI/hyperflow-h3-flash](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash) | DiT (`fl2va_gguf/`, `ref2va_gguf/`) | HyperFlow H3 Flash (section below); the int8_convrot files are unsupported |
+| [VideoRebirthAI/hyperflow-h3-flash](https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash) | DiT (`fl2va_gguf/`, `ref2va_gguf/`, `fl2va_int8_convrot_comfyui/`, `ref2va_int8_convrot_comfyui/`) | HyperFlow H3 Flash (section below); the single-file int8 versions for ComfyUI can be imported too. The split diffusers-format int8 versions (`fl2va_int8_convrot/`, `ref2va_int8_convrot/`) are unsupported |
 
 These are sorted by reading the files' headers in the download screens. Every
 source has been checked to make a short video with a typical file around Q4

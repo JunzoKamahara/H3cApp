@@ -229,6 +229,7 @@
         <li><strong>HyperFlowのGGUFを取り込みます。</strong>ダウンロードウィザードでDiT（FL2VA）の配布元を<code>VideoRebirthAI/hyperflow-h3-flash</code>にして<code>fl2va_gguf/</code>のファイル（動作確認済みはQ4_K_M）を選ぶか、手元のファイルを「<span class="ui">GGUFを取り込む…</span>」で取り込みます。中身からHyperFlowだと判定し、モデルの詳細（ⓘ）にHyperFlowと表示されます。</li>
         <li><strong>使うモデルをHyperFlowに切り替えて生成します。</strong>ステップ数は4・6・8から選びます（既定は6）。速度プリセット・LoRAなど使えない設定は詳細設定から隠れます。通常のモデルに戻すと、元の設定に戻ります。</li>
       </ol>
+      <p>v0.8.1から、ComfyUI用のint8版（<code>fl2va_int8_convrot_comfyui/</code>・<code>ref2va_int8_convrot_comfyui/</code>の<code>.safetensors</code>、各約16GB）も同じ手順で取り込めます。標準はGGUF版のままです。M5（24GB）では時間とメモリはGGUFのQ4_K_Mとほぼ同じで、同じseedでも細部の違う絵になります。どちらが良いかは判定していません。</p>
       <p>アプリのAPI（<code>POST /api/generate</code>）でも同じように使えます。HyperFlowのモデルでは、<code>steps</code>は4・6・8だけを受け付け、使えない設定には理由付きの<code>400</code>を返します。</p>
     </section>
 

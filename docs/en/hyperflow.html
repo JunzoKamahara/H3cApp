@@ -229,6 +229,7 @@
         <li><strong>Import the HyperFlow GGUF.</strong> In the download wizard, set the DiT (FL2VA) source to <code>VideoRebirthAI/hyperflow-h3-flash</code> and pick a file from <code>fl2va_gguf/</code> (Q4_K_M is the tested one), or import a file you have with “<span class="ui">Import GGUF…</span>”. H3cApp recognizes HyperFlow from the file's contents and shows it in the model details (ⓘ).</li>
         <li><strong>Switch to the HyperFlow model and generate.</strong> Choose 4, 6 or 8 steps (6 by default). Settings that do not apply, such as the speed presets and LoRAs, are hidden in the advanced settings. Switching back to a regular model restores your settings.</li>
       </ol>
+      <p>From v0.8.1, the int8 files made for ComfyUI (the <code>.safetensors</code> in <code>fl2va_int8_convrot_comfyui/</code> and <code>ref2va_int8_convrot_comfyui/</code>, about 16 GB each) can be imported the same way. GGUF remains the standard choice. On an M5 with 24 GB, time and memory are about the same as the Q4_K_M GGUF, and the same seed gives a picture that differs in detail; which is better was not judged.</p>
       <p>The app's API (<code>POST /api/generate</code>) works the same way. With a HyperFlow model, <code>steps</code> accepts only 4, 6 and 8, and settings that do not apply get a <code>400</code> with the reason.</p>
     </section>
 
