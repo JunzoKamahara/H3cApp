@@ -25,7 +25,15 @@ LIB_C += h3_video_vae.c h3_video_encoder.c h3_audio_vae.c \
 	h3_quant.c h3_gguf.c h3_vsr_chunk.c h3_vsr_window.c h3_vsr_weights.c h3_vsr_reae.c h3_vsr_wan.c h3_vsr.c \
 	h3_latent_upscale.c h3_seedvr2.c h3_seedvr2_vae.c h3_seedvr2_video.c h3_lora_extract.c h3_memory.c h3_plan.c h3_refmod.c
 LIB_M := h3_metal.m h3_gpu.m h3_tokenizer.m h3_av_writer.m h3_av_reader.m
-LIB_OBJ := $(LIB_C:.c=.o) $(LIB_M:.m=.o)
+# Everything the build writes goes under $(BUILD): objects and dependency
+# files in obj/ (flat: no two sources share a name), programs in bin/, the
+# library at $(BUILD)/libh3.a (native/H3Spike/Package.swift links it there).
+BUILD ?= build
+OBJ := $(BUILD)/obj
+BIN := $(BUILD)/bin
+vpath %.c tests tools tools/ccv_eval
+vpath %.m tools
+LIB_OBJ := $(addprefix $(OBJ)/,$(LIB_C:.c=.o) $(LIB_M:.m=.o))
 
 # Optional, opt-in: set CCV_DIR to a built liuliu/ccv checkout (see
 # tools/ccv_eval/README.md) to make the experimental H3_ATTENTION_BACKEND=
@@ -44,7 +52,7 @@ LIB_OBJ := $(LIB_C:.c=.o) $(LIB_M:.m=.o)
 # prerequisite so `make libh3.a CCV_DIR=...` leaves it built and ready for
 # Package.swift to reference without a separate build step.
 ifneq ($(strip $(CCV_DIR)),)
-CCV_EXTRA_OBJ := h3_gpu_ccv_attention.o
+CCV_EXTRA_OBJ := $(OBJ)/h3_gpu_ccv_attention.o
 # Also a prerequisite of h3_generate_cli, so rebuilding (e.g. re-patching)
 # ccv relinks it instead of leaving a stale binary.
 CCV_LIB := $(CCV_DIR)/lib/libccv.a
@@ -52,46 +60,48 @@ LDLIBS += $(CCV_LIB) -lblas -lc++ \
 	-framework CoreML -framework IOSurface -framework QuartzCore
 endif
 
-.PHONY: all test parity real-parity clean
+.PHONY: all test parity real-parity clean libh3.a
 
 all: libh3.a
 
-libh3.a: $(LIB_OBJ) $(CCV_EXTRA_OBJ)
+libh3.a: $(BUILD)/libh3.a
+
+$(BUILD)/libh3.a: $(LIB_OBJ) $(CCV_EXTRA_OBJ)
 	$(AR) rcs $@ $(LIB_OBJ)
 
 # One-time tool: quantizes QKV/attention-output to int8 and writes the cache
 # that H3_ATTENTION_CACHE points the runtime at. See h3_build_attention_cache.c.
-build_attention_cache: h3_build_attention_cache.o $(LIB_OBJ)
+$(BIN)/build_attention_cache: $(OBJ)/h3_build_attention_cache.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # One-time tool: converts a downloaded SwiftVR model into the .h3vc cache
 # the VSR upscaler runs from. See h3_build_vsr_cache.c and UPSCALE_PLAN.md.
-build_vsr_cache: h3_build_vsr_cache.o $(LIB_OBJ)
+$(BIN)/build_vsr_cache: $(OBJ)/h3_build_vsr_cache.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Upscales a clip latent file with the LBH 3D-conv latent upscaler (see
 # h3_latent_upscale.h); the Open-H3 regeneration experiment of UPSCALE_PLAN §11.
-h3_latent_upscale: tools/latent_upscale_cli.o $(LIB_OBJ)
+$(BIN)/h3_latent_upscale: $(OBJ)/latent_upscale_cli.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # One-time tool: builds the curve-form AdaLN file that H3_ADALN_CURVE points
 # the runtime at. See h3_adaln_curve.h.
-build_adaln_curve: h3_build_adaln_curve.o $(LIB_OBJ)
+$(BIN)/build_adaln_curve: $(OBJ)/h3_build_adaln_curve.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Same-schedule comparison of curve-form against dense AdaLN (needs the
 # released weights; not in `make test`).
-h3_adaln_curve_check: tests/adaln_curve_check.o $(LIB_OBJ)
+$(BIN)/h3_adaln_curve_check: $(OBJ)/adaln_curve_check.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Tensor-by-tensor comparison of a quantized re-publication (GGUF) against
 # the released weights (needs both; not in `make test`).
-h3_weight_compare: tests/weight_compare.o $(LIB_OBJ)
+$(BIN)/h3_weight_compare: $(OBJ)/weight_compare.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Inspect GGUF files as the importer does, or trim a text encoder to the
 # layers the engine reads.
-h3_gguf_tool: tools/gguf_tool.o $(LIB_OBJ)
+$(BIN)/h3_gguf_tool: $(OBJ)/gguf_tool.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Plain-C generation driver (see tools/ccv_eval/h3_generate_cli.c) - a
@@ -99,183 +109,183 @@ h3_gguf_tool: tools/gguf_tool.o $(LIB_OBJ)
 # H3_ATTENTION_BACKEND=ccv_dense end-to-end without hitting a still-
 # unexplained Swift-runtime/ccv interaction documented there and in
 # SPEEDUP_ROADMAP.md item 5.
-h3_generate_cli: tools/ccv_eval/h3_generate_cli.o $(LIB_OBJ) $(CCV_EXTRA_OBJ) \
+$(BIN)/h3_generate_cli: $(OBJ)/h3_generate_cli.o $(LIB_OBJ) $(CCV_EXTRA_OBJ) \
 		$(CCV_LIB)
 	$(CC) -o $@ $(filter-out $(CCV_LIB),$^) $(LDLIBS)
 
-h3_tests: tests/test_h3.o $(LIB_OBJ)
+$(BIN)/h3_tests: $(OBJ)/test_h3.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # One-step VSR host geometry (chunk protocol, window layout, RoPE): no GPU,
 # no weights, always run. See UPSCALE_PLAN.md §9.
-h3_vsr_tests: tests/test_vsr.o h3_vsr_chunk.o h3_vsr_window.o
+$(BIN)/h3_vsr_tests: $(OBJ)/test_vsr.o $(OBJ)/h3_vsr_chunk.o $(OBJ)/h3_vsr_window.o
 	$(CC) -o $@ $^ -lm
 
 # The .h3vc weight cache round trip on a synthetic Wan model (GPU, no weights).
-h3_vsr_cache_tests: tests/test_vsr_cache.o $(LIB_OBJ)
+$(BIN)/h3_vsr_cache_tests: $(OBJ)/test_vsr_cache.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # The ReAE autoencoder against a double-precision reference (GPU, no weights).
-h3_vsr_reae_tests: tests/test_vsr_reae.o $(LIB_OBJ)
+$(BIN)/h3_vsr_reae_tests: $(OBJ)/test_vsr_reae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # The Wan DiT runner against a double-precision reference (GPU, no weights).
-h3_vsr_wan_tests: tests/test_vsr_wan.o $(LIB_OBJ)
+$(BIN)/h3_vsr_wan_tests: $(OBJ)/test_vsr_wan.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # The whole VSR pipeline on a synthetic model (GPU, no weights).
-h3_vsr_session_tests: tests/test_vsr_session.o $(LIB_OBJ)
+$(BIN)/h3_vsr_session_tests: $(OBJ)/test_vsr_session.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_vsr_tapconv_tests: tests/test_vsr_tapconv.o $(LIB_OBJ)
+$(BIN)/h3_vsr_tapconv_tests: $(OBJ)/test_vsr_tapconv.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Speed of the TensorOps tap convolution on the SeedVR2 video VAE's shapes (development).
-h3_bench_tapconv: tests/bench_tapconv.o $(LIB_OBJ)
+$(BIN)/h3_bench_tapconv: $(OBJ)/bench_tapconv.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_metal_tests: tests/test_metal.o $(LIB_OBJ)
+$(BIN)/h3_metal_tests: $(OBJ)/test_metal.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_renoise_tests: tests/test_renoise.o $(LIB_OBJ)
+$(BIN)/h3_renoise_tests: $(OBJ)/test_renoise.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_bf16_tests: tests/test_bf16.o $(LIB_OBJ)
+$(BIN)/h3_bf16_tests: $(OBJ)/test_bf16.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Dense SDPA execution modes (issue #2): CPU reference, full vs chunked vs
-# explicit, and a probe mode for real DiT shapes (./h3_sdpa_tests --probe).
-h3_sdpa_tests: tests/test_sdpa.o $(LIB_OBJ)
+# explicit, and a probe mode for real DiT shapes ($(BIN)/h3_sdpa_tests --probe).
+$(BIN)/h3_sdpa_tests: $(OBJ)/test_sdpa.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # SeedVR2 (h3_seedvr2.c): the window partition always; the stages against a
 # reference dump when H3_SEEDVR2_FIXTURE and the weights are present.
-h3_seedvr2_tests: tests/test_seedvr2.o $(LIB_OBJ)
+$(BIN)/h3_seedvr2_tests: $(OBJ)/test_seedvr2.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Temporal SeedVR2 against the official reference dumps
 # (tools/seedvr2_temporal_fixtures.md); skips without them unless
 # H3_SEEDVR2_STRICT=1.
-h3_seedvr2_temporal_tests: tests/test_seedvr2_temporal.o $(LIB_OBJ)
+$(BIN)/h3_seedvr2_temporal_tests: $(OBJ)/test_seedvr2_temporal.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # HyperFlow H3 Flash (h3_hyperflow.h): grids and (t, r) rows; with
 # H3_HYPERFLOW_DIR also the inspector and the two-time AdaLN schedule
 # against a CPU reference (skips without it unless H3_HYPERFLOW_STRICT=1).
-h3_hyperflow_tests: tests/test_hyperflow.o $(LIB_OBJ)
+$(BIN)/h3_hyperflow_tests: $(OBJ)/test_hyperflow.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # HyperFlow on real weights against the ComfyUI reference fixture
 # (H3_HYPERFLOW_DIR + H3_HYPERFLOW_FIXTURE; skips without them).
-h3_hyperflow_real_tests: tests/test_hyperflow_real.o $(LIB_OBJ)
+$(BIN)/h3_hyperflow_real_tests: $(OBJ)/test_hyperflow_real.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # The LoRA rank extraction (h3_lora_extract.c) on a synthetic file.
-h3_lora_extract_tests: tests/test_lora_extract.o $(LIB_OBJ)
+$(BIN)/h3_lora_extract_tests: $(OBJ)/test_lora_extract.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # PNG in, PNG out through the SeedVR2 session (tools/seedvr2_cli.m).
-h3_seedvr2_cli: tools/seedvr2_cli.o $(LIB_OBJ)
+$(BIN)/h3_seedvr2_cli: $(OBJ)/seedvr2_cli.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_tokenizer_tests: tests/test_tokenizer.o $(LIB_OBJ)
+$(BIN)/h3_tokenizer_tests: $(OBJ)/test_tokenizer.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_text_tests: tests/test_text_metal.o $(LIB_OBJ)
+$(BIN)/h3_text_tests: $(OBJ)/test_text_metal.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_audio_gpu_tests: tests/test_audio_gpu.o $(LIB_OBJ)
+$(BIN)/h3_audio_gpu_tests: $(OBJ)/test_audio_gpu.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_quant_tests: tests/test_quant.o $(LIB_OBJ)
+$(BIN)/h3_quant_tests: $(OBJ)/test_quant.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # GGUF header parsing alone: no Apple frameworks or model weights.
-h3_gguf_header_tests: tests/test_gguf.o h3_gguf.o h3_safetensors.o h3_quant.o
+$(BIN)/h3_gguf_header_tests: $(OBJ)/test_gguf.o $(OBJ)/h3_gguf.o $(OBJ)/h3_safetensors.o $(OBJ)/h3_quant.o
 	$(CC) -o $@ $^ -lm $(MINOS_FLAG)
 
-h3_determinism_tests: tests/test_determinism.o $(LIB_OBJ)
+$(BIN)/h3_determinism_tests: $(OBJ)/test_determinism.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # End-to-end same-seed check (needs the released weights; not in `make test`).
-h3_repro_check: tests/repro_check.o $(LIB_OBJ) $(CCV_EXTRA_OBJ) $(CCV_LIB)
+$(BIN)/h3_repro_check: $(OBJ)/repro_check.o $(LIB_OBJ) $(CCV_EXTRA_OBJ) $(CCV_LIB)
 	$(CC) -o $@ $(filter-out $(CCV_LIB),$^) $(LDLIBS)
 
-h3_real_audio_vae_test: tests/test_real_audio_vae.o $(LIB_OBJ)
+$(BIN)/h3_real_audio_vae_test: $(OBJ)/test_real_audio_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_real_audio_encoder_test: tests/test_real_audio_encoder.o $(LIB_OBJ)
+$(BIN)/h3_real_audio_encoder_test: $(OBJ)/test_real_audio_encoder.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_real_video_encoder_test: tests/test_real_video_encoder.o $(LIB_OBJ)
+$(BIN)/h3_real_video_encoder_test: $(OBJ)/test_real_video_encoder.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_video_encoder_chunks_test: tests/test_video_encoder_chunks.o $(LIB_OBJ)
+$(BIN)/h3_video_encoder_chunks_test: $(OBJ)/test_video_encoder_chunks.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_plan_tests: tests/test_plan.o $(LIB_OBJ)
+$(BIN)/h3_plan_tests: $(OBJ)/test_plan.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_refmod_tests: tests/test_refmod.o $(LIB_OBJ)
+$(BIN)/h3_refmod_tests: $(OBJ)/test_refmod.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_real_refmod_test: tests/test_real_refmod.o $(LIB_OBJ)
+$(BIN)/h3_real_refmod_test: $(OBJ)/test_real_refmod.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_real_qwen_vision_test: tests/test_real_qwen_vision.o $(LIB_OBJ)
+$(BIN)/h3_real_qwen_vision_test: $(OBJ)/test_real_qwen_vision.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_real_multimodal_text_test: tests/test_real_multimodal_text.o $(LIB_OBJ)
+$(BIN)/h3_real_multimodal_text_test: $(OBJ)/test_real_multimodal_text.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_real_ref_video_text_test: tests/test_real_ref_video_text.o $(LIB_OBJ)
+$(BIN)/h3_real_ref_video_text_test: $(OBJ)/test_real_ref_video_text.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_real_prompt_test: tests/test_real_prompt.o $(LIB_OBJ)
+$(BIN)/h3_real_prompt_test: $(OBJ)/test_real_prompt.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_real_dit_block_test: tests/test_real_dit_block.o $(LIB_OBJ)
+$(BIN)/h3_real_dit_block_test: $(OBJ)/test_real_dit_block.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_real_dit_schedule_test: tests/test_real_dit_schedule.o $(LIB_OBJ)
+$(BIN)/h3_real_dit_schedule_test: $(OBJ)/test_real_dit_schedule.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_real_dit_test: tests/test_real_dit.o $(LIB_OBJ)
+$(BIN)/h3_real_dit_test: $(OBJ)/test_real_dit.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_semantic_dit_test: tests/test_semantic_dit.o $(LIB_OBJ)
+$(BIN)/h3_semantic_dit_test: $(OBJ)/test_semantic_dit.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_dit_bench: tests/bench_dit.o $(LIB_OBJ)
+$(BIN)/h3_dit_bench: $(OBJ)/bench_dit.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_dit_bench_864: tests/bench_dit_864.o $(LIB_OBJ)
+$(BIN)/h3_dit_bench_864: $(OBJ)/bench_dit_864.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-tests/bench_dit_864.o: tests/bench_dit.c
+$(OBJ)/bench_dit_864.o: tests/bench_dit.c | $(OBJ)
 	$(CC) $(CFLAGS) -I. -DH3_BENCH_LATENT_H=30 \
 		-DH3_BENCH_LATENT_W=54 -c $< -o $@
 
-h3_real_video_vae_test: tests/test_real_video_vae.o $(LIB_OBJ)
+$(BIN)/h3_real_video_vae_test: $(OBJ)/test_real_video_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # SwiftVR parity against the official implementation (needs the downloaded
 # weights and the fixture of tools/dump_swiftvr_fixture.py; self-skipping).
-h3_real_vsr_test: tests/test_real_vsr.o $(LIB_OBJ)
+$(BIN)/h3_real_vsr_test: $(OBJ)/test_real_vsr.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Stage timing of the SwiftVR engine on the real weights (not in `make test`).
-h3_vsr_bench: tests/bench_vsr.o $(LIB_OBJ)
+$(BIN)/h3_vsr_bench: $(OBJ)/bench_vsr.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_int8_bench: tests/bench_int8.o $(LIB_OBJ)
+$(BIN)/h3_int8_bench: $(OBJ)/bench_int8.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Runs the SwiftVR engine on raw RGB frames (quality evaluation; not in `make test`).
-h3_vsr_run: tests/vsr_run.o $(LIB_OBJ)
+$(BIN)/h3_vsr_run: $(OBJ)/vsr_run.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-h3_semantic_vae_test: tests/test_semantic_vae.o $(LIB_OBJ)
+$(BIN)/h3_semantic_vae_test: $(OBJ)/test_semantic_vae.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_extract_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests h3_vsr_wan_tests h3_vsr_session_tests h3_vsr_tapconv_tests h3_real_vsr_test h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
@@ -285,145 +295,154 @@ test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_
 	h3_real_qwen_vision_test h3_real_multimodal_text_test \
 	h3_real_ref_video_text_test h3_hyperflow_tests h3_hyperflow_real_tests
 
-	./h3_tests
-	./h3_hyperflow_tests
-	./h3_hyperflow_real_tests
-	./h3_sdpa_tests
-	H3_NAX=0 ./h3_sdpa_tests
-	./h3_seedvr2_tests
-	./h3_seedvr2_temporal_tests
-	./h3_lora_extract_tests
-	./h3_vsr_tests
-	./h3_vsr_cache_tests
-	./h3_vsr_reae_tests
-	./h3_vsr_wan_tests
-	./h3_vsr_session_tests
-	./h3_vsr_tapconv_tests
-	./h3_real_vsr_test
-	./h3_gguf_header_tests
-	./h3_quant_tests
+	$(BIN)/h3_tests
+	$(BIN)/h3_hyperflow_tests
+	$(BIN)/h3_hyperflow_real_tests
+	$(BIN)/h3_sdpa_tests
+	H3_NAX=0 $(BIN)/h3_sdpa_tests
+	$(BIN)/h3_seedvr2_tests
+	$(BIN)/h3_seedvr2_temporal_tests
+	$(BIN)/h3_lora_extract_tests
+	$(BIN)/h3_vsr_tests
+	$(BIN)/h3_vsr_cache_tests
+	$(BIN)/h3_vsr_reae_tests
+	$(BIN)/h3_vsr_wan_tests
+	$(BIN)/h3_vsr_session_tests
+	$(BIN)/h3_vsr_tapconv_tests
+	$(BIN)/h3_real_vsr_test
+	$(BIN)/h3_gguf_header_tests
+	$(BIN)/h3_quant_tests
 	@if test -f misc/fixtures/h3_dit.safetensors && \
 	         test -f misc/fixtures/h3_dit_bf16.safetensors; then \
-		./h3_metal_tests misc/fixtures/h3_dit.safetensors; \
-		./h3_bf16_tests misc/fixtures/h3_dit_bf16.safetensors; \
+		$(BIN)/h3_metal_tests misc/fixtures/h3_dit.safetensors; \
+		$(BIN)/h3_bf16_tests misc/fixtures/h3_dit_bf16.safetensors; \
 	else \
 		echo "skip: MLX toy-block fixtures are not installed"; \
 	fi
 	@if test -f MiniMax-H3/tokenizer/tokenizer.json; then \
-		./h3_tokenizer_tests MiniMax-H3/tokenizer/tokenizer.json; \
+		$(BIN)/h3_tokenizer_tests MiniMax-H3/tokenizer/tokenizer.json; \
 	else \
 		echo "skip: released tokenizer is not installed"; \
 	fi
 	@if test -f misc/fixtures/h3_text_bf16.safetensors; then \
-		./h3_text_tests misc/fixtures/h3_text_bf16.safetensors; \
+		$(BIN)/h3_text_tests misc/fixtures/h3_text_bf16.safetensors; \
 	else \
 		echo "skip: MLX Qwen fixture is not installed"; \
 	fi
-	./h3_audio_gpu_tests
+	$(BIN)/h3_audio_gpu_tests
 # Again with TensorOps off: the shader library must also compile without
 # H3_METAL_HAS_TENSOR (pre-M5 Macs, and the fallback after a failed Metal 4 compile).
-	H3_NAX=0 ./h3_audio_gpu_tests
-	./h3_determinism_tests
+	H3_NAX=0 $(BIN)/h3_audio_gpu_tests
+	$(BIN)/h3_determinism_tests
 	@if test -f MiniMax-H3/FL2VA/audio_vae/model.safetensors && \
 	         test -f misc/fixtures/h3_real_audio_vae_37.safetensors; then \
-		./h3_real_audio_vae_test; \
+		$(BIN)/h3_real_audio_vae_test; \
 	else \
 		echo "skip: released AudioVAE weights/fixture are not installed"; \
 	fi
 	@if test -f MiniMax-H3/FL2VA/audio_vae/model.safetensors && \
 	         test -f misc/fixtures/h3_real_audio_encoder_64000.safetensors; then \
-		./h3_real_audio_encoder_test; \
+		$(BIN)/h3_real_audio_encoder_test; \
 	else \
 		echo "skip: released audio encoder weights/fixture are not installed"; \
 	fi
 	@if test -f MiniMax-H3/FL2VA/video_vae/source/model.safetensors && \
 	         test -f misc/fixtures/h3_real_video_encoder_256.safetensors; then \
-		./h3_real_video_encoder_test; \
+		$(BIN)/h3_real_video_encoder_test; \
 	else \
 		echo "skip: released visual encoder weights/fixture are not installed"; \
 	fi
 	@if test -f MiniMax-H3/Ref2VA/video_vae/source/model.safetensors && \
 	         test -f misc/fixtures/h3_real_video_encoder_video_22x64.safetensors; then \
-		./h3_real_video_encoder_test MiniMax-H3 \
+		$(BIN)/h3_real_video_encoder_test MiniMax-H3 \
 			misc/fixtures/h3_real_video_encoder_video_22x64.safetensors; \
 	else \
 		echo "skip: released reference-video encoder fixture is not installed"; \
 	fi
-	./h3_video_encoder_chunks_test
-	./h3_plan_tests
-	./h3_refmod_tests
+	$(BIN)/h3_video_encoder_chunks_test
+	$(BIN)/h3_plan_tests
+	$(BIN)/h3_refmod_tests
 	@if test -f MiniMax-H3/Ref2VA/video_vae/source/model.safetensors; then \
-		./h3_real_refmod_test; \
+		$(BIN)/h3_real_refmod_test; \
 	else \
 		echo "skip: released Ref2VA VAE weights are not installed (RefMod extraction)"; \
 	fi
 	@if test -f MiniMax-H3/Ref2VA/video_vae/source/model.safetensors && \
 	         test -n "$(H3_CHUNKS_VIDEO)" && test -f "$(H3_CHUNKS_VIDEO)"; then \
-		./h3_video_encoder_chunks_test MiniMax-H3/Ref2VA/video_vae/source \
+		$(BIN)/h3_video_encoder_chunks_test MiniMax-H3/Ref2VA/video_vae/source \
 			"$(H3_CHUNKS_VIDEO)"; \
 	else \
 		echo "skip: chunked encoder check needs the weights and H3_CHUNKS_VIDEO=<video>"; \
 	fi
 	@if test -f MiniMax-H3/FL2VA/text_encoder/model-00014-of-00014.safetensors && \
 	         test -f misc/fixtures/h3_real_qwen_vision_64.safetensors; then \
-		./h3_real_qwen_vision_test; \
+		$(BIN)/h3_real_qwen_vision_test; \
 	else \
 		echo "skip: released Qwen vision weights/fixture are not installed"; \
 	fi
 	@if test -f MiniMax-H3/Ref2VA/text_encoder/model-00014-of-00014.safetensors && \
 	         test -f misc/fixtures/h3_real_qwen_vision_video2x64.safetensors; then \
-		./h3_real_qwen_vision_test MiniMax-H3 \
+		$(BIN)/h3_real_qwen_vision_test MiniMax-H3 \
 			misc/fixtures/h3_real_qwen_vision_video2x64.safetensors; \
 	else \
 		echo "skip: released Qwen video-pair fixture is not installed"; \
 	fi
 	@if test -f MiniMax-H3/FL2VA/text_encoder/model-00001-of-00014.safetensors && \
 	         test -f misc/fixtures/h3_real_multimodal_text_64.safetensors; then \
-		./h3_real_multimodal_text_test; \
+		$(BIN)/h3_real_multimodal_text_test; \
 	else \
 		echo "skip: released multimodal Qwen weights/fixture are not installed"; \
 	fi
 	@if test -f MiniMax-H3/Ref2VA/text_encoder/model-00001-of-00014.safetensors && \
 	         test -f misc/fixtures/h3_real_ref_video_text_64.safetensors; then \
-		./h3_real_ref_video_text_test; \
+		$(BIN)/h3_real_ref_video_text_test; \
 	else \
 		echo "skip: Ref2VA video presentation fixture is not installed"; \
 	fi
 
 parity: h3_metal_tests h3_bf16_tests h3_text_tests
-	./h3_metal_tests misc/fixtures/h3_dit.safetensors
-	./h3_bf16_tests misc/fixtures/h3_dit_bf16.safetensors
-	./h3_text_tests misc/fixtures/h3_text_bf16.safetensors
+	$(BIN)/h3_metal_tests misc/fixtures/h3_dit.safetensors
+	$(BIN)/h3_bf16_tests misc/fixtures/h3_dit_bf16.safetensors
+	$(BIN)/h3_text_tests misc/fixtures/h3_text_bf16.safetensors
 
 real-parity: h3_real_prompt_test h3_real_dit_block_test
-	./h3_real_prompt_test MiniMax-H3 misc/fixtures/h3_real_prompt_bf16.safetensors
-	./h3_real_dit_block_test MiniMax-H3 misc/fixtures/h3_real_dit_block0_bf16.safetensors
+	$(BIN)/h3_real_prompt_test MiniMax-H3 misc/fixtures/h3_real_prompt_bf16.safetensors
+	$(BIN)/h3_real_dit_block_test MiniMax-H3 misc/fixtures/h3_real_dit_block0_bf16.safetensors
 
-%.o: %.c
+$(OBJ) $(BIN):
+	mkdir -p $@
+
+$(OBJ)/%.o: %.c | $(OBJ)
 	$(CC) $(CFLAGS) -I. -c $< -o $@
 
-%.o: %.m
+$(OBJ)/%.o: %.m | $(OBJ)
 	$(CC) $(OBJCFLAGS) -I. -c $< -o $@
 
-h3_gpu_ccv_attention.o: h3_gpu_ccv_attention.mm
+$(OBJ)/h3_gpu_ccv_attention.o: h3_gpu_ccv_attention.mm | $(OBJ)
 	$(CC) -std=c++17 -O3 -fobjc-arc -fblocks $(MINOS_FLAG) -I. -I$(CCV_DIR) -I$(CCV_DIR)/lib \
 		-D HAVE_CBLAS -D HAVE_PTHREAD -D HAVE_ACCELERATE_FRAMEWORK \
 		-D USE_DISPATCH -D HAVE_MPS -c $< -o $@
 
-tests/%.o: tests/%.c
-	$(CC) $(CFLAGS) -I. -c $< -o $@
+# Every program can be asked for by its bare name (make h3_tests).
+PROGRAMS := build_attention_cache build_vsr_cache h3_latent_upscale build_adaln_curve \
+	h3_adaln_curve_check h3_weight_compare h3_gguf_tool h3_generate_cli \
+	h3_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests \
+	h3_vsr_wan_tests h3_vsr_session_tests h3_vsr_tapconv_tests h3_bench_tapconv \
+	h3_metal_tests h3_renoise_tests h3_bf16_tests h3_sdpa_tests \
+	h3_seedvr2_tests h3_seedvr2_temporal_tests h3_hyperflow_tests h3_hyperflow_real_tests \
+	h3_lora_extract_tests h3_seedvr2_cli h3_tokenizer_tests h3_text_tests \
+	h3_audio_gpu_tests h3_quant_tests h3_gguf_header_tests h3_determinism_tests \
+	h3_repro_check h3_real_audio_vae_test h3_real_audio_encoder_test h3_real_video_encoder_test \
+	h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests h3_real_refmod_test \
+	h3_real_qwen_vision_test h3_real_multimodal_text_test h3_real_ref_video_text_test h3_real_prompt_test \
+	h3_real_dit_block_test h3_real_dit_schedule_test h3_real_dit_test h3_semantic_dit_test \
+	h3_dit_bench h3_dit_bench_864 h3_real_video_vae_test h3_real_vsr_test \
+	h3_vsr_bench h3_int8_bench h3_vsr_run h3_semantic_vae_test
+.PHONY: $(PROGRAMS)
+$(PROGRAMS): %: $(BIN)/%
+$(addprefix $(BIN)/,$(PROGRAMS)): | $(BIN)
 
--include $(wildcard *.d tests/*.d)
+-include $(wildcard $(OBJ)/*.d)
 
 clean:
-	rm -f h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests h3_real_refmod_test
-	rm -f h3_tests h3_hyperflow_tests h3_hyperflow_real_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_extract_tests h3_seedvr2_cli h3_metal_tests h3_bf16_tests h3_renoise_tests h3_tokenizer_tests \
-		h3_text_tests h3_real_prompt_test h3_real_dit_block_test \
-		h3_audio_gpu_tests h3_determinism_tests h3_repro_check \
-		h3_real_audio_vae_test h3_real_audio_encoder_test \
-		h3_real_video_encoder_test h3_real_qwen_vision_test \
-		h3_real_multimodal_text_test h3_real_ref_video_text_test \
-		h3_real_dit_schedule_test h3_real_dit_test h3_semantic_dit_test \
-		h3_real_video_vae_test h3_semantic_vae_test \
-	h3_dit_bench h3_dit_bench_864 build_adaln_curve h3_adaln_curve_check h3_quant_tests h3_gguf_header_tests h3_weight_compare h3_gguf_tool \
-	libh3.a *.o *.d tests/*.o tests/*.d
+	rm -rf $(BUILD)

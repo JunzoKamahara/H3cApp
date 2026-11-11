@@ -26,7 +26,7 @@ let repoRoot = packageDir.deletingLastPathComponent().deletingLastPathComponent(
 // loose object file passed directly to the linker is always included.
 let ccvDir = ProcessInfo.processInfo.environment["CCV_DIR"]
 var h3LinkerSettings: [LinkerSetting] = [
-    .unsafeFlags(["-L\(repoRoot)", "-lh3", "-licucore"]),
+    .unsafeFlags(["-L\(repoRoot)/build", "-lh3", "-licucore"]),
     .linkedFramework("Foundation"),
     .linkedFramework("Metal"),
     .linkedFramework("MetalPerformanceShaders"),
@@ -41,7 +41,7 @@ var h3LinkerSettings: [LinkerSetting] = [
 ]
 if let ccvDir {
     h3LinkerSettings.append(.unsafeFlags([
-        "\(repoRoot)/h3_gpu_ccv_attention.o",
+        "\(repoRoot)/build/obj/h3_gpu_ccv_attention.o",
         "\(ccvDir)/lib/libccv.a", "-lblas", "-lc++",
     ]))
     h3LinkerSettings.append(.linkedFramework("CoreML"))

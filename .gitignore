@@ -6,6 +6,7 @@ outputs/
 lora/
 
 # Compiler and test outputs.
+build/
 *.o
 *.d
 *.air
