@@ -20,17 +20,21 @@ LDLIBS := $(FRAMEWORKS) -licucore -lm $(MINOS_FLAG)
 # The generation engine (libh3.a) and the upscale module (libh3upscale.a:
 # SwiftVR, SeedVR2, the latent upscaler). The upscale module uses the
 # engine, never the other way round.
-LIB_C := h3.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c \
-	h3_dit_schedule.c h3_dit.c h3_lora.c h3_hyperflow.c h3_model_family.c \
+LIB_C := h3.c h3_conditioning.c h3_params.c h3_references.c h3_plan_generation.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c \
+	h3_dit_schedule.c h3_dit.c h3_dit_weights.c h3_dit_setup.c h3_dit_block.c h3_lora.c h3_hyperflow.c h3_model_family.c \
 	h3_video_vae.c h3_video_encoder.c h3_audio_vae.c \
 	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c h3_adaln_curve.c \
 	h3_quant.c h3_gguf.c h3_lora_extract.c h3_memory.c h3_plan.c h3_refmod.c h3_options.c
-LIB_M := h3_metal.m h3_gpu.m h3_tokenizer.m h3_av_writer.m h3_av_reader.m
+LIB_M := h3_metal.m h3_gpu.m h3_gpu_attention.m h3_gpu_conv.m h3_gpu_linear.m h3_gpu_blocks.m h3_tokenizer.m h3_av_writer.m h3_av_reader.m
 UPSCALE_C := h3_vsr_chunk.c h3_vsr_window.c h3_vsr_weights.c h3_vsr_reae.c h3_vsr_wan.c h3_vsr.c \
 	h3_latent_upscale.c h3_seedvr2.c h3_seedvr2_vae.c h3_seedvr2_video.c
 UPSCALE_M := h3_gpu_vsr.m h3_gpu_sv2.m
 # The shader source the programs read is these parts joined, in this order.
-SHADER_PARTS := src/gpu/h3_shaders_core.metal src/upscale/h3_shaders_vsr.metal \
+# core: the preamble and the F32, VAE and audio kernels; tensorops: the M5
+# TensorOps kernels (one #ifdef block); blocks: the BF16 kernels of the
+# transformer blocks, the text encoder and the sampler.
+SHADER_PARTS := src/gpu/h3_shaders_core.metal src/gpu/h3_shaders_tensorops.metal \
+	src/gpu/h3_shaders_blocks.metal src/upscale/h3_shaders_vsr.metal \
 	src/upscale/h3_shaders_seedvr2.metal
 
 # Everything the build writes goes under $(BUILD): objects and dependency

@@ -171,6 +171,22 @@ docs/               そのまま（Pages の公開元）
   - Swift のラッパー（`H3VSR.swift`・`H3SeedVR2.swift`・`H3LatentUpscaler.swift`）は `H3Upscale` ターゲットに分けた。
   - **見送ったこと**：3 つの `*ModelSetup.swift` のダウンロードと照合の共通化。20GB 級のダウンロードをやり直さないと確かめられないため、手を付けていない。
   - **確かめていないこと**：選択画面とモデル管理の画面を目で見る確認（「モデルを準備…」のシートの開閉、準備中の表示の更新）。コンパイルと API の応答、拡大 8 方式と生成の出力は基準と一致。
+- **フェーズ 6**：記述子の表を `src/model/h3_model_family.c` に置いた（公開側は `h3.h`）。
+  - **モデルの系統**（`h3_model_family`）：ステップ数の選択肢と既定値、できること（LoRA・再ノイズ・ステップの再利用・層の間引き・独自の sigma・音声シフト・注意キャッシュ・曲線形 AdaLN）、スケジュールの作り方。`h3_generate` の「HyperFlow では使えない」の判定は `h3_model_family_problem` になった（文言と順番は同じ）。`h3_dit.c` も、何が使えるかを問う場所は表を読む。
+  - **サンプラー**（`h3_sampler`）と**計算方式**（`h3_compute_mode`）も表にした。
+  - アプリは HyperFlow のステップ数の複製（`hyperflowSteps` など）を捨て、`H3ModelFamily.stepChoices`・`defaultSteps`・`can(_:)`、`ComputeMode.needsTensorOps` でエンジンに聞く。
+  - **名前で分岐したままの場所**：HyperFlow そのものの説明文、メモリの目安、API の断りの文言（`isHyperFlow` が 7 か所）。因子化した線形層や 2 時刻 AdaLN など、ブロックの形の違いは `h3_dit.c` の `dit->hyperflow` のまま（これは構造で、方針ではない）。
+  - **重みの形式**の表（§6 の 2 行目）は作っていない。`h3_weights.c` にすでに集まっていて、表にしても読む側が変わらないため。
+- **フェーズ 7**：`src/core/h3_options.c` に、エンジンが読む環境変数 160 個すべてを、分野・取る値・説明つきで並べた。
+  - ソースは `h3_option("H3_…")` で読む（中身は `getenv` だけ）。`tools/check_options.py`（`make test` に入っている）が、表にない名前・読まれない行・`getenv` の直呼びを落とす。`build/bin/h3_options` で一覧。
+  - **消した変数はない。** どれが不要かは使う人の判断なので、手を付けていない。
+- **フェーズ 8**：大きいファイルを割った（中身は移動だけ）。
+  - `h3_gpu.m` → `h3_gpu.m`（デバイス・テンソル・コマンド）、`h3_gpu_blocks.m`、`h3_gpu_linear.m`、`h3_gpu_attention.m`、`h3_gpu_conv.m`。共有は `h3_gpu_private.h`。
+  - `h3_dit.c` → `h3_dit.c`（公開 API とノイズ除去の流れ）、`h3_dit_setup.c`、`h3_dit_weights.c`、`h3_dit_block.c`。共有は `h3_dit_private.h`。ファイルをまたぐようになった補助関数 40 個は `h3_dit_` を前に付けた。
+  - `h3.c` → `h3.c`（`h3_generate`）、`h3_params.c`、`h3_references.c`、`h3_conditioning.c`、`h3_plan_generation.c`。共有は `h3_private.h`。
+  - シェーダーの本体 → `h3_shaders_core.metal`・`h3_shaders_tensorops.metal`・`h3_shaders_blocks.metal`。つなげた結果は割る前と同じ（MD5 一致）。
+  - 最大のファイルは約 2,000 行（割る前は 8,243 行）。
+  - **残っていること**：`h3_generate` は 1 つの関数で約 1,350 行ある。関数の中を割るのは移動では済まないので、この計画では触っていない。
 
 ## 8. 合格の条件
 

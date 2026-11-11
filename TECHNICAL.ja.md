@@ -213,7 +213,7 @@
 ## つなげて生成のしくみ
 
 つなげて生成は、「前の動画の続きを作る」を順に繰り返し、最後に重なりで
-つなぐものです。続きを作る部分はエンジン（[h3.c](src/core/h3.c)）に、連なりの
+つなぐものです。続きを作る部分はエンジン（[h3_conditioning.c](src/core/h3_conditioning.c)。[h3.c](src/core/h3.c)から呼ぶ）に、連なりの
 管理とつなぐ処理はアプリ（[Continuation.swift](native/H3Spike/Sources/H3cApp/Continuation.swift)、
 [ChainGeneration.swift](native/H3Spike/Sources/H3cApp/ChainGeneration.swift)）
 にあります。
@@ -558,7 +558,7 @@ Ref2VAの参照は一度エンコードされてキャッシュされるので�
 するか、denoisingステップ数を減らすか、`reuse`の値を上げてください。
 極端なケースは、メモリ不足を招く前に明確なエラーで拒否されます
 （MPSGraphフォールバック経路の512MiBアテンションマスク上限、
-[h3_gpu.m](src/gpu/h3_gpu.m)参照）。
+[h3_gpu_attention.m](src/gpu/h3_gpu_attention.m)参照）。
 
 ### 実行前の判定
 

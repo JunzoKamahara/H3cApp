@@ -230,7 +230,7 @@ Related documentation: [Local API](API.md) Â· [Building and testing](BUILD.md) Â
 ## How joined generation works
 
 Joined generation repeats "continue the previous video" and joins the
-results at their overlaps. Continuing is in the engine ([h3.c](src/core/h3.c)); the
+results at their overlaps. Continuing is in the engine ([h3_conditioning.c](src/core/h3_conditioning.c), called from [h3.c](src/core/h3.c)); the
 chain and the joining are in the app
 ([Continuation.swift](native/H3Spike/Sources/H3cApp/Continuation.swift),
 [ChainGeneration.swift](native/H3Spike/Sources/H3cApp/ChainGeneration.swift)).
@@ -594,7 +594,7 @@ extreme case but doesn't change this scaling.
 **If a generation with references is unexpectedly slow**: use a
 smaller/shorter reference, fewer denoising steps, or a higher `reuse`
 value. An extreme case is refused outright with a clear error (a 512 MiB
-attention-mask cap in the MPSGraph fallback path, see [h3_gpu.m](src/gpu/h3_gpu.m))
+attention-mask cap in the MPSGraph fallback path, see [h3_gpu_attention.m](src/gpu/h3_gpu_attention.m))
 rather than risking an out-of-memory crash.
 
 ### Checking a request before it runs

@@ -27,10 +27,16 @@ MiniMax-H3を直接ダウンロードするか尋ねます（[機能](TECHNICAL.
 ```
 include/                        公開C API: h3.h（h3_load_dir、h3_generate、h3_build_attention_cache、...）、
                                  h3_vsr.h、h3_seedvr2.h、h3_latent_upscale.h、h3_lora_extract.h、h3_refmod.h
-src/core/                       h3.c（生成の流れ）、ホスト側の計算、メモリ、計画
+src/core/                       h3.c（h3_generate）と、その隣の h3_params.c・h3_references.c・h3_conditioning.c・
+                                 h3_plan_generation.c。ホスト側の計算、メモリ、計画。h3_options.c は H3_ で始まる
+                                 環境変数すべての表（build/bin/h3_options で一覧）
 src/io/                         重み（safetensors、GGUF、量子化形式）、トークナイザー、動画・音声ファイル
-src/model/                      DiTとスケジュール、LoRA、HyperFlow、文章・画像のエンコーダー、VAE、RefMod
-src/gpu/                        Metalの層（h3_gpu.m）と、エンジンのMetalコンピュートカーネル（h3_shaders_core.metal）
+src/model/                      DiT（h3_dit.c と h3_dit_setup.c・h3_dit_weights.c・h3_dit_block.c）とスケジュール、
+                                 LoRA、HyperFlow、文章・画像のエンコーダー、VAE、RefMod。h3_model_family.c は
+                                 モデルの系統・サンプラー・計算方式の表
+src/gpu/                        Metalの層（h3_gpu.m と h3_gpu_blocks.m・h3_gpu_linear.m・h3_gpu_attention.m・
+                                 h3_gpu_conv.m）と、エンジンのMetalコンピュートカーネル（h3_shaders_core.metal・
+                                 h3_shaders_tensorops.metal・h3_shaders_blocks.metal）
 src/upscale/                    拡大モジュール（libh3upscale.aになる）: SwiftVR（h3_vsr*）、SeedVR2（h3_seedvr2*）、
                                  潜在の拡大、そのGPUコード（h3_gpu_vsr.m、h3_gpu_sv2.m）とカーネル
 tools/                          コマンドラインのツール（h3_build_attention_cache.c -> build_attention_cache、

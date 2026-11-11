@@ -26,10 +26,16 @@ to skip that step and stream the original BF16 weights instead.
 ```
 include/                        Public C API: h3.h (h3_load_dir, h3_generate, h3_build_attention_cache, ...),
                                  h3_vsr.h, h3_seedvr2.h, h3_latent_upscale.h, h3_lora_extract.h, h3_refmod.h
-src/core/                       h3.c (the generation flow), host math, memory, planning
+src/core/                       h3.c (h3_generate) with h3_params.c, h3_references.c, h3_conditioning.c and
+                                 h3_plan_generation.c beside it; host math, memory, planning; h3_options.c, the
+                                 table of every H3_ environment switch (`build/bin/h3_options` prints it)
 src/io/                         Weights (safetensors, GGUF, quantized formats), tokenizer, video/audio files
-src/model/                      DiT and its schedule, LoRA, HyperFlow, the text/vision encoders, the VAEs, RefMod
-src/gpu/                        The Metal layer (h3_gpu.m) and the engine's Metal compute kernels (h3_shaders_core.metal)
+src/model/                      The DiT (h3_dit.c with h3_dit_setup.c, h3_dit_weights.c, h3_dit_block.c) and its schedule,
+                                 LoRA, HyperFlow, the text/vision encoders, the VAEs, RefMod; h3_model_family.c, the
+                                 tables of model families, samplers and compute modes
+src/gpu/                        The Metal layer (h3_gpu.m with h3_gpu_blocks.m, h3_gpu_linear.m, h3_gpu_attention.m,
+                                 h3_gpu_conv.m) and the engine's Metal compute kernels (h3_shaders_core.metal,
+                                 h3_shaders_tensorops.metal, h3_shaders_blocks.metal)
 src/upscale/                    The upscale module, built as libh3upscale.a: SwiftVR (h3_vsr*), SeedVR2 (h3_seedvr2*),
                                  the latent upscaler, their GPU code (h3_gpu_vsr.m, h3_gpu_sv2.m) and kernels
 tools/                          Command-line drivers (h3_build_attention_cache.c -> build_attention_cache,
