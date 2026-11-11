@@ -1,5 +1,7 @@
+import Combine
 import CH3
 import H3Engine
+import H3Upscale
 import SwiftUI
 
 /// The files the "Open-H3 再生成" enlargement needs, pinned to one revision of
@@ -584,5 +586,61 @@ struct OpenH3SetupView: View {
             removalError = String(localized: "削除できませんでした（詳細: \(error.localizedDescription)）")
         }
         version += 1
+    }
+}
+
+/// OpenH3 as the upscalers see its model (UpscalerModel): the model manager's
+/// row, the sheet's button and GET /api/upscalers read it here.
+final class OpenH3Kit: UpscalerModel {
+    static let shared = OpenH3Kit()
+    let id = "openH3"
+    var title: String { VideoUpscaler.openH3.label }
+    var directory: String { OpenH3Model.directory }
+    var isReady: Bool { VideoUpscaler.openH3.isAvailable }
+    @MainActor var isBusy: Bool { OpenH3Setup.shared.isBusy }
+    @MainActor var phaseText: String { OpenH3Setup.shared.phase.apiText }
+    @MainActor var phaseChanged: AnyPublisher<Void, Never> {
+        OpenH3Setup.shared.$phase.dropFirst().map { _ in () }.receive(on: DispatchQueue.main).eraseToAnyPublisher()
+    }
+
+    @MainActor var statusText: String {
+        if OpenH3Setup.shared.isBusy {
+            return String(localized: "準備中です（\(OpenH3Setup.shared.phase.apiText)）")
+        }
+        if VideoUpscaler.openH3.isAvailable {
+            let size = ByteCountFormatter.string(fromByteCount: OpenH3Model.bytesOnDisk(), countStyle: .file)
+            let check = OpenH3Model.verified ? "" : String(localized: "。取得元との照合はまだです（「管理…」から）")
+            return String(localized: "使えます（精緻化LoRAは取り出し済み、\(size)）") + check
+        }
+        if OpenH3Model.upsamplerPresent && OpenH3Model.refinerPresent {
+            return String(localized: "LightX2V Turbo v1.2のファイルがありません（「準備…」でダウンロードします）。")
+        }
+        return String(localized: "まだありません。約13GBのダウンロードと、精緻化LoRAの取り出しが必要です（終わると約5GB）。")
+    }
+
+
+    @MainActor var apiFields: [String: Any] {
+        var item: [String: Any] = [:]
+            item["model_directory"] = OpenH3Model.directory
+            item["model_installed"] = OpenH3Model.ready
+            item["license_accepted"] = OpenH3Model.licenseAcceptedAt != nil
+            item["setup"] = OpenH3Setup.shared.phase.apiText
+            item["revision"] = OpenH3Model.revision
+            item["declared_license"] = OpenH3Model.declaredLicense
+            item["verified"] = OpenH3Model.verified
+            item["verified_at"] = OpenH3Model.verified
+                ? OpenH3Model.provenance.map { ISO8601DateFormatter().string(from: $0.verifiedAt) } as Any
+                : NSNull()
+            item["turbo"] = OpenH3Model.turboPath as Any
+            item["max_pixels"] = OpenH3Plan.maxPixels
+            item["default_strength"] = OpenH3Strength.standard.rawValue
+            item["strengths"] = OpenH3Strength.allCases.map { strength -> [String: Any] in
+                ["id": strength.rawValue, "label": strength.label, "sigmas": strength.sigmas.map { (Double($0) * 1e6).rounded() / 1e6 }]
+            }
+        return item
+    }
+
+    @MainActor func setupView(busy: Bool, close: @escaping () -> Void) -> AnyView {
+        AnyView(OpenH3SetupView(busy: busy, close: close))
     }
 }

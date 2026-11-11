@@ -242,59 +242,11 @@ extension GenerationViewModel {
                 // video may stop earlier (a side, the GPU's memory, the canvas).
                 item["min_scale"] = upscaler.factorFloor
                 item["max_scale"] = upscaler.factorCeiling
-                if upscaler.isSwiftVR {
-                    item["model_directory"] = SwiftVRModel.directory
-                    item["model_installed"] = SwiftVRModel.weightsPresent
-                    item["original_removed"] = SwiftVRModel.originalRemoved
-                    item["cache"] = SwiftVRModel.cachePath as Any
-                    item["license_accepted"] = SwiftVRModel.licenseAcceptedAt != nil
-                    item["setup"] = SwiftVRSetup.shared.phase.apiText
-                    // The pinned revision, what it declared, and whether the
-                    // files here were checked against it (appendix A.5).
-                    item["revision"] = SwiftVRModel.revision
-                    item["declared_license"] = SwiftVRModel.declaredLicense
-                    item["verified"] = SwiftVRModel.verified
-                    item["verified_at"] = SwiftVRModel.verified
-                        ? SwiftVRModel.provenance.map { ISO8601DateFormatter().string(from: $0.verifiedAt) } as Any
-                        : NSNull()
-                }
-                if upscaler == .openH3 {
-                    item["model_directory"] = OpenH3Model.directory
-                    item["model_installed"] = OpenH3Model.ready
-                    item["license_accepted"] = OpenH3Model.licenseAcceptedAt != nil
-                    item["setup"] = OpenH3Setup.shared.phase.apiText
-                    item["revision"] = OpenH3Model.revision
-                    item["declared_license"] = OpenH3Model.declaredLicense
-                    item["verified"] = OpenH3Model.verified
-                    item["verified_at"] = OpenH3Model.verified
-                        ? OpenH3Model.provenance.map { ISO8601DateFormatter().string(from: $0.verifiedAt) } as Any
-                        : NSNull()
-                    item["turbo"] = OpenH3Model.turboPath as Any
-                    item["max_pixels"] = OpenH3Plan.maxPixels
-                    item["default_strength"] = OpenH3Strength.standard.rawValue
-                    item["strengths"] = OpenH3Strength.allCases.map { strength -> [String: Any] in
-                        ["id": strength.rawValue, "label": strength.label, "sigmas": strength.sigmas.map { (Double($0) * 1e6).rounded() / 1e6 }]
-                    }
-                }
-                if upscaler.isSeedVR2 {
-                    item["model_directory"] = SeedVR2Model.directory
-                    item["model_installed"] = SeedVR2Model.weightsPresent
-                    item["license_accepted"] = SeedVR2Model.licenseAcceptedAt != nil
-                    item["setup"] = SeedVR2Setup.shared.phase.apiText
-                    item["revision"] = SeedVR2Model.revision
-                    item["declared_license"] = SeedVR2Model.declaredLicense
-                    item["verified"] = SeedVR2Model.verified
-                    item["verified_at"] = SeedVR2Model.verified
-                        ? SeedVR2Model.provenance.map { ISO8601DateFormatter().string(from: $0.verifiedAt) } as Any
-                        : NSNull()
-                }
-                if upscaler == .seedVR2Video {
-                    // How it cuts the video (appendix A.10's choice; fixed).
-                    let window = SeedVR2VideoWindow.chosen
-                    item["window_frames"] = window.windowFrames
-                    item["overlap_frames"] = window.overlapFrames
-                    item["blend"] = window.blend ? "hann" : "cut"
-                }
+                // Its model (where it goes, how far it is set up, the pinned
+                // revision and whether the files were checked against it),
+                // then what the method itself adds.
+                if let model = upscaler.model { item.merge(model.apiFields) { _, new in new } }
+                item.merge(upscaler.method.apiFields) { _, new in new }
                 return item
             })
         case ("POST", "/api/upscalers/openH3/setup"):

@@ -29,18 +29,23 @@ include/                        Public C API: h3.h (h3_load_dir, h3_generate, h3
 src/core/                       h3.c (the generation flow), host math, memory, planning
 src/io/                         Weights (safetensors, GGUF, quantized formats), tokenizer, video/audio files
 src/model/                      DiT and its schedule, LoRA, HyperFlow, the text/vision encoders, the VAEs, RefMod
-src/gpu/                        The Metal layer (h3_gpu.m) and h3_shaders.metal, all Metal compute kernels
-src/upscale/                    The upscalers: SwiftVR (h3_vsr*), SeedVR2 (h3_seedvr2*), the latent upscaler
+src/gpu/                        The Metal layer (h3_gpu.m) and the engine's Metal compute kernels (h3_shaders_core.metal)
+src/upscale/                    The upscale module, built as libh3upscale.a: SwiftVR (h3_vsr*), SeedVR2 (h3_seedvr2*),
+                                 the latent upscaler, their GPU code (h3_gpu_vsr.m, h3_gpu_sv2.m) and kernels
 tools/                          Command-line drivers (h3_build_attention_cache.c -> build_attention_cache,
                                  h3_build_adaln_curve.c -> build_adaln_curve, ...) and fixture scripts
-build/                          Everything `make` writes: build/libh3.a, build/obj/, build/bin/ (not in git)
+build/                          Everything `make` writes: build/libh3.a, build/libh3upscale.a, build/h3_shaders.metal
+                                 (the kernel sources joined), build/obj/, build/bin/ (not in git)
 tests/                          C test suite (make test / make parity)
 native/H3Spike/                 Native macOS app (SwiftPM)
   Sources/CH3                   C shim exposing libh3.a's C API to Swift
   Sources/H3Engine              Swift async wrapper over the C API (AsyncThrowingStream-based progress/cancellation)
+  Sources/H3Upscale             Swift wrappers of the upscale module (SwiftVR, SeedVR2, the latent upscaler)
   Sources/H3cApp                The SwiftUI app itself (H3cApp.app), including ModelLibrary/ModelManagerView
                                  (registered models/LoRAs), ModelDownloader (Hugging Face downloads), and
-                                 HTTPServer/GenerationViewModel+API (the embedded automation API)
+                                 HTTPServer/GenerationViewModel+API (the embedded automation API);
+                                 Upscale/ holds the enlargement feature: one type per method in Upscale/Methods,
+                                 listed in UpscalerRegistry (UpscalerMethod.swift)
   Sources/H3Spike                Minimal in-process spike/reference client for H3Engine, not the shipped app
   package_app.sh                Builds + bundles H3cApp.app; also signs/notarizes it, see below
   make_dmg.sh                   Packages the built H3cApp.app into a distributable .dmg
@@ -63,8 +68,10 @@ make parity            # just the Metal/MLX numerical checks
 mentioned above, and `make build_adaln_curve` the curve-form AdaLN tool;
 neither is part of the default `make` target.
 
-Everything `make` builds lands in `build/`: the library at `build/libh3.a`, the
-tools and tests in `build/bin/` (run them from the repo root, e.g.
+Everything `make` builds lands in `build/`: the generation engine at
+`build/libh3.a`, the upscale module at `build/libh3upscale.a` (it uses the engine,
+not the other way round; `make libh3.a` builds both and the joined shader source),
+the tools and tests in `build/bin/` (run them from the repo root, e.g.
 `build/bin/h3_gguf_tool`).
 
 ### Native app

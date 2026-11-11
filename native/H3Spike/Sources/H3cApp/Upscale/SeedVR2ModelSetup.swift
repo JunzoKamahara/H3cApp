@@ -1,5 +1,7 @@
+import Combine
 import AppKit
 import H3Engine
+import H3Upscale
 import SwiftUI
 
 /// The SeedVR2-3B model on this Mac (VideoUpscaler.seedVR2ModelDirectory):
@@ -476,5 +478,52 @@ struct SeedVR2SetupView: View {
             removalError = String(localized: "削除できませんでした（詳細: \(error.localizedDescription)）")
         }
         version += 1
+    }
+}
+
+/// SeedVR2 as the upscalers see its model (UpscalerModel): the model manager's
+/// row, the sheet's button and GET /api/upscalers read it here.
+final class SeedVR2Kit: UpscalerModel {
+    static let shared = SeedVR2Kit()
+    let id = "seedVR2"
+    var title: String { VideoUpscaler.seedVR2.label }
+    var directory: String { SeedVR2Model.directory }
+    var isReady: Bool { VideoUpscaler.seedVR2.isAvailable }
+    @MainActor var isBusy: Bool { SeedVR2Setup.shared.isBusy }
+    @MainActor var phaseText: String { SeedVR2Setup.shared.phase.apiText }
+    @MainActor var phaseChanged: AnyPublisher<Void, Never> {
+        SeedVR2Setup.shared.$phase.dropFirst().map { _ in () }.receive(on: DispatchQueue.main).eraseToAnyPublisher()
+    }
+
+    @MainActor var statusText: String {
+        if SeedVR2Setup.shared.isBusy {
+            return String(localized: "準備中です（\(SeedVR2Setup.shared.phase.apiText)）")
+        }
+        if VideoUpscaler.seedVR2.isAvailable {
+            let size = ByteCountFormatter.string(fromByteCount: SeedVR2Model.bytesOnDisk(), countStyle: .file)
+            let check = SeedVR2Model.verified ? "" : String(localized: "。取得元との照合はまだです（「管理…」から）")
+            return String(localized: "使えます（\(size)）") + check
+        }
+        return String(localized: "まだありません。約4.7GBのダウンロードが必要です（変換は不要）。")
+    }
+
+
+    @MainActor var apiFields: [String: Any] {
+        var item: [String: Any] = [:]
+            item["model_directory"] = SeedVR2Model.directory
+            item["model_installed"] = SeedVR2Model.weightsPresent
+            item["license_accepted"] = SeedVR2Model.licenseAcceptedAt != nil
+            item["setup"] = SeedVR2Setup.shared.phase.apiText
+            item["revision"] = SeedVR2Model.revision
+            item["declared_license"] = SeedVR2Model.declaredLicense
+            item["verified"] = SeedVR2Model.verified
+            item["verified_at"] = SeedVR2Model.verified
+                ? SeedVR2Model.provenance.map { ISO8601DateFormatter().string(from: $0.verifiedAt) } as Any
+                : NSNull()
+        return item
+    }
+
+    @MainActor func setupView(busy: Bool, close: @escaping () -> Void) -> AnyView {
+        AnyView(SeedVR2SetupView(busy: busy, close: close))
     }
 }

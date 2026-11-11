@@ -159,6 +159,18 @@ docs/               そのまま（Pages の公開元）
 - **フェーズ 1（9eb052d）**：生成物は `build/`（`build/libh3.a`・`build/obj/`・`build/bin/`）。`make h3_tests` などの名前はそのまま使える。
 - **フェーズ 2（7662bf7 が移動だけ、1411e82 がパスの修正）**：`make test`、エンジンの照合、アプリの照合（拡大 8 方式・生成 1 本）が基準と一致。シェーダーは `build/bin/h3_shaders.metal` に複製を置く（ツールは作業フォルダになければ実行ファイルの隣を読む）。
 - **フェーズ 3**：計画書とサイトの保守メモを `plans/` に移した。
+- **フェーズ 4（197f491）**：`libh3.a`（生成）と `libh3upscale.a`（拡大）に分けた。
+  - `h3_gpu.m` から拡大の GPU コード約 1,450 行を `src/upscale/h3_gpu_vsr.m`・`h3_gpu_sv2.m` に移した。共有するのは `src/gpu/h3_gpu_internal.h`（GPU とテンソルのオブジェクト、補助関数 11 個）だけ。
+  - カーネル名は `h3_gpu_register_kernels` で読み込み時に登録する。拡大をリンクしないプログラム（`h3_generate_cli` など）は、拡大のパイプラインを作らない。
+  - シェーダーは `h3_shaders_core.metal`・`h3_shaders_vsr.metal`・`h3_shaders_seedvr2.metal` の 3 つ。つなげた `build/h3_shaders.metal` は、割る前のファイルと 1 バイトも違わない（MD5 一致）。本体をさらに dit・vae に割るのはフェーズ 8。
+  - `libh3.a` に拡大のシンボルは 0（`nm` で確認）。`make test`、エンジンとアプリの照合が基準と一致。
+  - 分かったこと：`tests/bench_dit.c`・`test_real_dit.c`・`test_semantic_dit.c` は main の時点で引数の数が合わず、コンパイルできない（`make test` には入っていない）。この計画では直していない。
+- **フェーズ 5**：アプリの拡大を `Sources/H3cApp/Upscale/` にまとめた。
+  - 方式は `UpscalerMethod`（`Upscale/Methods/` に 6 ファイル、9 方式）、ダウンロードするモデルは `UpscalerModel`（SwiftVR・SeedVR2・Open-H3 の `…Kit`）。`UpscalerRegistry` に並べる。
+  - `VideoUpscaler` の enum は、API と記録に使う名前として残した。方式ごとの `switch` は 0 か所になり、選択画面・モデル管理・`GET /api/upscalers` は登録表を回す。新しい方式は「enum の case・型・登録表の 1 行」の 3 か所。
+  - Swift のラッパー（`H3VSR.swift`・`H3SeedVR2.swift`・`H3LatentUpscaler.swift`）は `H3Upscale` ターゲットに分けた。
+  - **見送ったこと**：3 つの `*ModelSetup.swift` のダウンロードと照合の共通化。20GB 級のダウンロードをやり直さないと確かめられないため、手を付けていない。
+  - **確かめていないこと**：選択画面とモデル管理の画面を目で見る確認（「モデルを準備…」のシートの開閉、準備中の表示の更新）。コンパイルと API の応答、拡大 8 方式と生成の出力は基準と一致。
 
 ## 8. 合格の条件
 

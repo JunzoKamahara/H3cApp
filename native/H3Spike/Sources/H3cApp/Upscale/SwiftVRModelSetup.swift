@@ -1,5 +1,7 @@
+import Combine
 import AppKit
 import H3Engine
+import H3Upscale
 import SwiftUI
 
 /// The SwiftVR model on this Mac (VideoUpscaler.swiftVRModelDirectory):
@@ -710,5 +712,63 @@ struct SwiftVRSetupView: View {
             removalError = String(localized: "削除できませんでした（詳細: \(error.localizedDescription)）")
         }
         version += 1
+    }
+}
+
+/// SwiftVR as the upscalers see its model (UpscalerModel): the model manager's
+/// row, the sheet's button and GET /api/upscalers read it here.
+final class SwiftVRKit: UpscalerModel {
+    static let shared = SwiftVRKit()
+    let id = "swiftVR"
+    var title: String { VideoUpscaler.swiftVR.label }
+    var directory: String { SwiftVRModel.directory }
+    var isReady: Bool { VideoUpscaler.swiftVR.isAvailable }
+    @MainActor var isBusy: Bool { SwiftVRSetup.shared.isBusy }
+    @MainActor var phaseText: String { SwiftVRSetup.shared.phase.apiText }
+    @MainActor var phaseChanged: AnyPublisher<Void, Never> {
+        SwiftVRSetup.shared.$phase.dropFirst().map { _ in () }.receive(on: DispatchQueue.main).eraseToAnyPublisher()
+    }
+
+    @MainActor var statusText: String {
+        if SwiftVRSetup.shared.isBusy {
+            return String(localized: "準備中です（\(SwiftVRSetup.shared.phase.apiText)）")
+        }
+        if VideoUpscaler.swiftVR.isAvailable {
+            let size = ByteCountFormatter.string(fromByteCount: SwiftVRModel.bytesOnDisk(), countStyle: .file)
+            let check = SwiftVRModel.verified ? "" : String(localized: "。取得元との照合はまだです（「管理…」から）")
+            if SwiftVRModel.originalRemoved {
+                return String(localized: "使えます（\(SwiftVRModel.usesInt8 ? "int8" : "BF16")で変換済み、元の重みは削除済み、\(size)）") + check
+            }
+            return String(localized: "使えます（\(SwiftVRModel.usesInt8 ? "int8" : "BF16")で変換済み、\(size)）") + check
+        }
+        if SwiftVRModel.originalRemoved {
+            return String(localized: "元の重みを削除したあとで、キャッシュが使えなくなりました。もう一度ダウンロードと変換が必要です。")
+        }
+        if SwiftVRModel.weightsPresent { return String(localized: "重みはありますが、このMac用に変換されていません。") }
+        return String(localized: "まだありません。約20GBのダウンロードと変換が必要です。")
+    }
+
+
+    @MainActor var apiFields: [String: Any] {
+        var item: [String: Any] = [:]
+            item["model_directory"] = SwiftVRModel.directory
+            item["model_installed"] = SwiftVRModel.weightsPresent
+            item["original_removed"] = SwiftVRModel.originalRemoved
+            item["cache"] = SwiftVRModel.cachePath as Any
+            item["license_accepted"] = SwiftVRModel.licenseAcceptedAt != nil
+            item["setup"] = SwiftVRSetup.shared.phase.apiText
+            // The pinned revision, what it declared, and whether the
+            // files here were checked against it (appendix A.5).
+            item["revision"] = SwiftVRModel.revision
+            item["declared_license"] = SwiftVRModel.declaredLicense
+            item["verified"] = SwiftVRModel.verified
+            item["verified_at"] = SwiftVRModel.verified
+                ? SwiftVRModel.provenance.map { ISO8601DateFormatter().string(from: $0.verifiedAt) } as Any
+                : NSNull()
+        return item
+    }
+
+    @MainActor func setupView(busy: Bool, close: @escaping () -> Void) -> AnyView {
+        AnyView(SwiftVRSetupView(busy: busy, close: close))
     }
 }

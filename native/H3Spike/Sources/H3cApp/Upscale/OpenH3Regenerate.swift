@@ -1,5 +1,6 @@
 import Foundation
 import H3Engine
+import H3Upscale
 
 // "Open-H3 再生成": enlarging a generated clip by regenerating it with H3
 // itself - its latent upscaled onto the larger grid (LBH's 3D-conv latent

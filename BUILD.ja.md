@@ -30,18 +30,23 @@ include/                        公開C API: h3.h（h3_load_dir、h3_generate、
 src/core/                       h3.c（生成の流れ）、ホスト側の計算、メモリ、計画
 src/io/                         重み（safetensors、GGUF、量子化形式）、トークナイザー、動画・音声ファイル
 src/model/                      DiTとスケジュール、LoRA、HyperFlow、文章・画像のエンコーダー、VAE、RefMod
-src/gpu/                        Metalの層（h3_gpu.m）と、すべてのMetalコンピュートカーネル（h3_shaders.metal）
-src/upscale/                    拡大: SwiftVR（h3_vsr*）、SeedVR2（h3_seedvr2*）、潜在の拡大
+src/gpu/                        Metalの層（h3_gpu.m）と、エンジンのMetalコンピュートカーネル（h3_shaders_core.metal）
+src/upscale/                    拡大モジュール（libh3upscale.aになる）: SwiftVR（h3_vsr*）、SeedVR2（h3_seedvr2*）、
+                                 潜在の拡大、そのGPUコード（h3_gpu_vsr.m、h3_gpu_sv2.m）とカーネル
 tools/                          コマンドラインのツール（h3_build_attention_cache.c -> build_attention_cache、
                                  h3_build_adaln_curve.c -> build_adaln_curve など）とフィクスチャ用スクリプト
-build/                          makeの出力すべて: build/libh3.a、build/obj/、build/bin/（gitには入れない）
+build/                          makeの出力すべて: build/libh3.a、build/libh3upscale.a、build/h3_shaders.metal
+                                 （カーネルのソースをつなげたもの）、build/obj/、build/bin/（gitには入れない）
 tests/                          Cテストスイート（make test / make parity）
 native/H3Spike/                 ネイティブmacOSアプリ（SwiftPM）
   Sources/CH3                   libh3.aのC APIをSwiftへ橋渡しするCシム
   Sources/H3Engine              C APIのSwift非同期ラッパー（AsyncThrowingStreamベースの進捗/キャンセル）
+  Sources/H3Upscale             拡大モジュールのSwiftラッパー（SwiftVR、SeedVR2、潜在の拡大）
   Sources/H3cApp                SwiftUIアプリ本体（H3cApp.app）。ModelLibrary/ModelManagerView（登録済み
                                  モデル/LoRA）、ModelDownloader（Hugging Faceダウンロード）、
                                  HTTPServer/GenerationViewModel+API（組み込み自動化API）を含む
+                                 Upscale/ は拡大の機能。方式ごとに1つの型（Upscale/Methods）があり、
+                                 UpscalerRegistry（UpscalerMethod.swift）に並ぶ
   Sources/H3Spike                H3Engine用の最小限のプロセス内スパイク/参照クライアント。配布アプリ本体ではない
   package_app.sh                H3cApp.appをビルド・パッケージング。署名・公証も行う（下記参照）
   make_dmg.sh                   ビルド済みH3cApp.appを配布用.dmgにまとめる
@@ -64,8 +69,9 @@ make parity            # Metal/MLXの数値比較チェックのみ
 `make build_adaln_curve`は曲線形AdaLNのツールをビルドします。
 どちらもデフォルトの`make`ターゲットには含まれません。
 
-`make`の出力はすべて`build/`に入ります。ライブラリは`build/libh3.a`、ツールとテストは
-`build/bin/`です（リポジトリ直下から`build/bin/h3_gguf_tool`のように実行します）。
+`make`の出力はすべて`build/`に入ります。生成のエンジンは`build/libh3.a`、拡大モジュールは
+`build/libh3upscale.a`です（拡大がエンジンを使い、逆はありません。`make libh3.a`で両方と、
+つなげたシェーダーのソースができます）。ツールとテストは`build/bin/`です（リポジトリ直下から`build/bin/h3_gguf_tool`のように実行します）。
 
 ### ネイティブアプリ
 

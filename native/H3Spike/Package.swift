@@ -62,6 +62,13 @@ let package = Package(
             dependencies: ["CH3"],
             path: "Sources/H3Engine"
         ),
+        // The upscalers' Swift wrappers (SwiftVR, SeedVR2, the latent upscaler):
+        // apart from the generation engine's, as libh3upscale.a is from libh3.a.
+        .target(
+            name: "H3Upscale",
+            dependencies: ["CH3"],
+            path: "Sources/H3Upscale"
+        ),
         .executableTarget(
             name: "H3Spike",
             dependencies: ["CH3"],
@@ -70,7 +77,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "H3cApp",
-            dependencies: ["H3Engine"],
+            dependencies: ["H3Engine", "H3Upscale"],
             path: "Sources/H3cApp",
             linkerSettings: h3LinkerSettings
         ),

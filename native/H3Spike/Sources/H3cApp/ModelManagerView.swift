@@ -46,9 +46,8 @@ struct ModelManagerView: View {
 
     private var palette: H3Palette { H3Palette(colorScheme) }
 
-    @State private var showingSwiftVRSetup = false
-    @State private var showingSeedVR2Setup = false
-    @State private var showingOpenH3Setup = false
+    /// The upscaler model whose setup sheet is open.
+    @State private var upscalerSetup: UpscalerModelRef?
 
     private enum Section: String, CaseIterable, Identifiable {
         case models, loras, refmods, upscalers
@@ -701,42 +700,20 @@ struct ModelManagerView: View {
     private var upscalersSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             List {
-                HStack(alignment: .top, spacing: H3Spacing.md) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(VideoUpscaler.swiftVR.label).font(.system(size: 13, weight: .medium))
-                        Text(swiftVRStatusText).font(.caption).foregroundStyle(palette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(verbatim: SwiftVRModel.directory).font(.caption2).foregroundStyle(palette.textSecondary)
-                            .textSelection(.enabled)
+                ForEach(UpscalerRegistry.models.map(UpscalerModelRef.init)) { item in
+                    HStack(alignment: .top, spacing: H3Spacing.md) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.model.title).font(.system(size: 13, weight: .medium))
+                            Text(item.model.statusText).font(.caption).foregroundStyle(palette.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(verbatim: item.model.directory).font(.caption2).foregroundStyle(palette.textSecondary)
+                                .textSelection(.enabled)
+                        }
+                        Spacer()
+                        Button(item.model.isReady ? "管理…" : "準備…") { upscalerSetup = item }
                     }
-                    Spacer()
-                    Button(VideoUpscaler.swiftVR.isAvailable ? "管理…" : "準備…") { showingSwiftVRSetup = true }
+                    .padding(.vertical, 4)
                 }
-                .padding(.vertical, 4)
-                HStack(alignment: .top, spacing: H3Spacing.md) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(VideoUpscaler.seedVR2.label).font(.system(size: 13, weight: .medium))
-                        Text(seedVR2StatusText).font(.caption).foregroundStyle(palette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(verbatim: SeedVR2Model.directory).font(.caption2).foregroundStyle(palette.textSecondary)
-                            .textSelection(.enabled)
-                    }
-                    Spacer()
-                    Button(VideoUpscaler.seedVR2.isAvailable ? "管理…" : "準備…") { showingSeedVR2Setup = true }
-                }
-                .padding(.vertical, 4)
-                HStack(alignment: .top, spacing: H3Spacing.md) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(VideoUpscaler.openH3.label).font(.system(size: 13, weight: .medium))
-                        Text(openH3StatusText).font(.caption).foregroundStyle(palette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(verbatim: OpenH3Model.directory).font(.caption2).foregroundStyle(palette.textSecondary)
-                            .textSelection(.enabled)
-                    }
-                    Spacer()
-                    Button(VideoUpscaler.openH3.isAvailable ? "管理…" : "準備…") { showingOpenH3Setup = true }
-                }
-                .padding(.vertical, 4)
                 HStack(alignment: .top, spacing: H3Spacing.md) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Real-ESRGAN 汎用・アニメ").font(.system(size: 13, weight: .medium))
@@ -753,61 +730,9 @@ struct ModelManagerView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(H3Spacing.md)
         }
-        .sheet(isPresented: $showingSwiftVRSetup) {
-            SwiftVRSetupView(busy: isGenerating) { showingSwiftVRSetup = false }
+        .sheet(item: $upscalerSetup) { item in
+            item.model.setupView(busy: isGenerating) { upscalerSetup = nil }
         }
-        .sheet(isPresented: $showingSeedVR2Setup) {
-            SeedVR2SetupView(busy: isGenerating) { showingSeedVR2Setup = false }
-        }
-        .sheet(isPresented: $showingOpenH3Setup) {
-            OpenH3SetupView(busy: isGenerating) { showingOpenH3Setup = false }
-        }
-    }
-
-    private var openH3StatusText: String {
-        if OpenH3Setup.shared.isBusy {
-            return String(localized: "準備中です（\(OpenH3Setup.shared.phase.apiText)）")
-        }
-        if VideoUpscaler.openH3.isAvailable {
-            let size = ByteCountFormatter.string(fromByteCount: OpenH3Model.bytesOnDisk(), countStyle: .file)
-            let check = OpenH3Model.verified ? "" : String(localized: "。取得元との照合はまだです（「管理…」から）")
-            return String(localized: "使えます（精緻化LoRAは取り出し済み、\(size)）") + check
-        }
-        if OpenH3Model.upsamplerPresent && OpenH3Model.refinerPresent {
-            return String(localized: "LightX2V Turbo v1.2のファイルがありません（「準備…」でダウンロードします）。")
-        }
-        return String(localized: "まだありません。約13GBのダウンロードと、精緻化LoRAの取り出しが必要です（終わると約5GB）。")
-    }
-
-    private var seedVR2StatusText: String {
-        if SeedVR2Setup.shared.isBusy {
-            return String(localized: "準備中です（\(SeedVR2Setup.shared.phase.apiText)）")
-        }
-        if VideoUpscaler.seedVR2.isAvailable {
-            let size = ByteCountFormatter.string(fromByteCount: SeedVR2Model.bytesOnDisk(), countStyle: .file)
-            let check = SeedVR2Model.verified ? "" : String(localized: "。取得元との照合はまだです（「管理…」から）")
-            return String(localized: "使えます（\(size)）") + check
-        }
-        return String(localized: "まだありません。約4.7GBのダウンロードが必要です（変換は不要）。")
-    }
-
-    private var swiftVRStatusText: String {
-        if SwiftVRSetup.shared.isBusy {
-            return String(localized: "準備中です（\(SwiftVRSetup.shared.phase.apiText)）")
-        }
-        if VideoUpscaler.swiftVR.isAvailable {
-            let size = ByteCountFormatter.string(fromByteCount: SwiftVRModel.bytesOnDisk(), countStyle: .file)
-            let check = SwiftVRModel.verified ? "" : String(localized: "。取得元との照合はまだです（「管理…」から）")
-            if SwiftVRModel.originalRemoved {
-                return String(localized: "使えます（\(SwiftVRModel.usesInt8 ? "int8" : "BF16")で変換済み、元の重みは削除済み、\(size)）") + check
-            }
-            return String(localized: "使えます（\(SwiftVRModel.usesInt8 ? "int8" : "BF16")で変換済み、\(size)）") + check
-        }
-        if SwiftVRModel.originalRemoved {
-            return String(localized: "元の重みを削除したあとで、キャッシュが使えなくなりました。もう一度ダウンロードと変換が必要です。")
-        }
-        if SwiftVRModel.weightsPresent { return String(localized: "重みはありますが、このMac用に変換されていません。") }
-        return String(localized: "まだありません。約20GBのダウンロードと変換が必要です。")
     }
 
     private func emptyState(_ text: String) -> some View {

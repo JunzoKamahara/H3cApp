@@ -4,6 +4,7 @@ import AVFoundation
 import CoreVideo
 import Foundation
 import H3Engine
+import H3Upscale
 import Metal
 import MetalFX
 
@@ -12,8 +13,10 @@ import MetalFX
 // sizes enlarge the decoded frames the same way - so it works on any video,
 // its sound copied as it is.
 
-/// How the frames are enlarged (the choice in UpscaleSheet). Each runs in
-/// the app, frame by frame; this is where other upscalers go.
+/// How the frames are enlarged (the choice in UpscaleSheet): the names the
+/// API and the saved records use. What each one does is its UpscalerMethod
+/// (Upscale/Methods); a new upscaler is a case here, a type there and a line
+/// in UpscalerRegistry.
 enum VideoUpscaler: String, CaseIterable, Identifiable {
     /// vImage's high-quality (Lanczos) resampling, as the engine uses for
     /// the ×2 sizes (h3_resize_rgb24_high_quality). On the CPU.
@@ -55,19 +58,45 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var label: String {
-        switch self {
-        case .standard: return String(localized: "標準（高品質な拡大）")
-        case .metalFX: return String(localized: "MetalFX（輪郭を保つ拡大）")
-        case .realESRGANGeneral: return String(localized: "Real-ESRGAN 汎用（AI超解像）")
-        case .realESRGANAnime: return String(localized: "Real-ESRGAN アニメ（AI超解像）")
-        case .swiftVR: return String(localized: "SwiftVR（AI動画超解像）")
-        case .swiftVRFourX: return String(localized: "SwiftVR 4倍で生成してから縮小（質感が穏やか）")
-        case .seedVR2: return String(localized: "SeedVR2（AI超解像・細部重視、非常に遅い・試験的）")
-        case .seedVR2Video: return String(localized: "SeedVR2 動画（ちらつきを抑える・非常に遅い・試験的）")
-        case .openH3: return String(localized: "Open-H3 再生成（H3で描き直し・最大1344×768、非常に遅い・試験的）")
-        }
-    }
+    /// What this method is and does: its own type (Upscale/Methods), found
+    /// in UpscalerRegistry. Everything below asks it.
+    var method: any UpscalerMethod { UpscalerRegistry.method(for: self) }
+
+    var label: String { method.label }
+
+    /// What it is and what it suits, for the sheet.
+    var detail: String { method.detail }
+
+    /// The model it needs downloaded (a モデルを準備 button), if any.
+    var model: (any UpscalerModel)? { method.model }
+
+    /// Whether it regenerates with H3 itself (a project clip's latent, not
+    /// the frames): only project videos, and sizes of its own.
+    var regeneratesFromLatent: Bool { method.regeneratesFromLatent }
+
+    /// Whether this Mac can run it.
+    var isAvailable: Bool { method.isAvailable }
+
+    /// Why an unavailable upscaler can't be chosen, for the sheet.
+    var unavailableReason: String? { isAvailable ? nil : method.missingReason }
+
+    /// Whether it wants the GPU to itself (so it waits for a generation).
+    var needsIdleGPU: Bool { method.needsIdleGPU }
+
+    /// The smallest factor it takes: 等倍 for the ones that redraw the
+    /// frames, while a resizer at that size would change nothing.
+    var factorFloor: Double { method.factorFloor }
+
+    /// The largest factor it takes, whatever the video: the resizers go on
+    /// as far as a side allows, the AI models stop at the 4x they were
+    /// made for.
+    var factorCeiling: Double { method.factorCeiling }
+
+    /// The engine's own answer on whether sizes (input width, height,
+    /// output width, height) fit this Mac, for the models that have one and
+    /// are installed. It reads no weights: the sheet asks it before loading
+    /// anything.
+    var sizeCheck: (@Sendable (Int, Int, Int, Int) -> Bool)? { method.sizeCheck }
 
     /// Where the Open-H3 files live (the latent upscaler, the extracted
     /// refiner, Turbo when downloaded here); H3_OPENH3_MODEL_DIR points
@@ -95,188 +124,14 @@ enum VideoUpscaler: String, CaseIterable, Identifiable {
         H3VideoSuperResolver.usableCachePath(modelDirectory: swiftVRModelDirectory)
     }
 
-    /// The bundled weights of an AI upscaler (Resources/Upscalers).
-    var weightsURL: URL? {
-        switch self {
-        case .standard, .metalFX: return nil
-        case .realESRGANGeneral:
-            return Bundle.main.url(forResource: "realesr-general-x4v3", withExtension: "safetensors", subdirectory: "Upscalers")
-        case .realESRGANAnime:
-            return Bundle.main.url(forResource: "realesr-animevideov3", withExtension: "safetensors", subdirectory: "Upscalers")
-        case .swiftVR, .swiftVRFourX, .seedVR2, .seedVR2Video, .openH3: return nil
-        }
-    }
-
-    /// Whether it is SwiftVR in either form (the same model and setup).
-    var isSwiftVR: Bool { self == .swiftVR || self == .swiftVRFourX }
-
-    /// Whether it is SeedVR2 in either form (the same model and setup).
-    var isSeedVR2: Bool { self == .seedVR2 || self == .seedVR2Video }
-
-    /// Whether it needs a model the user downloads (a モデルを準備 button).
-    var needsDownloadedModel: Bool { isSwiftVR || isSeedVR2 || self == .openH3 }
-
-    /// Whether it regenerates with H3 itself (a project clip's latent, not
-    /// the frames): only project videos, and sizes of its own.
-    var regeneratesFromLatent: Bool { self == .openH3 }
-
-    /// What it is and what it suits, for the sheet.
-    var detail: String {
-        switch self {
-        case .standard:
-            return String(localized: "大きさの「×2」と同じ拡大です。なめらかで、元の動画の見た目をそのまま大きくします。CPUで処理します。")
-        case .metalFX:
-            return String(localized: "AppleのMetalFXで、輪郭を見ながら拡大し、少しくっきりさせます。GPUで処理します。AIによる高画質化ではありません。")
-        case .realESRGANGeneral:
-            return String(localized: "AIで細部を補いながら拡大します（Real-ESRGAN realesr-general-x4v3）。実写や一般の映像向けです。細部を描き足すので、元にない模様が出ることがあります。標準より時間がかかります（GPUで、5秒の動画に数十秒〜数分）。")
-        case .realESRGANAnime:
-            return String(localized: "AIで線や色の面をくっきりさせながら拡大します（Real-ESRGAN realesr-animevideov3）。アニメやイラスト調の映像向けで、汎用より速く処理します。")
-        case .swiftVR:
-            return String(localized: "動画全体を一度に見るAIモデル（SwiftVR、Wan2.2ベース）で、質感や細部を描き起こしながら拡大します。24フレームずつ処理し、Real-ESRGANより大幅に時間がかかります（M5で5秒の動画に1分前後）。重みは同梱せず、配布元でApache License 2.0と宣言されていた版をダウンロードし（SHA-256で照合）、アプリで変換して使います。")
-        case .seedVR2:
-            return String(localized: "SeedVR2-3B（ByteDance Seed、Apache License 2.0）で1フレームずつ描き起こします。まつ毛や肌のきめなど細部の表現はSwiftVRより強く、そのぶん元の映像から離れることがあります（顔の印象が変わることも）。1フレームに数秒かかり、5秒の動画をM5で672×384から2倍にすると約8分（960×544からは約21分）、GPUに約10GBを使います。重みは同梱せず、配布元の記録と照合してダウンロードします。試験的な方式です。")
-        case .seedVR2Video:
-            return String(localized: "SeedVR2-3Bに、17フレームの窓で動画として描き起こさせます（時間方向のVAEと3Dウィンドウ注意）。細部の描き方は1フレームずつのSeedVR2と同じで、髪・肌・毛皮のちらつきが減ります（窓の継ぎ目は5フレームの重なりをクロスフェード。比較では、フレーム間の揺れが1枚ずつより35〜45%小さくなり、速い動きやアニメでは差が小さく、細部はわずかに柔らかくなりました）。時間は1枚ずつの約2倍で、5秒の動画をM5で672×384から2倍にすると約17分、GPUに約13GBを使います（24GBのMacでは1920×1088まで。1344×768より大きいときは状態を8ビット、1920×1088では4ビットで持つため出力がわずかに変わります。16GBのMacでは使えません）。重みは1枚ずつのSeedVR2と同じです。試験的な方式です。")
-        case .openH3:
-            return String(localized: "H3自身に描き直させます。生成したときの潜在をOpen-H3の潜在アップスケーラで大きな格子に広げ、選んだ強さまでノイズを戻して、NVIDIAのOpen-H3精緻化LoRAとLightX2V Turbo v1.2で2〜3ステップだけ生成し直します。模様や質感がH3の生成そのものの質で描かれ、生成時の設定（文章・seed）を引き継ぎます。大きさはH3の上限（1344×768ピクセル）まで、このアプリで生成した動画（潜在ファイルのあるもの）だけに使えます。1344×768・5秒でM5で約12分、生成と同じメモリ（約15GB）を使います。重みは同梱せず、配布元の記録と照合してダウンロードし、精緻化LoRAはこのMacで取り出します。試験的な方式です。")
-        case .swiftVRFourX:
-            return String(localized: "SwiftVRに4倍で復元させてから、標準の拡大と同じ方法で選んだ大きさに縮めます。目や眉を描き直しにくく、質感が穏やかで元の動画に忠実になります。4倍の途中の画面がGPUのメモリに入らない大きさでは、重なりを持たせたタイルに分けて復元します。時間はSwiftVRの約5倍です（M5で5秒の544×960を2倍にするのに約4分）。")
-        }
-    }
-
     /// The method chosen last in the sheet, which it opens on next time.
     static var lastChosen: VideoUpscaler? {
         get { UserDefaults.standard.string(forKey: lastChosenKey).flatMap(VideoUpscaler.init(rawValue:)) }
         set { UserDefaults.standard.set(newValue?.rawValue, forKey: lastChosenKey) }
     }
     private static let lastChosenKey = "h3c-app.lastUpscaler"
-
-    /// Whether this Mac can run it.
-    var isAvailable: Bool {
-        switch self {
-        case .standard: return true
-        case .metalFX:
-            guard let device = MTLCreateSystemDefaultDevice() else { return false }
-            return MTLFXSpatialScalerDescriptor.supportsDevice(device)
-        case .realESRGANGeneral, .realESRGANAnime:
-            return weightsURL != nil && MTLCreateSystemDefaultDevice() != nil
-        case .swiftVR, .swiftVRFourX:
-            return Self.swiftVRCachePath != nil && MTLCreateSystemDefaultDevice() != nil
-        case .seedVR2, .seedVR2Video:
-            return SeedVR2Model.weightsPresent && MTLCreateSystemDefaultDevice() != nil
-        case .openH3:
-            return OpenH3Model.ready && MTLCreateSystemDefaultDevice() != nil
-        }
-    }
-
-    /// Why an unavailable upscaler can't be chosen, for the sheet.
-    var unavailableReason: String? {
-        if isAvailable { return nil }
-        switch self {
-        case .swiftVR, .swiftVRFourX:
-            if SwiftVRModel.originalRemoved {
-                return String(localized: "元の重みを削除したあとで、変換したキャッシュが使えなくなりました（アプリの更新でキャッシュの形式が変わったときなど）。「モデルを準備…」で重みをもう一度ダウンロードして変換すると選べます。")
-            }
-            if SwiftVRModel.weightsPresent {
-                return String(localized: "SwiftVRの重みはありますが、このMac用に変換されていません。「モデルを準備…」で変換すると選べます。")
-            }
-            return String(localized: "SwiftVRのモデルが入っていません。「モデルを準備…」で重み（約20GB）をダウンロードして変換すると選べます。")
-        case .seedVR2, .seedVR2Video:
-            return String(localized: "SeedVR2のモデルが入っていません。「モデルを準備…」で重み（約4.7GB）をダウンロードすると選べます。")
-        case .openH3:
-            if OpenH3Model.upsamplerPresent && OpenH3Model.refinerPresent {
-                return String(localized: "LightX2V Turbo v1.2のファイルがありません。「モデルを準備…」でダウンロードすると選べます。")
-            }
-            return String(localized: "Open-H3のモデルが入っていません。「モデルを準備…」で結合LoRA（約12.5GB）と潜在アップスケーラをダウンロードし、精緻化LoRAを取り出すと選べます。")
-        default:
-            return String(localized: "このMacでは使えません。")
-        }
-    }
-
-    /// Whether it wants the GPU to itself (so it waits for a generation).
-    var needsIdleGPU: Bool { isSwiftVR || isSeedVR2 || self == .openH3 }
-
-    /// The smallest factor it takes: 等倍 for the ones that redraw the
-    /// frames, while a resizer at that size would change nothing.
-    var factorFloor: Double {
-        switch self {
-        case .standard, .metalFX: return 1.1
-        default: return UpscaleFactor.minimum
-        }
-    }
-
-    /// The largest factor it takes, whatever the video: the resizers go on
-    /// as far as a side allows, the AI models stop at the 4x they were
-    /// made for.
-    var factorCeiling: Double {
-        switch self {
-        case .standard, .metalFX: return UpscaleFactor.maximum
-        default: return 4
-        }
-    }
-
-    /// The engine's own answer on whether sizes (input width, height,
-    /// output width, height) fit this Mac, for the models that have one and
-    /// are installed. It reads no weights: the sheet asks it before loading
-    /// anything.
-    var sizeCheck: (@Sendable (Int, Int, Int, Int) -> Bool)? {
-        switch self {
-        case .swiftVR, .swiftVRFourX:
-            guard let cachePath = Self.swiftVRCachePath else { return nil }
-            return H3VideoSuperResolver.sizeCheck(modelDirectory: Self.swiftVRModelDirectory,
-                                                  int8: cachePath.hasSuffix("int8.h3vc"))
-        case .seedVR2:
-            guard SeedVR2Model.weightsPresent else { return nil }
-            return H3SeedVR2Restorer.sizeCheck(modelDirectory: Self.seedVR2ModelDirectory)
-        case .seedVR2Video:
-            guard SeedVR2Model.weightsPresent else { return nil }
-            return H3SeedVR2Restorer.videoSizeCheck(modelDirectory: Self.seedVR2ModelDirectory,
-                                                    windowFrames: SeedVR2VideoWindow.chosen.windowFrames)
-        default:
-            return nil
-        }
-    }
 }
 
-/// How SeedVR2 動画 cuts a video into windows: `windowFrames` (4n+1) per
-/// window, `overlapFrames` of them shared with the next, and whether the
-/// shared frames cross-fade (Hann) or switch over. Recorded with the video.
-struct SeedVR2VideoWindow: Hashable, Codable {
-    var windowFrames: Int
-    var overlapFrames: Int
-    var blend: Bool
-
-    /// What the app runs: the configuration appendix A.10 chose (17 frames,
-    /// 5 shared and cross-faded: a switch-over left a visible step at every
-    /// window, 5-frame windows were worse than per frame, 29 frames don't
-    /// fit 24 GB at 1344x768).
-    static let standard = SeedVR2VideoWindow(windowFrames: 17, overlapFrames: 5, blend: true)
-
-    /// `standard`, unless the developer environment variables
-    /// H3_SV2_VIDEO_WINDOW / H3_SV2_VIDEO_OVERLAP / H3_SV2_VIDEO_BLEND (0/1)
-    /// name another valid one (for comparisons; not a user setting).
-    static var chosen: SeedVR2VideoWindow {
-        let env = ProcessInfo.processInfo.environment
-        guard env["H3_SV2_VIDEO_WINDOW"] != nil || env["H3_SV2_VIDEO_OVERLAP"] != nil || env["H3_SV2_VIDEO_BLEND"] != nil else {
-            return standard
-        }
-        let other = SeedVR2VideoWindow(windowFrames: env["H3_SV2_VIDEO_WINDOW"].flatMap(Int.init) ?? standard.windowFrames,
-                                       overlapFrames: env["H3_SV2_VIDEO_OVERLAP"].flatMap(Int.init) ?? standard.overlapFrames,
-                                       blend: env["H3_SV2_VIDEO_BLEND"].map { $0 != "0" } ?? standard.blend)
-        return other.engineSettings.isValid ? other : standard
-    }
-
-    /// The engine's form, with the per-frame path's seed.
-    var engineSettings: H3SeedVR2VideoSettings {
-        H3SeedVR2VideoSettings(windowFrames: windowFrames, overlapFrames: overlapFrames, blend: blend, seed: 42)
-    }
-
-    /// "17枚（重なり5、クロスフェード）", for the record.
-    var label: String {
-        blend ? String(localized: "\(windowFrames)枚（重なり\(overlapFrames)、クロスフェード）")
-            : String(localized: "\(windowFrames)枚（重なり\(overlapFrames)、切り替え）")
-    }
-}
 
 /// How much bigger (the sheet's 倍率): one of the usual factors or any
 /// other in hundredths. What each upscaler can make of a video is
@@ -441,7 +296,7 @@ struct UpscaleChoices {
 }
 
 /// One frame in, the same frame enlarged out (both 32BGRA).
-private protocol FrameScaler {
+protocol FrameScaler {
     func scale(_ source: CVPixelBuffer, into destination: CVPixelBuffer) throws
 }
 
@@ -451,7 +306,7 @@ private protocol FrameScaler {
 /// next call should bring.
 /// `progress` may be told the share of the call done so far (0-1) while
 /// a chunk takes long.
-private protocol ChunkedFrameScaler {
+protocol ChunkedFrameScaler {
     var chunkFrames: Int { get }
     func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
                  progress: @escaping (Double) -> Void) throws -> [CVPixelBuffer]
@@ -461,7 +316,7 @@ private protocol ChunkedFrameScaler {
 
 /// Any per-frame scaler as a chunk of one: the same operations, so the
 /// output is unchanged byte for byte.
-private final class PerFrameChunkAdapter: ChunkedFrameScaler {
+final class PerFrameChunkAdapter: ChunkedFrameScaler {
     let scaler: FrameScaler
     init(_ scaler: FrameScaler) { self.scaler = scaler }
     var chunkFrames: Int { 1 }
@@ -482,132 +337,9 @@ private final class PerFrameChunkAdapter: ChunkedFrameScaler {
     func cancel() {}
 }
 
-/// SwiftVR through the engine: 28 frames, then 24 at a time. A chunk
-/// takes seconds, so 中止 is read at each DiT block (`isCancelled`) and
-/// stops the engine there.
-private final class VSRChunkScaler: ChunkedFrameScaler {
-    let session: H3VideoSuperResolver.Session
-    let isCancelled: () -> Bool
-    init(session: H3VideoSuperResolver.Session, isCancelled: @escaping () -> Bool) {
-        self.session = session
-        self.isCancelled = isCancelled
-    }
-    var chunkFrames: Int { max(1, session.nextChunkFrames) }
-    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
-                 progress: @escaping (Double) -> Void) throws -> [CVPixelBuffer] {
-        do {
-            return try session.process(frames, isLast: isLast, pool: pool) { [session, isCancelled] share in
-                if isCancelled() { session.cancel() }
-                progress(share)
-            }
-        } catch H3VSRError.cancelled {
-            throw VideoUpscale.UpscaleError.cancelled
-        }
-    }
-    func cancel() { session.cancel() }
-}
 
-/// SeedVR2 on windows of frames through the engine's temporal path (the
-/// same contract as SwiftVR's chunks): a window takes a minute or more, so
-/// 中止 is read at every phase step.
-private final class SeedVR2ChunkScaler: ChunkedFrameScaler {
-    let session: H3SeedVR2Restorer.VideoSession
-    let isCancelled: () -> Bool
-    init(session: H3SeedVR2Restorer.VideoSession, isCancelled: @escaping () -> Bool) {
-        self.session = session
-        self.isCancelled = isCancelled
-    }
-    var chunkFrames: Int { max(1, session.nextChunkFrames) }
-    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
-                 progress: @escaping (Double) -> Void) throws -> [CVPixelBuffer] {
-        do {
-            return try session.process(frames, isLast: isLast, pool: pool) { [session, isCancelled] share in
-                if isCancelled() { session.cancel() }
-                progress(share)
-            }
-        } catch H3VSRError.cancelled {
-            throw VideoUpscale.UpscaleError.cancelled
-        }
-    }
-    func cancel() { session.cancel() }
-}
 
-/// SeedVR2 through the engine: one frame at a time, each taking seconds, so
-/// 中止 is read at every DiT block.
-private final class SeedVR2FrameScaler: ChunkedFrameScaler {
-    let session: H3SeedVR2Restorer.Session
-    let isCancelled: () -> Bool
-    init(session: H3SeedVR2Restorer.Session, isCancelled: @escaping () -> Bool) {
-        self.session = session
-        self.isCancelled = isCancelled
-    }
-    var chunkFrames: Int { 1 }
-    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
-                 progress: @escaping (Double) -> Void) throws -> [CVPixelBuffer] {
-        var outputs: [CVPixelBuffer] = []
-        for (index, frame) in frames.enumerated() {
-            do {
-                outputs.append(try session.process(frame, pool: pool) { [session, isCancelled] share in
-                    if isCancelled() { session.cancel() }
-                    progress((Double(index) + share) / Double(frames.count))
-                })
-            } catch H3VSRError.cancelled {
-                throw VideoUpscale.UpscaleError.cancelled
-            }
-        }
-        return outputs
-    }
-    func cancel() { session.cancel() }
-}
 
-/// SwiftVR's "4倍で生成してから縮小": the engine restores to 4x, and each frame
-/// is brought down to the asked-for size with the standard resize. Gentler
-/// than a direct 2x on soft sources (UPSCALE_PLAN appendix A.3), at about
-/// four times the time. When the 4x frame does not fit the GPU's memory in
-/// one piece the engine restores it as overlapping tiles and blends them.
-private final class HalvingChunkScaler: ChunkedFrameScaler {
-    let inner: ChunkedFrameScaler
-    private let largeWidth: Int, largeHeight: Int
-    private var largePool: CVPixelBufferPool?
-    private let resizer = VImageScaler()
-    init(inner: ChunkedFrameScaler, largeWidth: Int, largeHeight: Int) {
-        self.inner = inner
-        self.largeWidth = largeWidth
-        self.largeHeight = largeHeight
-    }
-    var chunkFrames: Int { inner.chunkFrames }
-    func process(_ frames: [CVPixelBuffer], isLast: Bool, pool: CVPixelBufferPool,
-                 progress: @escaping (Double) -> Void) throws -> [CVPixelBuffer] {
-        if largePool == nil {
-            let attributes: [String: Any] = [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: largeWidth,
-                kCVPixelBufferHeightKey as String: largeHeight,
-                kCVPixelBufferMetalCompatibilityKey as String: true,
-                kCVPixelBufferIOSurfacePropertiesKey as String: [:],
-            ]
-            var made: CVPixelBufferPool?
-            CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &made)
-            largePool = made
-        }
-        guard let largePool else {
-            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
-        }
-        let large = try inner.process(frames, isLast: isLast, pool: largePool, progress: progress)
-        var outputs: [CVPixelBuffer] = []
-        for frame in large {
-            var halved: CVPixelBuffer?
-            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &halved)
-            guard let halved else {
-                throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
-            }
-            try resizer.scale(frame, into: halved)
-            outputs.append(halved)
-        }
-        return outputs
-    }
-    func cancel() { inner.cancel() }
-}
 
 enum VideoUpscale {
     enum UpscaleError: LocalizedError {
@@ -696,102 +428,9 @@ enum VideoUpscale {
         guard width <= maximumSide, height <= maximumSide else {
             throw UpscaleError.tooLarge(width: width, height: height)
         }
-        let scaler: ChunkedFrameScaler
-        switch upscaler {
-        case .standard: scaler = PerFrameChunkAdapter(VImageScaler())
-        case .metalFX:
-            guard let made = MetalFXScaler(inputWidth: inputWidth, inputHeight: inputHeight,
-                                           outputWidth: width, outputHeight: height) else {
-                throw UpscaleError.unavailable(upscaler.label)
-            }
-            scaler = PerFrameChunkAdapter(made)
-        case .realESRGANGeneral, .realESRGANAnime:
-            guard let weights = upscaler.weightsURL else { throw UpscaleError.unavailable(upscaler.label) }
-            scaler = PerFrameChunkAdapter(try RealESRGANScaler(network: RealESRGANNetwork(weights: weights, width: inputWidth,
-                                                                                          height: inputHeight,
-                                                                                          scale: factor == .two ? 2 : 4),
-                                                               outputWidth: width, outputHeight: height))
-        case .openH3:
-            // Not a frame scaler: GenerationViewModel.runOpenH3Regeneration.
-            throw UpscaleError.unavailable(upscaler.label)
-        case .swiftVR, .swiftVRFourX:
-            guard let cachePath = VideoUpscaler.swiftVRCachePath else { throw UpscaleError.unavailable(upscaler.label) }
-            let resolver: H3VideoSuperResolver
-            do {
-                resolver = try H3VideoSuperResolver(modelDirectory: VideoUpscaler.swiftVRModelDirectory, cachePath: cachePath)
-            } catch {
-                throw UpscaleError.cannotWrite(error.localizedDescription)
-            }
-            // 4倍で生成してから縮小: restore at 4x (in tiles when the frame
-            // is large), or at 3x or 2x where the engine or the writer's limit
-            // stops that; the size asked for when none of them is larger.
-            var engineWidth = width, engineHeight = height
-            if upscaler == .swiftVRFourX {
-                for large in [UpscaleFactor.four, .three, .two] where large.rawValue > factor.rawValue {
-                    let (w, h) = large.size(width: inputWidth, height: inputHeight)
-                    if w <= maximumSide && h <= maximumSide &&
-                        resolver.requirements(inputWidth: inputWidth, inputHeight: inputHeight,
-                                              outputWidth: w, outputHeight: h).supported {
-                        engineWidth = w; engineHeight = h
-                        break
-                    }
-                }
-            }
-            let requirements = resolver.requirements(inputWidth: inputWidth, inputHeight: inputHeight,
-                                                     outputWidth: engineWidth, outputHeight: engineHeight)
-            guard requirements.supported else { throw UpscaleError.cannotWrite(requirements.reason) }
-            do {
-                let direct = VSRChunkScaler(session: try resolver.openSession(inputWidth: inputWidth, inputHeight: inputHeight,
-                                                                              outputWidth: engineWidth, outputHeight: engineHeight),
-                                            isCancelled: isCancelled)
-                scaler = engineWidth == width ? direct
-                    : HalvingChunkScaler(inner: direct, largeWidth: engineWidth, largeHeight: engineHeight)
-            } catch {
-                throw UpscaleError.cannotWrite(error.localizedDescription)
-            }
-        case .seedVR2:
-            guard SeedVR2Model.weightsPresent else { throw UpscaleError.unavailable(upscaler.label) }
-            let restorer: H3SeedVR2Restorer
-            do {
-                restorer = try H3SeedVR2Restorer(modelDirectory: VideoUpscaler.seedVR2ModelDirectory)
-            } catch {
-                throw UpscaleError.cannotWrite(error.localizedDescription)
-            }
-            let requirements = restorer.requirements(inputWidth: inputWidth, inputHeight: inputHeight,
-                                                     outputWidth: width, outputHeight: height)
-            guard requirements.supported else { throw UpscaleError.cannotWrite(requirements.reason) }
-            do {
-                scaler = SeedVR2FrameScaler(session: try restorer.openSession(inputWidth: inputWidth, inputHeight: inputHeight,
-                                                                              outputWidth: width, outputHeight: height),
-                                            isCancelled: isCancelled)
-            } catch {
-                throw UpscaleError.cannotWrite(error.localizedDescription)
-            }
-        case .seedVR2Video:
-            guard SeedVR2Model.weightsPresent else { throw UpscaleError.unavailable(upscaler.label) }
-            let restorer: H3SeedVR2Restorer
-            do {
-                restorer = try H3SeedVR2Restorer(modelDirectory: VideoUpscaler.seedVR2ModelDirectory)
-            } catch {
-                throw UpscaleError.cannotWrite(error.localizedDescription)
-            }
-            let window = SeedVR2VideoWindow.chosen
-            let requirements = restorer.videoRequirements(inputWidth: inputWidth, inputHeight: inputHeight,
-                                                          outputWidth: width, outputHeight: height,
-                                                          windowFrames: window.windowFrames)
-            guard requirements.supported else { throw UpscaleError.cannotWrite(requirements.reason) }
-            do {
-                // The length is left unknown (0): the frame count from the
-                // duration can be off by one, and the session moves its
-                // last window back onto the final frame on `isLast` anyway.
-                scaler = SeedVR2ChunkScaler(session: try restorer.openVideoSession(inputWidth: inputWidth, inputHeight: inputHeight,
-                                                                                   outputWidth: width, outputHeight: height,
-                                                                                   totalFrames: 0, settings: window.engineSettings),
-                                            isCancelled: isCancelled)
-            } catch {
-                throw UpscaleError.cannotWrite(error.localizedDescription)
-            }
-        }
+        let scaler = try upscaler.method.makeScaler(UpscaleJob(inputWidth: inputWidth, inputHeight: inputHeight,
+                                                               width: width, height: height, factor: factor,
+                                                               isCancelled: isCancelled))
         let expectedFrames = max(1, Int((timeRange.duration.seconds * Double(frameRate)).rounded()))
 
         let reader = try AVAssetReader(asset: asset)
@@ -998,170 +637,8 @@ enum VideoUpscale {
     }
 }
 
-/// VideoUpscaler.standard: vImage's Lanczos on the CPU.
-private struct VImageScaler: FrameScaler {
-    func scale(_ source: CVPixelBuffer, into destination: CVPixelBuffer) throws {
-        CVPixelBufferLockBaseAddress(source, .readOnly)
-        CVPixelBufferLockBaseAddress(destination, [])
-        defer {
-            CVPixelBufferUnlockBaseAddress(source, .readOnly)
-            CVPixelBufferUnlockBaseAddress(destination, [])
-        }
-        guard let input = CVPixelBufferGetBaseAddress(source),
-              let output = CVPixelBufferGetBaseAddress(destination) else {
-            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
-        }
-        var from = vImage_Buffer(data: input,
-                                 height: vImagePixelCount(CVPixelBufferGetHeight(source)),
-                                 width: vImagePixelCount(CVPixelBufferGetWidth(source)),
-                                 rowBytes: CVPixelBufferGetBytesPerRow(source))
-        var to = vImage_Buffer(data: output,
-                               height: vImagePixelCount(CVPixelBufferGetHeight(destination)),
-                               width: vImagePixelCount(CVPixelBufferGetWidth(destination)),
-                               rowBytes: CVPixelBufferGetBytesPerRow(destination))
-        // Four 8-bit channels in any order: BGRA scales as ARGB does.
-        guard vImageScale_ARGB8888(&from, &to, nil,
-                                   vImage_Flags(kvImageHighQualityResampling | kvImageEdgeExtend)) == kvImageNoError else {
-            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
-        }
-    }
-}
 
-/// VideoUpscaler.realESRGAN*: RealESRGANNetwork on each frame - its 2x
-/// straight into the output, or its 4x resized to the size asked for
-/// (Lanczos, as Real-ESRGAN does an outscale other than its own).
-private final class RealESRGANScaler: FrameScaler {
-    let network: RealESRGANNetwork
-    private let outputWidth: Int
-    private let outputHeight: Int
-    /// The network's whole output when it isn't the output's size.
-    private var full: UnsafeMutableRawPointer?
 
-    init(network: RealESRGANNetwork, outputWidth: Int, outputHeight: Int) {
-        self.network = network
-        self.outputWidth = outputWidth
-        self.outputHeight = outputHeight
-        if network.outputWidth != outputWidth || network.outputHeight != outputHeight {
-            full = UnsafeMutableRawPointer.allocate(byteCount: network.outputWidth * network.outputHeight * 4,
-                                                    alignment: 64)
-        }
-    }
-
-    deinit { full?.deallocate() }
-
-    /// Whether `buffer` holds at least `width` x `height` BGRA pixels: the
-    /// network and vImage copy that many rows of that many bytes, at the
-    /// buffer's own row stride, with nothing else bounding them.
-    private static func holds(_ buffer: CVPixelBuffer, width: Int, height: Int) -> Bool {
-        CVPixelBufferGetWidth(buffer) >= width && CVPixelBufferGetHeight(buffer) >= height
-            && CVPixelBufferGetBytesPerRow(buffer) >= width * 4
-    }
-
-    func scale(_ source: CVPixelBuffer, into destination: CVPixelBuffer) throws {
-        CVPixelBufferLockBaseAddress(source, .readOnly)
-        CVPixelBufferLockBaseAddress(destination, [])
-        defer {
-            CVPixelBufferUnlockBaseAddress(source, .readOnly)
-            CVPixelBufferUnlockBaseAddress(destination, [])
-        }
-        // The network was made for the track's size (naturalSize); a frame
-        // decoded smaller would be read past its end.
-        guard let input = CVPixelBufferGetBaseAddress(source),
-              let output = CVPixelBufferGetBaseAddress(destination),
-              Self.holds(source, width: network.width, height: network.height),
-              Self.holds(destination, width: outputWidth, height: outputHeight) else {
-            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
-        }
-        guard let full else {
-            try network.upscale(input, sourceRowBytes: CVPixelBufferGetBytesPerRow(source),
-                                into: output, destinationRowBytes: CVPixelBufferGetBytesPerRow(destination))
-            return
-        }
-        try network.upscale(input, sourceRowBytes: CVPixelBufferGetBytesPerRow(source),
-                            into: full, destinationRowBytes: network.outputWidth * 4)
-        var from = vImage_Buffer(data: full, height: vImagePixelCount(network.outputHeight),
-                                 width: vImagePixelCount(network.outputWidth), rowBytes: network.outputWidth * 4)
-        var to = vImage_Buffer(data: output, height: vImagePixelCount(outputHeight),
-                               width: vImagePixelCount(outputWidth),
-                               rowBytes: CVPixelBufferGetBytesPerRow(destination))
-        guard vImageScale_ARGB8888(&from, &to, nil,
-                                   vImage_Flags(kvImageHighQualityResampling | kvImageEdgeExtend)) == kvImageNoError else {
-            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
-        }
-    }
-}
-
-/// VideoUpscaler.metalFX: MetalFX's spatial scaler on the GPU, reading and
-/// writing the frames' own memory (CVMetalTextureCache). The scaler writes
-/// a private texture, copied into the output frame.
-private final class MetalFXScaler: FrameScaler {
-    private let queue: MTLCommandQueue
-    private let scaler: MTLFXSpatialScaler
-    private let cache: CVMetalTextureCache
-    private let scaled: MTLTexture
-
-    init?(inputWidth: Int, inputHeight: Int, outputWidth: Int, outputHeight: Int) {
-        guard let device = MTLCreateSystemDefaultDevice(),
-              MTLFXSpatialScalerDescriptor.supportsDevice(device),
-              let queue = device.makeCommandQueue() else { return nil }
-        let descriptor = MTLFXSpatialScalerDescriptor()
-        descriptor.inputWidth = inputWidth
-        descriptor.inputHeight = inputHeight
-        descriptor.outputWidth = outputWidth
-        descriptor.outputHeight = outputHeight
-        descriptor.colorTextureFormat = .bgra8Unorm
-        descriptor.outputTextureFormat = .bgra8Unorm
-        // Video is gamma-encoded, not linear light.
-        descriptor.colorProcessingMode = .perceptual
-        guard let scaler = descriptor.makeSpatialScaler(device: device) else { return nil }
-        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .bgra8Unorm, width: outputWidth, height: outputHeight, mipmapped: false)
-        textureDescriptor.usage = scaler.outputTextureUsage
-        textureDescriptor.storageMode = .private
-        var cache: CVMetalTextureCache?
-        guard let scaled = device.makeTexture(descriptor: textureDescriptor),
-              CVMetalTextureCacheCreate(nil, nil, device, nil, &cache) == kCVReturnSuccess,
-              let cache else { return nil }
-        self.queue = queue
-        self.scaler = scaler
-        self.cache = cache
-        self.scaled = scaled
-    }
-
-    private func texture(_ buffer: CVPixelBuffer) throws -> (CVMetalTexture, MTLTexture) {
-        var made: CVMetalTexture?
-        let status = CVMetalTextureCacheCreateTextureFromImage(
-            nil, cache, buffer, nil, .bgra8Unorm,
-            CVPixelBufferGetWidth(buffer), CVPixelBufferGetHeight(buffer), 0, &made)
-        guard status == kCVReturnSuccess, let made, let texture = CVMetalTextureGetTexture(made) else {
-            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
-        }
-        return (made, texture)
-    }
-
-    func scale(_ source: CVPixelBuffer, into destination: CVPixelBuffer) throws {
-        // The CVMetalTextures are held until the GPU is done with them.
-        let (sourceRef, input) = try texture(source)
-        let (destinationRef, output) = try texture(destination)
-        guard let command = queue.makeCommandBuffer() else {
-            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
-        }
-        scaler.colorTexture = input
-        scaler.outputTexture = scaled
-        scaler.encode(commandBuffer: command)
-        guard let blit = command.makeBlitCommandEncoder() else {
-            throw VideoUpscale.UpscaleError.cannotWrite(String(localized: "フレームを拡大できませんでした"))
-        }
-        blit.copy(from: scaled, to: output)
-        blit.endEncoding()
-        command.commit()
-        command.waitUntilCompleted()
-        withExtendedLifetime((sourceRef, destinationRef)) {}
-        if command.status != .completed {
-            throw VideoUpscale.UpscaleError.cannotWrite(command.error?.localizedDescription ?? "")
-        }
-    }
-}
 
 extension GenerationViewModel {
     /// A video waiting for its upscaler to be picked (UpscaleSheet): a
@@ -1368,7 +845,7 @@ extension GenerationViewModel {
                 record.upscaledFrom = video.url.lastPathComponent
                 record.upscaler = upscaler.rawValue
                 record.upscaleStrength = upscaler.regeneratesFromLatent ? strength.rawValue : nil
-                let window = upscaler == .seedVR2Video ? SeedVR2VideoWindow.chosen : nil
+                let window = upscaler.method.recordedWindow
                 record.upscaleWindowFrames = window?.windowFrames
                 record.upscaleOverlapFrames = window?.overlapFrames
                 record.upscaleBlend = window?.blend
