@@ -1,5 +1,6 @@
 /* SeedVR2-3B VAE (see h3_seedvr2.h): weights and the forward pass on the
  * F32 / MPSGraph path (M1-M4) and on the TensorOps grid (M5). */
+#include "h3_options.h"
 #include "h3_seedvr2_internal.h"
 
 /* --- VAE weights, stored (O, kt, kh, kw, I). For still images every causal
@@ -1198,10 +1199,10 @@ static int run_sliced_bits(h3_seedvr2 *m, sv2_clip_fn fn, const act *x, act *out
 static int run_sliced(h3_seedvr2 *m, sv2_clip_fn fn, const act *x, act *out, int step, const char *phase,
                       h3_progress_callback on_progress, void *opaque, const volatile int *cancel,
                       char *error, size_t error_size) {
-    if (getenv("H3_SV2_STATE_BITS")) m->state_bits = m->nax_vae ? atoi(getenv("H3_SV2_STATE_BITS")) : 0;   /* tests: 0, 8 or 4 */
-    else if (getenv("H3_SV2_STATE_INT8")) m->state_bits = m->nax_vae && atoi(getenv("H3_SV2_STATE_INT8")) != 0 ? 8 : 0;
+    if (h3_option("H3_SV2_STATE_BITS")) m->state_bits = m->nax_vae ? atoi(h3_option("H3_SV2_STATE_BITS")) : 0;   /* tests: 0, 8 or 4 */
+    else if (h3_option("H3_SV2_STATE_INT8")) m->state_bits = m->nax_vae && atoi(h3_option("H3_SV2_STATE_INT8")) != 0 ? 8 : 0;
     int saved = m->state_bits;
-    if (saved == 4 && strcmp(phase, "vsr encode") == 0 && !getenv("H3_SV2_STATE_INT4_ENCODER")) m->state_bits = 8;
+    if (saved == 4 && strcmp(phase, "vsr encode") == 0 && !h3_option("H3_SV2_STATE_INT4_ENCODER")) m->state_bits = 8;
     int ok = run_sliced_bits(m, fn, x, out, step, phase, on_progress, opaque, cancel, error, error_size);
     m->state_bits = saved;
     return ok;

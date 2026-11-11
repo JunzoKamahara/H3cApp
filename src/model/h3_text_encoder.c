@@ -1,3 +1,4 @@
+#include "h3_options.h"
 #include "h3_text_encoder.h"
 #include "h3_quant.h"
 
@@ -123,7 +124,7 @@ static h3_gpu_tensor *load_2d(load_context *load, const char *name,
 }
 
 static int text_prefetch_threads(void) {
-    const char *value = getenv("H3_QWEN_PREFETCH");
+    const char *value = h3_option("H3_QWEN_PREFETCH");
     if (!value || !*value) return 8;
     if (!strcmp(value, "0")) return 0;
     char *tail = NULL;
@@ -134,7 +135,7 @@ static int text_prefetch_threads(void) {
 }
 
 static int text_prefetch_depth(const h3_gpu *gpu) {
-    const char *value = getenv("H3_QWEN_PREFETCH_DEPTH");
+    const char *value = h3_option("H3_QWEN_PREFETCH_DEPTH");
     if (!value || !*value) return h3_gpu_is_m5(gpu) ? 3 : 2;
     char *tail = NULL;
     long depth = strtol(value, &tail, 10);
@@ -423,7 +424,7 @@ static void prefetch_slots_retire(text_prefetch_slot *slots, int count) {
  * h3_debug_hash in h3.c). */
 static int debug_hashes_enabled(void) {
     static int enabled = -1;
-    if (enabled < 0) enabled = getenv("H3_DEBUG_HASHES") != NULL;
+    if (enabled < 0) enabled = h3_option("H3_DEBUG_HASHES") != NULL;
     return enabled;
 }
 

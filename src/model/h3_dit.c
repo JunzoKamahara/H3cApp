@@ -1,3 +1,4 @@
+#include "h3_options.h"
 #include "h3_dit.h"
 
 #include "h3_adaln_curve.h"
@@ -383,7 +384,7 @@ static void fail(char *error, size_t error_size, const char *format, ...) {
 }
 
 static unsigned command_block_interval(const h3_dit *dit) {
-    const char *value = getenv("H3_DIT_COMMAND_BLOCKS");
+    const char *value = h3_option("H3_DIT_COMMAND_BLOCKS");
     if (value && *value) {
         char *end = NULL;
         long parsed = strtol(value, &end, 10);
@@ -622,11 +623,11 @@ static int validate_layout(h3_dit *dit, const h3_text_embedding *text,
 
 static int configure_token_reduction(h3_dit *dit, int requested,
                                      char *error, size_t error_size) {
-    const char *enabled = getenv("H3_TOKEN_REDUCTION");
+    const char *enabled = h3_option("H3_TOKEN_REDUCTION");
     if (!requested &&
         (!enabled || !*enabled || !strcmp(enabled, "0"))) return 1;
     unsigned begin = 4, end = 30;
-    const char *range = getenv("H3_TOKEN_REDUCTION_BLOCKS");
+    const char *range = h3_option("H3_TOKEN_REDUCTION_BLOCKS");
     if (range && *range) {
         char *middle = NULL;
         unsigned long parsed_begin = strtoul(range, &middle, 10);
@@ -650,7 +651,7 @@ static int configure_token_reduction(h3_dit *dit, int requested,
      * noisy samples form. Restore earlier once fine detail starts resolving. */
     unsigned early_steps = end < 40 ? 10 : 0;
     unsigned early_end = end < 40 ? 40 : end;
-    const char *early = getenv("H3_TOKEN_REDUCTION_EARLY");
+    const char *early = h3_option("H3_TOKEN_REDUCTION_EARLY");
     if (early && *early) {
         if (!strcmp(early, "0")) {
             early_steps = 0;
@@ -678,7 +679,7 @@ static int configure_token_reduction(h3_dit *dit, int requested,
         }
     }
     float scale = 1.0f;
-    const char *scale_text = getenv("H3_TOKEN_REDUCTION_SCALE");
+    const char *scale_text = h3_option("H3_TOKEN_REDUCTION_SCALE");
     if (scale_text && *scale_text) {
         char *tail = NULL;
         scale = strtof(scale_text, &tail);
@@ -1499,7 +1500,7 @@ static int attention_cache_validate(const char *path, int need_mlp,
          * instead of a warning (found the hard way: a stale cache here
          * once produced a garbage-looking kernel comparison that was
          * actually just wrong quantized weights, not a real bug). */
-        if (getenv("H3_ATTENTION_CACHE_STRICT")) {
+        if (h3_option("H3_ATTENTION_CACHE_STRICT")) {
             fail(error, error_size,
                  "attention cache %s's model fingerprint does not match "
                  "the loaded checkpoint (different weights, or weights "
@@ -2128,7 +2129,7 @@ static unsigned next_active_block(const h3_dit *dit, unsigned current) {
 }
 
 static void configure_gate_ranked_blocks(h3_dit *dit) {
-    const char *policy = getenv("H3_DIT_LAYER_POLICY");
+    const char *policy = h3_option("H3_DIT_LAYER_POLICY");
     if ((policy && !strcmp(policy, "uniform")) || dit->hyperflow ||
         dit->active_block_count == H3_DIT_BLOCKS) return;
     typedef struct { unsigned block; double score; } block_score;
@@ -2154,7 +2155,7 @@ static void configure_gate_ranked_blocks(h3_dit *dit) {
     unsigned skipped = H3_DIT_BLOCKS - dit->active_block_count;
     for (unsigned index = 0; index < skipped; index++)
         dit->block_active[scores[index].block] = 0;
-    if (getenv("H3_PROFILE")) {
+    if (h3_option("H3_PROFILE")) {
         fprintf(stderr, "h3: gate-ranked DiT skips");
         for (unsigned index = 0; index < skipped; index++)
             fprintf(stderr, " %u(%.4g)", scores[index].block,
@@ -2333,11 +2334,11 @@ static int allocate_activations(h3_dit *dit, char *error, size_t error_size) {
     size_t video = dit->video_rows;
     size_t audio_total = dit->audio_total_rows;
     size_t video_total = dit->video_total_rows;
-    dit->activation_aliases = !getenv("H3_DISABLE_DIT_ACTIVATION_ALIAS");
+    dit->activation_aliases = !h3_option("H3_DISABLE_DIT_ACTIVATION_ALIAS");
     dit->fused_patch_projection =
-        !getenv("H3_DISABLE_FUSED_PATCH_CAST") && !getenv("H3_SCALAR_PATCH");
+        !h3_option("H3_DISABLE_FUSED_PATCH_CAST") && !h3_option("H3_SCALAR_PATCH");
     dit->fused_patch_pack = dit->fused_patch_projection &&
-        !getenv("H3_DISABLE_FUSED_PATCH_PACK");
+        !h3_option("H3_DISABLE_FUSED_PATCH_PACK");
 #define BF(field, elements) (dit->field = h3_gpu_tensor_new_bf16(dit->gpu, (elements)))
 #define F32(field, elements) (dit->field = h3_gpu_tensor_new_f32(dit->gpu, (elements)))
     h3_gpu_tensor *all[] = {
@@ -2407,7 +2408,7 @@ static int allocate_activations(h3_dit *dit, char *error, size_t error_size) {
              h3_gpu_error(dit->gpu));
         return 0;
     }
-    if (getenv("H3_DISABLE_FUSED_FINAL_SLICE")) {
+    if (h3_option("H3_DISABLE_FUSED_FINAL_SLICE")) {
         dit->final_audio_input = h3_gpu_tensor_new_bf16(
             dit->gpu, audio * HIDDEN);
         dit->final_video_input = h3_gpu_tensor_new_bf16(
@@ -2419,8 +2420,8 @@ static int allocate_activations(h3_dit *dit, char *error, size_t error_size) {
             return 0;
         }
     }
-    if (!dit->bf16_final || getenv("H3_DISABLE_FUSED_FINAL_HEAD") ||
-        getenv("H3_DISABLE_FUSED_FINAL_SLICE")) {
+    if (!dit->bf16_final || h3_option("H3_DISABLE_FUSED_FINAL_HEAD") ||
+        h3_option("H3_DISABLE_FUSED_FINAL_SLICE")) {
         dit->final_audio_norm = h3_gpu_tensor_new_bf16(
             dit->gpu, audio * HIDDEN);
         dit->final_video_norm = h3_gpu_tensor_new_bf16(
@@ -2751,12 +2752,12 @@ static h3_dit *load_dit(const char *weight_directory,
         fail(error, error_size, "out of memory creating DiT model");
         return NULL;
     }
-    dit->fused_mlp = getenv("H3_DISABLE_FUSED_MLP") == NULL;
+    dit->fused_mlp = h3_option("H3_DISABLE_FUSED_MLP") == NULL;
     /* The released final heads are F32, but their inputs are already BF16.
      * Converting these small weights once selects the Iris-derived tiled
      * linear and eliminates two full-width casts plus the scalar F32 kernel.
      * Keep the old path available for close-reference diagnosis. */
-    dit->bf16_final = getenv("H3_DIT_F32_FINAL") == NULL;
+    dit->bf16_final = h3_option("H3_DIT_F32_FINAL") == NULL;
     dit->core_reuse_interval = core_reuse_interval;
     dit->ssd_streaming = ssd_streaming;
     dit->spatial_rope_scale = spatial_rope_scale;
@@ -2814,7 +2815,7 @@ static h3_dit *load_dit(const char *weight_directory,
     if (!dit->gpu) goto failed;
     /* factored_linear; H3_HYPERFLOW_MPSGRAPH=1 keeps MPSGraph. */
     dit->factored_tensor_ops = dit->hyperflow &&
-        h3_gpu_has_tensor_ops(dit->gpu) && !getenv("H3_HYPERFLOW_MPSGRAPH");
+        h3_gpu_has_tensor_ops(dit->gpu) && !h3_option("H3_HYPERFLOW_MPSGRAPH");
     if (lora_count) {
         dit->loras = h3_lora_set_load(dit->gpu, loras, lora_count, error,
                                       error_size);
@@ -2831,8 +2832,8 @@ static h3_dit *load_dit(const char *weight_directory,
                               !use_slower_bf16_attention_output &&
                               dit->sequence >= 128 &&
                               h3_gpu_has_int8_mlp(dit->gpu);
-    const char *attention_cache_path = getenv("H3_ATTENTION_CACHE");
-    const char *attention_cache_dir = getenv("H3_ATTENTION_CACHE_DIR");
+    const char *attention_cache_path = h3_option("H3_ATTENTION_CACHE");
+    const char *attention_cache_dir = h3_option("H3_ATTENTION_CACHE_DIR");
     h3_cache_model_kind model_kind = detect_model_kind(weight_directory);
     char *selected_cache_path = NULL;
     if (attention_cache_path && *attention_cache_path &&
@@ -2897,7 +2898,7 @@ static h3_dit *load_dit(const char *weight_directory,
             free(selected_cache_path);
             goto failed;
         }
-        const char *stream_mlp = getenv("H3_INT8_STREAM_MLP");
+        const char *stream_mlp = h3_option("H3_INT8_STREAM_MLP");
         int want_mlp_stream = stream_mlp && *stream_mlp && strcmp(stream_mlp, "0");
         if (want_mlp_stream && !dit->int8_mlp) {
             fail(error, error_size,
@@ -2938,17 +2939,17 @@ static h3_dit *load_dit(const char *weight_directory,
         use_slower_uncached_int8_scales;
     dit->use_slower_dynamic_fc1_k = use_slower_dynamic_fc1_k;
     dit->keep_bf16_attention_out = dit->int8_attention_out &&
-        (getenv("H3_INT8_KEEP_BF16_ATTENTION_OUT") ||
-         getenv("H3_BENCH_INT8_ATTENTION_OUT_AB"));
+        (h3_option("H3_INT8_KEEP_BF16_ATTENTION_OUT") ||
+         h3_option("H3_BENCH_INT8_ATTENTION_OUT_AB"));
     dit->keep_bf16_qkv = dit->int8_qkv &&
-        (getenv("H3_INT8_KEEP_BF16_QKV") ||
-         getenv("H3_BENCH_INT8_QKV_AB"));
+        (h3_option("H3_INT8_KEEP_BF16_QKV") ||
+         h3_option("H3_BENCH_INT8_QKV_AB"));
     dit->use_slower_grouped_quantizer = use_slower_grouped_quantizer;
     dit->use_int8_row_fc2 = dit->int8_mlp && use_int8_row_fc2;
     dit->keep_bf16_mlp = dit->int8_mlp &&
-        (getenv("H3_INT8_KEEP_BF16_MLP") ||
-         getenv("H3_BENCH_INT8_MLP_AB") ||
-         getenv("H3_INT8_MLP_STAGE"));
+        (h3_option("H3_INT8_KEEP_BF16_MLP") ||
+         h3_option("H3_BENCH_INT8_MLP_AB") ||
+         h3_option("H3_INT8_MLP_STAGE"));
     h3_gpu_profile_set_label(dit->gpu, "H3 DiT");
     report(progress, progress_opaque, "refine text", 0, 1);
     if (!refine_text_reusing(dit, text, prep, weight_directory, loras,
@@ -2967,7 +2968,7 @@ static h3_dit *load_dit(const char *weight_directory,
      * Its identity goes into the schedule-cache key (bytes 16..31, unused by
      * the weight fingerprint), so dense and curve schedules never mix. */
     const char *curve_path =
-        dit->family->info.capabilities & H3_CAN_ADALN_CURVE ? getenv("H3_ADALN_CURVE") : NULL;
+        dit->family->info.capabilities & H3_CAN_ADALN_CURVE ? h3_option("H3_ADALN_CURVE") : NULL;
     h3_adaln_curve *curve = NULL;
     if (dit->hyperflow) {
         /* Two-time AdaLN; no curve form applies. */
@@ -3045,7 +3046,7 @@ static h3_dit *load_dit(const char *weight_directory,
     /* H3_ADALN_ULP_NOISE=<fraction> (diagnostic): a rounding-sized random
      * change to the schedule, as a yardstick for H3_ADALN_CURVE's. Applied
      * to this generation only (after the schedule cache stored its copy). */
-    const char *ulp_noise = getenv("H3_ADALN_ULP_NOISE");
+    const char *ulp_noise = h3_option("H3_ADALN_ULP_NOISE");
     if (dit->schedule && ulp_noise && atof(ulp_noise) > 0.0) {
         fprintf(stderr, "h3: perturbing %.1f%% of AdaLN values by one BF16 step\n",
                 100.0 * atof(ulp_noise));
@@ -3403,10 +3404,10 @@ static void debug_append_attention_meta(const char *prefix, int truncate,
  * dump only prints a warning, since it's not part of generation). */
 static void debug_dump_attention_qkv(h3_dit *dit, unsigned index, int step,
                                      uint32_t rows) {
-    const char *prefix = getenv("H3_DUMP_ATTENTION_QKV");
+    const char *prefix = h3_option("H3_DUMP_ATTENTION_QKV");
     if (!prefix || !*prefix) return;
-    const char *block_text = getenv("H3_DUMP_ATTENTION_BLOCK");
-    const char *step_text = getenv("H3_DUMP_ATTENTION_STEP");
+    const char *block_text = h3_option("H3_DUMP_ATTENTION_BLOCK");
+    const char *step_text = h3_option("H3_DUMP_ATTENTION_STEP");
     unsigned want_block = block_text ? (unsigned)atoi(block_text) : 0;
     int want_step = step_text ? atoi(step_text) : 0;
     if (index != want_block || step != want_step) return;
@@ -3484,10 +3485,10 @@ static void debug_dump_attention_qkv(h3_dit *dit, unsigned index, int step,
  * comparable capture). Gated behind the same env vars as the QKV dump. */
 static void debug_dump_attention_output(h3_dit *dit, unsigned index, int step,
                                         uint32_t rows, int head_major) {
-    const char *prefix = getenv("H3_DUMP_ATTENTION_QKV");
+    const char *prefix = h3_option("H3_DUMP_ATTENTION_QKV");
     if (!prefix || !*prefix) return;
-    const char *block_text = getenv("H3_DUMP_ATTENTION_BLOCK");
-    const char *step_text = getenv("H3_DUMP_ATTENTION_STEP");
+    const char *block_text = h3_option("H3_DUMP_ATTENTION_BLOCK");
+    const char *step_text = h3_option("H3_DUMP_ATTENTION_STEP");
     unsigned want_block = block_text ? (unsigned)atoi(block_text) : 0;
     int want_step = step_text ? atoi(step_text) : 0;
     if (index != want_block || step != want_step) return;
@@ -3651,7 +3652,7 @@ static int run_block(h3_dit *dit, unsigned index, int step,
             dit->activated, weight->q_norm, weight->k_norm, rope_cos,
             rope_sin, rows, HEADS, HEAD_DIM, ROPE_HALF, 1e-5f),
            "HyperFlow Q/K norm/RoPE");
-    } else if (dit->int8_qkv && !getenv("H3_DISABLE_INT8_QKV")) {
+    } else if (dit->int8_qkv && !h3_option("H3_DISABLE_INT8_QKV")) {
         OP(h3_gpu_grouped_qkv_linear_rope_int8(
             dit->gpu, dit->query, dit->key, dit->value,
             dit->int8_activation, dit->int8_activation_scales,
@@ -3672,11 +3673,11 @@ static int run_block(h3_dit *dit, unsigned index, int step,
     }
     debug_dump_attention_qkv(dit, index, step, rows);
     int int8_attention_output = dit->int8_attention_out && !factored_out &&
-        !getenv("H3_DISABLE_INT8_ATTENTION_OUT");
+        !h3_option("H3_DISABLE_INT8_ATTENTION_OUT");
     int head_major_attention_output = int8_attention_output &&
         !dit->use_slower_row_major_attention_output &&
         !dit->use_slower_uncached_int8_scales &&
-        !getenv("H3_DISABLE_HEAD_MAJOR_ATTENTION_OUTPUT");
+        !h3_option("H3_DISABLE_HEAD_MAJOR_ATTENTION_OUTPUT");
     /* Experimental, opt-in: replace this engine's own MPSGraph SDPA with
      * liuliu/ccv's Metal int8 NAX attention kernel for an A/B comparison
      * (see plans/SPEEDUP_ROADMAP.md item 5, tools/ccv_eval/README.md). Only
@@ -3746,8 +3747,8 @@ static int run_block(h3_dit *dit, unsigned index, int step,
     }
     int fused_int8_mlp_input = dit->int8_mlp && !factored_mlp &&
         !dit->use_slower_unfused_int8_inputs &&
-        !getenv("H3_DISABLE_FUSED_INT8_MLP_INPUT") &&
-        !getenv("H3_INT8_MLP_STAGE");
+        !h3_option("H3_DISABLE_FUSED_INT8_MLP_INPUT") &&
+        !h3_option("H3_INT8_MLP_STAGE");
     if (fused_int8_mlp_input) {
         uint32_t padded_rows = (rows + 127u) & ~127u;
         OP(h3_gpu_gate_adaln_quantize_int8(
@@ -3756,7 +3757,7 @@ static int run_block(h3_dit *dit, unsigned index, int step,
             dit->attention_output, weight->norm2, modulation, modulation,
             row_map, rows, padded_rows, HIDDEN, SLOTS, 2, 3, 4, 1e-5f),
            "DiT fused attention gate, MLP AdaLN and int8 quantization");
-    } else if (!getenv("H3_DISABLE_FUSED_GATE_ADALN")) {
+    } else if (!h3_option("H3_DISABLE_FUSED_GATE_ADALN")) {
         OP(h3_gpu_gate_adaln_bf16(
             dit->gpu, dit->hidden, dit->mod_mlp, dit->hidden,
             dit->attention_output, weight->norm2, modulation, modulation,
@@ -3818,7 +3819,7 @@ static int run_block(h3_dit *dit, unsigned index, int step,
                 weight->fc2, NULL, rows, FFN, HIDDEN), "HyperFlow FC2");
         }
     } else if (dit->int8_mlp &&
-        (!getenv("H3_DISABLE_INT8_MLP") ||
+        (!h3_option("H3_DISABLE_INT8_MLP") ||
          !weight->fc1 || !weight->fc2)) {
         OP(h3_gpu_mlp_int8_bf16(
             dit->gpu, mlp_output, dit->activated, dit->int8_activation,
@@ -3831,7 +3832,7 @@ static int run_block(h3_dit *dit, unsigned index, int step,
             dit->use_slower_dynamic_fc1_k, dit->use_int8_row_fc2,
             fused_int8_mlp_input),
            "DiT int8 fused MLP");
-    } else if (dit->nax_mlp && !getenv("H3_DISABLE_NAX_MLP")) {
+    } else if (dit->nax_mlp && !h3_option("H3_DISABLE_NAX_MLP")) {
         OP(h3_gpu_mlp_nax_bf16(dit->gpu, mlp_output, dit->activated,
             dit->mod_mlp, weight->fc1, weight->fc2, rows, HIDDEN, FFN,
             HIDDEN), "DiT NAX fused MLP");
@@ -3853,8 +3854,8 @@ static int run_block(h3_dit *dit, unsigned index, int step,
             dit->schedule, next_index);
         int fuse_int8_qkv_input = dit->int8_qkv && !next_weight->q_down &&
             !dit->use_slower_unfused_int8_inputs &&
-            !getenv("H3_DISABLE_INT8_QKV") &&
-            !getenv("H3_DISABLE_FUSED_INT8_QKV_INPUT");
+            !h3_option("H3_DISABLE_INT8_QKV") &&
+            !h3_option("H3_DISABLE_FUSED_INT8_QKV_INPUT");
         if (fuse_int8_qkv_input) {
             uint32_t padded_rows = (rows + 127u) & ~127u;
             OP(h3_gpu_gate_adaln_quantize_int8(
@@ -3998,7 +3999,7 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
         dit->core_forward_count % dit->core_reuse_interval == 0 ||
         step == h3_dit_schedule_steps(dit->schedule) - 1;
     int use_token_reduction = evaluate_core && dit->token_reduction &&
-        !getenv("H3_DISABLE_TOKEN_REDUCTION");
+        !h3_option("H3_DISABLE_TOKEN_REDUCTION");
     unsigned token_reduction_end =
         dit->token_reduction_early_steps &&
         (unsigned)step < dit->token_reduction_early_steps ?
@@ -4014,7 +4015,7 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
         unsigned completed_blocks = 0;
         /* Testing (tests/test_hyperflow_real.c): the hidden state after each
          * block of step 0 (resident or SSD-streamed weights). */
-        const char *dump_prefix = getenv("H3_DUMP_BLOCK_HIDDEN");
+        const char *dump_prefix = h3_option("H3_DUMP_BLOCK_HIDDEN");
         if (dump_prefix && (!*dump_prefix || dit->attention_stream))
             dump_prefix = NULL;
         int carried_attention_adaln = 0;
@@ -4029,7 +4030,7 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
             if (use_token_reduction &&
                 block == dit->token_reduction_begin) {
                 fused_token_adaln = dit->block_active[block] &&
-                    !getenv("H3_DISABLE_FUSED_TOKEN_POOL_ADALN");
+                    !h3_option("H3_DISABLE_FUSED_TOKEN_POOL_ADALN");
                 if (fused_token_adaln) {
                     if (!enter_token_reduction_adaln(
                             dit, block, step, error, error_size)) return 0;
@@ -4039,7 +4040,7 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
             }
             if (use_token_reduction && block == token_reduction_end) {
                 fused_token_adaln = dit->block_active[block] &&
-                    !getenv("H3_DISABLE_FUSED_TOKEN_ADALN");
+                    !h3_option("H3_DISABLE_FUSED_TOKEN_ADALN");
                 if (fused_token_adaln) {
                     if (!leave_token_reduction_adaln(
                             dit, block, step, error, error_size)) return 0;
@@ -4053,7 +4054,7 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
                 (next_block == dit->token_reduction_begin ||
                  next_block == token_reduction_end);
             int fuse_next_attention =
-                !getenv("H3_DISABLE_FUSED_CROSS_BLOCK_ADALN") &&
+                !h3_option("H3_DISABLE_FUSED_CROSS_BLOCK_ADALN") &&
                 next_block < H3_DIT_BLOCKS &&
                 dit->block_active[next_block] && !next_is_token_boundary;
             h3_dit_block streamed_weight;
@@ -4244,8 +4245,8 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
     dit->core_forward_count++;
     const h3_gpu_tensor *final = h3_dit_schedule_final(dit->schedule);
     int fused_final_head = dit->bf16_final &&
-        !getenv("H3_DISABLE_FUSED_FINAL_HEAD") &&
-        !getenv("H3_DISABLE_FUSED_FINAL_SLICE");
+        !h3_option("H3_DISABLE_FUSED_FINAL_HEAD") &&
+        !h3_option("H3_DISABLE_FUSED_FINAL_SLICE");
     if (fused_final_head) {
         OP(h3_gpu_adaln_linear_bf16(
             dit->gpu, dit->audio_output_bf16, dit->final_audio_inverse,
@@ -4261,7 +4262,7 @@ static int encode_forward(h3_dit *dit, int step, int begin, int submit,
             dit->final_video_w, dit->final_video_b, dit->video_rows, HIDDEN,
             VIDEO_PATCH, FINAL_SLOTS, 0, 1, 1e-5f),
            "fused final video AdaLN/head");
-    } else if (getenv("H3_DISABLE_FUSED_FINAL_SLICE")) {
+    } else if (h3_option("H3_DISABLE_FUSED_FINAL_SLICE")) {
         OP(h3_gpu_copy_bf16(dit->gpu, dit->final_audio_input, 0, dit->hidden,
             (size_t)dit->audio_target_start * HIDDEN,
             (size_t)dit->audio_rows * HIDDEN), "slice final audio");
@@ -4482,7 +4483,7 @@ int h3_dit_reuse_schedule(int steps, int reuse_interval, uint8_t *selected,
 }
 
 static int parse_reuse_steps(int steps, uint8_t *selected) {
-    const char *text = getenv("H3_REUSE_STEPS");
+    const char *text = h3_option("H3_REUSE_STEPS");
     if (!text || !*text) return 0;
     memset(selected, 0, (size_t)steps);
     int count = 0;
@@ -4504,15 +4505,15 @@ static int parse_reuse_steps(int steps, uint8_t *selected) {
 }
 
 static int gpu_sampler_requested(const h3_dit *dit) {
-    const char *cpu = getenv("H3_CPU_SAMPLER");
+    const char *cpu = h3_option("H3_CPU_SAMPLER");
     if (cpu && *cpu && strcmp(cpu, "0")) return 0;
-    const char *value = getenv("H3_GPU_SAMPLER");
+    const char *value = h3_option("H3_GPU_SAMPLER");
     if (value) return *value && strcmp(value, "0");
     return h3_gpu_is_m5(dit->gpu);
 }
 
 static unsigned gpu_sampler_window(void) {
-    const char *value = getenv("H3_GPU_SAMPLER_WINDOW");
+    const char *value = h3_option("H3_GPU_SAMPLER_WINDOW");
     if (!value || !*value) return 1;
     char *end = NULL;
     long parsed = strtol(value, &end, 10);
@@ -4555,13 +4556,13 @@ static int denoise_euler_gpu(h3_dit *dit, float *video_latent,
         return 0;
     }
     if (custom_count > 0) selected_count = custom_count;
-    if (reuse_interval > 1 && getenv("H3_PROFILE"))
+    if (reuse_interval > 1 && h3_option("H3_PROFILE"))
         fprintf(stderr, "h3: %s GPU reuse schedule has %d evaluations\n",
                 custom_count > 0 ? "custom" : "selected", selected_count);
     unsigned window = gpu_sampler_window();
     int disable_command_split = window == 1 &&
-                                getenv("H3_DIT_COMMAND_BLOCKS") == NULL;
-    if (getenv("H3_PROFILE"))
+                                h3_option("H3_DIT_COMMAND_BLOCKS") == NULL;
+    if (h3_option("H3_PROFILE"))
         fprintf(stderr, "h3: GPU sampler encode window is %s; internal split "
                 "%s\n", window ? "bounded" : "unbounded",
                 disable_command_split ? "disabled" : "enabled");
@@ -4942,7 +4943,7 @@ int h3_dit_denoise_euler_preview(
         return 0;
     }
     if (custom_count > 0) selected_count = custom_count;
-    if (reuse_interval > 1 && getenv("H3_PROFILE"))
+    if (reuse_interval > 1 && h3_option("H3_PROFILE"))
         fprintf(stderr, "h3: %s reuse schedule has %d evaluations\n",
                 custom_count > 0 ? "custom" : "selected", selected_count);
     size_t video_count = h3_dit_video_elements(dit);
@@ -5193,7 +5194,7 @@ void h3_dit_free(h3_dit *dit) {
 #undef FREE
     free(dit->forced_audio);
     h3_dit_schedule_free(dit->schedule);
-    if (dit->ssd_streaming && getenv("H3_PROFILE")) {
+    if (dit->ssd_streaming && h3_option("H3_PROFILE")) {
         double gib = (double)dit->stream_bytes / (1024.0 * 1024.0 * 1024.0);
         fprintf(stderr,
                 "h3: BF16 SSD stream %.3f GiB read in %.3fs (%.3f GiB/s), "
@@ -5203,7 +5204,7 @@ void h3_dit_free(h3_dit *dit) {
                     ? gib / dit->stream_read_seconds : 0.0,
                 dit->stream_wait_seconds);
     }
-    if (dit->attention_stream && getenv("H3_PROFILE")) {
+    if (dit->attention_stream && h3_option("H3_PROFILE")) {
         double gib = (double)dit->attn_stream_bytes /
             (1024.0 * 1024.0 * 1024.0);
         fprintf(stderr,

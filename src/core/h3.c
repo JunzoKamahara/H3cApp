@@ -1,3 +1,4 @@
+#include "h3_options.h"
 #include "h3_internal.h"
 #include "h3_audio_vae.h"
 #include "h3_gpu.h"
@@ -472,7 +473,7 @@ static float h3_audio_sigma_shift(const h3_params *params) {
  * clearly worse (lipsync-test/REPORT.md). Changes the sigma schedule, so it
  * is part of the prepared key. */
 static int h3_forced_audio_clean(const h3_params *params) {
-    const char *mode = getenv("H3_FORCED_AUDIO_MODE");
+    const char *mode = h3_option("H3_FORCED_AUDIO_MODE");
     if (params->forced_audio_path) return !(mode && !strcmp(mode, "noised"));
     /* An initial latent's own audio is held clean the same way. */
     return params->initial_latent_path != NULL;
@@ -1169,7 +1170,7 @@ typedef struct {
  * default; costs one pass over each buffer when on. */
 static int h3_debug_hashes_enabled(void) {
     static int enabled = -1;
-    if (enabled < 0) enabled = getenv("H3_DEBUG_HASHES") != NULL;
+    if (enabled < 0) enabled = h3_option("H3_DEBUG_HASHES") != NULL;
     return enabled;
 }
 
@@ -1642,9 +1643,9 @@ int h3_fast_attention_available(void) {
  * H3_ATTENTION_BACKEND / H3_CCV_DIRECT environment (never set by the app). */
 static h3_dit_attention_mode h3_resolve_attention_mode(const h3_params *params) {
     if (params->fast_attention) return H3_DIT_ATTENTION_CCV_INT8_DIRECT;
-    const char *backend = getenv("H3_ATTENTION_BACKEND");
+    const char *backend = h3_option("H3_ATTENTION_BACKEND");
     if (backend && !strcmp(backend, "ccv_dense")) {
-        const char *direct = getenv("H3_CCV_DIRECT");
+        const char *direct = h3_option("H3_CCV_DIRECT");
         return direct && *direct == '1' ? H3_DIT_ATTENTION_CCV_INT8_DIRECT
                                         : H3_DIT_ATTENTION_CCV_INT8;
     }
@@ -1792,7 +1793,7 @@ static int h3_reference_canvas(const h3_ctx *ctx, const h3_params *params,
 /* Whether h3_gpu.m will run dense attention as one MPSGraph call (its
  * policy: Apple10 GPUs on macOS 26 or later, unless H3_SDPA_MODE says). */
 static int h3_plan_full_sdpa(const h3_ctx *ctx) {
-    const char *mode = getenv("H3_SDPA_MODE");
+    const char *mode = h3_option("H3_SDPA_MODE");
     if (mode && *mode) return !strcmp(mode, "full");
     if (h3_device(ctx)->apple_gpu_family < 10) return 0;
     if (__builtin_available(macOS 26.0, *)) return 1;
@@ -2105,7 +2106,7 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
             generated_rows += part->stop - part->start;
     }
     /* As h3_text_encoder.c reads ahead: 3 layers on M5, 2 elsewhere. */
-    const char *prefetch = getenv("H3_QWEN_PREFETCH_DEPTH");
+    const char *prefetch = h3_option("H3_QWEN_PREFETCH_DEPTH");
     int prefetch_depth = params->plan_text_prefetch_depth > 0 ?
         params->plan_text_prefetch_depth :
         prefetch && *prefetch ? atoi(prefetch) :
@@ -2115,7 +2116,7 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
     /* Resident mode: neither SSD streaming nor the attention cache. Int8
      * on a GPU with tensor units (~18 GiB, like the cache file), BF16
      * elsewhere (~37 GiB). */
-    const char *cache = getenv("H3_ATTENTION_CACHE");
+    const char *cache = h3_option("H3_ATTENTION_CACHE");
     int cached = params->plan_attention_cache ?
         params->plan_attention_cache > 0 : (cache && *cache);
     uint64_t hyperflow_resident = h3_hyperflow_resident_bytes(ctx, ref2va);
@@ -2163,7 +2164,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
          * encoding it for many minutes, and one past this Mac's memory can
          * take the whole system down. A plan that cannot be made (say, an
          * unreadable file) is left for the generation to report. */
-        const char *preflight = getenv("H3_PREFLIGHT");
+        const char *preflight = h3_option("H3_PREFLIGHT");
         h3_plan plan;
         planned = (!preflight || strcmp(preflight, "0")) &&
             h3_plan_generation(ctx, prompt, params, &plan);
@@ -3265,7 +3266,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     dit = NULL;
     if (progress.cancelled) goto cleanup;
     h3_video_vae_set_cancel(params->cancel_requested);
-    const char *decode_forced = getenv("H3_FORCED_AUDIO_DECODE");
+    const char *decode_forced = h3_option("H3_FORCED_AUDIO_DECODE");
     if (forced_pcm && !(decode_forced && *decode_forced &&
                         strcmp(decode_forced, "0"))) {
         /* The file's own audio, not its trip through the audio VAE (set

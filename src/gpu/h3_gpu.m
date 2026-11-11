@@ -1,3 +1,4 @@
+#include "h3_options.h"
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #import <MetalPerformanceShaders/MetalPerformanceShaders.h>
@@ -122,7 +123,7 @@ static MPSGraphTensorData *h3_gpu_graph_data(const h3_gpu_tensor *tensor,
                                              MPSDataType data_type,
                                              int stable) {
     H3Tensor *object = TENSOR(tensor);
-    if (!stable || getenv("H3_DISABLE_GRAPH_DATA_CACHE"))
+    if (!stable || h3_option("H3_DISABLE_GRAPH_DATA_CACHE"))
         return [[MPSGraphTensorData alloc] initWithMTLBuffer:object.buffer
             shape:shape dataType:data_type];
     if (object.graphData && object.graphDataShape == shape &&
@@ -138,7 +139,7 @@ static MPSGraphTensorData *h3_gpu_graph_data(const h3_gpu_tensor *tensor,
 }
 
 static MPSCommandBuffer *h3_gpu_mps_command(H3GPU *gpu) {
-    const char *override = getenv("H3_REUSE_MPS_COMMAND");
+    const char *override = h3_option("H3_REUSE_MPS_COMMAND");
     BOOL reuse = override ? (*override && strcmp(override, "0")) :
                             gpu.reuseMPSCommandDefault;
     if (!reuse)
@@ -156,7 +157,7 @@ static double h3_gpu_now(void) {
 }
 
 static int h3_gpu_profile_enabled(void) {
-    const char *value = getenv("H3_PROFILE");
+    const char *value = h3_option("H3_PROFILE");
     return value && *value && strcmp(value, "0");
 }
 
@@ -328,7 +329,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             if (error && error_size) snprintf(error, error_size, "cannot initialize Metal");
             return NULL;
         }
-        if (getenv("H3_DEBUG_GPU_MEMORY")) {
+        if (h3_option("H3_DEBUG_GPU_MEMORY")) {
             fprintf(stderr, "h3: Metal live allocation at GPU startup: "
                     "%.3f GiB\n", (double)gpu.device.currentAllocatedSize /
                     (1024.0 * 1024.0 * 1024.0));
@@ -366,7 +367,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
         if (source) {
             MTLCompileOptions *options = [[MTLCompileOptions alloc] init];
             options.mathMode = MTLMathModeSafe;
-            const char *nax = getenv("H3_NAX");
+            const char *nax = h3_option("H3_NAX");
             BOOL hasTensorHardware = h3_device_has_tensor_ops(gpu.device);
             BOOL wantsTensorOps =
                 hasTensorHardware && (!nax || !*nax || strcmp(nax, "0") != 0);
@@ -392,7 +393,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             if (!gpu.library && wantsTensorOps) {
                 /* TensorOps is optional: an older runtime must retain the
                  * ordinary MPSGraph/direct Metal implementation. */
-                if (getenv("H3_NAX_DIAGNOSTIC"))
+                if (h3_option("H3_NAX_DIAGNOSTIC"))
                     fprintf(stderr, "h3: TensorOps compile failed: %s\n",
                             libraryError.localizedDescription.UTF8String);
                 options.preprocessorMacros = @{};
@@ -564,7 +565,7 @@ void h3_gpu_free(h3_gpu *gpu) {
         object.library = nil;
         object.queue = nil;
         object.device = nil;
-        if (getenv("H3_DEBUG_GPU_MEMORY")) {
+        if (h3_option("H3_DEBUG_GPU_MEMORY")) {
             fprintf(stderr, "h3: Metal live allocation at GPU teardown: "
                     "%.3f GiB\n", (double)before /
                     (1024.0 * 1024.0 * 1024.0));
@@ -716,7 +717,7 @@ static h3_gpu_tensor *h3_gpu_tensor_load_file(h3_gpu *opaque, const char *path,
         elements > SIZE_MAX / item_size) return NULL;
     size_t bytes = elements * item_size;
     if ((uint64_t)bytes > (uint64_t)INT64_MAX - file_offset) return NULL;
-    const char *zero_copy = getenv("H3_ZERO_COPY_WEIGHTS");
+    const char *zero_copy = h3_option("H3_ZERO_COPY_WEIGHTS");
     int transformer_weight = strstr(path, "/transformer/") != NULL;
     int m5 = h3_device_has_tensor_ops(gpu.device);
     int map_weight = bytes &&
@@ -1247,7 +1248,7 @@ int h3_gpu_linear_f32(h3_gpu *opaque, h3_gpu_tensor *output,
         TENSOR(output).dtype != H3_GPU_F32 ||
         (bias && (!h3_gpu_require_elements(gpu, bias, output_dim, @"linear bias") ||
                   TENSOR(bias).dtype != H3_GPU_F32))) return 0;
-    if (!getenv("H3_SCALAR_PATCH") && rows >= 16 && output_dim == 5376 &&
+    if (!h3_option("H3_SCALAR_PATCH") && rows >= 16 && output_dim == 5376 &&
         (input_dim == 32 || input_dim == 96)) {
         linear_args args = {rows, input_dim, output_dim, bias ? 1u : 0u};
         const h3_gpu_tensor *bias_buffer = bias ? bias : input;
@@ -1861,7 +1862,7 @@ static const char *h3_gpu_family_name(id<MTLDevice> device) {
 
 static h3_gpu_sdpa_mode h3_gpu_sdpa_resolve_mode(H3GPU *gpu) {
     if (gpu.sdpaMode) return (h3_gpu_sdpa_mode)gpu.sdpaMode;
-    const char *env = getenv("H3_SDPA_MODE");
+    const char *env = h3_option("H3_SDPA_MODE");
     if (env && *env) {
         if (!strcmp(env, "full")) return H3_GPU_SDPA_FULL;
         if (!strcmp(env, "chunked")) return H3_GPU_SDPA_CHUNKED;
@@ -1881,7 +1882,7 @@ static h3_gpu_sdpa_mode h3_gpu_sdpa_resolve_mode(H3GPU *gpu) {
 
 static uint64_t h3_gpu_sdpa_budget(H3GPU *gpu) {
     if (gpu.sdpaBudget) return gpu.sdpaBudget;
-    const char *env = getenv("H3_SDPA_SCORE_BYTES");
+    const char *env = h3_option("H3_SDPA_SCORE_BYTES");
     if (env && *env) {
         unsigned long long parsed = strtoull(env, NULL, 10);
         if (parsed >= (1ull << 20)) return parsed;
@@ -2130,7 +2131,7 @@ static void h3_gpu_sdpa_log(H3GPU *gpu, h3_gpu_sdpa_mode mode,
                             const h3_gpu_tensor *key,
                             const h3_gpu_tensor *value,
                             const h3_gpu_tensor *output) {
-    if (!getenv("H3_SDPA_LOG")) return;
+    if (!h3_option("H3_SDPA_LOG")) return;
     @autoreleasepool {
         NSString *key_text = [NSString stringWithFormat:
             @"%d:%u:%u:%u:%u:%u:%u:%d:%d:%d", (int)mode, (unsigned)dtype, batch,
@@ -3795,7 +3796,7 @@ int h3_gpu_lora_delta_bf16(h3_gpu *opaque, h3_gpu_tensor *delta,
      * (h3_lora pads ranks to a multiple of 32 for it). MPSGraph's BF16
      * matmul measured ~4x slower at these skinny shapes. */
     if (gpu.tensorOpsEnabled && rows >= 128 && !(rank % 32) &&
-        !(columns % 64) && !getenv("H3_LORA_MPS")) {
+        !(columns % 64) && !h3_option("H3_LORA_MPS")) {
         if (!h3_gpu_require_command(gpu)) return 0;
         id<MTLComputePipelineState> pipeline =
             h3_gpu_pipeline(gpu, @"h3_linear_bf16_nax_r128");
@@ -3882,7 +3883,7 @@ int h3_gpu_linear_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
         !h3_gpu_require_bf16(gpu, weight, weight_count, @"linear weight") ||
         !h3_gpu_require_bf16(gpu, output, output_count, @"linear output") ||
         (bias && !h3_gpu_require_bf16(gpu, bias, output_dim, @"linear bias"))) return 0;
-    const char *splitRowsValue = getenv("H3_NAX_SPLIT_ROWS");
+    const char *splitRowsValue = h3_option("H3_NAX_SPLIT_ROWS");
     BOOL autoSplitRows = gpu.tensorOpsEnabled && rows > 2048 && rows <= 3072 &&
         (gpu.tensorOpsMode == 2 || gpu.tensorOpsMode == 3 ||
          gpu.tensorOpsMode == 4);
@@ -3898,13 +3899,13 @@ int h3_gpu_linear_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
         (specializedRows && gpu.tensorOpsMode == 4 &&
          input_dim == 5376 && output_dim == 21504);
     if (gpu.tensorOpsEnabled && naxShape && !bias && rows >= 128 &&
-        !getenv("H3_DISABLE_NAX_LINEAR") &&
+        !h3_option("H3_DISABLE_NAX_LINEAR") &&
         (input_dim % 32) == 0 && (output_dim % 64) == 0) {
         if (!h3_gpu_require_command(gpu)) return 0;
         uint32_t column_tiles = (output_dim + 63) / 64;
         BOOL morton4 = (rows <= 2048 || splitRows) &&
                        !(column_tiles % 4) &&
-                       getenv("H3_DISABLE_NAX_LINEAR_MORTON4") == NULL;
+                       h3_option("H3_DISABLE_NAX_LINEAR_MORTON4") == NULL;
         id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(
             gpu, morton4 ? @"h3_linear_bf16_nax_r128_morton4" :
                            @"h3_linear_bf16_nax_r128");
@@ -4103,13 +4104,13 @@ static int h3_gpu_fc1_swiglu_nax_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
                              @"NAX FC1 output") ||
         !rows || (input_dim % 32) || (hidden_dim % 64) ||
         !h3_gpu_require_command(gpu)) return 0;
-    BOOL morton = getenv("H3_DISABLE_NAX_MORTON") == NULL &&
-                  getenv("H3_DISABLE_NAX_MORTON_FC1") == NULL;
+    BOOL morton = h3_option("H3_DISABLE_NAX_MORTON") == NULL &&
+                  h3_option("H3_DISABLE_NAX_MORTON_FC1") == NULL;
     uint32_t row_tiles = (rows + 127) / 128;
     uint32_t column_tiles = (hidden_dim + 63) / 64;
     BOOL morton4 = morton && !(column_tiles % 4) &&
-                   getenv("H3_DISABLE_NAX_MORTON4") == NULL &&
-                   getenv("H3_DISABLE_NAX_MORTON4_FC1") == NULL;
+                   h3_option("H3_DISABLE_NAX_MORTON4") == NULL &&
+                   h3_option("H3_DISABLE_NAX_MORTON4_FC1") == NULL;
     id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(
         gpu, morton4 ? @"h3_fc1_swiglu_bf16_nax_r128_morton4" :
         morton ? @"h3_fc1_swiglu_bf16_nax_r128_morton" :
@@ -4170,13 +4171,13 @@ int h3_gpu_mlp_nax_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
                              @"NAX FC2 output") ||
         !h3_gpu_fc1_swiglu_nax_bf16(opaque, activated, input, fc1_weight,
                                      rows, input_dim, hidden_dim)) return 0;
-    BOOL morton = getenv("H3_DISABLE_NAX_MORTON") == NULL &&
-                  getenv("H3_DISABLE_NAX_MORTON_FC2") == NULL;
+    BOOL morton = h3_option("H3_DISABLE_NAX_MORTON") == NULL &&
+                  h3_option("H3_DISABLE_NAX_MORTON_FC2") == NULL;
     uint32_t row_tiles = (rows + 127) / 128;
     uint32_t column_tiles = (output_dim + 63) / 64;
     BOOL morton4 = morton && !(column_tiles % 4) &&
-                   getenv("H3_DISABLE_NAX_MORTON4") == NULL &&
-                   getenv("H3_DISABLE_NAX_MORTON4_FC2") == NULL;
+                   h3_option("H3_DISABLE_NAX_MORTON4") == NULL &&
+                   h3_option("H3_DISABLE_NAX_MORTON4_FC2") == NULL;
     id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(
         gpu, morton4 ? @"h3_linear_bf16_nax_r128_morton4" :
         morton ? @"h3_linear_bf16_nax_r128_morton" :
@@ -4235,7 +4236,7 @@ static int h3_gpu_quantize_bf16_int8_rows(
         !h3_gpu_require_command(gpu)) return 0;
     BOOL vector_quantizer =
         [label isEqualToString:@"int8 MLP FC2 input"] ||
-        getenv("H3_INT8_VECTOR_QUANT");
+        h3_option("H3_INT8_VECTOR_QUANT");
     NSString *kernel = vector_quantizer ?
         @"h3_quantize_bf16_int8_rows" :
         @"h3_quantize_bf16_int8_rows_scalar";
@@ -4330,15 +4331,15 @@ static int h3_gpu_quantize_bf16_int8_groups(
                             @"grouped int8 scales") ||
         !h3_gpu_require_command(gpu)) return 0;
     BOOL scalar128 = !use_slower_grouped_quantizer && rows <= 2048;
-    const char *quantizer_override = getenv("H3_INT8_GROUP_QUANT_128");
+    const char *quantizer_override = h3_option("H3_INT8_GROUP_QUANT_128");
     if (quantizer_override)
         scalar128 = *quantizer_override && strcmp(quantizer_override, "0");
     BOOL cached128 = scalar128 && group_size == 1024;
-    const char *cache_override = getenv("H3_INT8_GROUP_QUANT_128_CACHE");
+    const char *cache_override = h3_option("H3_INT8_GROUP_QUANT_128_CACHE");
     if (cache_override)
         cached128 = cached128 && *cache_override &&
             strcmp(cache_override, "0");
-    NSString *kernel = getenv("H3_INT8_VECTOR_QUANT") ?
+    NSString *kernel = h3_option("H3_INT8_VECTOR_QUANT") ?
         @"h3_quantize_bf16_int8_groups" : cached128 ?
         @"h3_quantize_bf16_int8_groups_scalar128_cached" : scalar128 ?
         @"h3_quantize_bf16_int8_groups_scalar128" :
@@ -4408,24 +4409,24 @@ static int h3_gpu_linear_int8_bf16_layout(
             !h3_gpu_quantize_bf16_int8_head_major_rows(
                 opaque, quantized_input, input_scales, input, rows,
                 padded_rows, heads, headDim)) return 0;
-    } else if (!getenv("H3_BENCH_SKIP_QUANT") &&   /* diagnosis only: time the matmul alone */
+    } else if (!h3_option("H3_BENCH_SKIP_QUANT") &&   /* diagnosis only: time the matmul alone */
                !h3_gpu_quantize_bf16_int8_rows(
                    opaque, quantized_input, input_scales, input, rows,
                    padded_rows, input_dim, 1.0f,
                    @"int8 linear input")) return 0;
     BOOL local_scales = !use_slower_uncached_int8_scales &&
-        getenv("H3_DISABLE_INT8_LOCAL_SCALES") == NULL;
+        h3_option("H3_DISABLE_INT8_LOCAL_SCALES") == NULL;
     BOOL known_linear = local_scales && rows <= 2048 && input_dim == 7168 &&
         output_dim == 5376 &&
-        getenv("H3_DISABLE_INT8_LINEAR_KNOWN") == NULL;
+        h3_option("H3_DISABLE_INT8_LINEAR_KNOWN") == NULL;
     /* The SwiftVR DiT's shapes get static K loops (and FC2 a full-K
      * product unless H3_VSR_FC2_LOOP is set). */
     NSString *vsr_name = nil;
     BOOL wide = NO;
-    if (local_scales && getenv("H3_DISABLE_INT8_LINEAR_KNOWN") == NULL) {
+    if (local_scales && h3_option("H3_DISABLE_INT8_LINEAR_KNOWN") == NULL) {
         /* 128x256 tiles only on request (H3_VSR_X256=1): measured slower
          * for FC2 (114 vs 77 ms) and equal elsewhere */
-        BOOL x256 = getenv("H3_VSR_X256") != NULL && atoi(getenv("H3_VSR_X256")) != 0;
+        BOOL x256 = h3_option("H3_VSR_X256") != NULL && atoi(h3_option("H3_VSR_X256")) != 0;
         if (input_dim == 3072 && output_dim == 3072)
             vsr_name = x256 ? @"h3_linear_int8_nax_r128x256_full_k3072_n3072" : @"h3_linear_int8_local_scales_nax_r128_k3072_n3072";
         else if (input_dim == 3072 && output_dim == 9216)
@@ -4434,10 +4435,10 @@ static int h3_gpu_linear_int8_bf16_layout(
             vsr_name = x256 ? @"h3_linear_int8_nax_r128x256_full_k3072_n14336" : @"h3_linear_int8_local_scales_nax_r128_k3072_n14336";
         else if (input_dim == 14336 && output_dim == 3072)
             vsr_name = x256 ? @"h3_linear_int8_nax_r128x256_full_k14336_n3072" :
-                       getenv("H3_VSR_FC2_LOOP") ? @"h3_linear_int8_local_scales_nax_r128_k14336_n3072"
+                       h3_option("H3_VSR_FC2_LOOP") ? @"h3_linear_int8_local_scales_nax_r128_k14336_n3072"
                                                  : @"h3_linear_int8_nax_r128_full_k14336_n3072";
         wide = vsr_name != nil && x256;
-        if (getenv("H3_VSR_INT8_GENERIC")) { vsr_name = nil; wide = NO; }
+        if (h3_option("H3_VSR_INT8_GENERIC")) { vsr_name = nil; wide = NO; }
     }
     id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(
         gpu, vsr_name ? vsr_name :
@@ -4523,7 +4524,7 @@ int h3_gpu_mlp_int8_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
     uint32_t fc2_scale_groups = hidden_dim / 1024u;
     size_t activation_capacity = (size_t)padded_rows *
         MAX(input_dim, hidden_dim);
-    const char *stage = getenv("H3_INT8_MLP_STAGE");
+    const char *stage = h3_option("H3_INT8_MLP_STAGE");
     BOOL int8_fc1 = !stage || (strcmp(stage, "fc2") &&
                                strcmp(stage, "bf16"));
     BOOL int8_fc2 = !stage || (strcmp(stage, "fc1") &&
@@ -4600,7 +4601,7 @@ int h3_gpu_mlp_int8_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
         return 0;
     }
     float activation_clip = 1.0f;
-    const char *clip_value = getenv("H3_INT8_ACTIVATION_CLIP");
+    const char *clip_value = h3_option("H3_INT8_ACTIVATION_CLIP");
     if (clip_value) {
         float parsed = strtof(clip_value, NULL);
         if (parsed >= 0.1f && parsed <= 1.0f) activation_clip = parsed;
@@ -4608,19 +4609,19 @@ int h3_gpu_mlp_int8_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
     BOOL grouped_fc2 = int8_fc2 && !use_int8_row_fc2;
     BOOL row_fc2_n256 = use_int8_row_fc2 && rows <= 2048;
     BOOL grouped_fc2_local = grouped_fc2 &&
-        getenv("H3_INT8_GROUP_FC2_THREADGROUP") == NULL;
+        h3_option("H3_INT8_GROUP_FC2_THREADGROUP") == NULL;
     BOOL grouped_fc2_local128 = grouped_fc2 &&
-        getenv("H3_INT8_GROUP_FC2_LOCAL128") != NULL;
+        h3_option("H3_INT8_GROUP_FC2_LOCAL128") != NULL;
     BOOL int8_fc1_local = int8_fc1 &&
-        getenv("H3_INT8_FC1_LOCAL") != NULL;
+        h3_option("H3_INT8_FC1_LOCAL") != NULL;
     BOOL int8_fc1_known = int8_fc1 && input_dim == 5376 &&
         !use_slower_dynamic_fc1_k;
-    const char *known_override = getenv("H3_INT8_FC1_KNOWN");
+    const char *known_override = h3_option("H3_INT8_FC1_KNOWN");
     if (known_override)
         int8_fc1_known = int8_fc1 && input_dim == 5376 &&
             strcmp(known_override, "0") != 0;
     BOOL int8_fc1_full = int8_fc1_known &&
-        getenv("H3_DISABLE_FC1_FULL_K") == NULL;
+        h3_option("H3_DISABLE_FC1_FULL_K") == NULL;
     uint32_t row_tiles = padded_rows / 128;
     if (input_is_quantized && !int8_fc1) {
         h3_gpu_set_error(gpu,
@@ -5023,7 +5024,7 @@ int h3_gpu_gate_adaln_bf16(
     gate_adaln_args args = {
         rows, width, slots, gate_slot, shift_slot, scale_slot, epsilon
     };
-    NSString *pipeline_name = getenv("H3_DISABLE_EXACT_SIMD_GATE_ADALN") ?
+    NSString *pipeline_name = h3_option("H3_DISABLE_EXACT_SIMD_GATE_ADALN") ?
         @"h3_gate_adaln_bf16" : @"h3_gate_adaln_bf16_exact_simd";
     id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(
         gpu, pipeline_name);
@@ -5104,7 +5105,7 @@ int h3_gpu_gate_adaln_quantize_int8(
         rows, width, slots, gate_slot, shift_slot, scale_slot, epsilon
     };
     NSString *pipeline_name = width == 5376 &&
-        getenv("H3_DISABLE_VECTOR_GATE_ADALN") == NULL ?
+        h3_option("H3_DISABLE_VECTOR_GATE_ADALN") == NULL ?
         @"h3_gate_adaln_quantize_int8" :
         @"h3_gate_adaln_quantize_int8_scalar";
     id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(
@@ -5164,9 +5165,9 @@ static int h3_gpu_qkv_rope_bf16_layout(h3_gpu *opaque, h3_gpu_tensor *query,
         rope_half * 2 > head_dim) return 0;
     qkv_args args = {sequence, heads, head_dim, rope_half, grouped, epsilon};
     if (head_dim == 128 && !(heads % 4) &&
-        !getenv("H3_DISABLE_COOP_QKV")) {
+        !h3_option("H3_DISABLE_COOP_QKV")) {
         if (!h3_gpu_require_command(gpu)) return 0;
-        NSString *pipeline_name = getenv("H3_DISABLE_CACHED_QKV") ?
+        NSString *pipeline_name = h3_option("H3_DISABLE_CACHED_QKV") ?
             @"h3_qkv_rope_bf16_coop_uncached" :
             @"h3_qkv_rope_bf16_coop";
         id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(
@@ -5265,8 +5266,8 @@ int h3_gpu_grouped_qkv_linear_rope_bf16(
         rope_half == 48 &&
         (gpu.tensorOpsMode == 1 || gpu.tensorOpsMode == 3 ||
          gpu.tensorOpsMode == 4) &&
-        !getenv("H3_DISABLE_NAX_LINEAR") &&
-        !getenv("H3_DISABLE_SPLIT_NAX_QKV");
+        !h3_option("H3_DISABLE_NAX_LINEAR") &&
+        !h3_option("H3_DISABLE_SPLIT_NAX_QKV");
     if (!candidate) {
         return h3_gpu_linear_bf16(opaque, qkv, input, weight, NULL, rows,
                                   input_dim, inner * 3) &&
@@ -5293,7 +5294,7 @@ int h3_gpu_grouped_qkv_linear_rope_bf16(
         !h3_gpu_require_bf16(gpu, key, projected, @"split key") ||
         !h3_gpu_require_bf16(gpu, value, projected, @"split value") ||
         !h3_gpu_require_command(gpu)) return 0;
-    uint32_t headMajor = getenv("H3_DISABLE_HEAD_MAJOR_SDPA") == NULL;
+    uint32_t headMajor = h3_option("H3_DISABLE_HEAD_MAJOR_SDPA") == NULL;
     typedef struct {
         uint32_t rows, input_dim, heads, head_dim, rope_half, head_major;
         float epsilon;
@@ -5403,12 +5404,12 @@ int h3_gpu_grouped_qkv_linear_rope_int8(
             opaque, quantized_input, input_scales, input, rows, padded_rows,
             input_dim, 1.0f, @"int8 QKV input")) return 0;
     BOOL fused_rope = !use_slower_unfused_qkv_rope &&
-        getenv("H3_DISABLE_FUSED_INT8_QKV_ROPE") == NULL;
+        h3_option("H3_DISABLE_FUSED_INT8_QKV_ROPE") == NULL;
     BOOL local_scales = fused_rope && rows > 2048 &&
         !use_slower_uncached_int8_scales &&
-        getenv("H3_DISABLE_QKV_LOCAL_SCALES") == NULL;
+        h3_option("H3_DISABLE_QKV_LOCAL_SCALES") == NULL;
     BOOL full_k = fused_rope && input_dim == 5376u &&
-        getenv("H3_DISABLE_QKV_FULL_K") == NULL;
+        h3_option("H3_DISABLE_QKV_FULL_K") == NULL;
     id<MTLComputePipelineState> projection = h3_gpu_pipeline(
         gpu, local_scales && full_k ?
             @"h3_qkv_project_split_int8_rope_local_scales_nax_r128_k5376_morton4" :
@@ -5435,9 +5436,9 @@ int h3_gpu_grouped_qkv_linear_rope_int8(
      * bit 1 selects ordered BF16x4 RMS loads, bit 2 packs norm/RoPE by four. */
     uint32_t rms_mode = 1u;
     if (fused_rope && rows <= 2048 && !use_slower_scalar_qkv_rms &&
-        getenv("H3_DISABLE_VECTOR_QKV_RMS") == NULL)
+        h3_option("H3_DISABLE_VECTOR_QKV_RMS") == NULL)
         rms_mode |= 2u;
-    if (fused_rope && getenv("H3_DISABLE_VECTOR_QKV_ROPE") == NULL)
+    if (fused_rope && h3_option("H3_DISABLE_VECTOR_QKV_ROPE") == NULL)
         rms_mode |= 4u;
     qkv_project_rope_args args = {
         rows, input_dim, heads, head_dim, rope_half, rms_mode, epsilon
@@ -6086,7 +6087,7 @@ static int h3_gpu_gqa_rows(H3GPU *gpu, h3_gpu_tensor *output,
                            uint32_t head_dim, float scale,
                            NSUInteger threads) {
     uint32_t groups = query_heads / kv_heads;
-    const char *group_env = getenv("H3_GQA_GROUP");
+    const char *group_env = h3_option("H3_GQA_GROUP");
     int grouped = groups == 8 && !(group_env && !strcmp(group_env, "0"));
     id<MTLComputePipelineState> pipeline = grouped ?
         h3_gpu_pipeline(gpu, @"h3_gqa_causal_group_bf16") : nil;
@@ -6096,7 +6097,7 @@ static int h3_gpu_gqa_rows(H3GPU *gpu, h3_gpu_tensor *output,
     }
     if (!pipeline || pipeline.maxTotalThreadsPerThreadgroup < threads)
         return 0;
-    const char *env = getenv("H3_GQA_ROWS");
+    const char *env = h3_option("H3_GQA_ROWS");
     uint32_t minimum = env && *env ? (uint32_t)strtoul(env, NULL, 10) :
         grouped ? H3_GQA_GROUP_MIN_SEQUENCE : H3_GQA_ROWS_MIN_SEQUENCE;
     if (!minimum || sequence < minimum) return 0;
@@ -6166,7 +6167,7 @@ int h3_gpu_gqa_causal_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
         !h3_gpu_require_bf16(gpu, value, kv_count, @"GQA value") ||
         !h3_gpu_require_bf16(gpu, output, query_count, @"GQA output") ||
         !h3_gpu_require_command(gpu)) return 0;
-    if (getenv("H3_MPS_GQA") && h3_gpu_gqa_mps(
+    if (h3_option("H3_MPS_GQA") && h3_gpu_gqa_mps(
             gpu, output, query, key, value, sequence, query_heads,
             kv_heads, head_dim, scale)) return 1;
     size_t score_bytes = (size_t)sequence * sizeof(float);
@@ -6674,7 +6675,7 @@ int h3_gpu_linear_int8_bf16_split_k(h3_gpu *opaque, h3_gpu_tensor *output, h3_gp
         !h3_gpu_require_f32(gpu, partial, (size_t)splits * padded_rows * output_dim, @"split-K partials") ||
         !h3_gpu_require_bf16(gpu, output, (size_t)rows * output_dim, @"split-K output") ||
         !h3_gpu_require_command(gpu)) return 0;
-    if (!getenv("H3_BENCH_SKIP_QUANT") &&
+    if (!h3_option("H3_BENCH_SKIP_QUANT") &&
         !h3_gpu_quantize_bf16_int8_rows(opaque, quantized_input, input_scales, input, rows, padded_rows,
                                         input_dim, 1.0f, @"split-K input")) return 0;
     id<MTLComputePipelineState> pipeline = h3_gpu_pipeline(gpu, @"h3_linear_int8_split_k_nax_r128");

@@ -1,3 +1,4 @@
+#include "h3_options.h"
 #include "h3_vision_encoder.h"
 
 #include "h3_weights.h"
@@ -69,7 +70,7 @@ static void free_tensor(h3_gpu_tensor **tensor) {
 
 static void debug_tensor(const char *label, const h3_gpu_tensor *tensor,
                          size_t elements) {
-    if (!getenv("H3_DEBUG_VISION") || !tensor) return;
+    if (!h3_option("H3_DEBUG_VISION") || !tensor) return;
     uint16_t *values = malloc(elements * sizeof(*values));
     if (!values || !h3_gpu_tensor_read_bf16(tensor, values, elements)) {
         free(values);
@@ -124,7 +125,7 @@ static int gpu_op(h3_gpu *gpu, int ok, const char *operation,
 static int debug_sync(h3_gpu *gpu, const char *label,
                       const h3_gpu_tensor *tensor, size_t elements,
                       char *error, size_t error_size) {
-    if (!getenv("H3_DEBUG_VISION_STEPS")) return 1;
+    if (!h3_option("H3_DEBUG_VISION_STEPS")) return 1;
     if (!gpu_op(gpu, h3_gpu_submit(gpu), "submit vision debug step",
                 error, error_size)) return 0;
     debug_tensor(label, tensor, elements);
@@ -563,7 +564,7 @@ int h3_vision_encode_bf16(const char *weight_directory,
             rope_cos, rope_sin, error, error_size);
         free_block_weights(&block);
         if (!ok) break;
-        if (getenv("H3_DEBUG_VISION")) {
+        if (h3_option("H3_DEBUG_VISION")) {
             char label[64];
             snprintf(label, sizeof(label), "block %d", layer);
             debug_tensor(label, hidden, hidden_elements);

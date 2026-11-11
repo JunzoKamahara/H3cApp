@@ -24,7 +24,7 @@ LIB_C := h3.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c \
 	h3_dit_schedule.c h3_dit.c h3_lora.c h3_hyperflow.c h3_model_family.c \
 	h3_video_vae.c h3_video_encoder.c h3_audio_vae.c \
 	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c h3_adaln_curve.c \
-	h3_quant.c h3_gguf.c h3_lora_extract.c h3_memory.c h3_plan.c h3_refmod.c
+	h3_quant.c h3_gguf.c h3_lora_extract.c h3_memory.c h3_plan.c h3_refmod.c h3_options.c
 LIB_M := h3_metal.m h3_gpu.m h3_tokenizer.m h3_av_writer.m h3_av_reader.m
 UPSCALE_C := h3_vsr_chunk.c h3_vsr_window.c h3_vsr_weights.c h3_vsr_reae.c h3_vsr_wan.c h3_vsr.c \
 	h3_latent_upscale.c h3_seedvr2.c h3_seedvr2_vae.c h3_seedvr2_video.c
@@ -123,6 +123,10 @@ $(BIN)/h3_adaln_curve_check: $(OBJ)/adaln_curve_check.o $(LIB_OBJ)
 # the released weights (needs both; not in `make test`).
 $(BIN)/h3_weight_compare: $(OBJ)/weight_compare.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
+
+# Prints the engine's environment switches (src/core/h3_options.h).
+$(BIN)/h3_options: $(OBJ)/options_cli.o $(OBJ)/h3_options.o
+	$(CC) -o $@ $^
 
 # Inspect GGUF files as the importer does, or trim a text encoder to the
 # layers the engine reads.
@@ -391,6 +395,7 @@ test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_
 	$(BIN)/h3_video_encoder_chunks_test
 	$(BIN)/h3_plan_tests
 	$(BIN)/h3_model_family_tests
+	python3 tools/check_options.py
 	$(BIN)/h3_refmod_tests
 	@if test -f MiniMax-H3/Ref2VA/video_vae/source/model.safetensors; then \
 		$(BIN)/h3_real_refmod_test; \
@@ -454,7 +459,7 @@ $(OBJ)/h3_gpu_ccv_attention.o: h3_gpu_ccv_attention.mm | $(OBJ)
 		-D USE_DISPATCH -D HAVE_MPS -c $< -o $@
 
 # Every program can be asked for by its bare name (make h3_tests).
-PROGRAMS := h3_model_family_tests build_attention_cache build_vsr_cache h3_latent_upscale build_adaln_curve \
+PROGRAMS := h3_options h3_model_family_tests build_attention_cache build_vsr_cache h3_latent_upscale build_adaln_curve \
 	h3_adaln_curve_check h3_weight_compare h3_gguf_tool h3_generate_cli \
 	h3_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests \
 	h3_vsr_wan_tests h3_vsr_session_tests h3_vsr_tapconv_tests h3_bench_tapconv \

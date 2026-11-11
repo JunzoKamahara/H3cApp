@@ -22,6 +22,7 @@
 // as void*, unretained (the underlying h3_gpu/h3_gpu_tensor keeps it
 // alive); casting it straight to the matching mtl_*_t* here is exactly
 // that interop, not a new bridge.
+#include "h3_options.h"
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #include "h3_gpu.h"
@@ -50,7 +51,7 @@ ccv_attention_state g_state;
 bool memlog_enabled() {
     static int enabled = -1;
     if (enabled < 0) {
-        const char *value = getenv("H3_CCV_MEMLOG");
+        const char *value = h3_option("H3_CCV_MEMLOG");
         enabled = value && *value == '1';
     }
     return enabled;
@@ -235,7 +236,7 @@ int ccv_dense_attention_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
     /* FP32 softmax/accumulator intermediates instead of FP16. Does not
      * un-quantize the int8 kernel's P/V, so only meaningful with
      * quantized=0. */
-    const char *upcast = getenv("H3_CCV_UPCAST");
+    const char *upcast = h3_option("H3_CCV_UPCAST");
     params.upcast = upcast && *upcast == '1';
 
     auto command_buffer = (mtl_command_buffer_t *)raw_command_buffer;

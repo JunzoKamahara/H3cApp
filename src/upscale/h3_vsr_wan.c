@@ -10,6 +10,7 @@
  * side never runs: K2/V2 and every modulation vector come precomputed from
  * the cache. Linears are int8 (per-row, tensor hardware) or BF16 as the
  * cache was built; activations stay BF16 between kernels. */
+#include "h3_options.h"
 #include "h3_vsr_internal.h"
 
 #include <math.h>
@@ -204,7 +205,7 @@ h3_vsr_wan *h3_vsr_wan_load(h3_gpu *gpu, const char *cache_path,
     if (!wan->blocks) goto failed;
     uint32_t D = (uint32_t)wan->dim, F = (uint32_t)wan->ffn, S = (uint32_t)wan->text_tokens;
     /* K-contiguous FFN slices: 2 by default (H3_VSR_FFN_SPLITS 2 or 4) */
-    int ffn_splits = getenv("H3_VSR_FFN_SPLITS") ? atoi(getenv("H3_VSR_FFN_SPLITS")) : 2;
+    int ffn_splits = h3_option("H3_VSR_FFN_SPLITS") ? atoi(h3_option("H3_VSR_FFN_SPLITS")) : 2;
     if (ffn_splits != 4) ffn_splits = 2;
     for (int b = 0; b < wan->layers; b++) {
         wan_block *k = &wan->blocks[b];
@@ -227,7 +228,7 @@ h3_vsr_wan *h3_vsr_wan_load(h3_gpu *gpu, const char *cache_path,
             !(k->fc1_bias = load_f32(wan, &cache, E("ffn.fc1.bias"), F, error, error_size)) ||
             !load_linear(wan, &cache, E("ffn.fc2"), D, F, wan->int8, &k->fc2, error, error_size) ||
             !(k->fc2_bias = load_f32(wan, &cache, E("ffn.fc2.bias"), D, error, error_size)) ||
-            (wan->int8 && F % 512 == 0 && !getenv("H3_VSR_FFN_WHOLE") &&
+            (wan->int8 && F % 512 == 0 && !h3_option("H3_VSR_FFN_WHOLE") &&
              !split_ffn(wan, k, D, F, ffn_splits, error, error_size)))
             goto failed;
         if (h3_vsr_cache_find(&cache, E("norm2.weight"))) {
@@ -358,7 +359,7 @@ static int upload_layout(h3_gpu *gpu, const h3_vsr_window_layout *layout, gpu_la
             int t = counts[j]; counts[j] = counts[j - 1]; counts[j - 1] = t;
             t = members[j]; members[j] = members[j - 1]; members[j - 1] = t;
         }
-    int buckets = getenv("H3_VSR_QUERY_BUCKETS") ? atoi(getenv("H3_VSR_QUERY_BUCKETS")) : 3;
+    int buckets = h3_option("H3_VSR_QUERY_BUCKETS") ? atoi(h3_option("H3_VSR_QUERY_BUCKETS")) : 3;
     if (buckets < 1) buckets = 1;
     if (buckets > distinct) buckets = distinct;
     /* bucket boundaries (indices into the sorted counts) minimizing the
@@ -424,8 +425,8 @@ static void free_layout(gpu_layout *l) {
  * so a real-weights mismatch can be placed at a block. The command buffer
  * is submitted and reopened around each read. */
 static void dump_tokens(h3_gpu *gpu, const char *stage, h3_gpu_tensor *x, size_t elements, int full) {
-    const char *dir = getenv("H3_VSR_DUMP_DIR");
-    if (!dir || !dir[0] || !getenv("H3_VSR_DUMP_TOKENS")) return;
+    const char *dir = h3_option("H3_VSR_DUMP_DIR");
+    if (!dir || !dir[0] || !h3_option("H3_VSR_DUMP_TOKENS")) return;
     if (!h3_gpu_submit(gpu)) return;
     uint16_t *raw = malloc(elements * sizeof(uint16_t));
     if (raw && h3_gpu_tensor_read_bf16(x, raw, elements)) {
@@ -454,7 +455,7 @@ static void dump_tokens(h3_gpu *gpu, const char *stage, h3_gpu_tensor *x, size_t
 
 /* With H3_VSR_DUMP_BLOCK=b (and H3_VSR_DUMP_DIR), every step of block b
  * reports its non-finite count. */
-static int dump_block_index(void) { const char *e = getenv("H3_VSR_DUMP_BLOCK"); return e && e[0] ? atoi(e) : -1; }
+static int dump_block_index(void) { const char *e = h3_option("H3_VSR_DUMP_BLOCK"); return e && e[0] ? atoi(e) : -1; }
 #define TRACE(stage, tensor, elements) do { if (b == trace_block) dump_tokens(gpu, stage, tensor, elements, 0); } while (0)
 
 /* H3_VSR_TRACE_DIT: GPU time of every op of block 1 (submit + wait). */
@@ -540,7 +541,7 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
     h3_gpu_tensor *v = h3_gpu_tensor_new_bf16(gpu, (size_t)N * wan->patch_out);
     h3_gpu_tensor *partial = NULL;
     int halves = ffn_splits > 0;
-    int fused_gelu = !getenv("H3_VSR_GELU_SEPARATE") && halves && F / (uint32_t)ffn_splits <= 8192;
+    int fused_gelu = !h3_option("H3_VSR_GELU_SEPARATE") && halves && F / (uint32_t)ffn_splits <= 8192;
     if (wan->int8) {
         uint32_t max_in = F > D ? F : D;
         r.q_in = h3_gpu_tensor_new_i8(gpu, (size_t)r.padded * max_in);
@@ -560,11 +561,11 @@ int h3_vsr_wan_predict(h3_vsr_wan *wan, const h3_gpu_tensor *z_lq,
                                 (uint32_t)width, (uint32_t)wan->latent_channels));
     OP(h3_gpu_linear_bf16(gpu, x, tokens, wan->patch.w, NULL, N, (uint32_t)wan->patch_in, D));
     OP(h3_gpu_vsr_bias_gate_add_bf16(gpu, x, x, wan->patch_bias, NULL, NULL, N, D));
-    int trace_tokens = getenv("H3_VSR_DUMP_TOKENS") != NULL;
+    int trace_tokens = h3_option("H3_VSR_DUMP_TOKENS") != NULL;
     dump_tokens(gpu, "x_in", x, (size_t)N * D, 1);
     int trace_block = dump_block_index();
-    int trace_dit = getenv("H3_VSR_TRACE_DIT") != NULL;
-    int all_queries = getenv("H3_VSR_ALL_QUERIES") != NULL;   /* the full-window attention of before */
+    int trace_dit = h3_option("H3_VSR_TRACE_DIT") != NULL;
+    int all_queries = h3_option("H3_VSR_ALL_QUERIES") != NULL;   /* the full-window attention of before */
     double mark = dit_now();
     for (int b = 0; b < wan->layers; b++) {
         wan_block *k = &wan->blocks[b];

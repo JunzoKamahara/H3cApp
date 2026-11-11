@@ -1,3 +1,4 @@
+#include "h3_options.h"
 #include "h3_video_vae.h"
 
 #include "h3_weights.h"
@@ -495,11 +496,11 @@ static int allocate_activations(vae_context *vae, char *error,
  * reference linears for comparison. The int8 kernels need at least one full
  * 128-row tile, which every resident decoder tile exceeds. */
 static void configure_linear_precision(vae_context *vae) {
-    const char *value = getenv("H3_VAE_INT8");
+    const char *value = h3_option("H3_VAE_INT8");
     int requested = !value || !*value || strcmp(value, "0") != 0;
     vae->int8_linears = requested && h3_gpu_has_int8_mlp(vae->gpu) &&
                         vae->sequence >= 128;
-    if (getenv("H3_PROFILE"))
+    if (h3_option("H3_PROFILE"))
         fprintf(stderr, "h3: video VAE block linears: %s\n",
                 vae->int8_linears ? "int8" : "F32");
 }
@@ -787,7 +788,7 @@ static int tile_count_for_extent(int extent, int tile_pixels) {
 }
 
 static int configured_tile_pixels(int pixel_height, int pixel_width) {
-    const char *value = getenv("H3_VAE_TILE_PIXELS");
+    const char *value = h3_option("H3_VAE_TILE_PIXELS");
     if (value && *value) {
         char *end = NULL;
         long pixels = strtol(value, &end, 10);
@@ -882,7 +883,7 @@ static float *extract_latent_tile(const float *latent, int full_t,
  * 0.25 brings the edges back to the rest of the picture and decoded real
  * video closer to the original; H3_VAE_DEBLOCK sets it, 0 turns it off. */
 static float deblock_strength(void) {
-    const char *value = getenv("H3_VAE_DEBLOCK");
+    const char *value = h3_option("H3_VAE_DEBLOCK");
     if (!value || !*value) return 0.25f;
     float strength = strtof(value, NULL);
     return strength > 0.0f && strength <= 1.0f ? strength : 0.0f;
@@ -1080,7 +1081,7 @@ h3_video_vae_decoder *h3_video_vae_decoder_load(
                         &decoder->y_axis, error, error_size) &&
         tile_axis_build(latent_width * SPATIAL_RATIO, tile_pixels,
                         &decoder->x_axis, error, error_size);
-    if (ok && getenv("H3_PROFILE"))
+    if (ok && h3_option("H3_PROFILE"))
         fprintf(stderr, "h3: resident video VAE tiles %dx%d at %d pixels\n",
                 decoder->x_axis.count, decoder->y_axis.count, tile_pixels);
     vae_context *vae = &decoder->vae;
@@ -1298,7 +1299,7 @@ static int decode_chunked(const char *weight_directory,
         tile_axis_free(&y_axis); tile_axis_free(&x_axis);
         return 0;
     }
-    if (getenv("H3_PROFILE"))
+    if (h3_option("H3_PROFILE"))
         fprintf(stderr, "h3: video VAE tiles %dx%d at %d pixels\n",
                 x_axis.count, y_axis.count, tile_pixels);
     vae_context vae;

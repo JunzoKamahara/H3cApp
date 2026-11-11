@@ -2,6 +2,7 @@
  * mflux src/mflux/models/seedvr2 (MIT); weights: mlx-community/
  * SeedVR2-3B-mlx-int8 (MLX affine 8-bit export of ByteDance's Apache-2.0
  * checkpoint). Numbers and names below are the 3B configuration. */
+#include "h3_options.h"
 #include "h3_seedvr2_internal.h"
 
 
@@ -390,7 +391,7 @@ static int load_block(h3_seedvr2 *m, const h3_st_header *h, int b, const float *
     }
     if (m->int8_dit) {
         /* H3_SV2_INT8_SKIP=qkv,out,fc1,fc2 keeps those BF16 (measuring) */
-        const char *skip = getenv("H3_SV2_INT8_SKIP");
+        const char *skip = h3_option("H3_SV2_INT8_SKIP");
         int sq = skip && strstr(skip, "qkv"), so = skip && strstr(skip, "out");
         int s1 = skip && strstr(skip, "fc1"), s2 = skip && strstr(skip, "fc2");
         sv2_linear *lins[8] = {&k->qkv_vid, &k->out_vid, &k->qkv_txt, &k->out_txt,
@@ -474,7 +475,7 @@ void sv2_pool_give(h3_seedvr2 *m, h3_gpu_tensor *t) {
          * 2026-11-07 (1344x768 x17): 2 kept 88.9 s at a 12.47 GiB peak, 4
          * kept 90.2 s / 13.60 GiB, none kept (every free a GPU wait) 110.9 s
          * / 12.63 GiB. The blocks drain the pool where the sizes change. */
-        int keep = getenv("H3_SV2_POOL_KEEP_N") ? atoi(getenv("H3_SV2_POOL_KEEP_N")) : 2;
+        int keep = h3_option("H3_SV2_POOL_KEEP_N") ? atoi(h3_option("H3_SV2_POOL_KEEP_N")) : 2;
         if (m->pool_count >= keep) {
             double t0 = now_seconds();
             if (h3_gpu_command_open(m->gpu)) { h3_gpu_submit(m->gpu); h3_gpu_begin(m->gpu); }
@@ -653,13 +654,13 @@ h3_seedvr2 *h3_seedvr2_open(const char *model_dir, const h3_seedvr2_open_params 
                            error, error_size);
     if (!m->gpu) { free(m); return NULL; }
     int nax = m->params.nax_linear < 0 ? h3_gpu_has_tensor_ops(m->gpu) : m->params.nax_linear;
-    if (getenv("H3_SV2_NO_NAX")) nax = 0;
+    if (h3_option("H3_SV2_NO_NAX")) nax = 0;
     h3_gpu_set_nax_linear_generic(m->gpu, nax);
-    m->nax_vae = h3_gpu_has_tensor_ops(m->gpu) && !m->params.vae_f32 && !getenv("H3_SV2_VAE_F32");
+    m->nax_vae = h3_gpu_has_tensor_ops(m->gpu) && !m->params.vae_f32 && !h3_option("H3_SV2_VAE_F32");
     /* int8 (per-row, on top of the export's group-wise 8-bit) costs 10 dB
      * against the reference (41.8 vs 52 dB on the 512x288 frame) for 0.8 s
      * of the frame: off unless asked (H3_SV2_INT8=1 or params.int8 = 1). */
-    m->int8_dit = m->params.int8 > 0 || (m->params.int8 < 0 && getenv("H3_SV2_INT8") != NULL);
+    m->int8_dit = m->params.int8 > 0 || (m->params.int8 < 0 && h3_option("H3_SV2_INT8") != NULL);
     if (m->int8_dit && !h3_gpu_has_tensor_ops(m->gpu)) m->int8_dit = 0;
     sv2_files f;
     if (!files_open(&f, model_dir, error, error_size)) { h3_seedvr2_close(m); return NULL; }
@@ -960,7 +961,7 @@ int sv2_dit_forward(h3_seedvr2 *m, sv2_layout *layouts, const h3_gpu_tensor *tok
     /* The text stream's linears run on 128 rows (the last 70 zero) so the
      * TensorOps kernel takes them instead of an MPSGraph launch; the MLP is
      * two such linears around the SwiGLU kernel for the same reason. */
-    const int direct = h3_gpu_has_tensor_ops(m->gpu) && !getenv("H3_SV2_NO_NAX");
+    const int direct = h3_gpu_has_tensor_ops(m->gpu) && !h3_option("H3_SV2_NO_NAX");
     const uint32_t TR = direct ? 128 : T;
     /* int8 linears quantise per row and want 128-row multiples: the video
      * rows are allocated padded and the linears run over the padding */
@@ -1051,7 +1052,7 @@ int sv2_dit_forward(h3_seedvr2 *m, sv2_layout *layouts, const h3_gpu_tensor *tok
         }
         DIT_OP(h3_gpu_continue(m->gpu));
         if (b == dump_block) {
-            const char *path = getenv("H3_SV2_DUMP");
+            const char *path = h3_option("H3_SV2_DUMP");
             if (path && h3_gpu_submit(m->gpu)) {
                 size_t n = (size_t)N * D;
                 uint16_t *bf = malloc(n * 2);
@@ -1385,7 +1386,7 @@ static uint64_t gpu_budget(void) {
 int h3_seedvr2_output_fits(const h3_seedvr2_info *info, int in_w, int in_h, int out_w, int out_h) {
     if (!info || in_w < 16 || in_h < 16 || out_w < 64 || out_h < 64 || out_w > 4096 || out_h > 4096) return 0;
     uint64_t budget = gpu_budget();
-    int nax_vae = info->tensor_ops && !getenv("H3_SV2_VAE_F32");
+    int nax_vae = info->tensor_ops && !h3_option("H3_SV2_VAE_F32");
     return !budget || peak_gpu_bytes(info->resident_bytes, nax_vae, out_w, out_h) <= budget;
 }
 

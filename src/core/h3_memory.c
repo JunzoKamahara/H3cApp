@@ -1,3 +1,4 @@
+#include "h3_options.h"
 #include "h3_memory.h"
 
 #include <libproc.h>
@@ -52,8 +53,8 @@ static void *watch(void *unused) {
 }
 
 static void start(void) {
-    const char *trace = getenv("H3_MEMORY_TRACE");
-    const char *limit = getenv("H3_MEMORY_LIMIT_GIB");
+    const char *trace = h3_option("H3_MEMORY_TRACE");
+    const char *limit = h3_option("H3_MEMORY_LIMIT_GIB");
     tracing = trace && *trace && strcmp(trace, "0");
     if (limit && *limit) {
         double value = strtod(limit, NULL);

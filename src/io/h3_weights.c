@@ -1,3 +1,4 @@
+#include "h3_options.h"
 #include "h3_weights.h"
 
 #include "h3_quant.h"
@@ -149,7 +150,7 @@ h3_weight_store *h3_weight_store_open(const char *directory,
                         !find_exact(store, "time_embedder.proj_in.weight", NULL)) ||
                        ((gguf || comfy_quant) &&
                         find_exact(store, "video_patch_proj.weight", NULL));
-    const char *layout = getenv("H3_QKV_LAYOUT");
+    const char *layout = h3_option("H3_QKV_LAYOUT");
     if (layout && !strcmp(layout, "split")) store->qkv_split = 1;
     if (layout && !strcmp(layout, "interleaved")) store->qkv_split = 0;
     return store;

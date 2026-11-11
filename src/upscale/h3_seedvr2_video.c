@@ -4,6 +4,7 @@
  * in causal slices, z = noise - v at t = 1000 with the latent as the
  * condition, decode in causal slices, the colour transfer per frame. The
  * window session (overlap, tail padding) is built on this. */
+#include "h3_options.h"
 #include "h3_seedvr2_internal.h"
 #include "h3_metal.h"
 
@@ -162,7 +163,7 @@ int h3_seedvr2_video_output_fits(const h3_seedvr2_info *info, int in_w, int in_h
     if (!info || in_w < 16 || in_h < 16 || out_w < 64 || out_h < 64 || out_w > 4096 || out_h > 4096) return 0;
     if (window_frames < 1 || window_frames % 4 != 1 || window_frames > 121) return 0;
     int full_w = round_up(out_w, SV2_PIXEL_MULTIPLE), full_h = round_up(out_h, SV2_PIXEL_MULTIPLE);
-    int nax_vae = info->tensor_ops && !getenv("H3_SV2_VAE_F32");
+    int nax_vae = info->tensor_ops && !h3_option("H3_SV2_VAE_F32");
     int split, q, fits;
     video_cheapest(info->resident_bytes, info->block_bytes, nax_vae, full_w, full_h, window_frames, video_budget(), 0,
                    &split, &q, &fits);
@@ -187,8 +188,8 @@ int h3_seedvr2_restore_clip(h3_seedvr2 *m, const h3_vsr_image *in, int frames, i
                        p.state_mode, &split, &bits, &fits);
         if (p.vae_split < 0) p.vae_split = split;
         m->state_bits = m->nax_vae && p.vae_split > 0 ? bits : 0;
-        if (getenv("H3_SV2_STATE_BITS")) m->state_bits = m->nax_vae && p.vae_split > 0 ? atoi(getenv("H3_SV2_STATE_BITS")) : 0;
-        else if (getenv("H3_SV2_STATE_INT8")) m->state_bits = m->nax_vae && p.vae_split > 0 && atoi(getenv("H3_SV2_STATE_INT8")) != 0 ? 8 : 0;
+        if (h3_option("H3_SV2_STATE_BITS")) m->state_bits = m->nax_vae && p.vae_split > 0 ? atoi(h3_option("H3_SV2_STATE_BITS")) : 0;
+        else if (h3_option("H3_SV2_STATE_INT8")) m->state_bits = m->nax_vae && p.vae_split > 0 && atoi(h3_option("H3_SV2_STATE_INT8")) != 0 ? 8 : 0;
     }
     uint64_t seed = p.seed ? p.seed : m->params.seed;
     int color = p.color_transfer < 0 ? m->params.color_transfer : p.color_transfer;

@@ -1,3 +1,4 @@
+#include "h3_options.h"
 #include "h3_audio_vae.h"
 
 #include "h3_weights.h"
@@ -737,7 +738,7 @@ static const uint32_t encoder_dilations[ENCODER_RESIDUALS] = {1, 3, 9};
 static void encoder_trace(audio_context *audio, const char *label,
                           const h3_gpu_tensor *tensor, size_t elements) {
     (void)audio;
-    if (!getenv("H3_AUDIO_ENCODER_TRACE") || !tensor || !elements) return;
+    if (!h3_option("H3_AUDIO_ENCODER_TRACE") || !tensor || !elements) return;
     float *values = malloc(elements * sizeof(*values));
     if (!values || !h3_gpu_tensor_read_f32(tensor, values, elements)) {
         free(values);

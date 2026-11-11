@@ -1,3 +1,4 @@
+#include "h3_options.h"
 #include "h3_video_encoder.h"
 
 #include "h3_host.h"
@@ -106,7 +107,7 @@ static double profile_seconds[PROFILE_COUNT];
 static int profiling(void) {
     static int enabled = -1;
     if (enabled < 0) {
-        const char *value = getenv("H3_ENCODER_PROFILE");
+        const char *value = h3_option("H3_ENCODER_PROFILE");
         enabled = value && *value == '1';
     }
     return enabled;
@@ -628,7 +629,7 @@ static float *encode_tile_frames(encoder_context *encoder, const float *pixels,
                                  int *latent_time, char *error,
                                  size_t error_size) {
     if (profiling()) encoder->profile_mark = profile_now();
-    const char *still = getenv("H3_ENCODER_STILL");
+    const char *still = h3_option("H3_ENCODER_STILL");
     encoder->still = frames == 1 && !encoder->streaming &&
                      !(still && *still == '0');
     size_t pixel_count = (size_t)frames * height * width * RGB_CHANNELS;
@@ -1005,7 +1006,7 @@ static int encode_video(const char *weight_directory,
     }
     encoder_context encoder = {0};
     /* Diagnostic: H3_ENCODER_FAST=1 uses the 2D convolutions everywhere. */
-    const char *force_fast = getenv("H3_ENCODER_FAST");
+    const char *force_fast = h3_option("H3_ENCODER_FAST");
     encoder.fast = fast || (force_fast && *force_fast == '1');
     double started = 0;
     if (profiling()) {
@@ -1110,7 +1111,7 @@ uint64_t h3_video_encoder_chunked_peak_bytes(int chunk_frames, int height,
 }
 
 uint64_t h3_video_encoder_default_budget(void) {
-    const char *value = getenv("H3_VAE_ENCODE_BUDGET_BYTES");
+    const char *value = h3_option("H3_VAE_ENCODE_BUDGET_BYTES");
     if (value && *value) {
         unsigned long long parsed = strtoull(value, NULL, 10);
         if (parsed >= (64ull << 20)) return parsed;

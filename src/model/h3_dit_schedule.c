@@ -1,3 +1,4 @@
+#include "h3_options.h"
 #include "h3_dit_schedule.h"
 
 #include "h3_adaln_curve.h"
@@ -257,7 +258,7 @@ static int dense_linear(h3_gpu *gpu, h3_gpu_tensor *output,
                         uint32_t outputs) {
     static int reference = -1;
     if (reference < 0) {
-        const char *value = getenv("H3_ADALN_F32_REFERENCE");
+        const char *value = h3_option("H3_ADALN_F32_REFERENCE");
         reference = value && *value && strcmp(value, "0") != 0;
     }
     if (!reference)

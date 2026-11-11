@@ -2,6 +2,7 @@
  * it uses that file's internals through h3_gpu_internal.h and registers its
  * kernel names at load time, so a program that does not link the upscale
  * module builds no pipelines for it. */
+#include "h3_options.h"
 #include "h3_gpu_internal.h"
 #include "h3_gpu_vsr.h"
 
@@ -481,7 +482,7 @@ static const vsr_tapconv_variant *vsr_tapconv_variant_for(uint32_t in_ch, uint32
      * made no measurable difference inside a SeedVR2 window (bench_tapconv
      * and UPSCALE_PLAN appendix A.10, 2026-11-07): they stay for the
      * benchmark, H3_TAPCONV_KERNEL picks one. */
-    const char *want = getenv("H3_TAPCONV_KERNEL");
+    const char *want = h3_option("H3_TAPCONV_KERNEL");
     if (want)
         for (size_t i = 0; i < sizeof(vsr_tapconv_variants) / sizeof(*vsr_tapconv_variants); i++) {
             const vsr_tapconv_variant *v = &vsr_tapconv_variants[i];
@@ -540,7 +541,7 @@ static int vsr_tapconv(H3GPU *gpu, h3_gpu_tensor *output,
     /* row tiles fastest (as before): running a row tile's channel tiles
      * together (H3_TAPCONV_ORDER=1) gained nothing at 128-256 channels and
      * lost 1.5x at 512 channels x 27 taps (bench_tapconv, 2026-11-07) */
-    const char *order_env = getenv("H3_TAPCONV_ORDER");
+    const char *order_env = h3_option("H3_TAPCONV_ORDER");
     uint32_t order = order_env ? (uint32_t)(atoi(order_env) != 0) : 0u;
     vsr_tapconv_args args = {rows, x_rows, guard, in_ch, out_ch, taps, (x1 && !state) ? 2u : 1u,
                              relu != 0, bias != NULL, residual != NULL, {0},

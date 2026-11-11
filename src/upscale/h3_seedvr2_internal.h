@@ -4,6 +4,7 @@
 #ifndef H3_SEEDVR2_INTERNAL_H
 #define H3_SEEDVR2_INTERNAL_H
 
+#include "h3_options.h"
 #include "h3_seedvr2.h"
 #include "h3_gpu.h"
 #include "h3_gpu_sv2.h"
@@ -63,7 +64,7 @@ static inline double now_seconds(void) {
 
 static inline int trace_enabled(void) {
     static int cached = -1;
-    if (cached < 0) cached = getenv("H3_SV2_TRACE") != NULL;
+    if (cached < 0) cached = h3_option("H3_SV2_TRACE") != NULL;
     return cached;
 }
 
@@ -78,7 +79,7 @@ static inline void trace(double *mark, const char *label) {
  * real (slower overall: the command buffer is split at every mark). */
 static inline void trace_sync(h3_gpu *gpu, double *mark, const char *label) {
     if (!trace_enabled()) return;
-    if (getenv("H3_SV2_SYNC") && h3_gpu_command_open(gpu)) { h3_gpu_submit(gpu); h3_gpu_begin(gpu); }
+    if (h3_option("H3_SV2_SYNC") && h3_gpu_command_open(gpu)) { h3_gpu_submit(gpu); h3_gpu_begin(gpu); }
     trace(mark, label);
 }
 

@@ -1,3 +1,4 @@
+#include "h3_options.h"
 #include "h3_lora.h"
 
 #include "h3_safetensors.h"
@@ -632,7 +633,7 @@ int h3_lora_set_has_adaln(const h3_lora_set *set) {
 static int load_adaln(h3_lora_set *set, adapter_index *adapters,
                       const h3_lora *loras, size_t count, int block,
                       char *error, size_t error_size) {
-    const char *off = getenv("H3_LORA_NO_ADALN");
+    const char *off = h3_option("H3_LORA_NO_ADALN");
     if (off && *off && strcmp(off, "0")) return 1;
     for (size_t index = 0; index < count; index++) {
         adapter_index *adapter = &adapters[index];

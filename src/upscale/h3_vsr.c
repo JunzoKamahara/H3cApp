@@ -15,6 +15,7 @@
  * as a grid of overlapping tiles (h3_vsr_tile_plan), each with its own
  * ReAE state, and the tiles are blended into the frame with linear ramps
  * across the overlaps. */
+#include "h3_options.h"
 #include "h3_vsr_internal.h"
 #include "h3_metal.h"
 
@@ -94,7 +95,7 @@ static void fail(char *error, size_t error_size, const char *format, ...) {
  * mark, printed at points where the GPU has been waited for. */
 static double trace_now(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9; }
 static void trace_stage(double *mark, const char *label) {
-    if (!getenv("H3_VSR_TRACE_STAGES")) return;
+    if (!h3_option("H3_VSR_TRACE_STAGES")) return;
     double now = trace_now();
     fprintf(stderr, "vsr stage %-28s %7.1f ms\n", label, (now - *mark) * 1000.0);
     *mark = now;
@@ -102,7 +103,7 @@ static void trace_stage(double *mark, const char *label) {
 
 static void trace_live(h3_gpu *gpu, const char *label) {
     h3_gpu_stats st;
-    if (getenv("H3_VSR_TRACE_LIVE") && h3_gpu_get_stats(gpu, &st))
+    if (h3_option("H3_VSR_TRACE_LIVE") && h3_gpu_get_stats(gpu, &st))
         fprintf(stderr, "vsr live %.2f GiB: %s\n", (double)st.live_bytes / 1073741824.0, label);
 }
 
@@ -137,7 +138,7 @@ h3_vsr *h3_vsr_open(const char *model_dir, const h3_vsr_open_params *params,
     /* 0 = "auto": 4 frames per ReAE pass (one latent step when decoding)
      * bounds the activations; larger batches measured no faster (bench_vsr). */
     if (vsr->params.reae_frame_batch <= 0) vsr->params.reae_frame_batch = 4;
-    if (getenv("H3_VSR_NO_COLOR_MATCH")) vsr->params.color_match = -1;
+    if (h3_option("H3_VSR_NO_COLOR_MATCH")) vsr->params.color_match = -1;
     vsr->clip_latents = H3_VSR_CLIP_FRAMES / H3_VSR_TEMPORAL;
     if (!h3_vsr_inspect_dir(model_dir, &vsr->info, error, error_size)) goto failed;
     if (!h3_vsr_cache_matches(params->cache_path, model_dir)) {
@@ -159,7 +160,7 @@ h3_vsr *h3_vsr_open(const char *model_dir, const h3_vsr_open_params *params,
     trace_live(vsr->gpu, "after reae load");
     /* Off by default: measured no faster at 1080p on M5, where the DiT
      * already saturates the GPU (UPSCALE_PLAN appendix A.2). */
-    if (params->reae_separate_queue > 0 || getenv("H3_VSR_OVERLAP")) {
+    if (params->reae_separate_queue > 0 || h3_option("H3_VSR_OVERLAP")) {
         vsr->gpu_b = h3_gpu_create(params->shader_source_path ? params->shader_source_path : "h3_shaders.metal",
                                    error, error_size);
         if (!vsr->gpu_b) goto failed;
@@ -204,7 +205,7 @@ int h3_vsr_gpu_stats(const h3_vsr *vsr, h3_gpu_stats *stats) {
 
 /* The least overlap between tiles, in output pixels (a multiple of 32). */
 static int tile_overlap(void) {
-    const char *env = getenv("H3_VSR_TILE_OVERLAP");
+    const char *env = h3_option("H3_VSR_TILE_OVERLAP");
     int overlap = env && atoi(env) >= 32 ? atoi(env) / 32 * 32 : H3_VSR_TILE_OVERLAP;
     return overlap;
 }
@@ -248,7 +249,7 @@ static int choose_plan(uint64_t weight_bytes, int in_w, int in_h, int out_w, int
                        int full_w, int full_h, uint64_t budget,
                        h3_vsr_tile_plan *plan, uint64_t *bytes) {
     int overlap = tile_overlap();
-    const char *forced = getenv("H3_VSR_TILES");
+    const char *forced = h3_option("H3_VSR_TILES");
     int fc = 0, fr = 0;
     if (forced && sscanf(forced, "%dx%d", &fc, &fr) == 2 && fc >= 1 && fr >= 1) {
         if (!h3_vsr_tile_plan_build(full_w, full_h, fc, fr, overlap, plan)) return 0;
@@ -285,7 +286,7 @@ static uint64_t gpu_budget(void) {
     if (h3_metal_probe(&device, probe_error, sizeof(probe_error)))
         budget = device.recommended_working_set ? device.recommended_working_set : device.physical_memory;
     budget = budget * 9 / 10;
-    if (getenv("H3_VSR_IGNORE_BUDGET")) budget = 0;   /* measuring: one tile, whatever it takes */
+    if (h3_option("H3_VSR_IGNORE_BUDGET")) budget = 0;   /* measuring: one tile, whatever it takes */
     return budget;
 }
 
@@ -470,7 +471,7 @@ h3_vsr_session *h3_vsr_session_open(h3_vsr *vsr, int in_w, int in_h,
         }
     }
     free(weights);
-    if (getenv("H3_VSR_TRACE_STAGES") && s->tile_count > 1)
+    if (h3_option("H3_VSR_TRACE_STAGES") && s->tile_count > 1)
         fprintf(stderr, "vsr tiles: %d x %d of %d x %d over %d x %d (overlap %d)\n", s->plan.columns, s->plan.rows,
                 s->tile_w, s->tile_h, s->full_w, s->full_h, s->plan.overlap);
     trace_live(vsr->gpu, "session opened");
@@ -517,7 +518,7 @@ static int block_watch_callback(const char *phase, int done, int total, void *op
  * (tests/test_real_vsr.c compares them with the official SwiftVR dump).
  * Off in the app; one tile only. */
 static void dump_f32(int chunk, const char *stage, h3_gpu_tensor *tensor, size_t elements) {
-    const char *dir = getenv("H3_VSR_DUMP_DIR");
+    const char *dir = h3_option("H3_VSR_DUMP_DIR");
     if (!dir || !dir[0] || !tensor) return;
     float *host = malloc(elements * sizeof(float));
     if (!host) return;
@@ -586,7 +587,7 @@ static int color_match(h3_gpu *gpu, h3_gpu_tensor *decoded, int frames, int widt
         return 0;
     }
     for (int c = 0; c < 3; c++) offsets[c] = input_means[c] - out_means[c];
-    if (getenv("H3_VSR_TRACE_STAGES"))
+    if (h3_option("H3_VSR_TRACE_STAGES"))
         fprintf(stderr, "vsr colour match: offsets %+.4f %+.4f %+.4f (x255: %+.1f %+.1f %+.1f)\n",
                 offsets[0], offsets[1], offsets[2], offsets[0] * 255, offsets[1] * 255, offsets[2] * 255);
     if (!h3_gpu_begin(gpu) ||

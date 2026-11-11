@@ -13,6 +13,7 @@
  * block-diagonal weight (512 x 512 x 5, 5 MB); the engine's GroupNorm
  * kernel reduces per "frame", so the whole clip is handed to it as one
  * frame of T*H rows, which is PyTorch's GroupNorm over (C/G, T, H, W). */
+#include "h3_options.h"
 #include "h3_latent_upscale.h"
 #include "h3_gpu.h"
 #include "h3_gpu_vsr.h"
@@ -305,7 +306,7 @@ static int conv3(run *r, const act *x, const h3_gpu_tensor *w,
     act padded;
     if (!pad(r, x, 1, 1, 1, &padded)) return 0;
     OOM(act_new(r->u->gpu, out, x->T, x->H, x->W, cout));
-    GPU_OP((getenv("H3_LU_CONV3D") ? h3_gpu_conv3d_f32 : h3_gpu_conv3d_as_2d_f32)(r->u->gpu, out->t, padded.t, w, b, 1,
+    GPU_OP((h3_option("H3_LU_CONV3D") ? h3_gpu_conv3d_f32 : h3_gpu_conv3d_as_2d_f32)(r->u->gpu, out->t, padded.t, w, b, 1,
                              (uint32_t)padded.T, (uint32_t)padded.H,
                              (uint32_t)padded.W, (uint32_t)x->C, (uint32_t)cout,
                              3, 3, 3, 1, 1, 1));
@@ -319,7 +320,7 @@ static int conv_t5(run *r, const act *x, const h3_gpu_tensor *w,
     act padded;
     if (!pad(r, x, 2, 2, 0, &padded)) return 0;
     OOM(act_new(r->u->gpu, out, x->T, x->H, x->W, x->C));
-    GPU_OP((getenv("H3_LU_CONV3D") ? h3_gpu_conv3d_f32 : h3_gpu_conv3d_as_2d_f32)(r->u->gpu, out->t, padded.t, w, b, 1,
+    GPU_OP((h3_option("H3_LU_CONV3D") ? h3_gpu_conv3d_f32 : h3_gpu_conv3d_as_2d_f32)(r->u->gpu, out->t, padded.t, w, b, 1,
                              (uint32_t)padded.T, (uint32_t)padded.H,
                              (uint32_t)padded.W, (uint32_t)x->C, (uint32_t)x->C,
                              TK, 1, 1, 1, 1, 1));
@@ -357,7 +358,7 @@ static void dump_sub(h3_gpu *gpu, const act *x, int index, int on) {
     if (!on) return;
     char name[64];
     snprintf(name, sizeof(name), "sub_%d", index);
-    const char *dir = getenv("H3_LU_DUMP_DIR");
+    const char *dir = h3_option("H3_LU_DUMP_DIR");
     if (!dir) return;
     size_t n = act_elements(x);
     float *host = malloc(n * sizeof(float));
@@ -375,7 +376,7 @@ static void dump_sub(h3_gpu *gpu, const act *x, int index, int on) {
 static int run_block(run *r, block *b, const float *emb_silu, act *x) {
     h3_gpu *gpu = r->u->gpu;
     act h1, h2, h3, y;
-    int debug = getenv("H3_LU_DEBUG_BLOCK") && b == &r->u->out_blocks[atoi(getenv("H3_LU_DEBUG_BLOCK"))];
+    int debug = h3_option("H3_LU_DEBUG_BLOCK") && b == &r->u->out_blocks[atoi(h3_option("H3_LU_DEBUG_BLOCK"))];
     if (b->temporal) {
         if (!gn_silu(r, x, b->tn_w, b->tn_b, &h1)) return 0;
         if (!conv_t5(r, &h1, b->dw_w, b->dw_b, &h2)) return 0;
@@ -453,7 +454,7 @@ static void resize_cpu(const float *in, int T, int H, int W, int C,
 /* H3_LU_DUMP_DIR=<dir>: writes every stage's activation ([T,H,W,C] F32)
  * for the parity check against the author node's forward hooks. */
 static void dump_stage(h3_gpu *gpu, const act *x, int index) {
-    const char *dir = getenv("H3_LU_DUMP_DIR");
+    const char *dir = h3_option("H3_LU_DUMP_DIR");
     if (!dir || !*dir) return;
     size_t n = act_elements(x);
     float *host = malloc(n * sizeof(float));

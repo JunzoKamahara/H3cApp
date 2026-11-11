@@ -20,6 +20,7 @@
  * The runner walks a layer table over frame batches, carrying every
  * MemBlock's last input frame in the state, so memory is bounded by the
  * batch and chunks join seamlessly. */
+#include "h3_options.h"
 #include "h3_vsr_internal.h"
 #include "h3_weights.h"
 
@@ -165,7 +166,7 @@ static h3_gpu_tensor *pack_bias(h3_gpu *gpu, const float *b, int out, int out_p)
 }
 
 static int nax_wanted(h3_gpu *gpu) {
-    return h3_gpu_has_tensor_ops(gpu) && !getenv("H3_VSR_REAE_F32");
+    return h3_gpu_has_tensor_ops(gpu) && !h3_option("H3_VSR_REAE_F32");
 }
 
 /* conv 3x3 [O, I, 3, 3] (+ bias): the same bytes as conv3d [O, I, 1, 3, 3]. */
@@ -1008,7 +1009,7 @@ static int run_table(h3_vsr_reae *reae, const layer *layers, int count,
                 act_free(&current);
                 return 0;
             }
-            if (getenv("H3_VSR_TRACE_CPU")) {
+            if (h3_option("H3_VSR_TRACE_CPU")) {
                 struct timespec cpu1;
                 clock_gettime(CLOCK_MONOTONIC, &cpu1);
                 fprintf(stderr, "reae cpu %s %2d kind %d %s %.1f ms\n", layers == reae->encoder ? "enc" : "dec", i,
@@ -1017,7 +1018,7 @@ static int run_table(h3_vsr_reae *reae, const layer *layers, int count,
             }
             act_free(&current);
             current = next;
-            if (getenv("H3_VSR_TRACE_LAYERS")) {
+            if (h3_option("H3_VSR_TRACE_LAYERS")) {
                 /* per-layer GPU time: submit (waits) and reopen */
                 struct timespec a, b;
                 clock_gettime(CLOCK_MONOTONIC, &a);
@@ -1027,14 +1028,14 @@ static int run_table(h3_vsr_reae *reae, const layer *layers, int count,
                         (int)layers[i].kind, current.t, current.h, current.w, current.c,
                         ((double)(b.tv_sec - a.tv_sec) + (double)(b.tv_nsec - a.tv_nsec) * 1e-9) * 1000.0);
             }
-            if (getenv("H3_VSR_TRACE_LIVE")) {
+            if (h3_option("H3_VSR_TRACE_LIVE")) {
                 h3_gpu_stats st;
                 if (h3_gpu_get_stats(gpu, &st))
                     fprintf(stderr, "reae live %.2f GiB after layer %d kind %d [%d,%d,%d,%d]\n",
                             (double)st.live_bytes / 1073741824.0, i, (int)layers[i].kind, current.t, current.h, current.w, current.c);
             }
             /* Keep command buffers short. */
-            if (!getenv("H3_VSR_REAE_NO_CONTINUE") && !h3_gpu_continue(gpu)) {
+            if (!h3_option("H3_VSR_REAE_NO_CONTINUE") && !h3_gpu_continue(gpu)) {
                 fail(error, error_size, "ReAE: GPU continue failed: %s", h3_gpu_error(gpu));
                 act_free(&current);
                 return 0;
@@ -1062,7 +1063,7 @@ static int run_table(h3_vsr_reae *reae, const layer *layers, int count,
         }
         out_at += current.t;
         act_free(&current);
-        if (getenv("H3_VSR_TRACE_BATCH")) {
+        if (h3_option("H3_VSR_TRACE_BATCH")) {
             struct timespec batch1;
             if (!h3_gpu_submit(gpu) || !h3_gpu_begin(gpu)) return 0;
             clock_gettime(CLOCK_MONOTONIC, &batch1);
@@ -1085,7 +1086,7 @@ static int run_table(h3_vsr_reae *reae, const layer *layers, int count,
         }
         /* The pool serves the batch loop; the buffers go back to the system
          * between calls so the DiT has the memory. */
-        if (!getenv("H3_VSR_REAE_KEEP_POOL")) pool_drain(reae);
+        if (!h3_option("H3_VSR_REAE_KEEP_POOL")) pool_drain(reae);
     }
     if (out_at != out_t) {
         fail(error, error_size, "ReAE: produced %d of %d frames", out_at, out_t);
@@ -1159,6 +1160,6 @@ int h3_vsr_reae_finish(h3_vsr_reae *reae, char *error, size_t error_size) {
         fail(error, error_size, "ReAE: GPU wait failed: %s", h3_gpu_error(reae->gpu));
         return 0;
     }
-    if (!getenv("H3_VSR_REAE_KEEP_POOL")) pool_drain(reae);
+    if (!h3_option("H3_VSR_REAE_KEEP_POOL")) pool_drain(reae);
     return 1;
 }
