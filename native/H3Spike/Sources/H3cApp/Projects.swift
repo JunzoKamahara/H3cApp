@@ -655,10 +655,9 @@ extension GenerationViewModel {
         // the draft's value should win. A HyperFlow model only takes 4/6/8;
         // a HyperFlow draft's few steps would ruin a plain H3 run, so the
         // current count stays then.
-        if isHyperFlow {
-            steps = H3ModelFamily.hyperflowSteps.contains(draft.steps)
-                ? draft.steps : H3ModelFamily.hyperflowDefaultSteps
-        } else if draft.modelFamily != H3ModelFamily.hyperflow.rawValue {
+        if let choices = fixedSteps {
+            steps = choices.contains(draft.steps) ? draft.steps : modelFamily.defaultSteps
+        } else if (draft.modelFamily.flatMap(H3ModelFamily.init(rawValue:)) ?? .h3).stepChoices.isEmpty {
             steps = draft.steps.clamped(to: stepsRange)
         }
         activePresetID = nil

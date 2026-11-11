@@ -21,7 +21,7 @@ LDLIBS := $(FRAMEWORKS) -licucore -lm $(MINOS_FLAG)
 # SwiftVR, SeedVR2, the latent upscaler). The upscale module uses the
 # engine, never the other way round.
 LIB_C := h3.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c \
-	h3_dit_schedule.c h3_dit.c h3_lora.c h3_hyperflow.c \
+	h3_dit_schedule.c h3_dit.c h3_lora.c h3_hyperflow.c h3_model_family.c \
 	h3_video_vae.c h3_video_encoder.c h3_audio_vae.c \
 	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c h3_adaln_curve.c \
 	h3_quant.c h3_gguf.c h3_lora_extract.c h3_memory.c h3_plan.c h3_refmod.c
@@ -251,6 +251,10 @@ $(BIN)/h3_video_encoder_chunks_test: $(OBJ)/test_video_encoder_chunks.o $(LIB_OB
 $(BIN)/h3_plan_tests: $(OBJ)/test_plan.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# The model family and sampler tables (no GPU, no weights).
+$(BIN)/h3_model_family_tests: $(OBJ)/test_model_family.o $(CORE_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 $(BIN)/h3_refmod_tests: $(OBJ)/test_refmod.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
@@ -316,7 +320,7 @@ $(BIN)/h3_semantic_vae_test: $(OBJ)/test_semantic_vae.o $(LIB_OBJ)
 test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_extract_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests h3_vsr_wan_tests h3_vsr_session_tests h3_vsr_tapconv_tests h3_real_vsr_test h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
 	h3_audio_gpu_tests h3_determinism_tests h3_real_audio_vae_test \
 	h3_real_audio_encoder_test h3_real_video_encoder_test \
-	h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests h3_real_refmod_test \
+	h3_video_encoder_chunks_test h3_plan_tests h3_model_family_tests h3_refmod_tests h3_real_refmod_test \
 	h3_real_qwen_vision_test h3_real_multimodal_text_test \
 	h3_real_ref_video_text_test h3_hyperflow_tests h3_hyperflow_real_tests
 
@@ -386,6 +390,7 @@ test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_
 	fi
 	$(BIN)/h3_video_encoder_chunks_test
 	$(BIN)/h3_plan_tests
+	$(BIN)/h3_model_family_tests
 	$(BIN)/h3_refmod_tests
 	@if test -f MiniMax-H3/Ref2VA/video_vae/source/model.safetensors; then \
 		$(BIN)/h3_real_refmod_test; \
@@ -449,7 +454,7 @@ $(OBJ)/h3_gpu_ccv_attention.o: h3_gpu_ccv_attention.mm | $(OBJ)
 		-D USE_DISPATCH -D HAVE_MPS -c $< -o $@
 
 # Every program can be asked for by its bare name (make h3_tests).
-PROGRAMS := build_attention_cache build_vsr_cache h3_latent_upscale build_adaln_curve \
+PROGRAMS := h3_model_family_tests build_attention_cache build_vsr_cache h3_latent_upscale build_adaln_curve \
 	h3_adaln_curve_check h3_weight_compare h3_gguf_tool h3_generate_cli \
 	h3_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests \
 	h3_vsr_wan_tests h3_vsr_session_tests h3_vsr_tapconv_tests h3_bench_tapconv \

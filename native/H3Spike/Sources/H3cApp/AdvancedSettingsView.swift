@@ -53,7 +53,7 @@ struct AdvancedSettingsView: View {
                     }
                     chainSection
                     seedSection
-                    if !viewModel.isHyperFlow { loraSection }
+                    if viewModel.modelFamily.can(.lora) { loraSection }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(H3Spacing.lg)
@@ -175,13 +175,13 @@ struct AdvancedSettingsView: View {
             Picker("計算方式", selection: $viewModel.computeMode) {
                 ForEach(ComputeMode.allCases) { mode in
                     Text(mode.label).tag(mode)
-                        .disabled(mode == .attentionCache && !viewModel.supportsInt8Cache)
+                        .disabled(mode.needsTensorOps && !viewModel.supportsInt8Cache)
                 }
             }
             .pickerStyle(.menu)
             .labelsHidden()
             .frame(maxWidth: 260)
-            switch viewModel.isHyperFlow && viewModel.computeMode == .attentionCache ? nil : viewModel.computeMode {
+            switch !viewModel.modelFamily.can(.attentionCache) && viewModel.computeMode == .attentionCache ? nil : viewModel.computeMode {
             case nil:
                 Text(viewModel.effectiveComputeMode == .resident
                      ? "HyperFlow H3 Flashはint8キャッシュを使いません。このMacでは常駐（int8）で生成します。"
@@ -201,7 +201,7 @@ struct AdvancedSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
             }
-            if viewModel.supportsInt8Cache && viewModel.computeMode == .attentionCache && !viewModel.isHyperFlow {
+            if viewModel.supportsInt8Cache && viewModel.computeMode == .attentionCache && viewModel.modelFamily.can(.attentionCache) {
                 attentionCacheBuildSection
             }
             if viewModel.isHeavySsdStreamingConfig {

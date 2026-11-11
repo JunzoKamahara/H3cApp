@@ -288,6 +288,83 @@ enum {
     H3_SAMPLER_RENOISE = 1
 };
 
+/* The step rules as a table (h3_sampler): what a front end needs to know
+ * about one without naming it. */
+typedef struct {
+    int id;                    /* H3_SAMPLER_* */
+    const char *name;          /* "euler", "renoise" */
+    /* It evaluates every step, so h3_params.denoise_reuse must be 1. */
+    int evaluates_every_step;
+} h3_sampler_info;
+
+/* NULL for an id that is not a sampler. */
+const h3_sampler_info *h3_sampler(int id);
+int h3_sampler_count(void);
+
+/* The ways the DiT's weights are held during the denoise, as a table
+ * (h3_compute_mode). h3_generate picks one from h3_params.ssd_streaming and
+ * whether an attention cache is given; a front end reads what each needs. */
+enum {
+    H3_COMPUTE_ATTENTION_CACHE = 0,  /* blocks streamed from the int8 attention cache */
+    H3_COMPUTE_RESIDENT = 1,         /* the whole transformer in memory */
+    H3_COMPUTE_SSD_STREAMING = 2     /* blocks streamed from the original weights */
+};
+
+typedef struct {
+    int id;                    /* H3_COMPUTE_* */
+    const char *name;          /* "attentionCache", "resident", "ssdStreaming" */
+    int needs_tensor_ops;      /* only on a GPU with the int8 tensor-op path (M5) */
+    int needs_cache_file;      /* runs from a cache built once per model */
+    int streams_blocks;        /* holds one block at a time, not the transformer */
+} h3_compute_mode_info;
+
+/* NULL for an id that is not a compute mode. */
+const h3_compute_mode_info *h3_compute_mode(int id);
+int h3_compute_mode_count(void);
+
+/* Model families: the kinds of transformer a model folder can hold, and
+ * what each takes. The engine refuses a generation whose parameters ask a
+ * family for something it cannot do (h3_model_family_problem); a front end
+ * reads the same table to offer only what applies. */
+enum {
+    H3_FAMILY_H3 = 0,          /* MiniMax H3 and its plain re-publications */
+    H3_FAMILY_HYPERFLOW = 1    /* HyperFlow H3 Flash */
+};
+
+enum {
+    H3_CAN_LORA = 1u << 0,             /* h3_params.loras */
+    H3_CAN_RENOISE = 1u << 1,          /* samplers other than Euler */
+    H3_CAN_STEP_REUSE = 1u << 2,       /* denoise_reuse, core_reuse, token_reduction */
+    H3_CAN_LAYER_SKIP = 1u << 3,       /* dit_layers below the default */
+    H3_CAN_CUSTOM_SIGMAS = 1u << 4,    /* video_sigmas */
+    H3_CAN_AUDIO_SHIFT = 1u << 5,      /* audio_sigma_shift other than the default */
+    H3_CAN_ATTENTION_CACHE = 1u << 6,  /* the int8 attention cache */
+    H3_CAN_ADALN_CURVE = 1u << 7       /* curve-form AdaLN files */
+};
+
+#define H3_FAMILY_MAX_STEP_CHOICES 8
+
+typedef struct {
+    int id;                    /* H3_FAMILY_* */
+    const char *name;          /* "h3", "hyperflow": stable, for records */
+    const char *label;         /* "MiniMax H3", "HyperFlow H3 Flash" */
+    /* The step counts it samples in; step_choice_count 0 means any. */
+    int step_choices[H3_FAMILY_MAX_STEP_CHOICES];
+    int step_choice_count;
+    int default_steps;
+    unsigned capabilities;     /* H3_CAN_* */
+} h3_model_family_info;
+
+/* NULL for an id that is not a family. */
+const h3_model_family_info *h3_model_family(int id);
+int h3_model_family_count(void);
+
+/* NULL when `params` ask the family for nothing it cannot do, else what
+ * the first such thing is, as the rest of a sentence ("it samples in 4, 6
+ * or 8 steps"). */
+const char *h3_model_family_problem(const h3_model_family_info *family,
+                                    const h3_params *params);
+
 #define H3_PARAMS_DEFAULT { \
     .width = H3_DEFAULT_WIDTH, .height = H3_DEFAULT_HEIGHT, \
     .frames = H3_DEFAULT_FRAMES, .steps = H3_DEFAULT_STEPS, \

@@ -1,4 +1,5 @@
 import Foundation
+import H3Engine
 
 // Size tier of the preset sizes (プロンプト欄の「大きさ」).
 enum SizeTier: String, CaseIterable, Identifiable {
@@ -346,6 +347,10 @@ enum SpeedMode: String, CaseIterable, Identifiable, Codable {
 enum ComputeMode: String, CaseIterable, Identifiable, Codable {
     case attentionCache, resident, ssdStreaming
     var id: String { rawValue }
+
+    /// Whether it only runs on a GPU with the int8 tensor-op path (M5): the
+    /// engine's table (h3_compute_mode) says, by this mode's name.
+    var needsTensorOps: Bool { H3ComputeModes.needsTensorOps(named: rawValue) }
 
     var label: String {
         switch self {

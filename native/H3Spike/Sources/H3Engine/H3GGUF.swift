@@ -77,8 +77,52 @@ public enum H3ModelFamily: String, Codable, Sendable {
     case h3
     case hyperflow
 
-    public static let hyperflowSteps = [4, 6, 8]
-    public static let hyperflowDefaultSteps = 6
+    /// What a family can be asked for (the engine's H3_CAN_* flags).
+    public struct Capabilities: OptionSet, Sendable {
+        public let rawValue: UInt32
+        public init(rawValue: UInt32) { self.rawValue = rawValue }
+        public static let lora = Capabilities(rawValue: UInt32(H3_CAN_LORA))
+        public static let renoise = Capabilities(rawValue: UInt32(H3_CAN_RENOISE))
+        /// Denoiser reuse, core reuse, token reduction and the speed presets built on them.
+        public static let stepReuse = Capabilities(rawValue: UInt32(H3_CAN_STEP_REUSE))
+        public static let layerSkip = Capabilities(rawValue: UInt32(H3_CAN_LAYER_SKIP))
+        public static let customSigmas = Capabilities(rawValue: UInt32(H3_CAN_CUSTOM_SIGMAS))
+        public static let audioShift = Capabilities(rawValue: UInt32(H3_CAN_AUDIO_SHIFT))
+        public static let attentionCache = Capabilities(rawValue: UInt32(H3_CAN_ATTENTION_CACHE))
+        public static let adalnCurve = Capabilities(rawValue: UInt32(H3_CAN_ADALN_CURVE))
+    }
+
+    /// This family's row in the engine's table (h3_model_family), found by
+    /// name: the app asks it what applies instead of keeping a copy.
+    private var info: h3_model_family_info {
+        for id in 0 ..< h3_model_family_count() {
+            if let row = h3_model_family(id), String(cString: row.pointee.name) == rawValue { return row.pointee }
+        }
+        preconditionFailure("the engine has no model family named \(rawValue)")
+    }
+
+    public var label: String { String(cString: info.label) }
+
+    /// The step counts it samples in; empty when it takes any.
+    public var stepChoices: [Int] {
+        let row = info
+        return withUnsafeBytes(of: row.step_choices) { bytes in
+            Array(bytes.bindMemory(to: Int32.self).prefix(Int(row.step_choice_count))).map(Int.init)
+        }
+    }
+
+    /// `stepChoices` as words: "4, 6 or 8".
+    public var stepChoicesText: String {
+        let numbers = stepChoices.map(String.init)
+        guard let last = numbers.last, numbers.count > 1 else { return numbers.first ?? "" }
+        return numbers.dropLast().joined(separator: ", ") + " or " + last
+    }
+
+    public var defaultSteps: Int { Int(info.default_steps) }
+
+    public func can(_ capability: Capabilities) -> Bool {
+        Capabilities(rawValue: UInt32(info.capabilities)).contains(capability)
+    }
 
     /// From the FL2VA transformer's header: a GGUF, or a single ComfyUI
     /// int8 safetensors file (HyperFlow ships both; the released shards of
@@ -164,4 +208,19 @@ public enum H3GGUFTools {
             }
         }.value
     }
+}
+
+/// The engine's compute modes (h3_compute_mode), by the names the app
+/// records ("attentionCache", "resident", "ssdStreaming").
+public enum H3ComputeModes {
+    private static func info(named name: String) -> h3_compute_mode_info {
+        for id in 0 ..< h3_compute_mode_count() {
+            if let row = h3_compute_mode(id), String(cString: row.pointee.name) == name { return row.pointee }
+        }
+        preconditionFailure("the engine has no compute mode named \(name)")
+    }
+
+    public static func needsTensorOps(named name: String) -> Bool { info(named: name).needs_tensor_ops != 0 }
+    public static func needsCacheFile(named name: String) -> Bool { info(named: name).needs_cache_file != 0 }
+    public static func streamsBlocks(named name: String) -> Bool { info(named: name).streams_blocks != 0 }
 }

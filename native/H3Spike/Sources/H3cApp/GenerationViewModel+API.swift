@@ -132,8 +132,9 @@ extension GenerationViewModel {
             let family = await Task.detached { H3ModelFamily.detect(modelDirectory: path) }.value
             return .json(200, ["name": entry.name, "path": path, "total_bytes": detail.totalBytes,
                                "family": family.rawValue,
-                               "steps": family == .hyperflow ? H3ModelFamily.hyperflowSteps as Any
-                                                             : ["min": stepsRange.lowerBound, "max": stepsRange.upperBound],
+                               "steps": family.stepChoices.isEmpty
+                                   ? ["min": stepsRange.lowerBound, "max": stepsRange.upperBound]
+                                   : family.stepChoices as Any,
                                "sections": detail.sections.map { section in
                                    ["title": section.title, "note": section.note ?? NSNull(),
                                     "rows": section.rows.map { row in
@@ -911,9 +912,9 @@ extension GenerationViewModel {
         // otherwise be accepted and silently run a different step count.
         var requestedSteps: Int?
         if let stepsValue = json["steps"] {
-            if isHyperFlow {
-                guard let value = jsonInteger(stepsValue), H3ModelFamily.hyperflowSteps.contains(value) else {
-                    return .error(400, "\"steps\" must be 4, 6 or 8 for the active HyperFlow H3 Flash model")
+            if let choices = fixedSteps {
+                guard let value = jsonInteger(stepsValue), choices.contains(value) else {
+                    return .error(400, "\"steps\" must be \(modelFamily.stepChoicesText) for the active \(modelFamily.label) model")
                 }
             }
             guard let value = jsonInteger(stepsValue), stepsRange.contains(value) else {
@@ -1066,7 +1067,7 @@ extension GenerationViewModel {
             }
             denoiseReuse = reuse
         } else {
-            denoiseReuse = isHyperFlow ? 1 : defaultReuse
+            denoiseReuse = modelFamily.can(.stepReuse) ? defaultReuse : 1
         }
 
         if let layers = json["dit_layers"] {
@@ -1241,8 +1242,8 @@ extension GenerationViewModel {
         // to its recommended steps (followTurboLoRASteps), which an explicit
         // "steps" in the request still overrides.
         let turboSteps = library.enabledLoRAs.first { $0.recommendedSteps != nil }?.recommendedSteps
-        steps = requestedSteps ?? (isHyperFlow ? H3ModelFamily.hyperflowDefaultSteps
-                                               : turboSteps ?? defaultStepsForAPI)
+        steps = requestedSteps ?? (fixedSteps != nil ? modelFamily.defaultSteps
+                                                     : turboSteps ?? defaultStepsForAPI)
 
         // "sampler" ("auto", "euler", "renoise") and "audio_shift" (0 =
         // auto) override, for this one generation, the step rule and audio

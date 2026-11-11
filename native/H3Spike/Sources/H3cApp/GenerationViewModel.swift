@@ -151,18 +151,20 @@ final class GenerationViewModel: ObservableObject {
     @Published private(set) var modelFamily: H3ModelFamily = .h3
     var isHyperFlow: Bool { modelFamily == .hyperflow }
     /// The step choices for the active model, for the 詳細設定 picker.
-    var availableSteps: [Int] { isHyperFlow ? H3ModelFamily.hyperflowSteps : Array(stepsRange) }
+    var availableSteps: [Int] { fixedSteps ?? Array(stepsRange) }
+    /// The step counts the active model samples in, when it only takes some
+    /// (the engine's table, H3ModelFamily.stepChoices).
+    var fixedSteps: [Int]? { modelFamily.stepChoices.isEmpty ? nil : modelFamily.stepChoices }
     /// Steps sent to the engine: HyperFlow's nearest allowed count.
     var effectiveSteps: Int {
-        guard isHyperFlow else { return steps.clamped(to: stepsRange) }
-        return H3ModelFamily.hyperflowSteps.min { abs($0 - steps) < abs($1 - steps) }
-            ?? H3ModelFamily.hyperflowDefaultSteps
+        guard let choices = fixedSteps else { return steps.clamped(to: stepsRange) }
+        return choices.min { abs($0 - steps) < abs($1 - steps) } ?? modelFamily.defaultSteps
     }
     /// HyperFlow has no int8 attention cache: the cache choice runs it
     /// resident (int8, about 17 GiB measured at 672x384 5 s on M5) where
     /// the Mac has at least 24 GB, else streamed from the SSD (about 9 GiB).
     var effectiveComputeMode: ComputeMode {
-        guard isHyperFlow, computeMode == .attentionCache else { return computeMode }
+        guard !modelFamily.can(.attentionCache), computeMode == .attentionCache else { return computeMode }
         let physicalGiB = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
         return supportsInt8Cache && physicalGiB >= 23.5 ? .resident : .ssdStreaming
     }
@@ -185,7 +187,7 @@ final class GenerationViewModel: ObservableObject {
     /// measured at reuse 1 - so they run at 1 whatever denoiseReuse holds.
     /// The re-noise step rule evaluates every step, so it runs at 1 too.
     var effectiveDenoiseReuse: Int {
-        guard !isHyperFlow else { return 1 }
+        guard modelFamily.can(.stepReuse) else { return 1 }
         return speedMode == .quality && !samplingSettings.renoise ? denoiseReuse.clamped(to: reuseRange) : 1
     }
 
@@ -205,7 +207,7 @@ final class GenerationViewModel: ObservableObject {
     var samplingSettings: SamplingSettings {
         var settings = SamplingSettings()
         // HyperFlow: its own Euler schedule, audio shift fixed at 3.
-        guard !isHyperFlow else { return settings }
+        guard modelFamily.can(.renoise) else { return settings }
         for entry in library.enabledLoRAs {
             let wanted = library.sampling(for: entry)
             if wanted.renoise { settings.renoise = true }
@@ -260,7 +262,7 @@ final class GenerationViewModel: ObservableObject {
     /// the engine rejects combining the two.
     var speedSettings: SpeedSettings {
         var settings = SpeedSettings()
-        guard !isHyperFlow else { return settings } // all blocks, every step
+        guard modelFamily.can(.stepReuse) else { return settings } // all blocks, every step
         // The layer count is its own advanced setting, not part of a preset.
         settings.ditLayers = Int32(ditLayers.clamped(to: ditLayersRange))
         guard speedMode != .quality else { return settings }
@@ -362,7 +364,7 @@ final class GenerationViewModel: ObservableObject {
     /// (entries switched on there or in the form) and applies in every
     /// compute mode.
     var effectiveLoRAs: [ResolvedLoRA] {
-        guard !isHyperFlow else { return [] }
+        guard modelFamily.can(.lora) else { return [] }
         return library.enabledLoRAs.map { ResolvedLoRA(name: $0.name, path: $0.path, strength: $0.strength) }
     }
 
@@ -436,9 +438,9 @@ final class GenerationViewModel: ObservableObject {
     var draftEstimatedSeconds: Double? {
         if isChained { return chainEstimatedSeconds }
         let frames = Int(h3AlignedFrameCount(seconds: Double(seconds.clamped(to: secondsRange))))
-        let calibration = TimingCalibration.load(for: effectiveComputeMode, speed: isHyperFlow ? .quality : speedMode,
+        let calibration = TimingCalibration.load(for: effectiveComputeMode, speed: modelFamily.can(.stepReuse) ? speedMode : .quality,
                                                  fastAttention: useFastAttention,
-                                                 ditLayers: isHyperFlow ? defaultDitLayers : ditLayers.clamped(to: ditLayersRange),
+                                                 ditLayers: modelFamily.can(.layerSkip) ? ditLayers.clamped(to: ditLayersRange) : defaultDitLayers,
                                                  family: modelFamily)
         let shape = progressShape(sizeProfile: sizeProfile, frames: frames,
                                   steps: effectiveSteps, reuse: effectiveDenoiseReuse,
@@ -751,7 +753,7 @@ final class GenerationViewModel: ObservableObject {
             .removeDuplicates()
             .scan((previous: Int?.none, current: Int?.none)) { ($0.current, $1) }
             .sink { [weak self] change in
-                guard let self, !self.isHyperFlow else { return }
+                guard let self, self.modelFamily.can(.lora) else { return }
                 if let steps = change.current {
                     self.steps = steps
                 } else if let previous = change.previous, self.steps == previous {
@@ -816,13 +818,14 @@ final class GenerationViewModel: ObservableObject {
     private func adoptModelFamily(_ family: H3ModelFamily) {
         let previous = modelFamily
         modelFamily = family
-        if family == .hyperflow, previous != .hyperflow {
-            if !H3ModelFamily.hyperflowSteps.contains(steps) {
+        guard family != previous else { return }
+        if !family.stepChoices.isEmpty {
+            if !family.stepChoices.contains(steps) {
                 stepsBeforeHyperFlow = steps
-                steps = H3ModelFamily.hyperflowDefaultSteps
+                steps = family.defaultSteps
             }
-        } else if family == .h3, previous == .hyperflow {
-            if let before = stepsBeforeHyperFlow, steps == H3ModelFamily.hyperflowDefaultSteps {
+        } else if !previous.stepChoices.isEmpty {
+            if let before = stepsBeforeHyperFlow, steps == previous.defaultSteps {
                 steps = before
             }
             stepsBeforeHyperFlow = nil
@@ -1016,7 +1019,7 @@ final class GenerationViewModel: ObservableObject {
         if let forcedAudioPath, !FileManager.default.fileExists(atPath: forcedAudioPath) {
             return String(localized: "合わせる音声のファイルが見つかりません: \(URL(fileURLWithPath: forcedAudioPath).lastPathComponent)")
         }
-        for lora in library.enabledLoRAs where !isHyperFlow {
+        for lora in library.enabledLoRAs where modelFamily.can(.lora) {
             if !FileManager.default.fileExists(atPath: lora.path) {
                 return String(localized: "追加モデル「\(lora.name)」のファイルが見つかりません。モデル管理で確認してください")
             }
@@ -1213,7 +1216,7 @@ final class GenerationViewModel: ObservableObject {
         params.ssdStreaming = computeMode == .ssdStreaming
         params.attentionCachePath = computeMode == .attentionCache ? currentAttentionCachePath : nil
         // HyperFlow's AdaLN is its own two-time projection (no curve file).
-        params.adalnCurveDirectory = preferences.useAdaLNCurve && !isHyperFlow
+        params.adalnCurveDirectory = preferences.useAdaLNCurve && modelFamily.can(.adalnCurve)
             ? library.activeModel.map { attentionCacheDirectory(for: $0) } : nil
         let loras = effectiveLoRAs
         params.loras = loras.map { H3LoRAInput(path: $0.path, strength: $0.strength) }
@@ -1290,11 +1293,11 @@ final class GenerationViewModel: ObservableObject {
             requestedSeconds: requestedSeconds,
             requestedFrames: requestedFrames,
             steps: effectiveSteps,
-            denoiseReuse: isHyperFlow ? 1 : denoiseReuse.clamped(to: reuseRange),
+            denoiseReuse: modelFamily.can(.stepReuse) ? denoiseReuse.clamped(to: reuseRange) : 1,
             effectiveDenoiseReuse: effectiveDenoiseReuse,
-            ditLayers: isHyperFlow ? defaultDitLayers : ditLayers.clamped(to: ditLayersRange),
+            ditLayers: modelFamily.can(.layerSkip) ? ditLayers.clamped(to: ditLayersRange) : defaultDitLayers,
             computeMode: computeMode,
-            speedMode: isHyperFlow ? .quality : speedMode,
+            speedMode: modelFamily.can(.stepReuse) ? speedMode : .quality,
             loras: loras,
             sampling: sampling,
             referenceNames: referenceNames(draft),

@@ -241,8 +241,8 @@ extension GenerationViewModel {
         // recommended count, and the preset's own value should win - unless
         // a HyperFlow model is active, which only takes 4/6/8.
         steps = preset.steps.clamped(to: stepsRange)
-        if isHyperFlow, !H3ModelFamily.hyperflowSteps.contains(steps) {
-            steps = H3ModelFamily.hyperflowDefaultSteps
+        if let choices = fixedSteps, !choices.contains(steps) {
+            steps = modelFamily.defaultSteps
         }
     }
 }

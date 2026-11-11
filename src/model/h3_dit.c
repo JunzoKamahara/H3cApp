@@ -3,6 +3,7 @@
 #include "h3_adaln_curve.h"
 #include "h3_dit_schedule.h"
 #include "h3_hyperflow.h"
+#include "h3_model_family.h"
 #include "h3_lora.h"
 #include "h3_quant.h"
 #include "h3_weights.h"
@@ -365,6 +366,9 @@ struct h3_dit {
      * [rows, rank] middle (and a copy of the MLP input for a dense FC1 in a
      * factored MLP): [sequence, max(max rank, HIDDEN)]. */
     int hyperflow;
+    /* Its row in the family table: what applies to it (never NULL once the
+     * weights are open). */
+    const h3_model_family_desc *family;
     int factored_tensor_ops;
     h3_hyperflow_info hyperflow_info;
     h3_gpu_tensor *lowrank_tmp;
@@ -2779,14 +2783,21 @@ static h3_dit *load_dit(const char *weight_directory,
     if (!h3_hyperflow_inspect(dit->weights, &dit->hyperflow_info, error,
                               error_size)) goto failed;
     dit->hyperflow = dit->hyperflow_info.two_time;
+    /* What this family takes (h3_model_family.h); h3_generate has already
+     * refused these with its own message. */
+    dit->family = h3_model_family_of(dit->hyperflow);
+    const unsigned can = dit->family->info.capabilities;
+    if ((!(can & H3_CAN_LAYER_SKIP) && active_blocks != H3_DIT_BLOCKS) ||
+        (!(can & H3_CAN_STEP_REUSE) &&
+         (core_reuse_interval != 1 || token_reduction)) ||
+        (!(can & H3_CAN_LORA) && lora_count)) {
+        fail(error, error_size,
+             "%s runs all of its blocks: layer skipping, "
+             "core reuse, token reduction and LoRA are not available",
+             dit->family->info.label);
+        goto failed;
+    }
     if (dit->hyperflow) {
-        if (active_blocks != H3_DIT_BLOCKS || core_reuse_interval != 1 ||
-            token_reduction || lora_count) {
-            fail(error, error_size,
-                 "HyperFlow H3 Flash runs all of its blocks: layer skipping, "
-                 "core reuse, token reduction and LoRA are not available");
-            goto failed;
-        }
         /* Its blocks are renumbered without gaps; the ones after
          * block_count do not exist. */
         memset(dit->block_active, 0, sizeof(dit->block_active));
@@ -2851,10 +2862,11 @@ static h3_dit *load_dit(const char *weight_directory,
                 name);
         attention_cache_path = selected_cache_path;
     }
-    if (attention_cache_path && *attention_cache_path && dit->hyperflow) {
+    if (attention_cache_path && *attention_cache_path &&
+        !(dit->family->info.capabilities & H3_CAN_ATTENTION_CACHE)) {
         /* Caches are built from the 50 dense H3 blocks. */
-        fprintf(stderr, "h3: HyperFlow checkpoint; ignoring H3_ATTENTION_CACHE "
-                        "(resident blocks instead)\n");
+        fprintf(stderr, "h3: %s checkpoint; ignoring H3_ATTENTION_CACHE "
+                        "(resident blocks instead)\n", dit->family->log_name);
         attention_cache_path = NULL;
         free(selected_cache_path);
         selected_cache_path = NULL;
@@ -2954,7 +2966,8 @@ static h3_dit *load_dit(const char *weight_directory,
      * of dense projections. It must have been built from this transformer.
      * Its identity goes into the schedule-cache key (bytes 16..31, unused by
      * the weight fingerprint), so dense and curve schedules never mix. */
-    const char *curve_path = dit->hyperflow ? NULL : getenv("H3_ADALN_CURVE");
+    const char *curve_path =
+        dit->family->info.capabilities & H3_CAN_ADALN_CURVE ? getenv("H3_ADALN_CURVE") : NULL;
     h3_adaln_curve *curve = NULL;
     if (dit->hyperflow) {
         /* Two-time AdaLN; no curve form applies. */
