@@ -4,7 +4,7 @@ import Foundation
 
 // The one-step video super-resolution engine (h3_vsr.h): a loaded model
 // (SwiftVR first), its weight cache, and a streaming session that upscales
-// a video chunk by chunk. UPSCALE_PLAN.md §6.2 / §7.
+// a video chunk by chunk. plans/UPSCALE_PLAN.md §6.2 / §7.
 
 public struct H3VSRInfo: Sendable {
     public let name: String

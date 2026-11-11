@@ -35,7 +35,7 @@ struct SizeProfile: Hashable, Identifiable {
 
     // DiT canvases: the large ones stay within customMaxPixels like a custom
     // size must. 960x544, 768x768 and 1920x1088/1536x1536 upscaled were
-    // measured on a 24 GB M5 (SPEEDUP_ROADMAP.md section 8).
+    // measured on a 24 GB M5 (plans/SPEEDUP_ROADMAP.md section 8).
     private static func presetCanvas(_ shape: AspectShape, _ tier: SizeTier) -> (width: Int32, height: Int32) {
         let landscape: (Int32, Int32)
         switch (shape, tier) {

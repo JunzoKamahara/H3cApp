@@ -1,4 +1,4 @@
-/* HyperFlow H3 Flash (h3_hyperflow.h, HYPERFLOW_PLAN.ja.md): the fixed
+/* HyperFlow H3 Flash (h3_hyperflow.h, plans/HYPERFLOW_PLAN.ja.md): the fixed
  * step grids, the (t, r) row layout, and - with a checkpoint - the inspector
  * and the two-time AdaLN schedule against a double-precision CPU reference
  * computed from the same weights.

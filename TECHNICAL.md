@@ -741,7 +741,7 @@ from its definitions and checked against PyTorch (`tests/test_refmod.c`,
 engine's own implementation of SwiftVR (arXiv 2606.09516): a one-step video
 restoration model built on Wan2.2-TI2V-5B with a small causal autoencoder
 (the Restoration-aware Autoencoder, ReAE). The design and every measurement
-are in `UPSCALE_PLAN.md`; the short version:
+are in `plans/UPSCALE_PLAN.md`; the short version:
 
 - **Weights.** Not bundled. The app downloads the 20 GB float32 safetensors
   from Hugging Face, pinned to the last revision of H-oliday/SwiftVR whose
@@ -788,7 +788,7 @@ are in `UPSCALE_PLAN.md`; the short version:
   parity test). The method "SwiftVR 4倍で生成してから縮小" (`swiftVRFourX` in the
   API) restores at 4x and shrinks the frames with the standard resize
   (`HalvingChunkScaler`): on soft sources it was
-  preferred to a direct 2x in a blind comparison (`UPSCALE_PLAN.md`
+  preferred to a direct 2x in a blind comparison (`plans/UPSCALE_PLAN.md`
   appendix A.3), at about four times the time.
 - **Tiles.** When a chunk's estimate (weights + about 150 KB per token +
   about 1.5 KB per output pixel + the F32 frames) passes 90% of the GPU's
@@ -818,7 +818,7 @@ are in `UPSCALE_PLAN.md`; the short version:
 The "SeedVR2" method of 動画を拡大 is the engine's own implementation
 (`h3_seedvr2.c`) of SeedVR2-3B, ByteDance Seed's one-step diffusion
 restorer, written against mflux's MLX implementation and checked stage by
-stage against it. Design notes and measurements are in `UPSCALE_PLAN.md`
+stage against it. Design notes and measurements are in `plans/UPSCALE_PLAN.md`
 appendix A.7; the short version:
 
 - **Weights.** The MLX affine 8-bit export (`mlx-community/SeedVR2-3B-mlx-int8`,
@@ -874,7 +874,7 @@ appendix A.7; the short version:
 The "Open-H3 再生成" method of 動画を拡大 is not a frame scaler: it is the
 generation pipeline run again from the clip's own latents on a larger
 canvas, NVIDIA's Open-H3-Regenerate-2K recipe without its LMS Sharp parts
-(`UPSCALE_PLAN.md` appendix A.4 has the gating experiment and A.5 the
+(`plans/UPSCALE_PLAN.md` appendix A.4 has the gating experiment and A.5 the
 version and license facts). `OpenH3Regenerate.swift` drives it:
 
 - **Steps.** The clip's `.h3lt` (written by every generation,
@@ -885,7 +885,7 @@ version and license facts). `OpenH3Regenerate.swift` drives it:
   `video_sigmas` set by the redraw strength: light (the default) is 0.4,
   0.2, 0, medium the recipe's two steps 0.7, 0.494118, 0, and strong the
   recipe's three steps 0.909375, 0.857143, 0.666667, 0 (which can come back
-  as a different picture at every factor, `UPSCALE_PLAN.md` appendix A.8).
+  as a different picture at every factor, `plans/UPSCALE_PLAN.md` appendix A.8).
   The start state is `(1 − σ₀)·z_up + σ₀·ε` with the clip's seed, Euler
   steps follow (CFG 1), the audio latent is held clean and carried into
   the output, and the frames are decoded and written as usual. The LoRAs

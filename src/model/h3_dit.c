@@ -3359,7 +3359,7 @@ static uint16_t debug_bf16_to_f16(uint16_t bf16_bits) {
 /* Debug-only: records shape/dtype and, critically, the SOURCE layout the
  * tensor actually had on the GPU versus the layout it was WRITTEN in
  * (input and output layouts can differ independently - see the head-major
- * bug this was added to catch, documented in SPEEDUP_ROADMAP.md). Appends
+ * bug this was added to catch, documented in plans/SPEEDUP_ROADMAP.md). Appends
  * one line per tensor to <prefix>.meta.txt so a later comparison never has
  * to assume a layout from context alone. */
 static void debug_append_attention_meta(const char *prefix, int truncate,
@@ -3666,7 +3666,7 @@ static int run_block(h3_dit *dit, unsigned index, int step,
         !getenv("H3_DISABLE_HEAD_MAJOR_ATTENTION_OUTPUT");
     /* Experimental, opt-in: replace this engine's own MPSGraph SDPA with
      * liuliu/ccv's Metal int8 NAX attention kernel for an A/B comparison
-     * (see SPEEDUP_ROADMAP.md item 5, tools/ccv_eval/README.md). Only
+     * (see plans/SPEEDUP_ROADMAP.md item 5, tools/ccv_eval/README.md). Only
      * available in builds made with CCV_DIR set - h3_gpu_ccv_dense_
      * attention_bf16 fails cleanly with a clear error otherwise, it never
      * silently falls back to the default path, so a run that requests this

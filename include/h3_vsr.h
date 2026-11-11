@@ -1,7 +1,7 @@
 /* One-step Wan-family video super-resolution (SwiftVR first, FlashVSR-1.1
  * Tiny second): the engine side of the app's "AI 超解像" upscaler.
  *
- * Design: UPSCALE_PLAN.md (§6). This header has two layers:
+ * Design: plans/UPSCALE_PLAN.md (§6). This header has two layers:
  *   1. host-side geometry with no GPU dependency - the chunk protocol
  *      (h3_vsr_chunk.c) and the mask-free shifted-window attention layout,
  *      RoPE tables and patch index math (h3_vsr_window.c). Tested by

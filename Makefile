@@ -81,7 +81,7 @@ $(BIN)/build_attention_cache: $(OBJ)/h3_build_attention_cache.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # One-time tool: converts a downloaded SwiftVR model into the .h3vc cache
-# the VSR upscaler runs from. See h3_build_vsr_cache.c and UPSCALE_PLAN.md.
+# the VSR upscaler runs from. See h3_build_vsr_cache.c and plans/UPSCALE_PLAN.md.
 $(BIN)/build_vsr_cache: $(OBJ)/h3_build_vsr_cache.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
@@ -114,7 +114,7 @@ $(BIN)/h3_gguf_tool: $(OBJ)/gguf_tool.o $(LIB_OBJ)
 # Swift-free equivalent of native/H3Spike, built to validate
 # H3_ATTENTION_BACKEND=ccv_dense end-to-end without hitting a still-
 # unexplained Swift-runtime/ccv interaction documented there and in
-# SPEEDUP_ROADMAP.md item 5.
+# plans/SPEEDUP_ROADMAP.md item 5.
 $(BIN)/h3_generate_cli: $(OBJ)/h3_generate_cli.o $(LIB_OBJ) $(CCV_EXTRA_OBJ) \
 		$(CCV_LIB)
 	$(CC) -o $@ $(filter-out $(CCV_LIB),$^) $(LDLIBS)
@@ -123,7 +123,7 @@ $(BIN)/h3_tests: $(OBJ)/test_h3.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # One-step VSR host geometry (chunk protocol, window layout, RoPE): no GPU,
-# no weights, always run. See UPSCALE_PLAN.md §9.
+# no weights, always run. See plans/UPSCALE_PLAN.md §9.
 $(BIN)/h3_vsr_tests: $(OBJ)/test_vsr.o $(OBJ)/h3_vsr_chunk.o $(OBJ)/h3_vsr_window.o
 	$(CC) -o $@ $^ -lm
 

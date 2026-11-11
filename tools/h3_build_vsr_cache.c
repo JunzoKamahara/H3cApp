@@ -6,7 +6,7 @@
  * <model_dir> holds reae.safetensors, prompt_embedding.safetensors and
  * transformer/{config.json,diffusion_pytorch_model.safetensors}. The
  * default output is <model_dir>/swiftvr-dit-<precision>.h3vc; auto picks
- * int8 on tensor hardware (M5) and BF16 elsewhere. See UPSCALE_PLAN.md §6.3. */
+ * int8 on tensor hardware (M5) and BF16 elsewhere. See plans/UPSCALE_PLAN.md §6.3. */
 #include "h3_vsr.h"
 
 #include <stdio.h>

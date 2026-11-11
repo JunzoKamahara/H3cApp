@@ -482,7 +482,7 @@ public final class H3Engine: @unchecked Sendable {
     /// vision, the reference VAE encoder and the refiner. During a batch
     /// also the AdaLN schedule (~150-400 MB, ~8 s per item). The prepared
     /// DiT and VAE decoder would save a little more but hold ~5.8 GiB
-    /// between runs and raise the peak by ~2.9 GiB (SPEEDUP_ROADMAP.md
+    /// between runs and raise the peak by ~2.9 GiB (plans/SPEEDUP_ROADMAP.md
     /// item 7), too much for a 24 GB Mac.
     private static func cacheTargets(batch: Bool) -> UInt32 {
         var targets = UInt32(H3_CACHE_CONDITIONING) | UInt32(H3_CACHE_REFINED_TEXT)

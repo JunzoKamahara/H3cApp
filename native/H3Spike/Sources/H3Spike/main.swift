@@ -66,7 +66,7 @@ print("== H3cApp native spike ==")
 // Reproduces a real, unexplained failure: this exact call (creates its own
 // GPU, no model needed) succeeds from a plain C/Objective-C++ process but
 // consistently fails with a garbled Metal shader compile error when made
-// from this Swift binary - see SPEEDUP_ROADMAP.md item 5's "Swift runtime
+// from this Swift binary - see plans/SPEEDUP_ROADMAP.md item 5's "Swift runtime
 // blocks the live H3_ATTENTION_BACKEND=ccv_dense path" note. Kept here as
 // a minimal, fast repro for whoever investigates this further; not part
 // of normal operation.

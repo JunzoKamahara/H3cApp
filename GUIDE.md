@@ -137,7 +137,7 @@ Good to know:
     automatically). The converted cache stays and keeps working; converting
     again, for example after an app update, needs a new download. It waits for a
     running generation to finish, since it needs the whole GPU
-    (UPSCALE_PLAN.md). Its output is brought back to the input's average
+    (plans/UPSCALE_PLAN.md). Its output is brought back to the input's average
     brightness (the model alone comes out slightly brighter).
   - **SwiftVR, restore at 4x then shrink**: the same model restores at 4x and
     the result is brought down to the chosen size with the standard resize.
@@ -148,7 +148,7 @@ Good to know:
     the seams; when 4x passes 4096 pixels a side or even tiles would not fit,
     it drops to 3x, then 2x, and else stays at the chosen scale. At 4x it is
     the same as SwiftVR. At the same size this is the upscaler truest to the
-    source (UPSCALE_PLAN.md appendix A.8).
+    source (plans/UPSCALE_PLAN.md appendix A.8).
   - **SeedVR2 (AI super-resolution, detail first; very slow, experimental)**:
     SeedVR2-3B (ByteDance Seed, Apache License 2.0), a one-step diffusion
     restorer, redraws each frame on its own. Fine detail such as eyelashes,
@@ -167,7 +167,7 @@ Good to know:
     revision's record, and keeps the record and the license text in the
     model folder. There is no conversion step. Each output frame's colours
     are matched to its input with the reference's wavelet and L*a*b*
-    transfer. It waits for a running generation to finish (UPSCALE_PLAN.md
+    transfer. It waits for a running generation to finish (plans/UPSCALE_PLAN.md
     appendix A.7).
   - **Open-H3 再生成 (regeneration by H3, up to 1344×768; very slow,
     experimental)**: not an enlargement of the frames but H3 itself
@@ -183,7 +183,7 @@ Good to know:
     composition, but expressions and faces can change. **Strong (σ 0.909)**
     is the source's recipe: it adds the most detail, can come back as a
     different person or picture at any factor, and takes about 1.3 times as
-    long (UPSCALE_PLAN.md appendix A.8). The
+    long (plans/UPSCALE_PLAN.md appendix A.8). The
     size stays within H3's limit (1344×768 pixels) and the factor is
     rounded into it (a 960×544 video becomes 1344×768 at every factor).
     The factor applies to the size the clip was generated at (its latent
@@ -201,7 +201,7 @@ Good to know:
     BF16 on this Mac (about 4.2 GB) and deletes the merged file. Turbo v1.2
     is taken from the LoRA folder when the same revision is there. The
     refiner LoRA is under the MiniMax H3 Community License
-    (UPSCALE_PLAN.md appendix A.4).
+    (plans/UPSCALE_PLAN.md appendix A.4).
 
   All of them run inside the app, with no other program. Real-ESRGAN's
   pretrained weights (BSD-3-Clause) are included in the app.

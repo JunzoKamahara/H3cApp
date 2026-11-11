@@ -22,8 +22,8 @@ docs/
   assets/images/          app-window.jpg, app-composer.jpg, app-lora.jpg, app-advanced.jpg, og-image.jpg, icons
   assets/video/           ex1-3.mp4 and posters
   .nojekyll  robots.txt  sitemap.xml
-website-facts.md          sources for every number and UI name (not published)
-note-handoff.md           brief for the note article (not published)
+plans/website-facts.md    sources for every number and UI name (not published)
+plans/note-handoff.md     brief for the note article (not published)
 ```
 
 All links inside the site are relative, so it works under the project

@@ -1,5 +1,5 @@
 /* HyperFlow H3 Flash on real weights against a ComfyUI reference dump
- * (HYPERFLOW_PLAN.ja.md appendix A.2; fixture made by the reference kit's
+ * (plans/HYPERFLOW_PLAN.ja.md appendix A.2; fixture made by the reference kit's
  * make_fixture.py from a t2v run: 256x256, 39 frames, 6 steps).
  *
  * H3_HYPERFLOW_DIR      transformer directory with model.gguf (FL2VA)

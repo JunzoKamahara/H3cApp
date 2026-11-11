@@ -1,7 +1,7 @@
 // Plain-C generation driver, mirroring native/H3Spike/Sources/H3Spike/main.swift
 // closely enough to reproduce the same run, but without Swift/SwiftPM - built
 // to sidestep a real, still-unexplained interaction between the Swift runtime
-// and ccv's Metal shader JIT-compilation (see SPEEDUP_ROADMAP.md item 5):
+// and ccv's Metal shader JIT-compilation (see plans/SPEEDUP_ROADMAP.md item 5):
 // the exact same H3_ATTENTION_BACKEND=ccv_dense call that works from a plain
 // C or Objective-C++ process fails with a garbled/corrupted-looking Metal
 // shader compile error every time it is made from H3Spike (a Swift binary),

@@ -1,6 +1,6 @@
 // Experimental, opt-in attention backend bridging to liuliu/ccv's Metal
 // int8 NAX attention kernel (NAInt8AttentionKernel, via the public
-// ccv_nnc_mfa_encode_attention C API). See SPEEDUP_ROADMAP.md item 5 and
+// ccv_nnc_mfa_encode_attention C API). See plans/SPEEDUP_ROADMAP.md item 5 and
 // tools/ccv_eval/README.md for the numbers this was validated against and
 // how to reproduce them.
 //

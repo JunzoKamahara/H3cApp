@@ -79,7 +79,7 @@ struct TimingCalibration: Codable {
     // The initial values are timings measured on this project's dev machine
     // (M5, 24GB, int8 cache) from real runs - 22 frames @256x256, 124 frames
     // @512x512, and 39 frames (the app's 1 s) at 512x512, 960x544 and
-    // 768x768 (SPEEDUP_ROADMAP.md section 8) - so the very first job has an
+    // 768x768 (plans/SPEEDUP_ROADMAP.md section 8) - so the very first job has an
     // estimate at the larger sizes too. Real jobs then append their own
     // samples and the seeds age out after `keep` runs; live measurement
     // inside a job overrides them as soon as a step / chunk completes.

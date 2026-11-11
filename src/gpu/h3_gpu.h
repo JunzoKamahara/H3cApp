@@ -1071,7 +1071,7 @@ int h3_gpu_silu_mul_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
  *
  * Bridges to liuliu/ccv's Metal int8 attention kernels for an A/B
  * comparison against this engine's own MPSGraph SDPA (see
- * SPEEDUP_ROADMAP.md item 5 and tools/ccv_eval/README.md). Only linked in
+ * plans/SPEEDUP_ROADMAP.md item 5 and tools/ccv_eval/README.md). Only linked in
  * when the build sets CCV_DIR (see Makefile); h3_gpu_ccv_dense_attention_bf16
  * itself is always declared and always safe to call - it fails cleanly with
  * "ccv backend not compiled into this binary" when nothing registered a

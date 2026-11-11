@@ -3,7 +3,7 @@
 Reproducible tooling for comparing [liuliu/ccv](https://github.com/liuliu/ccv)'s
 Metal (MFA) int8 attention kernels against this engine's own real production
 attention output. Built while investigating item 5 (Sol-Attn-style block-sparse
-attention) in [`SPEEDUP_ROADMAP.md`](../../SPEEDUP_ROADMAP.md) — read that file
+attention) in [`plans/SPEEDUP_ROADMAP.md`](../../plans/SPEEDUP_ROADMAP.md) — read that file
 for the full narrative, the numbers these tools produced, and an important
 correction (a real capture-layout bug that invalidated an earlier round of
 results before these tools existed).
@@ -144,7 +144,7 @@ than uncorrelated noise, an unmistakable layout-bug signature. **A
 layout assumptions before concluding anything about kernel quality.** After
 fixing the capture (see `h3_gpu_head_major_sdpa_inputs()` in `h3_gpu.m`/`.h`)
 and rebuilding the stale attention cache, the same comparison gave sane,
-trustworthy numbers — see `SPEEDUP_ROADMAP.md` for the current results table
+trustworthy numbers — see `plans/SPEEDUP_ROADMAP.md` for the current results table
 and what they do and don't establish (per-block PSNR is not directly
 comparable to final decoded-frame PSNR; end-to-end generation validation is
 still the open item).

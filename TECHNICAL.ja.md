@@ -688,7 +688,7 @@ PyTorchと突き合わせてあります（`tests/test_refmod.c`、
 「動画を拡大」には、リサイズ・MetalFX・Real-ESRGAN に加えて、SwiftVR
 （arXiv 2606.09516）をエンジン自身で実装した方式があります。Wan2.2-TI2V-5B を
 土台にした一段の動画復元モデルで、小さな因果オートエンコーダ（ReAE）を組み合わせ
-ます。設計と計測の全文は `UPSCALE_PLAN.ja.md` にあります。要点は次のとおりです。
+ます。設計と計測の全文は `plans/UPSCALE_PLAN.ja.md` にあります。要点は次のとおりです。
 
 - **重み。** 同梱しません。ライセンスの説明のあと、アプリが Hugging Face から
   float32 の safetensors 約 20 GB を
@@ -730,7 +730,7 @@ PyTorchと突き合わせてあります（`tests/test_refmod.c`、
   `h3_vsr_open_params` の `color_match`。公式実装との照合テストでは切ります）。
   拡大の方法「SwiftVR 4倍で生成してから縮小」（API では `swiftVRFourX`）は 4 倍で
   復元してから標準のリサイズで縮める経路（`HalvingChunkScaler`）で、柔らかい元動画ではブラインド比較で 2 倍直接より好まれました
-  （`UPSCALE_PLAN.ja.md` 付録 A.3）。時間は約 4 倍です。
+  （`plans/UPSCALE_PLAN.ja.md` 付録 A.3）。時間は約 4 倍です。
 - **タイル分割。** 1 チャンクの見積り（重み＋トークンあたり約 150 KB＋出力画素あたり約 1.5 KB
   ＋F32 のフレーム）が GPU の推奨作業領域の 90% を超える大きさでは、エンジンがフレームを
   32 px 単位の等しいタイル（重なり 128 px 以上）に分け、タイルごとに ReAE の状態と DiT を持って
@@ -753,7 +753,7 @@ PyTorchと突き合わせてあります（`tests/test_refmod.c`、
 動画を拡大の「SeedVR2」は、ByteDance Seed の一段拡散復元モデル SeedVR2-3B
 をエンジン自身で実装したものです（`h3_seedvr2.c`）。mflux の MLX 実装を
 参照して書き、段階ごとに一致を確かめました。設計と計測は
-`UPSCALE_PLAN.ja.md` 付録 A.7 にあります。要点：
+`plans/UPSCALE_PLAN.ja.md` 付録 A.7 にあります。要点：
 
 - **重み。** MLX の affine 8 ビット版（`mlx-community/SeedVR2-3B-mlx-int8`、
   固定した revision、SHA-256 照合、上流も宣言も Apache License 2.0）をその
@@ -805,7 +805,7 @@ PyTorchと突き合わせてあります（`tests/test_refmod.c`、
 動画を拡大の「Open-H3 再生成」はフレームの拡大器ではなく、クリップ自身の
 潜在から大きなキャンバスで生成のパイプラインをもう一度走らせるものです。
 NVIDIA の Open-H3-Regenerate-2K の手順から LMS Sharp の部分を除いたもの
-（判定実験は `UPSCALE_PLAN.ja.md` 付録 A.4、版とライセンスの事実は A.5）。
+（判定実験は `plans/UPSCALE_PLAN.ja.md` 付録 A.4、版とライセンスの事実は A.5）。
 `OpenH3Regenerate.swift` が動かします。
 
 - **手順。** クリップの `.h3lt`（全ての生成が書く。`h3_params.save_latent_path`）
@@ -815,7 +815,7 @@ NVIDIA の Open-H3-Regenerate-2K の手順から LMS Sharp の部分を除いた
   描き直しの強さの列にして `h3_generate` を走らせます。弱い（既定）は
   0.4, 0.2, 0、中は配布元の 2 ステップの 0.7, 0.494118, 0、強いは配布元の
   3 ステップの 0.909375, 0.857143, 0.666667, 0 です（強いはどの倍率でも別の絵に
-  なり得る。`UPSCALE_PLAN.ja.md` 付録 A.8）。開始状態はクリップの seed で
+  なり得る。`plans/UPSCALE_PLAN.ja.md` 付録 A.8）。開始状態はクリップの seed で
   `(1 − σ₀)·z_up + σ₀·ε`、そこから Euler（CFG 1）で下げ、音声の潜在は
   きれいなまま保持して出力に引き継ぎ、復号と書き出し
   はいつもどおりです。LoRA は Open-H3 の精緻化（rank 384、強さ 1）と LightX2V
