@@ -6,6 +6,7 @@
 
 #include "h3_vsr.h"
 #include "h3_gpu.h"
+#include "h3_gpu_vsr.h"
 
 #include <stdint.h>
 #include <stdio.h>

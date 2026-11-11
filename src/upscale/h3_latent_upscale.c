@@ -15,6 +15,7 @@
  * frame of T*H rows, which is PyTorch's GroupNorm over (C/G, T, H, W). */
 #include "h3_latent_upscale.h"
 #include "h3_gpu.h"
+#include "h3_gpu_vsr.h"
 #include "h3_weights.h"
 #include <errno.h>
 #include <math.h>

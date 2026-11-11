@@ -6,6 +6,7 @@
 
 #include "h3_seedvr2.h"
 #include "h3_gpu.h"
+#include "h3_gpu_sv2.h"
 #include "h3_metal.h"
 #include "h3_safetensors.h"
 

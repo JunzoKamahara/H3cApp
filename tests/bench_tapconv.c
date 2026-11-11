@@ -7,6 +7,7 @@
  *
  *   ./h3_bench_tapconv [frames] */
 #include "h3_gpu.h"
+#include "h3_gpu_vsr.h"
 
 #include <stdio.h>
 #include <stdlib.h>

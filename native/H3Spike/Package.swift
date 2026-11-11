@@ -26,7 +26,7 @@ let repoRoot = packageDir.deletingLastPathComponent().deletingLastPathComponent(
 // loose object file passed directly to the linker is always included.
 let ccvDir = ProcessInfo.processInfo.environment["CCV_DIR"]
 var h3LinkerSettings: [LinkerSetting] = [
-    .unsafeFlags(["-L\(repoRoot)/build", "-lh3", "-licucore"]),
+    .unsafeFlags(["-L\(repoRoot)/build", "-lh3upscale", "-lh3", "-licucore"]),
     .linkedFramework("Foundation"),
     .linkedFramework("Metal"),
     .linkedFramework("MetalPerformanceShaders"),

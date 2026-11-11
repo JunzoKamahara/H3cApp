@@ -17,14 +17,22 @@ FRAMEWORKS := -framework Foundation -framework Metal \
 	-framework ImageIO
 LDLIBS := $(FRAMEWORKS) -licucore -lm $(MINOS_FLAG)
 
+# The generation engine (libh3.a) and the upscale module (libh3upscale.a:
+# SwiftVR, SeedVR2, the latent upscaler). The upscale module uses the
+# engine, never the other way round.
 LIB_C := h3.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c \
-	h3_dit_schedule.c h3_dit.c h3_lora.c h3_hyperflow.c
-
-LIB_C += h3_video_vae.c h3_video_encoder.c h3_audio_vae.c \
+	h3_dit_schedule.c h3_dit.c h3_lora.c h3_hyperflow.c \
+	h3_video_vae.c h3_video_encoder.c h3_audio_vae.c \
 	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c h3_adaln_curve.c \
-	h3_quant.c h3_gguf.c h3_vsr_chunk.c h3_vsr_window.c h3_vsr_weights.c h3_vsr_reae.c h3_vsr_wan.c h3_vsr.c \
-	h3_latent_upscale.c h3_seedvr2.c h3_seedvr2_vae.c h3_seedvr2_video.c h3_lora_extract.c h3_memory.c h3_plan.c h3_refmod.c
+	h3_quant.c h3_gguf.c h3_lora_extract.c h3_memory.c h3_plan.c h3_refmod.c
 LIB_M := h3_metal.m h3_gpu.m h3_tokenizer.m h3_av_writer.m h3_av_reader.m
+UPSCALE_C := h3_vsr_chunk.c h3_vsr_window.c h3_vsr_weights.c h3_vsr_reae.c h3_vsr_wan.c h3_vsr.c \
+	h3_latent_upscale.c h3_seedvr2.c h3_seedvr2_vae.c h3_seedvr2_video.c
+UPSCALE_M := h3_gpu_vsr.m h3_gpu_sv2.m
+# The shader source the programs read is these parts joined, in this order.
+SHADER_PARTS := src/gpu/h3_shaders_core.metal src/upscale/h3_shaders_vsr.metal \
+	src/upscale/h3_shaders_seedvr2.metal
+
 # Everything the build writes goes under $(BUILD): objects and dependency
 # files in obj/ (flat: no two sources share a name), programs in bin/, the
 # library at $(BUILD)/libh3.a (native/H3Spike/Package.swift links it there).
@@ -39,7 +47,10 @@ INCLUDES := -Iinclude $(addprefix -I,$(SRC_DIRS))
 vpath %.c $(SRC_DIRS) tests tools tools/ccv_eval
 vpath %.m $(SRC_DIRS) tools
 vpath %.mm src/gpu
-LIB_OBJ := $(addprefix $(OBJ)/,$(LIB_C:.c=.o) $(LIB_M:.m=.o))
+CORE_OBJ := $(addprefix $(OBJ)/,$(LIB_C:.c=.o) $(LIB_M:.m=.o))
+UPSCALE_OBJ := $(addprefix $(OBJ)/,$(UPSCALE_C:.c=.o) $(UPSCALE_M:.m=.o))
+# What the tools and tests link: both, as objects.
+LIB_OBJ := $(CORE_OBJ) $(UPSCALE_OBJ)
 
 # Optional, opt-in: set CCV_DIR to a built liuliu/ccv checkout (see
 # tools/ccv_eval/README.md) to make the experimental H3_ATTENTION_BACKEND=
@@ -70,14 +81,22 @@ endif
 
 all: libh3.a
 
-libh3.a: $(BUILD)/libh3.a
+libh3.a: $(BUILD)/libh3.a $(BUILD)/libh3upscale.a $(BUILD)/h3_shaders.metal
 
-$(BUILD)/libh3.a: $(LIB_OBJ) $(CCV_EXTRA_OBJ)
-	$(AR) rcs $@ $(LIB_OBJ)
+$(BUILD)/libh3.a: $(CORE_OBJ) $(CCV_EXTRA_OBJ)
+	rm -f $@
+	$(AR) rcs $@ $(CORE_OBJ)
+
+$(BUILD)/libh3upscale.a: $(UPSCALE_OBJ)
+	rm -f $@
+	$(AR) rcs $@ $(UPSCALE_OBJ)
+
+$(BUILD)/h3_shaders.metal: $(SHADER_PARTS) | $(OBJ)
+	cat $(SHADER_PARTS) > $@
 
 # One-time tool: quantizes QKV/attention-output to int8 and writes the cache
 # that H3_ATTENTION_CACHE points the runtime at. See h3_build_attention_cache.c.
-$(BIN)/build_attention_cache: $(OBJ)/h3_build_attention_cache.o $(LIB_OBJ)
+$(BIN)/build_attention_cache: $(OBJ)/h3_build_attention_cache.o $(CORE_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # One-time tool: converts a downloaded SwiftVR model into the .h3vc cache
@@ -92,7 +111,7 @@ $(BIN)/h3_latent_upscale: $(OBJ)/latent_upscale_cli.o $(LIB_OBJ)
 
 # One-time tool: builds the curve-form AdaLN file that H3_ADALN_CURVE points
 # the runtime at. See h3_adaln_curve.h.
-$(BIN)/build_adaln_curve: $(OBJ)/h3_build_adaln_curve.o $(LIB_OBJ)
+$(BIN)/build_adaln_curve: $(OBJ)/h3_build_adaln_curve.o $(CORE_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Same-schedule comparison of curve-form against dense AdaLN (needs the
@@ -107,7 +126,7 @@ $(BIN)/h3_weight_compare: $(OBJ)/weight_compare.o $(LIB_OBJ)
 
 # Inspect GGUF files as the importer does, or trim a text encoder to the
 # layers the engine reads.
-$(BIN)/h3_gguf_tool: $(OBJ)/gguf_tool.o $(LIB_OBJ)
+$(BIN)/h3_gguf_tool: $(OBJ)/gguf_tool.o $(CORE_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # Plain-C generation driver (see tools/ccv_eval/h3_generate_cli.c) - a
@@ -115,11 +134,11 @@ $(BIN)/h3_gguf_tool: $(OBJ)/gguf_tool.o $(LIB_OBJ)
 # H3_ATTENTION_BACKEND=ccv_dense end-to-end without hitting a still-
 # unexplained Swift-runtime/ccv interaction documented there and in
 # plans/SPEEDUP_ROADMAP.md item 5.
-$(BIN)/h3_generate_cli: $(OBJ)/h3_generate_cli.o $(LIB_OBJ) $(CCV_EXTRA_OBJ) \
+$(BIN)/h3_generate_cli: $(OBJ)/h3_generate_cli.o $(CORE_OBJ) $(CCV_EXTRA_OBJ) \
 		$(CCV_LIB)
 	$(CC) -o $@ $(filter-out $(CCV_LIB),$^) $(LDLIBS)
 
-$(BIN)/h3_tests: $(OBJ)/test_h3.o $(LIB_OBJ)
+$(BIN)/h3_tests: $(OBJ)/test_h3.o $(CORE_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # One-step VSR host geometry (chunk protocol, window layout, RoPE): no GPU,
@@ -178,12 +197,12 @@ $(BIN)/h3_seedvr2_temporal_tests: $(OBJ)/test_seedvr2_temporal.o $(LIB_OBJ)
 # HyperFlow H3 Flash (h3_hyperflow.h): grids and (t, r) rows; with
 # H3_HYPERFLOW_DIR also the inspector and the two-time AdaLN schedule
 # against a CPU reference (skips without it unless H3_HYPERFLOW_STRICT=1).
-$(BIN)/h3_hyperflow_tests: $(OBJ)/test_hyperflow.o $(LIB_OBJ)
+$(BIN)/h3_hyperflow_tests: $(OBJ)/test_hyperflow.o $(CORE_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # HyperFlow on real weights against the ComfyUI reference fixture
 # (H3_HYPERFLOW_DIR + H3_HYPERFLOW_FIXTURE; skips without them).
-$(BIN)/h3_hyperflow_real_tests: $(OBJ)/test_hyperflow_real.o $(LIB_OBJ)
+$(BIN)/h3_hyperflow_real_tests: $(OBJ)/test_hyperflow_real.o $(CORE_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # The LoRA rank extraction (h3_lora_extract.c) on a synthetic file.
@@ -203,7 +222,7 @@ $(BIN)/h3_text_tests: $(OBJ)/test_text_metal.o $(LIB_OBJ)
 $(BIN)/h3_audio_gpu_tests: $(OBJ)/test_audio_gpu.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
-$(BIN)/h3_quant_tests: $(OBJ)/test_quant.o $(LIB_OBJ)
+$(BIN)/h3_quant_tests: $(OBJ)/test_quant.o $(CORE_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # GGUF header parsing alone: no Apple frameworks or model weights.
@@ -214,7 +233,7 @@ $(BIN)/h3_determinism_tests: $(OBJ)/test_determinism.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 # End-to-end same-seed check (needs the released weights; not in `make test`).
-$(BIN)/h3_repro_check: $(OBJ)/repro_check.o $(LIB_OBJ) $(CCV_EXTRA_OBJ) $(CCV_LIB)
+$(BIN)/h3_repro_check: $(OBJ)/repro_check.o $(CORE_OBJ) $(CCV_EXTRA_OBJ) $(CCV_LIB)
 	$(CC) -o $@ $(filter-out $(CCV_LIB),$^) $(LDLIBS)
 
 $(BIN)/h3_real_audio_vae_test: $(OBJ)/test_real_audio_vae.o $(LIB_OBJ)
@@ -451,7 +470,7 @@ $(addprefix $(BIN)/,$(PROGRAMS)): | $(BIN) $(BIN)/h3_shaders.metal
 # The programs name the shader source "h3_shaders.metal"; it is read from
 # the working directory or, failing that, from beside the executable
 # (h3_gpu.m), so a copy sits in $(BIN).
-$(BIN)/h3_shaders.metal: src/gpu/h3_shaders.metal | $(BIN)
+$(BIN)/h3_shaders.metal: $(BUILD)/h3_shaders.metal | $(BIN)
 	cp $< $@
 
 -include $(wildcard $(OBJ)/*.d)
