@@ -35,7 +35,7 @@ fi
 rm -rf "$app_bundle"
 mkdir -p "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources"
 cp "$scratch_dir/release/H3cApp" "$app_bundle/Contents/MacOS/H3cApp"
-cp "$repo_root/h3_shaders.metal" "$app_bundle/Contents/Resources/h3_shaders.metal"
+cp "$repo_root/src/gpu/h3_shaders.metal" "$app_bundle/Contents/Resources/h3_shaders.metal"
 cp "$script_dir/Packaging/AppIcon.icns" "$app_bundle/Contents/Resources/AppIcon.icns"
 cp "$script_dir/Packaging/Info.plist" "$app_bundle/Contents/Info.plist"
 # UI strings: Japanese keys, English and Japanese tables (see

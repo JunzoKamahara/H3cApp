@@ -25,12 +25,16 @@ MiniMax-H3を直接ダウンロードするか尋ねます（[機能](TECHNICAL.
 ## リポジトリ構成
 
 ```
-h3.c, h3_dit.c, h3_gpu.m, ...   コア推論エンジン（C + Objective-C/Metal）。libh3.aをビルド
-h3.h                            公開C API（h3_load_dir、h3_generate、h3_build_attention_cache、...）
-h3_shaders.metal                すべてのMetalコンピュートカーネル
-h3_build_attention_cache.c      h3_build_attention_cache()のCLIラッパー -> build_attention_cache
-h3_adaln_curve.c                曲線形AdaLNファイル（読み込みと作成）。h3_build_adaln_curve.c -> build_adaln_curve
-h3_lora.c                       LoRAの読み込み（形式の正規化）とGPU上での重みへの適用
+include/                        公開C API: h3.h（h3_load_dir、h3_generate、h3_build_attention_cache、...）、
+                                 h3_vsr.h、h3_seedvr2.h、h3_latent_upscale.h、h3_lora_extract.h、h3_refmod.h
+src/core/                       h3.c（生成の流れ）、ホスト側の計算、メモリ、計画
+src/io/                         重み（safetensors、GGUF、量子化形式）、トークナイザー、動画・音声ファイル
+src/model/                      DiTとスケジュール、LoRA、HyperFlow、文章・画像のエンコーダー、VAE、RefMod
+src/gpu/                        Metalの層（h3_gpu.m）と、すべてのMetalコンピュートカーネル（h3_shaders.metal）
+src/upscale/                    拡大: SwiftVR（h3_vsr*）、SeedVR2（h3_seedvr2*）、潜在の拡大
+tools/                          コマンドラインのツール（h3_build_attention_cache.c -> build_attention_cache、
+                                 h3_build_adaln_curve.c -> build_adaln_curve など）とフィクスチャ用スクリプト
+build/                          makeの出力すべて: build/libh3.a、build/obj/、build/bin/（gitには入れない）
 tests/                          Cテストスイート（make test / make parity）
 native/H3Spike/                 ネイティブmacOSアプリ（SwiftPM）
   Sources/CH3                   libh3.aのC APIをSwiftへ橋渡しするCシム
@@ -59,6 +63,9 @@ make parity            # Metal/MLXの数値比較チェックのみ
 `make build_attention_cache`は上記の独立したキャッシュ準備ツールを、
 `make build_adaln_curve`は曲線形AdaLNのツールをビルドします。
 どちらもデフォルトの`make`ターゲットには含まれません。
+
+`make`の出力はすべて`build/`に入ります。ライブラリは`build/libh3.a`、ツールとテストは
+`build/bin/`です（リポジトリ直下から`build/bin/h3_gguf_tool`のように実行します）。
 
 ### ネイティブアプリ
 

@@ -31,7 +31,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "../h3_gpu.h"
+#include "h3_gpu.h"
 
 static uint32_t rng_state = 0x9e3779b9u;
 static float rng_normal(void) {

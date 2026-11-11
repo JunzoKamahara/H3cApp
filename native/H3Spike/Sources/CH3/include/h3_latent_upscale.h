@@ -1,1 +1,1 @@
-../../../../../h3_latent_upscale.h
+../../../../../include/h3_latent_upscale.h

@@ -76,7 +76,7 @@ Related documentation: [Local API](API.md) · [Building and testing](BUILD.md) �
   [Joined generation: how to use it](GUIDE.md#joined-generation-how-to-use-it).
 - **Memory-aware reference-video sizing**: a large reference video is
   automatically downscaled based on the machine's physical RAM
-  (`h3_reference_max_pixels()` in [h3_host.c](h3_host.c)) before it reaches
+  (`h3_reference_max_pixels()` in [h3_host.c](src/core/h3_host.c)) before it reaches
   the model, rather than always targeting the same fixed cap regardless of
   what the machine can hold. See [Reference-conditioning cost](#reference-conditioning-cost-why-a-bigger-reference-is-not-free) below for why this matters.
 - **Stackable LoRAs**: the model manager keeps a library of LoRA files;
@@ -230,7 +230,7 @@ Related documentation: [Local API](API.md) · [Building and testing](BUILD.md) �
 ## How joined generation works
 
 Joined generation repeats "continue the previous video" and joins the
-results at their overlaps. Continuing is in the engine ([h3.c](h3.c)); the
+results at their overlaps. Continuing is in the engine ([h3.c](src/core/h3.c)); the
 chain and the joining are in the app
 ([Continuation.swift](native/H3Spike/Sources/H3cApp/Continuation.swift),
 [ChainGeneration.swift](native/H3Spike/Sources/H3cApp/ChainGeneration.swift)).
@@ -318,7 +318,7 @@ app's compute-mode picker (or the API's `compute_mode` field):
 | LoRA | Yes | Yes | Yes |
 
 Full detail on the cache format — versioning, `model_kind`/`model_id`
-mismatch guards — is in [h3_attention_cache.c](h3_attention_cache.c). A
+mismatch guards — is in [h3_attention_cache.c](src/model/h3_attention_cache.c). A
 cache can also be built as a standalone step with
 `build_attention_cache <FL2VA/transformer dir> <output file>` (`make
 build_attention_cache`), or pointed at a model root to build both FL2VA and
@@ -366,8 +366,8 @@ directly — `H3_ATTENTION_CACHE`, `H3_ATTENTION_CACHE_DIR`, `H3_INT8_STREAM_MLP
 to anyone linking `libh3.a` directly; the app itself doesn't rely on them
 for normal use; it drives the same underlying options through its own UI
 and `H3GenerationParams`. They're documented at their point of use in the
-source (start from [h3_dit.c](h3_dit.c), [h3_gpu.m](h3_gpu.m), and
-[h3_attention_cache.c](h3_attention_cache.c)).
+source (start from [h3_dit.c](src/model/h3_dit.c), [h3_gpu.m](src/gpu/h3_gpu.m), and
+[h3_attention_cache.c](src/model/h3_attention_cache.c)).
 
 ### How the full attention is executed (issue #2)
 
@@ -522,7 +522,7 @@ core reuse 4. Each cell is fast mode off / on.
 
 ## LoRA
 
-Adapters are never fused into a cache file. [h3_lora.c](h3_lora.c) reads
+Adapters are never fused into a cache file. [h3_lora.c](src/model/h3_lora.c) reads
 each file once per generation, maps its tensors onto the engine's own
 weight layout (ComfyUI and diffusers store attention q/k/v contiguously,
 the official checkpoint interleaves them per head; diffusers also swaps
@@ -552,8 +552,8 @@ recommend: at every step the model's velocity gives a clean-latent
 prediction `x0 = x + σ·v`, and the next step starts from fresh noise at the
 next sigma, `x = (1 − σ_next)·x0 + σ_next·ε`. The noise comes from a hash of
 the seed, the step and the element, so the same seed still reproduces the
-same video (`h3_params.sampler`; [h3_host.c](h3_host.c),
-`h3_renoise_bf16` in [h3_shaders.metal](h3_shaders.metal)). Re-noise
+same video (`h3_params.sampler`; [h3_host.c](src/core/h3_host.c),
+`h3_renoise_bf16` in [h3_shaders.metal](src/gpu/h3_shaders.metal)). Re-noise
 evaluates every step, so denoiser reuse runs at 1 with it. Some adapters
 were also trained with another audio sigma shift than the engine's 3
 (`h3_params.audio_sigma_shift`).
@@ -594,7 +594,7 @@ extreme case but doesn't change this scaling.
 **If a generation with references is unexpectedly slow**: use a
 smaller/shorter reference, fewer denoising steps, or a higher `reuse`
 value. An extreme case is refused outright with a clear error (a 512 MiB
-attention-mask cap in the MPSGraph fallback path, see [h3_gpu.m](h3_gpu.m))
+attention-mask cap in the MPSGraph fallback path, see [h3_gpu.m](src/gpu/h3_gpu.m))
 rather than risking an out-of-memory crash.
 
 ### Checking a request before it runs

@@ -24,12 +24,16 @@ to skip that step and stream the original BF16 weights instead.
 ## Repository layout
 
 ```
-h3.c, h3_dit.c, h3_gpu.m, ...   Core inference engine (C + Objective-C/Metal), builds into libh3.a
-h3.h                            Public C API surface (h3_load_dir, h3_generate, h3_build_attention_cache, ...)
-h3_shaders.metal                All Metal compute kernels
-h3_build_attention_cache.c      CLI wrapper around h3_build_attention_cache() -> build_attention_cache
-h3_adaln_curve.c                Curve-form AdaLN files (reader + builder); h3_build_adaln_curve.c -> build_adaln_curve
-h3_lora.c                       LoRA loading (format normalization) and GPU weight patching
+include/                        Public C API: h3.h (h3_load_dir, h3_generate, h3_build_attention_cache, ...),
+                                 h3_vsr.h, h3_seedvr2.h, h3_latent_upscale.h, h3_lora_extract.h, h3_refmod.h
+src/core/                       h3.c (the generation flow), host math, memory, planning
+src/io/                         Weights (safetensors, GGUF, quantized formats), tokenizer, video/audio files
+src/model/                      DiT and its schedule, LoRA, HyperFlow, the text/vision encoders, the VAEs, RefMod
+src/gpu/                        The Metal layer (h3_gpu.m) and h3_shaders.metal, all Metal compute kernels
+src/upscale/                    The upscalers: SwiftVR (h3_vsr*), SeedVR2 (h3_seedvr2*), the latent upscaler
+tools/                          Command-line drivers (h3_build_attention_cache.c -> build_attention_cache,
+                                 h3_build_adaln_curve.c -> build_adaln_curve, ...) and fixture scripts
+build/                          Everything `make` writes: build/libh3.a, build/obj/, build/bin/ (not in git)
 tests/                          C test suite (make test / make parity)
 native/H3Spike/                 Native macOS app (SwiftPM)
   Sources/CH3                   C shim exposing libh3.a's C API to Swift
@@ -58,6 +62,10 @@ make parity            # just the Metal/MLX numerical checks
 `make build_attention_cache` builds the standalone cache-preparation tool
 mentioned above, and `make build_adaln_curve` the curve-form AdaLN tool;
 neither is part of the default `make` target.
+
+Everything `make` builds lands in `build/`: the library at `build/libh3.a`, the
+tools and tests in `build/bin/` (run them from the repo root, e.g.
+`build/bin/h3_gguf_tool`).
 
 ### Native app
 

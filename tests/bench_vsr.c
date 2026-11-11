@@ -4,7 +4,7 @@
  * per-block pace), the ReAE decode and the 8-bit output, plus the GPU
  * context's own counters. Not part of `make test`.
  *
- *   ./h3_vsr_bench [in_w in_h out_w out_h] [chunks] [int8|bf16|auto] [full]
+ *   build/bin/h3_vsr_bench [in_w in_h out_w out_h] [chunks] [int8|bf16|auto] [full]
  *   defaults: 960 544 1920 1088, 2 chunks (28 + 24 frames), auto, MFSWA
  * Environment: H3_VSR_MODEL_DIR (default the app's Upscalers/SwiftVR),
  * H3_VSR_REAE_BATCH (ReAE frames per pass; 0 = whole chunk). */

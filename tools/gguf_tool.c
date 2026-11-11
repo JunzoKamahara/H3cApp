@@ -2,7 +2,7 @@
  *   h3_gguf_tool inspect <file.gguf>...
  *   h3_gguf_tool trim <text encoder.gguf> <output.gguf> [layers=50]
  *   h3_gguf_tool extract <component dir> <name prefix> <out.safetensors> */
-#include "../h3.h"
+#include "h3.h"
 
 #include <stdio.h>
 #include <stdlib.h>

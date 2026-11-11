@@ -5,11 +5,11 @@
  * Usage (from the repository root):
  *   h3_adaln_curve_check <transformer dir> <curve file>
  */
-#include "../h3_adaln_curve.h"
-#include "../h3_dit_schedule.h"
-#include "../h3_gpu.h"
-#include "../h3_host.h"
-#include "../h3_weights.h"
+#include "h3_adaln_curve.h"
+#include "h3_dit_schedule.h"
+#include "h3_gpu.h"
+#include "h3_host.h"
+#include "h3_weights.h"
 
 #define ACCELERATE_NEW_LAPACK
 #include <Accelerate/Accelerate.h>

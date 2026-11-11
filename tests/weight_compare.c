@@ -8,9 +8,9 @@
  * candidate (expanded to F32) against the released values, and a summary
  * per tensor group. Exits 1 when a shape differs or an error is large
  * (relative L2 > 0.1 - a layout mistake, not quantization). */
-#include "../h3_gpu.h"
-#include "../h3_quant.h"
-#include "../h3_weights.h"
+#include "h3_gpu.h"
+#include "h3_quant.h"
+#include "h3_weights.h"
 
 #include <math.h>
 #include <stdio.h>

@@ -71,7 +71,7 @@
   M5・24GBの横長・中では、出来上がる動画1秒あたり約105秒かかります。
   手順は[つなげて生成の使い方](GUIDE.ja.md#つなげて生成の使い方)。
 - **メモリ連動の参照動画サイズ調整**: 大きな参照動画は、マシンの物理
-  メモリ搭載量に応じて（[h3_host.c](h3_host.c)内の
+  メモリ搭載量に応じて（[h3_host.c](src/core/h3_host.c)内の
   `h3_reference_max_pixels()`）モデルに渡す前に自動的に縮小されます。
   マシンの余力に関わらず常に同じ固定上限を狙うのではありません。なぜ
   これが重要かは下の
@@ -213,7 +213,7 @@
 ## つなげて生成のしくみ
 
 つなげて生成は、「前の動画の続きを作る」を順に繰り返し、最後に重なりで
-つなぐものです。続きを作る部分はエンジン（[h3.c](h3.c)）に、連なりの
+つなぐものです。続きを作る部分はエンジン（[h3.c](src/core/h3.c)）に、連なりの
 管理とつなぐ処理はアプリ（[Continuation.swift](native/H3Spike/Sources/H3cApp/Continuation.swift)、
 [ChainGeneration.swift](native/H3Spike/Sources/H3cApp/ChainGeneration.swift)）
 にあります。
@@ -297,7 +297,7 @@ DiTの約37GiBのBF16重みは、生成のたびに何らかの形でGPUに供�
 | LoRA | 対応 | 対応 | 対応 |
 
 キャッシュ形式の詳細 — バージョン管理、`model_kind`/`model_id`の不一致
-検出 — は[h3_attention_cache.c](h3_attention_cache.c)にあります。
+検出 — は[h3_attention_cache.c](src/model/h3_attention_cache.c)にあります。
 キャッシュは独立したステップとして
 `build_attention_cache <FL2VA/transformer dir> <output file>`
 （`make build_attention_cache`）で作成することもでき、モデルの
@@ -344,8 +344,8 @@ DiTのチェックポイントのうち約24GiBはAdaLNです。ブロックご�
 `libh3.a`を直接リンクする人向けのもので、アプリ自身は通常の利用では
 これらに頼らず、同じ内部オプションを自前のUIと`H3GenerationParams`
 経由で操作しています。それぞれソース中の使用箇所
-（[h3_dit.c](h3_dit.c)、[h3_gpu.m](h3_gpu.m)、
-[h3_attention_cache.c](h3_attention_cache.c)から辿るのがおすすめ）に
+（[h3_dit.c](src/model/h3_dit.c)、[h3_gpu.m](src/gpu/h3_gpu.m)、
+[h3_attention_cache.c](src/model/h3_attention_cache.c)から辿るのがおすすめ）に
 ドキュメント化されています。
 
 ### 全注意（full attention）の実行のしかた（issue #2）
@@ -487,7 +487,7 @@ yarn.」、シード7、各1回、リクエストから動画ファイル完成�
 
 ## LoRA
 
-LoRAをキャッシュファイルへ融合することはありません。[h3_lora.c](h3_lora.c)が
+LoRAをキャッシュファイルへ融合することはありません。[h3_lora.c](src/model/h3_lora.c)が
 生成ごとに各ファイルを一度読み、テンソルをエンジン自身の重みの並びに対応付け
 （ComfyUIとdiffusersはアテンションのq/k/vを連続して格納しますが、公式
 チェックポイントはヘッドごとに交互に並んでいます。diffusersはさらにSwiGLUの
@@ -517,8 +517,8 @@ ComfyUIの`lcm`サンプラーと同じ計算で、LCMやDMD系のLoRAでよく�
 `x0 = x + σ·v`を作り、次のステップは新しいノイズを次のσの量だけ加えた
 `x = (1 − σ次)·x0 + σ次·ε`から始めます。ノイズはシード・ステップ・要素の
 番号から作るハッシュ乱数なので、同じシードなら同じ動画になります
-（`h3_params.sampler`。[h3_host.c](h3_host.c)、
-[h3_shaders.metal](h3_shaders.metal)の`h3_renoise_bf16`）。re-noiseは毎ステップ
+（`h3_params.sampler`。[h3_host.c](src/core/h3_host.c)、
+[h3_shaders.metal](src/gpu/h3_shaders.metal)の`h3_renoise_bf16`）。re-noiseは毎ステップ
 計算するので、ノイズ除去の再利用は1になります。また、エンジンの標準（3）と
 違う音声のシフト値で学習されたLoRAもあります（`h3_params.audio_sigma_shift`）。
 
@@ -558,7 +558,7 @@ Ref2VAの参照は一度エンコードされてキャッシュされるので�
 するか、denoisingステップ数を減らすか、`reuse`の値を上げてください。
 極端なケースは、メモリ不足を招く前に明確なエラーで拒否されます
 （MPSGraphフォールバック経路の512MiBアテンションマスク上限、
-[h3_gpu.m](h3_gpu.m)参照）。
+[h3_gpu.m](src/gpu/h3_gpu.m)参照）。
 
 ### 実行前の判定
 

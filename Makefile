@@ -31,8 +31,14 @@ LIB_M := h3_metal.m h3_gpu.m h3_tokenizer.m h3_av_writer.m h3_av_reader.m
 BUILD ?= build
 OBJ := $(BUILD)/obj
 BIN := $(BUILD)/bin
-vpath %.c tests tools tools/ccv_eval
-vpath %.m tools
+# Sources: the engine in src/ (core, io, model, gpu, upscale), the public
+# headers in include/. Includes stay "h3_x.h" everywhere; the directories
+# are on the include path.
+SRC_DIRS := src/core src/io src/model src/gpu src/upscale
+INCLUDES := -Iinclude $(addprefix -I,$(SRC_DIRS))
+vpath %.c $(SRC_DIRS) tests tools tools/ccv_eval
+vpath %.m $(SRC_DIRS) tools
+vpath %.mm src/gpu
 LIB_OBJ := $(addprefix $(OBJ)/,$(LIB_C:.c=.o) $(LIB_M:.m=.o))
 
 # Optional, opt-in: set CCV_DIR to a built liuliu/ccv checkout (see
@@ -263,7 +269,7 @@ $(BIN)/h3_dit_bench_864: $(OBJ)/bench_dit_864.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
 $(OBJ)/bench_dit_864.o: tests/bench_dit.c | $(OBJ)
-	$(CC) $(CFLAGS) -I. -DH3_BENCH_LATENT_H=30 \
+	$(CC) $(CFLAGS) $(INCLUDES) -DH3_BENCH_LATENT_H=30 \
 		-DH3_BENCH_LATENT_W=54 -c $< -o $@
 
 $(BIN)/h3_real_video_vae_test: $(OBJ)/test_real_video_vae.o $(LIB_OBJ)
@@ -413,13 +419,13 @@ $(OBJ) $(BIN):
 	mkdir -p $@
 
 $(OBJ)/%.o: %.c | $(OBJ)
-	$(CC) $(CFLAGS) -I. -c $< -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 $(OBJ)/%.o: %.m | $(OBJ)
-	$(CC) $(OBJCFLAGS) -I. -c $< -o $@
+	$(CC) $(OBJCFLAGS) $(INCLUDES) -c $< -o $@
 
 $(OBJ)/h3_gpu_ccv_attention.o: h3_gpu_ccv_attention.mm | $(OBJ)
-	$(CC) -std=c++17 -O3 -fobjc-arc -fblocks $(MINOS_FLAG) -I. -I$(CCV_DIR) -I$(CCV_DIR)/lib \
+	$(CC) -std=c++17 -O3 -fobjc-arc -fblocks $(MINOS_FLAG) $(INCLUDES) -I$(CCV_DIR) -I$(CCV_DIR)/lib \
 		-D HAVE_CBLAS -D HAVE_PTHREAD -D HAVE_ACCELERATE_FRAMEWORK \
 		-D USE_DISPATCH -D HAVE_MPS -c $< -o $@
 
@@ -440,7 +446,13 @@ PROGRAMS := build_attention_cache build_vsr_cache h3_latent_upscale build_adaln_
 	h3_vsr_bench h3_int8_bench h3_vsr_run h3_semantic_vae_test
 .PHONY: $(PROGRAMS)
 $(PROGRAMS): %: $(BIN)/%
-$(addprefix $(BIN)/,$(PROGRAMS)): | $(BIN)
+$(addprefix $(BIN)/,$(PROGRAMS)): | $(BIN) $(BIN)/h3_shaders.metal
+
+# The programs name the shader source "h3_shaders.metal"; it is read from
+# the working directory or, failing that, from beside the executable
+# (h3_gpu.m), so a copy sits in $(BIN).
+$(BIN)/h3_shaders.metal: src/gpu/h3_shaders.metal | $(BIN)
+	cp $< $@
 
 -include $(wildcard $(OBJ)/*.d)
 

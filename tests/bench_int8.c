@@ -1,7 +1,7 @@
 /* Micro-benchmark of h3_gpu_linear_int8_bf16 at the SwiftVR DiT's shapes
  * (and probes around them), to see why FC2 (K = 14336) runs at half the
  * efficiency of the others. Not part of `make test`.
- *   ./h3_int8_bench [rows]      (default 14280 = the 1080p FIRST chunk) */
+ *   build/bin/h3_int8_bench [rows]      (default 14280 = the 1080p FIRST chunk) */
 #include "h3_gpu.h"
 #include <stdio.h>
 #include <stdlib.h>
