@@ -340,8 +340,8 @@ the generation until denoising begins):
   last block, Q4_K_M 5%). The dump was made with the Q4_K_M weights, so this
   does not mean the int8 file is less accurate. How close either is to the
   BF16 output was not measured in H3cApp.
-- With FL2VA only text-to-video was checked. Not checked on M1-M4. The audio
-  has not been checked by listening.
+- With FL2VA only text-to-video was checked. The audio has not been checked
+  by listening.
 
 The Ref2VA int8 file (`ref2va_int8_convrot_comfyui/`, 16.4 GB, 49 blocks) was
 checked under the same conditions (November 11, 2026, M5 with 24 GB; the same
@@ -368,8 +368,15 @@ references and prompts as the GGUF Ref2VA check):
   than the GGUF's (mean -17.6 dB against -23.1 dB). The other three are
   within 1 dB. The audio has not been checked by listening.
 - The weights compare as for FL2VA (unquantized tensors identical, int8
-  matrices within 8.1%). M1-M4 (real or emulated) and 4 and 8 steps were not
-  checked.
+  matrices within 8.1%). 4 and 8 steps were not checked.
+
+Emulating M1-M4 (the M5 with TensorOps and the newer GPU features off, SSD
+streaming), the int8 files also generated all four without errors: FL2VA from
+text, and Ref2VA with an image, image + audio and a video reference. Totals
+were 417 s, 426 s, 448 s and 1,395 s with a peak of 10-11 GiB, about the same
+as the GGUF under the same emulation (times are the M5 GPU's, not a real
+M1-M4's). No breakage was seen in full-size frames and the reference voice was
+followed. Not yet checked on a real M1-M4.
 
 ## ComfyUI int8 (ConvRot) DiTs
 
