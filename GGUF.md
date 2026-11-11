@@ -368,7 +368,13 @@ references and prompts as the GGUF Ref2VA check):
   than the GGUF's (mean -17.6 dB against -23.1 dB). The other three are
   within 1 dB. The audio has not been checked by listening.
 - The weights compare as for FL2VA (unquantized tensors identical, int8
-  matrices within 8.1%). 4 and 8 steps were not checked.
+  matrices within 8.1%).
+- 4 and 8 steps (resident on the M5; two FL2VA text prompts and the Ref2VA
+  image reference, one run each) also generated without errors or visible
+  breakage. They took 5-12 s longer than the GGUF (51 s in one run) with a
+  peak of 15-17 GiB. The frame-to-frame flicker figure was higher for the
+  int8 files at 4, 6 and 8 steps (1.8-2.4 against 1.0-1.4 at 4 steps); the
+  pictures themselves differ, so this cannot be put down to the format.
 
 Emulating M1-M4 (the M5 with TensorOps and the newer GPU features off, SSD
 streaming), the int8 files also generated all four without errors: FL2VA from
