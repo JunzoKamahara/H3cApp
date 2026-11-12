@@ -341,7 +341,7 @@ private struct CustomClipRow: View {
                     ForEach(Array(clip.references.enumerated()), id: \.offset) { offset, reference in
                         if reference.kind == "refmod" {
                             RefModReferenceRow(
-                                library: library, path: reference.path, member: Int32(reference.member ?? -1),
+                                library: library, path: reference.path, member: reference.engineMember,
                                 strength: Binding(
                                     get: { offset < clip.references.count ? clip.references[offset].strength ?? 1 : 1 },
                                     set: { value in

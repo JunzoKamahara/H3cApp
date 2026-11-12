@@ -42,12 +42,19 @@ struct ProjectDraft: Codable, Equatable {
             member = input.kind == .refmod && input.member >= 0 ? Int(input.member) : nil
         }
 
+        /// The member as the engine takes it (-1 = none). project.json can
+        /// be edited by hand, so a number outside Int32 - no bundle has that
+        /// many members - counts as absent rather than trapping.
+        var engineMember: Int32 {
+            member.flatMap { Int32(exactly: $0) } ?? -1
+        }
+
         /// Back into a form reference; nil for a kind this build does not
         /// know (a record from a newer version).
         func input(resolve: (String) -> String = { $0 }) -> H3ReferenceInput? {
             guard let kind = H3ReferenceKind(storedName: kind) else { return nil }
             return H3ReferenceInput(kind: kind, path: resolve(path), strength: strength ?? 1,
-                                    member: Int32(member ?? -1))
+                                    member: engineMember)
         }
 
         func mappingPath(_ map: (String) -> String) -> Reference {
