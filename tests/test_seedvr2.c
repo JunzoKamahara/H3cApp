@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 static int tests_run;
 #define CHECK(condition) do { tests_run++; if (!(condition)) { \
@@ -62,6 +63,74 @@ static void test_windows(void) {
     }
 }
 
+/* A safetensors file of zero-filled 2-D tensors. */
+typedef struct { const char *name, *dtype; unsigned long long rows, cols; } st_entry;
+
+static void write_safetensors(const char *path, const st_entry *e, int count) {
+    char json[2048];
+    size_t len = 0;
+    unsigned long long offset = 0;
+    len += (size_t)snprintf(json + len, sizeof(json) - len, "{");
+    for (int i = 0; i < count; i++) {
+        unsigned long long bytes = e[i].rows * e[i].cols * (strcmp(e[i].dtype, "U32") ? 2u : 4u);
+        len += (size_t)snprintf(json + len, sizeof(json) - len,
+                                "%s\"%s\":{\"dtype\":\"%s\",\"shape\":[%llu,%llu],\"data_offsets\":[%llu,%llu]}",
+                                i ? "," : "", e[i].name, e[i].dtype, e[i].rows, e[i].cols, offset, offset + bytes);
+        offset += bytes;
+    }
+    len += (size_t)snprintf(json + len, sizeof(json) - len, "}");
+    CHECK(len < sizeof(json));
+    unsigned char prefix[8];
+    for (int i = 0; i < 8; i++) prefix[i] = (unsigned char)((unsigned long long)len >> (8 * i));
+    void *zeros = calloc(1, offset ? offset : 1);
+    FILE *f = fopen(path, "wb");
+    CHECK(f && zeros);
+    CHECK(fwrite(prefix, 1, 8, f) == 8 && fwrite(json, 1, len, f) == len && fwrite(zeros, 1, offset, f) == offset);
+    fclose(f);
+    free(zeros);
+}
+
+/* emb_in.proj_in (U32 [2560, 64] + F16 [2560, 4] scales / biases in the
+ * export) with a tensor of the wrong size: open fails with `expected`
+ * instead of the host dequantise reading past the file's buffers. */
+static void expect_bad_emb(const char *weight_dims, const char *scales_dims, const char *biases_dims,
+                           const char *expected) {
+    char dir[1024], path[1200];
+    snprintf(dir, sizeof(dir), "%s/h3_sv2_bad_emb.XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+    CHECK(mkdtemp(dir) != NULL);
+    snprintf(path, sizeof(path), "%s/config.json", dir);
+    FILE *f = fopen(path, "wb");
+    CHECK(f);
+    fputs("{\"model_type\":\"seedvr2\",\"variant\":\"seedvr2-3b\",\"quantization\":{\"bits\":8,\"group_size\":64}}", f);
+    fclose(f);
+    st_entry e[3] = {{"emb_in.proj_in.weight", "U32", 1, 1}, {"emb_in.proj_in.scales", "F16", 1, 1},
+                     {"emb_in.proj_in.biases", "F16", 1, 1}};
+    const char *dims[3] = {weight_dims, scales_dims, biases_dims};
+    for (int i = 0; i < 3; i++) CHECK(sscanf(dims[i], "%llux%llu", &e[i].rows, &e[i].cols) == 2);
+    snprintf(path, sizeof(path), "%s/transformer.safetensors", dir);
+    write_safetensors(path, e, 3);
+    snprintf(path, sizeof(path), "%s/vae.safetensors", dir);
+    write_safetensors(path, NULL, 0);
+    snprintf(path, sizeof(path), "%s/pos_emb.safetensors", dir);
+    write_safetensors(path, NULL, 0);
+    char error[512] = "";
+    h3_seedvr2_open_params params = {"h3_shaders.metal", 1, 42, -1, 0, -1};
+    h3_seedvr2 *m = h3_seedvr2_open(dir, &params, NULL, NULL, error, sizeof(error));
+    if (m) h3_seedvr2_close(m);
+    if (!strstr(error, expected)) fprintf(stderr, "  open: \"%s\", expected \"%s\"\n", error, expected);
+    CHECK(!m && strstr(error, expected));
+    const char *names[] = {"config.json", "transformer.safetensors", "vae.safetensors", "pos_emb.safetensors"};
+    for (int i = 0; i < 4; i++) { snprintf(path, sizeof(path), "%s/%s", dir, names[i]); remove(path); }
+    remove(dir);
+}
+
+static void test_bad_emb(void) {
+    expect_bad_emb("1x1", "1x1", "1x1", "emb_in.proj_in.weight is not a U32 [2560, 64] 8-bit weight");
+    expect_bad_emb("2560x16", "2560x4", "2560x4", "emb_in.proj_in.weight is not a U32 [2560, 64] 8-bit weight");
+    expect_bad_emb("2560x64", "1x1", "2560x4", "emb_in.proj_in.scales has an unexpected group size");
+    expect_bad_emb("2560x64", "2560x4", "1x1", "emb_in.proj_in.biases has an unexpected group size");
+}
+
 static float *load_tensor(const h3_st_header *h, const char *name, size_t expected) {
     const h3_st_tensor *t = h3_st_find(h, name);
     if (!t || t->dtype != H3_DTYPE_F32) { fprintf(stderr, "fixture: %s missing or not F32\n", name); exit(1); }
@@ -101,6 +170,8 @@ static int exists(const char *path) { struct stat st; return stat(path, &st) == 
 int main(void) {
     test_windows();
     printf("ok: SeedVR2 window partition (%d checks)\n", tests_run);
+    test_bad_emb();
+    printf("ok: SeedVR2 rejects mis-sized emb_in tensors (%d checks)\n", tests_run);
     const char *dir = getenv("H3_SEEDVR2_DIR");
     char fallback[1024];
     if (!dir) {

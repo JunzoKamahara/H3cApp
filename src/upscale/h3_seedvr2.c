@@ -258,10 +258,31 @@ static float *dequant_host(const h3_st_header *h, const char *prefix, uint32_t o
     snprintf(name, sizeof(name), "%s.weight", prefix);
     uint32_t *packed = read_tensor(h, name, H3_DTYPE_U32, &n, error, error_size);
     if (!packed) return NULL;
+    /* the loop below indexes packed [out, in / 4] and scales / biases
+     * [out, in / SV2_QUANT_GROUP]: the file's shapes must match (as in
+     * load_linear) */
+    const h3_st_tensor *wt = h3_st_find(h, name);
+    if (in % SV2_QUANT_GROUP || wt->ndim != 2 || wt->shape[0] != out || wt->shape[1] != in / 4 ||
+        n != (uint64_t)out * (in / 4)) {
+        fail(error, error_size, "SeedVR2: %s is not a U32 [%u, %u] 8-bit weight", name, out, in / 4);
+        free(packed);
+        return NULL;
+    }
+    uint64_t group_count = (uint64_t)out * (in / SV2_QUANT_GROUP);
     snprintf(name, sizeof(name), "%s.scales", prefix);
-    uint16_t *scales = read_tensor(h, name, H3_DTYPE_F16, NULL, error, error_size);
+    uint16_t *scales = read_tensor(h, name, H3_DTYPE_F16, &n, error, error_size);
+    if (scales && n != group_count) {
+        fail(error, error_size, "SeedVR2: %s has an unexpected group size", name);
+        free(scales);
+        scales = NULL;
+    }
     snprintf(name, sizeof(name), "%s.biases", prefix);
-    uint16_t *biases = scales ? read_tensor(h, name, H3_DTYPE_F16, NULL, error, error_size) : NULL;
+    uint16_t *biases = scales ? read_tensor(h, name, H3_DTYPE_F16, &n, error, error_size) : NULL;
+    if (biases && n != group_count) {
+        fail(error, error_size, "SeedVR2: %s has an unexpected group size", name);
+        free(biases);
+        biases = NULL;
+    }
     float *w = (scales && biases) ? malloc((size_t)out * in * sizeof(float)) : NULL;
     if (w) {
         uint32_t groups = in / SV2_QUANT_GROUP, words = in / 4;
