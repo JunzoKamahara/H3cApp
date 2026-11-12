@@ -280,7 +280,15 @@ public struct H3GenerationParams: Sendable {
  * calling into libh3.a for this since h3_align_frame_count lives in the
  * internal h3_host.h, not the public h3.h surface CH3 exposes. */
 public func h3AlignedFrameCount(seconds: Double) -> Int32 {
-    var requested = max(5, Int((seconds * 24).rounded()))
+    /* Saturate rather than trap: `seconds` can come straight from a
+     * project.json, so NaN, infinities and huge values must not crash. NaN
+     * and anything at or below 5 frames become 5; anything at or above the
+     * largest 5 + 17*k that fits Int32 becomes that. */
+    let scaled = (seconds * 24).rounded()
+    guard scaled > 5 else { return 5 }
+    let largest = 2_147_483_644
+    guard scaled < Double(largest) else { return Int32(largest) }
+    var requested = Int(scaled)
     let remainder = (requested - 5) % 17
     if remainder != 0 {
         requested += 17 - remainder
