@@ -496,7 +496,7 @@ the API token (see [API](API.md#api)).
 | `GET /api/models/import/downloads?kind=dit&repo=…` | download choices for a part (`dit`, `ref2va`, `textEncoder`, `vision`, `shared`); `repo` takes a name or URL. `403` when a web page on another site sends it (a foreign `Origin`, or `Sec-Fetch-Site: cross-site` / `same-site`); scripts and `curl` are unaffected |
 | `POST /api/models/import` | imports GGUF files (and a DiT in ComfyUI's int8 format): `files` or `folder`, `base_model` or `base_path`, `name`, `dry_run` |
 | `GET /api/models/detail?id=…` | what a model holds (the details screen), plus its `family` (`h3` or `hyperflow`) and the `steps` it takes |
-| `POST /api/models/remove` | unregisters (caches deleted); `delete_files` also moves the files to the Trash (not a folder only `POST /api/models/add` registered, unless it is an import or the default download folder: that one is listed in `refused`), `dry_run` only computes |
+| `POST /api/models/remove` | unregisters (caches deleted); `delete_files` also moves the files to the Trash, for a folder directly inside `Imported/`, the default download folder, or one registered in the app itself (Model Management, a wizard, an import); any other folder (one only `POST /api/models/add` registered, or one registered before the app recorded how) stays, is listed in `refused`, and can be removed in the Model Management window; `dry_run` only computes |
 | `POST /api/models/add` | registers a folder as a model |
 | `POST /api/models/add_ref2va` | adds Ref2VA to a model without it: `file` (the Ref2VA DiT) for a GGUF model, `dry_run` for the plan only (an official model's only as a plan) |
 

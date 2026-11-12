@@ -70,8 +70,9 @@ struct ModelRemovalPlan: Sendable {
     /// the files go too, so do the app's shared download folders and the
     /// caches no model uses. `requireWeights` (the API) also refuses a
     /// model folder without weights (see holdsModelWeights), and
-    /// `requireMadeByApp` (the API, for a folder only POST /api/models/add
-    /// registered) one the app did not make (see isMadeByApp).
+    /// `requireMadeByApp` (the API, unless the user or the app registered
+    /// the folder: H3ModelEntry.addedThroughAPI) one the app did not make
+    /// (see isMadeByApp).
     static func make(modelPath: String, id: UUID, others: [(path: String, id: UUID)],
                      includeFiles: Bool, requireWeights: Bool = false,
                      requireMadeByApp: Bool = false) -> ModelRemovalPlan {
@@ -171,19 +172,16 @@ struct ModelRemovalPlan: Sendable {
         }
     }
 
-    /// Whether the app made this folder: one directly in Imported (an
-    /// import), the default download folder, or one holding an import
-    /// record (a regular file only an import writes). Asked by the API of
-    /// a folder only POST /api/models/add registered, whose FL2VA folder
-    /// and weights file a request could have made itself.
+    /// Whether the app made this folder, by where it is: directly in
+    /// Imported (an import) or the default download folder. Nothing inside
+    /// the folder counts (a request could have put an FL2VA folder, a
+    /// weights file or an import record there itself). Asked by the API of
+    /// a folder the user is not known to have registered.
     static func isMadeByApp(_ path: String) -> Bool {
         func resolved(_ path: String) -> String { (path as NSString).resolvingSymlinksInPath }
         let folder = resolved(path)
-        if (folder as NSString).deletingLastPathComponent == resolved(importedModelsDirectory) ||
-            folder == resolved(defaultH3ModelDownloadPath) { return true }
-        let record = folder + "/" + ModelImportManifest.fileName
-        return (try? FileManager.default.attributesOfItem(atPath: record))?[.type] as? FileAttributeType == .typeRegular &&
-            ModelImportManifest.load(modelPath: folder) != nil
+        return (folder as NSString).deletingLastPathComponent == resolved(importedModelsDirectory) ||
+            folder == resolved(defaultH3ModelDownloadPath)
     }
 
     private static func regularFiles(under path: String) -> [String] {

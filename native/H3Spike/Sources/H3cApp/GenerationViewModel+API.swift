@@ -179,15 +179,17 @@ extension GenerationViewModel {
             // like Model Management's 削除… ("dry_run": true only reports
             // what would go and the space it frees). Only a folder holding
             // FL2VA weights goes: a request has no confirmation to show.
-            // One only POST /api/models/add registered goes only when the
-            // app made it, since a request chose it and can make those
-            // weights. The model's generation caches are always deleted.
+            // One the user is not known to have registered (POST
+            // /api/models/add did, or it was saved before that was noted)
+            // goes only when the app made it, since a request may have
+            // chosen it and can make those weights. The model's generation
+            // caches are always deleted.
             let others = library.models.filter { $0.id != id }.map { (path: $0.path, id: $0.id) }
             let path = entry.path, files = json["delete_files"] as? Bool == true
-            let addedThroughAPI = entry.addedThroughAPI == true
+            let userRegistered = entry.addedThroughAPI == false
             let plan = await Task.detached {
                 ModelRemovalPlan.make(modelPath: path, id: id, others: others, includeFiles: files,
-                                      requireWeights: true, requireMadeByApp: addedThroughAPI)
+                                      requireWeights: true, requireMadeByApp: !userRegistered)
             }.value
             let report: [String: Any] = [
                 "targets": plan.targets.map { ["path": $0.path, "label": $0.label, "bytes": $0.bytes] },

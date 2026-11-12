@@ -69,9 +69,10 @@ struct H3ModelEntry: Identifiable, Codable, Equatable {
     var name: String
     var path: String
     /// true when only POST /api/models/add registered this folder (a
-    /// request chose it); nil for every other way in - Model Management,
-    /// the wizards, an import, the seeded legacy folder - and for entries
-    /// saved before this existed. The API's delete_files checks it
+    /// request chose it); false when the user or the app did - Model
+    /// Management, the wizards, an import, the seeded legacy folder; nil
+    /// (unknown) for entries saved before this existed, which the API may
+    /// have registered. The API's delete_files trusts only false
     /// (ModelRemovalPlan.make). Optional so saved lists still decode.
     var addedThroughAPI: Bool?
 
@@ -263,7 +264,7 @@ final class ModelLibrary: ObservableObject {
         // so the download wizard offers defaultH3ModelDownloadPath rather
         // than this app's old name.
         if models.isEmpty, FileManager.default.fileExists(atPath: legacyDefaultH3ModelPath) {
-            let seeded = H3ModelEntry(name: "MiniMax-H3", path: legacyDefaultH3ModelPath)
+            let seeded = H3ModelEntry(name: "MiniMax-H3", path: legacyDefaultH3ModelPath, addedThroughAPI: false)
             models = [seeded]
             activeModelID = seeded.id
             persistModels()
@@ -304,13 +305,15 @@ final class ModelLibrary: ObservableObject {
     // MARK: Models
 
     /// `throughAPI` is POST /api/models/add. A folder counts as the API's
-    /// only while every entry for it came that way: registering it any
-    /// other way makes all of them the user's.
+    /// until the user registers it: registering it any other way makes
+    /// every entry for it the user's, and the API adding it again after
+    /// that keeps it so. An entry of unknown origin (nil) stays unknown
+    /// until then.
     func addModel(path: String, name: String? = nil, throughAPI: Bool = false) {
-        let onlyAPI = throughAPI && models.allSatisfy { $0.path != path || $0.addedThroughAPI == true }
-        if !onlyAPI { markUserRegistered(path: path) }
+        let onlyAPI = throughAPI && !models.contains { $0.path == path && $0.addedThroughAPI == false }
+        if !throughAPI { markUserRegistered(path: path) }
         let entry = H3ModelEntry(name: name ?? (path as NSString).lastPathComponent, path: path,
-                                 addedThroughAPI: onlyAPI ? true : nil)
+                                 addedThroughAPI: onlyAPI)
         models.append(entry)
         if activeModelID == nil {
             activeModelID = entry.id
@@ -337,7 +340,7 @@ final class ModelLibrary: ObservableObject {
     }
 
     private func markUserRegistered(path: String) {
-        for index in models.indices where models[index].path == path { models[index].addedThroughAPI = nil }
+        for index in models.indices where models[index].path == path { models[index].addedThroughAPI = false }
     }
 
     func removeModel(id: UUID) {
