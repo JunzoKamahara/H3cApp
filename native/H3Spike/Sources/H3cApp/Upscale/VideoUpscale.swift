@@ -184,14 +184,25 @@ struct UpscaleFactor: Hashable, Identifiable {
     var suffix: String { "x" + text }
 
     /// The size `width` x `height` becomes, rounded to even numbers (H.264).
+    /// A side too large for an Int (a corrupt record's) saturates at
+    /// Int.max or Int.min instead of trapping.
     func size(width: Int, height: Int) -> (width: Int, height: Int) {
-        (Int((Double(width) * rawValue / 2).rounded()) * 2, Int((Double(height) * rawValue / 2).rounded()) * 2)
+        (scaled(width) ?? (width < 0 ? .min : .max), scaled(height) ?? (height < 0 ? .min : .max))
     }
 
-    /// Whether the result stays within VideoUpscale.maximumSide.
+    /// Whether the result stays within VideoUpscale.maximumSide (never when
+    /// a side is too large for an Int).
     func fits(width: Int, height: Int) -> Bool {
-        let result = size(width: width, height: height)
-        return result.width <= VideoUpscale.maximumSide && result.height <= VideoUpscale.maximumSide
+        guard let scaledWidth = scaled(width), let scaledHeight = scaled(height) else { return false }
+        return scaledWidth <= VideoUpscale.maximumSide && scaledHeight <= VideoUpscale.maximumSide
+    }
+
+    /// `side` enlarged and rounded to an even number; nil when that is
+    /// beyond Int.
+    private func scaled(_ side: Int) -> Int? {
+        guard let half = Int(exactly: (Double(side) * rawValue / 2).rounded()) else { return nil }
+        let (doubled, overflow) = half.multipliedReportingOverflow(by: 2)
+        return overflow ? nil : doubled
     }
 }
 
