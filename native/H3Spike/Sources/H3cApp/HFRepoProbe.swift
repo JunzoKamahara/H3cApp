@@ -304,8 +304,13 @@ enum HFRepoProbe {
               let offsets = quant["data_offsets"] as? [NSNumber], offsets.count == 2 else { return nil }
         let begin = offsets[0].int64Value, end = offsets[1].int64Value
         guard begin >= 0, end > begin, end - begin < 1024 else { return nil }
+        // The offsets are the remote header's: ones past the end of the file
+        // (or past what Int64 holds) are malformed, not fetched.
+        let start = (8 + headerBytes).addingReportingOverflow(begin)
+        let stop = (8 + headerBytes).addingReportingOverflow(end)
+        guard !start.overflow, !stop.overflow, stop.partialValue <= file.size else { return nil }
         let data = try await fetchRange(repo: file.repo, revision: file.revision, path: file.path,
-                                        from: 8 + headerBytes + begin, count: end - begin)
+                                        from: start.partialValue, count: end - begin)
         guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let format = json["format"] as? String, format.hasPrefix("int8") else { return nil }
         guard json["convrot"] as? Bool == true else { return false }
@@ -318,6 +323,8 @@ enum HFRepoProbe {
     // MARK: HTTP
 
     private static func fetchRange(repo: String, revision: String, path: String, from: Int64, count: Int64) async throws -> Data {
+        // A range that is negative or runs past Int64 is not a range.
+        guard from >= 0, count >= 0, !from.addingReportingOverflow(count).overflow else { throw ProbeError.short }
         guard let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let url = URL(string: "https://huggingface.co/\(repo)/resolve/\(hfRevisionComponent(revision))/\(encoded)") else {
             throw ProbeError.badURL
