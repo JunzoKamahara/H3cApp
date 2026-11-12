@@ -485,15 +485,36 @@ enum ProjectFiles {
     /// file already there is reused) and returns the copy's path. Only files
     /// already in references/ stay where they are - a generated video used as
     /// a reference is copied too, so deleting the video doesn't break it (on
-    /// APFS the copy is a clone). Reads and copies files: call it off the
-    /// main actor.
-    static func importReference(_ path: String, into projectURL: URL) throws -> String {
+    /// APFS the copy is a clone). With `inside`, only a file that is in that
+    /// folder once every symbolic link is resolved (as isInside, for a path a
+    /// file on disk named). The file is opened once, and that descriptor is
+    /// what is checked and copied: a link is copied as the file it leads to,
+    /// and swapping the path afterwards changes nothing. Reads and copies
+    /// files: call it off the main actor.
+    static func importReference(_ path: String, into projectURL: URL, inside container: URL? = nil) throws -> String {
         if isImported(path, in: projectURL) { return path }
-        // A file (or a link to one, copied as the link): not a folder, whose
-        // whole contents would be copied, nor a device or a pipe.
+        func posixError() -> POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        // Without waiting for a pipe's writer; a regular file reads the same.
+        let fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { throw posixError() }
+        defer { close(fd) }
+        // A file: not a folder, whose whole contents would be copied, nor a
+        // device or a pipe.
         var info = stat()
-        guard stat(path, &info) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ENOENT) }
+        guard fstat(fd, &info) == 0 else { throw posixError() }
         guard info.st_mode & S_IFMT == S_IFREG else { throw POSIXError(.EFTYPE) }
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK)
+        if let container {
+            // Where the opened file really is, not what the path says now.
+            var real = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+            guard fcntl(fd, F_GETPATH, &real) == 0 else { throw posixError() }
+            guard let root = realpath(container.path, nil) else { throw posixError() }
+            defer { free(root) }
+            let folder = String(cString: root)
+            guard String(cString: real).hasPrefix(folder.hasSuffix("/") ? folder : folder + "/") else {
+                throw POSIXError(.EPERM)
+            }
+        }
         let folder = projectURL.appendingPathComponent(referencesFolder, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // The project's own folder, not a link to another place (a project
@@ -508,32 +529,58 @@ enum ProjectFiles {
         var destination = folder.appendingPathComponent(source.lastPathComponent)
         var counter = 2
         while FileManager.default.fileExists(atPath: destination.path) {
-            if FileManager.default.contentsEqual(atPath: destination.path, andPath: path) {
+            if holdsSameBytes(fd, size: info.st_size, asFileAt: destination.path) {
                 return destination.path
             }
             destination = folder.appendingPathComponent(ext.isEmpty ? "\(stem) \(counter)" : "\(stem) \(counter).\(ext)")
             counter += 1
         }
-        // The copy keeps the source's mode, but the project folder may be one
-        // others can read while the source wasn't: make it owner-only in a
-        // private folder (on the same volume, so still a clone) before it
-        // appears in references/.
+        // The copy would keep the source's mode, but the project folder may
+        // be one others can read while the source wasn't: make it owner-only
+        // in a private folder (on the same volume, so still a clone) before
+        // it appears in references/.
         let staging = try (try? FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask,
                                                          appropriateFor: folder, create: true))
             ?? FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask,
                                        appropriateFor: FileManager.default.temporaryDirectory, create: true)
         defer { try? FileManager.default.removeItem(at: staging) }
         let staged = staging.appendingPathComponent(source.lastPathComponent)
-        try FileManager.default.copyItem(at: source, to: staged)
-        let attributes = try FileManager.default.attributesOfItem(atPath: staged.path)
-        // Not a symbolic link (copied as one): its mode would be set on the
-        // file it points to.
-        if attributes[.type] as? FileAttributeType != .typeSymbolicLink,
-           let mode = attributes[.posixPermissions] as? NSNumber {
-            try FileManager.default.setAttributes([.posixPermissions: mode.intValue & 0o700], ofItemAtPath: staged.path)
+        let mode = info.st_mode & 0o700
+        // A clone of the opened file where the volume can make one, else
+        // its bytes.
+        if fclonefileat(fd, AT_FDCWD, staged.path, 0) == 0 {
+            guard chmod(staged.path, mode) == 0 else { throw posixError() }
+        } else {
+            let out = open(staged.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode)
+            guard out >= 0 else { throw posixError() }
+            defer { close(out) }
+            guard fcopyfile(fd, out, nil, copyfile_flags_t(COPYFILE_DATA)) == 0, fchmod(out, mode) == 0 else {
+                throw posixError()
+            }
         }
         try FileManager.default.moveItem(at: staged, to: destination)
         return destination.path
+    }
+
+    /// Whether the regular file at `path` (not a link to one) holds the same
+    /// bytes as the open file `fd`, whose read position is left alone.
+    private static func holdsSameBytes(_ fd: Int32, size: off_t, asFileAt path: String) -> Bool {
+        let other = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard other >= 0 else { return false }
+        defer { close(other) }
+        var info = stat()
+        guard fstat(other, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size == size else { return false }
+        let count = 1 << 20
+        var mine = [UInt8](repeating: 0, count: count), theirs = mine
+        var offset: off_t = 0
+        while offset < size {
+            let read = pread(fd, &mine, count, offset)
+            guard read > 0, pread(other, &theirs, read, offset) == read, memcmp(mine, theirs, read) == 0 else {
+                return false
+            }
+            offset += off_t(read)
+        }
+        return true
     }
 
     /// "20261004-153012_seed123", unique within the folder.
@@ -864,7 +911,7 @@ extension GenerationViewModel {
                 func imported(_ path: String) -> String {
                     guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path),
                           named[path].map({ ProjectFiles.isInside(path, folder: $0) }) ?? true,
-                          let copy = try? ProjectFiles.importReference(path, into: projectURL)
+                          let copy = try? ProjectFiles.importReference(path, into: projectURL, inside: named[path])
                     else { return path }
                     return ProjectFiles.stored(copy, in: projectURL)
                 }
@@ -1200,11 +1247,15 @@ extension GenerationViewModel {
         let projectURL = project.url
         let paths = referencesToImport(for: projectURL)
         guard !paths.isEmpty else { return }
+        // Checked again on the file the copy opens (importReference).
+        let named = fileNamedInputs
         referenceImportTask = Task { [weak self] in
             let results = await Task.detached(priority: .userInitiated) { () -> [String: Result<String, Error>] in
                 var results: [String: Result<String, Error>] = [:]
                 for path in paths {
-                    results[path] = Result { try ProjectFiles.importReference(path, into: projectURL) }
+                    results[path] = Result {
+                        try ProjectFiles.importReference(path, into: projectURL, inside: named[path])
+                    }
                 }
                 return results
             }.value

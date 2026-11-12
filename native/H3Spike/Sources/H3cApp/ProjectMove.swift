@@ -74,7 +74,10 @@ extension ProjectFiles {
         // A path as a record in the source stores it, as the destination's
         // record should: the moved files where they went; input files from
         // inside the source copied into the destination; anything else
-        // (absolute paths outside the project, files not there) as it was.
+        // (outside the project, not there, not copied) still naming the
+        // file it named: an absolute path as it was, one relative to the
+        // source as an absolute path, since the destination's record would
+        // read it as a file in the destination.
         func whereMoved(_ path: String) -> String? {
             let resolved = URL(fileURLWithPath: resolved(path, in: source)).standardizedFileURL
             if resolved.path == video.standardizedFileURL.path { return base + ".mp4" }
@@ -89,13 +92,15 @@ extension ProjectFiles {
         func carried(_ path: String) -> String {
             if let moved = whereMoved(path) { return moved }
             let resolvedPath = resolved(path, in: source)
+            let left = path.hasPrefix("/") || path.isEmpty ? path
+                : stored(URL(fileURLWithPath: resolvedPath).standardizedFileURL.path, in: destination)
             // Inside it with links resolved too: a record can be anyone's.
             guard stored(resolvedPath, in: source) != resolvedPath, isInside(resolvedPath, folder: source),
                   fm.fileExists(atPath: resolvedPath) else {
-                return path
+                return left
             }
             if let copy = copied[resolvedPath] { return copy }
-            guard let copy = try? importReference(resolvedPath, into: destination) else { return path }
+            guard let copy = try? importReference(resolvedPath, into: destination, inside: source) else { return left }
             let storedCopy = stored(copy, in: destination)
             copied[resolvedPath] = storedCopy
             return storedCopy
