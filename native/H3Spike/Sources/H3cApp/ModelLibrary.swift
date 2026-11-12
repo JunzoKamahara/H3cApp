@@ -444,13 +444,23 @@ final class ModelLibrary: ObservableObject {
     }
 
     /// A path in `directory` that no file has yet, for a file named after
-    /// `stem` (with "name 2", "name 3" when taken).
+    /// `stem` (with "name 2", "name 3" when taken). The stem is a file name,
+    /// never a path: "/" and NUL become "-", and an empty, "." or ".." stem
+    /// becomes "-", so the file always lands directly in `directory`.
     nonisolated static func freePath(in directory: String, stem: String, extension ext: String) -> String {
         let fm = FileManager.default
-        var target = URL(fileURLWithPath: directory).appendingPathComponent(stem).appendingPathExtension(ext)
+        // Scalar by scalar: a "/" followed by a combining mark is a single
+        // Character, which a String-level replace would not match.
+        var scalars = String.UnicodeScalarView()
+        for scalar in stem.unicodeScalars {
+            scalars.append(scalar == "/" || scalar == "\u{0}" ? "-" : scalar)
+        }
+        var name = String(scalars)
+        if name.isEmpty || name == "." || name == ".." { name = "-" }
+        var target = URL(fileURLWithPath: directory).appendingPathComponent(name).appendingPathExtension(ext)
         var number = 2
         while fm.fileExists(atPath: target.path) {
-            target = URL(fileURLWithPath: directory).appendingPathComponent("\(stem) \(number)").appendingPathExtension(ext)
+            target = URL(fileURLWithPath: directory).appendingPathComponent("\(name) \(number)").appendingPathExtension(ext)
             number += 1
         }
         return target.path
