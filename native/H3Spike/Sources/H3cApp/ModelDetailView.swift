@@ -324,7 +324,8 @@ private struct SafetensorsSummary {
         var highest = -1
         for name in names where name.hasPrefix(prefix) {
             let rest = name.dropFirst(prefix.count)
-            if let index = Int(rest.prefix { $0.isNumber }) { highest = max(highest, index) }
+            // An index of Int.max is treated as malformed, so `highest + 1` cannot overflow.
+            if let index = Int(rest.prefix { $0.isNumber }), index < Int.max { highest = max(highest, index) }
         }
         return highest + 1
     }
