@@ -166,6 +166,26 @@ enum SwiftVRModel {
         return try? decoder.decode(Provenance.self, from: data)
     }
 
+    /// Takes these keys out of the provenance record at `recordPath` (the
+    /// three models' records share this form) before their files are
+    /// downloaded again: the record vouches only for the bytes it hashed,
+    /// and a file fetched anew at the same size would otherwise pass as
+    /// checked. The next check hashes it and records it again.
+    static func forgetProvenance(of keys: [String], recordPath: String) throws {
+        guard !keys.isEmpty, let data = FileManager.default.contents(atPath: recordPath) else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        // A record that does not decode vouches for nothing already.
+        guard var record = try? decoder.decode(Provenance.self, from: data) else { return }
+        let before = record.files.count
+        for key in keys { record.files[key] = nil }
+        guard record.files.count != before else { return }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(record).write(to: URL(fileURLWithPath: recordPath), options: .atomic)
+    }
+
     /// Whether the files here are recorded as checked against the pinned
     /// revision: a record for this revision with the expected hashes, and
     /// every required file still at its recorded size (or the transformer
@@ -358,11 +378,13 @@ final class SwiftVRSetup: ObservableObject {
 
     private func run() async {
         do {
+            // Files fetched in this run are hashed whatever the record says.
+            var fetched = false
             if !SwiftVRModel.weightsPresent || !Self.allFilesComplete() {
-                try await download()
+                fetched = try await download()
             }
             guard !Task.isCancelled else { return }
-            if !SwiftVRModel.verified && SwiftVRModel.weightsPresent {
+            if (fetched || !SwiftVRModel.verified) && SwiftVRModel.weightsPresent {
                 phase = .verifying(done: 0, total: 0)
                 try await SwiftVRModel.verify { done, total in
                     Task { @MainActor in
@@ -403,7 +425,9 @@ final class SwiftVRSetup: ObservableObject {
         }
     }
 
-    private func download() async throws {
+    /// Returns whether any file is fetched or resumed (not at its listed
+    /// size here).
+    private func download() async throws -> Bool {
         let wanted = Set(SwiftVRModel.downloadedFiles)
         let listed = try await ModelDownloader.fetchEntries(repo: SwiftVRModel.repo, subpath: "", revision: SwiftVRModel.revision)
         let entries = listed.filter { wanted.contains($0.path) }
@@ -415,21 +439,27 @@ final class SwiftVRSetup: ObservableObject {
         try SwiftVRModel.checkListing(entries)
         Self.listedEntries = entries
         try Task.checkCancellation()
+        // What the downloader will fetch (it skips a file at its listed
+        // size): the record no longer vouches for those.
+        let fetching = entries.filter { SwiftVRModel.fileSize($0.local) != $0.size }
+        try SwiftVRModel.forgetProvenance(of: fetching.map(\.path),
+                                          recordPath: SwiftVRModel.directory + "/" + SwiftVRModel.provenanceFile)
         downloader.use(entries)
         downloader.startDownload(destination: SwiftVRModel.directory)
         phase = .downloading
         // The downloader runs its own task; wait for it to settle.
         for await state in downloader.$state.values {
             switch state {
-            case .completed: return
+            case .completed: return !fetching.isEmpty
             case .failed(let message): throw ModelDownloadError.listingFailed(message)
             case .ready, .idle:
                 // Stopped (cancel()) before it finished.
                 if phase == .downloading { throw CancellationError() }
-                return
+                return !fetching.isEmpty
             default: continue
             }
         }
+        return !fetching.isEmpty
     }
 
     /// Returns whether a conversion ran (false: a matching cache was here).

@@ -299,11 +299,13 @@ final class OpenH3Setup: ObservableObject {
 
     private func run() async {
         do {
+            // Files fetched in this run are hashed whatever the record says.
+            var fetched = false
             if !OpenH3Model.ready && !(OpenH3Model.mergedPresent && OpenH3Model.upsamplerPresent && !OpenH3Model.turboNeedsDownload) {
-                try await download()
+                fetched = try await download()
             }
             guard !Task.isCancelled else { return }
-            if !OpenH3Model.verified {
+            if fetched || !OpenH3Model.verified {
                 phase = .verifying(done: 0, total: 0)
                 try await OpenH3Model.verifyAndExtract { stage, done, total in
                     Task { @MainActor in
@@ -322,7 +324,9 @@ final class OpenH3Setup: ObservableObject {
         }
     }
 
-    private func download() async throws {
+    /// Returns whether any file is fetched or resumed (not at its listed
+    /// size here).
+    private func download() async throws -> Bool {
         // What is still needed: the merge only until the refiner exists.
         var wanted = Set(OpenH3Model.textFiles)
         if !OpenH3Model.upsamplerPresent { wanted.insert(OpenH3Model.upsamplerFile) }
@@ -348,19 +352,27 @@ final class OpenH3Setup: ObservableObject {
             entries.append(entry)
         }
         try Task.checkCancellation()
+        // What the downloader will fetch (it skips a file at its listed
+        // size): the record no longer vouches for those (Turbo is recorded
+        // under its own key).
+        let fetching = entries.filter { OpenH3Model.fileSize($0.local) != $0.size }
+        try SwiftVRModel.forgetProvenance(
+            of: fetching.map { $0.local == OpenH3Model.turboFile ? OpenH3Model.turboKey : $0.path },
+            recordPath: OpenH3Model.directory + "/" + OpenH3Model.provenanceFile)
         downloader.use(entries)
         downloader.startDownload(destination: OpenH3Model.directory)
         phase = .downloading
         for await state in downloader.$state.values {
             switch state {
-            case .completed: return
+            case .completed: return !fetching.isEmpty
             case .failed(let message): throw ModelDownloadError.listingFailed(message)
             case .ready, .idle:
                 if phase == .downloading { throw CancellationError() }
-                return
+                return !fetching.isEmpty
             default: continue
             }
         }
+        return !fetching.isEmpty
     }
 }
 

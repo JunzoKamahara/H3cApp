@@ -225,11 +225,13 @@ final class SeedVR2Setup: ObservableObject {
 
     private func run() async {
         do {
+            // Files fetched in this run are hashed whatever the record says.
+            var fetched = false
             if !SeedVR2Model.weightsPresent || !Self.allFilesComplete() {
-                try await download()
+                fetched = try await download()
             }
             guard !Task.isCancelled else { return }
-            if !SeedVR2Model.verified && SeedVR2Model.weightsPresent {
+            if (fetched || !SeedVR2Model.verified) && SeedVR2Model.weightsPresent {
                 phase = .verifying(done: 0, total: 0)
                 try await SeedVR2Model.verify { done, total in
                     Task { @MainActor in
@@ -255,7 +257,9 @@ final class SeedVR2Setup: ObservableObject {
         }
     }
 
-    private func download() async throws {
+    /// Returns whether any file is fetched or resumed (not at its listed
+    /// size here).
+    private func download() async throws -> Bool {
         let wanted = Set(SeedVR2Model.downloadedFiles)
         let listed = try await ModelDownloader.fetchEntries(repo: SeedVR2Model.repo, subpath: "", revision: SeedVR2Model.revision)
         let entries = listed.filter { wanted.contains($0.path) }
@@ -267,19 +271,25 @@ final class SeedVR2Setup: ObservableObject {
         try SeedVR2Model.checkListing(entries)
         Self.listedEntries = entries
         try Task.checkCancellation()
+        // What the downloader will fetch (it skips a file at its listed
+        // size): the record no longer vouches for those.
+        let fetching = entries.filter { SeedVR2Model.fileSize($0.local) != $0.size }
+        try SwiftVRModel.forgetProvenance(of: fetching.map(\.path),
+                                          recordPath: SeedVR2Model.directory + "/" + SeedVR2Model.provenanceFile)
         downloader.use(entries)
         downloader.startDownload(destination: SeedVR2Model.directory)
         phase = .downloading
         for await state in downloader.$state.values {
             switch state {
-            case .completed: return
+            case .completed: return !fetching.isEmpty
             case .failed(let message): throw ModelDownloadError.listingFailed(message)
             case .ready, .idle:
                 if phase == .downloading { throw CancellationError() }
-                return
+                return !fetching.isEmpty
             default: continue
             }
         }
+        return !fetching.isEmpty
     }
 }
 
