@@ -40,5 +40,8 @@ func formatClockTime(_ date: Date) -> String {
 /// A lip-sync start offset in seconds, without trailing zeros ("12.5", "3").
 func formatAudioOffset(_ seconds: Double) -> String {
     let rounded = (seconds * 100).rounded() / 100
-    return rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%g", rounded)
+    // A project's .json can hold any number: infinite and out-of-Int values
+    // fall through to %g rather than trapping in Int(_:).
+    if rounded == rounded.rounded(), let whole = Int(exactly: rounded) { return String(whole) }
+    return String(format: "%g", rounded)
 }
