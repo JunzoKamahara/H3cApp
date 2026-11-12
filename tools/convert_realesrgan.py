@@ -27,8 +27,23 @@ class _Storage:
         self.dtype, self.data = dtype, data
 
 
+def _check_layout(numel, offset, size, stride):
+    # offset, size and stride come from the pickle: refuse any layout that
+    # would make as_strided read outside the storage (torch never writes
+    # negative values, and a tensor with a 0 in its size reads nothing).
+    if not (isinstance(offset, int) and isinstance(size, (tuple, list)) and isinstance(stride, (tuple, list))
+            and len(size) == len(stride) and all(isinstance(v, int) for v in (*size, *stride))):
+        raise pickle.UnpicklingError(f'bad tensor layout: offset {offset!r}, size {size!r}, stride {stride!r}')
+    if offset < 0 or any(v < 0 for v in (*size, *stride)):
+        raise pickle.UnpicklingError(f'negative tensor layout: offset {offset}, size {size}, stride {stride}')
+    if 0 not in size and offset + sum((n - 1) * s for n, s in zip(size, stride)) >= numel:
+        raise pickle.UnpicklingError(f'tensor outside its storage of {numel} elements: '
+                                     f'offset {offset}, size {size}, stride {stride}')
+
+
 def _rebuild_tensor_v2(storage, offset, size, stride, requires_grad=None, hooks=None, metadata=None):
     array = np.frombuffer(storage.data, dtype=storage.dtype)
+    _check_layout(len(array), offset, size, stride)
     if not size:
         return array[offset:offset + 1].reshape(())
     item = array.itemsize
