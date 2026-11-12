@@ -173,7 +173,7 @@ enum OpenH3Model {
 
     /// After the download: hashes the merge, the upsampler, the text files
     /// and Turbo against the records, extracts the refiner (ranks 0-383,
-    /// BF16) from the merge, deletes the merge, writes the record.
+    /// BF16) from the merge, writes the record, then deletes the merge.
     /// `progress` gets (phase, done, total) with bytes for the hashing and
     /// tensors for the extraction.
     static func verifyAndExtract(progress: @escaping @Sendable (String, Int64, Int64) -> Void) async throws {
@@ -200,7 +200,8 @@ enum OpenH3Model {
         }
         // The refiner: extracted from the merge when the merge is here;
         // otherwise it must already be here from an earlier extraction.
-        if mergedPresent {
+        let extracting = mergedPresent
+        if extracting {
             try Task.checkCancellation()
             let partial = refinerPath
             try await Task.detached(priority: .userInitiated) {
@@ -214,7 +215,6 @@ enum OpenH3Model {
             try Task.checkCancellation()
             let sha = try await Task.detached(priority: .userInitiated) { try FileHash.sha256(ofFile: partial) }.value
             record[refinerKey] = SwiftVRModel.ProvenanceEntry(sha256: sha, bytes: fileSize(ofPath: partial) ?? 0)
-            try? FileManager.default.removeItem(atPath: mergedPath)
         } else if let size = fileSize(refinerFile), size > 0, record[refinerKey] == nil {
             let sha = try await Task.detached(priority: .userInitiated) { try FileHash.sha256(ofFile: refinerPath) }.value
             record[refinerKey] = SwiftVRModel.ProvenanceEntry(sha256: sha, bytes: size)
@@ -229,6 +229,9 @@ enum OpenH3Model {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(provenance).write(to: URL(fileURLWithPath: directory + "/" + provenanceFile), options: .atomic)
+        // Only once the record is saved: without the merge a later run
+        // could not hash it again, and would never be verified.
+        if extracting { try? FileManager.default.removeItem(atPath: mergedPath) }
     }
 
     static func bytesOnDisk() -> Int64 {
