@@ -166,7 +166,7 @@ struct ModelManagerView: View {
         .sheet(isPresented: $showingDownloadWizard) {
             ModelDownloadWizardView(
                 suggestedDestination: defaultH3ModelDownloadPath,
-                onCompleted: { path in
+                onCompleted: { path, _ in
                     let wasEmpty = library.models.isEmpty
                     library.addModel(path: path)
                     if wasEmpty { onActiveModelChange(library.activeModelID) }

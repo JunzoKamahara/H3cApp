@@ -164,9 +164,9 @@ struct ContentView: View {
         .sheet(isPresented: $showingDownloadWizard) {
             ModelDownloadWizardView(
                 suggestedDestination: viewModel.library.activeModel?.path ?? defaultH3ModelDownloadPath,
-                onCompleted: { path in
+                onCompleted: { path, chosenByUser in
                     if let id = viewModel.library.activeModelID {
-                        viewModel.library.setModelPath(id: id, path: path)
+                        viewModel.library.setModelPath(id: id, path: path, chosenByUser: chosenByUser)
                         viewModel.switchModel(to: id)
                     } else {
                         viewModel.library.addModel(path: path)

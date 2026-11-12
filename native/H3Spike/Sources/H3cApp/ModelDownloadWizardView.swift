@@ -10,11 +10,15 @@ import SwiftUI
 /// Sizes are fetched as soon as a choice is shown, so the one button reads
 /// what it will do and how much. An official download hands its folder back
 /// via `onCompleted` (the caller decides whether that updates an entry or
-/// adds one); a GGUF import hands back the imported folder via `onImported`.
+/// adds one), saying whether the user chose that folder here - picked an
+/// existing one, or downloaded somewhere other than the folder suggested -
+/// or only accepted the suggestion; a GGUF import hands back the imported
+/// folder via `onImported`.
 struct ModelDownloadWizardView: View {
     enum Source: Hashable { case gguf, official }
 
-    let onCompleted: (String) -> Void
+    let onCompleted: (_ path: String, _ chosenByUser: Bool) -> Void
+    private let suggestedDestination: String
     let onCancelled: () -> Void
     /// Needed for the GGUF route (the import registers nothing itself; the
     /// caller does, through onImported).
@@ -47,9 +51,11 @@ struct ModelDownloadWizardView: View {
     @State private var importError: String?
     @State private var importedPath: String?
 
-    init(suggestedDestination: String, onCompleted: @escaping (String) -> Void, onCancelled: @escaping () -> Void,
+    init(suggestedDestination: String, onCompleted: @escaping (_ path: String, _ chosenByUser: Bool) -> Void,
+         onCancelled: @escaping () -> Void,
          library: ModelLibrary? = nil, onImported: ((_ path: String, _ use: Bool) -> Void)? = nil) {
         self.onCompleted = onCompleted
+        self.suggestedDestination = suggestedDestination
         self.onCancelled = onCancelled
         self.library = library
         self.onImported = onImported
@@ -144,7 +150,7 @@ struct ModelDownloadWizardView: View {
 
     private func addExistingFolder() {
         guard let path = chooseDirectory() else { return }
-        onCompleted(path)
+        onCompleted(path, true)
     }
 
     // MARK: Official model
@@ -536,7 +542,14 @@ struct ModelDownloadWizardView: View {
         switch downloader.state {
         case .completed:
             Button("完了") {
-                if case .success(let path) = officialDestination { onCompleted(path) }
+                // Another folder than the one suggested, not the same
+                // one spelled differently.
+                if case .success(let path) = officialDestination {
+                    func folder(_ path: String) -> String {
+                        URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+                    }
+                    onCompleted(path, folder(path) != folder(suggestedDestination))
+                }
             }
             .buttonStyle(.borderedProminent)
         case .failed:

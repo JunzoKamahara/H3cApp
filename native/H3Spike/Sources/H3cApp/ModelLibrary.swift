@@ -329,13 +329,16 @@ final class ModelLibrary: ObservableObject {
     }
 
     /// Used after ModelDownloadWizardView finishes downloading into a
-    /// possibly-different folder than the entry originally pointed at.
-    func setModelPath(id: UUID, path: String) {
+    /// possibly-different folder than the entry originally pointed at, or
+    /// registers an existing one. `chosenByUser` is whether the user picked
+    /// that folder in the wizard: only then is it the user's (see
+    /// addedThroughAPI). A download into the folder the wizard suggested is
+    /// not a choice - that folder may be one a request registered, and the
+    /// API removes the whole folder, not only what was downloaded.
+    func setModelPath(id: UUID, path: String, chosenByUser: Bool) {
         guard let index = models.firstIndex(where: { $0.id == id }) else { return }
-        // A different folder is the one the user chose in the wizard.
-        let moved = models[index].path != path
         models[index].path = path
-        if moved { markUserRegistered(path: path) }
+        if chosenByUser { markUserRegistered(path: path) }
         persistModels()
     }
 
