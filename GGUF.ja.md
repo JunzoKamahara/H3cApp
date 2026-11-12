@@ -443,7 +443,7 @@ GGUF の取り込みは、同じディスク上のファイルを APFS の複製
 | `GET /api/models/import/downloads?kind=dit&repo=…` | 部品（`dit`・`ref2va`・`textEncoder`・`vision`・`shared`）のダウンロード候補。`repo` にはリポジトリ名か URL。別のサイトの Web ページから送られたもの（別の `Origin`、または `Sec-Fetch-Site: cross-site`/`same-site`）には `403` を返します。スクリプトや `curl` は影響を受けません |
 | `POST /api/models/import` | GGUF（と ComfyUI の int8 形式の DiT）の取り込み。`files` または `folder`、`base_model` か `base_path`、`name`、`dry_run` |
 | `GET /api/models/detail?id=…` | モデルの中身（詳細画面と同じ内容）。`family`（`h3` か `hyperflow`）と、選べる `steps` も返します |
-| `POST /api/models/remove` | 登録を外す（キャッシュは削除）。`delete_files` でファイルもゴミ箱へ、`dry_run` で計算だけ |
+| `POST /api/models/remove` | 登録を外す（キャッシュは削除）。`delete_files` でファイルもゴミ箱へ（`POST /api/models/add` だけで登録したフォルダは、取り込んだものか既定のダウンロード先でなければ移さず、`refused` に入ります）、`dry_run` で計算だけ |
 | `POST /api/models/add` | フォルダをモデルとして登録 |
 | `POST /api/models/add_ref2va` | Ref2VA のないモデルに Ref2VA を加える。GGUF のモデルは `file`（Ref2VA の DiT）、`dry_run` で計画だけ（公式のモデルの分は計画のみ） |
 

@@ -68,11 +68,18 @@ struct H3ModelEntry: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
     var path: String
+    /// true when only POST /api/models/add registered this folder (a
+    /// request chose it); nil for every other way in - Model Management,
+    /// the wizards, an import, the seeded legacy folder - and for entries
+    /// saved before this existed. The API's delete_files checks it
+    /// (ModelRemovalPlan.make). Optional so saved lists still decode.
+    var addedThroughAPI: Bool?
 
-    init(id: UUID = UUID(), name: String, path: String) {
+    init(id: UUID = UUID(), name: String, path: String, addedThroughAPI: Bool? = nil) {
         self.id = id
         self.name = name
         self.path = path
+        self.addedThroughAPI = addedThroughAPI
     }
 }
 
@@ -296,8 +303,14 @@ final class ModelLibrary: ObservableObject {
 
     // MARK: Models
 
-    func addModel(path: String, name: String? = nil) {
-        let entry = H3ModelEntry(name: name ?? (path as NSString).lastPathComponent, path: path)
+    /// `throughAPI` is POST /api/models/add. A folder counts as the API's
+    /// only while every entry for it came that way: registering it any
+    /// other way makes all of them the user's.
+    func addModel(path: String, name: String? = nil, throughAPI: Bool = false) {
+        let onlyAPI = throughAPI && models.allSatisfy { $0.path != path || $0.addedThroughAPI == true }
+        if !onlyAPI { markUserRegistered(path: path) }
+        let entry = H3ModelEntry(name: name ?? (path as NSString).lastPathComponent, path: path,
+                                 addedThroughAPI: onlyAPI ? true : nil)
         models.append(entry)
         if activeModelID == nil {
             activeModelID = entry.id
@@ -316,8 +329,15 @@ final class ModelLibrary: ObservableObject {
     /// possibly-different folder than the entry originally pointed at.
     func setModelPath(id: UUID, path: String) {
         guard let index = models.firstIndex(where: { $0.id == id }) else { return }
+        // A different folder is the one the user chose in the wizard.
+        let moved = models[index].path != path
         models[index].path = path
+        if moved { markUserRegistered(path: path) }
         persistModels()
+    }
+
+    private func markUserRegistered(path: String) {
+        for index in models.indices where models[index].path == path { models[index].addedThroughAPI = nil }
     }
 
     func removeModel(id: UUID) {

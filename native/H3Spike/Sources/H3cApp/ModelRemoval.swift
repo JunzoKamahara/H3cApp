@@ -69,9 +69,12 @@ struct ModelRemovalPlan: Sendable {
     /// `others` are the models staying registered; when there are none and
     /// the files go too, so do the app's shared download folders and the
     /// caches no model uses. `requireWeights` (the API) also refuses a
-    /// model folder without weights (see holdsModelWeights).
+    /// model folder without weights (see holdsModelWeights), and
+    /// `requireMadeByApp` (the API, for a folder only POST /api/models/add
+    /// registered) one the app did not make (see isMadeByApp).
     static func make(modelPath: String, id: UUID, others: [(path: String, id: UUID)],
-                     includeFiles: Bool, requireWeights: Bool = false) -> ModelRemovalPlan {
+                     includeFiles: Bool, requireWeights: Bool = false,
+                     requireMadeByApp: Bool = false) -> ModelRemovalPlan {
         var plan = ModelRemovalPlan()
         plan.includesFiles = includeFiles
         let fm = FileManager.default
@@ -89,7 +92,8 @@ struct ModelRemovalPlan: Sendable {
         func add(_ path: String, _ label: String) {
             if fm.fileExists(atPath: path) { plan.targets.append(Target(path: path, label: label, bytes: 0)) }
         }
-        if isDeletableModelFolder(modelPath) && (!requireWeights || holdsModelWeights(modelPath)) {
+        if isDeletableModelFolder(modelPath) && (!requireWeights || holdsModelWeights(modelPath)) &&
+            (!requireMadeByApp || isMadeByApp(modelPath)) {
             add(modelPath, String(localized: "モデルのフォルダ"))
         } else {
             plan.refused.append(modelPath)
@@ -155,7 +159,8 @@ struct ModelRemovalPlan: Sendable {
     /// this too: it registers any folder holding an FL2VA entry and can
     /// make one (a project named FL2VA), so the names above would let a
     /// request send any folder to the Trash. Only files count, since the
-    /// API can also make folders named like weights.
+    /// API can also make folders named like weights (and it can place a
+    /// file too, hence isMadeByApp).
     static func holdsModelWeights(_ path: String) -> Bool {
         let transformer = (path as NSString).standardizingPath + "/FL2VA/transformer"
         let fm = FileManager.default
@@ -164,6 +169,21 @@ struct ModelRemovalPlan: Sendable {
             return (name.hasSuffix(".safetensors") || name.hasSuffix(".gguf")) &&
                 fm.fileExists(atPath: transformer + "/" + name, isDirectory: &isDirectory) && !isDirectory.boolValue
         }
+    }
+
+    /// Whether the app made this folder: one directly in Imported (an
+    /// import), the default download folder, or one holding an import
+    /// record (a regular file only an import writes). Asked by the API of
+    /// a folder only POST /api/models/add registered, whose FL2VA folder
+    /// and weights file a request could have made itself.
+    static func isMadeByApp(_ path: String) -> Bool {
+        func resolved(_ path: String) -> String { (path as NSString).resolvingSymlinksInPath }
+        let folder = resolved(path)
+        if (folder as NSString).deletingLastPathComponent == resolved(importedModelsDirectory) ||
+            folder == resolved(defaultH3ModelDownloadPath) { return true }
+        let record = folder + "/" + ModelImportManifest.fileName
+        return (try? FileManager.default.attributesOfItem(atPath: record))?[.type] as? FileAttributeType == .typeRegular &&
+            ModelImportManifest.load(modelPath: folder) != nil
     }
 
     private static func regularFiles(under path: String) -> [String] {

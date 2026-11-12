@@ -179,12 +179,15 @@ extension GenerationViewModel {
             // like Model Management's 削除… ("dry_run": true only reports
             // what would go and the space it frees). Only a folder holding
             // FL2VA weights goes: a request has no confirmation to show.
-            // The model's generation caches are always deleted.
+            // One only POST /api/models/add registered goes only when the
+            // app made it, since a request chose it and can make those
+            // weights. The model's generation caches are always deleted.
             let others = library.models.filter { $0.id != id }.map { (path: $0.path, id: $0.id) }
             let path = entry.path, files = json["delete_files"] as? Bool == true
+            let addedThroughAPI = entry.addedThroughAPI == true
             let plan = await Task.detached {
                 ModelRemovalPlan.make(modelPath: path, id: id, others: others, includeFiles: files,
-                                      requireWeights: true)
+                                      requireWeights: true, requireMadeByApp: addedThroughAPI)
             }.value
             let report: [String: Any] = [
                 "targets": plan.targets.map { ["path": $0.path, "label": $0.label, "bytes": $0.bytes] },
@@ -204,7 +207,7 @@ extension GenerationViewModel {
             guard let path = json["path"] as? String, FileManager.default.fileExists(atPath: path + "/FL2VA") else {
                 return .error(400, "\"path\" must be a folder holding FL2VA")
             }
-            library.addModel(path: path, name: json["name"] as? String)
+            library.addModel(path: path, name: json["name"] as? String, throughAPI: true)
             return .json(200, ["id": library.models.first { $0.path == path }?.id.uuidString ?? ""])
         case ("POST", "/api/models/select"):
             let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
