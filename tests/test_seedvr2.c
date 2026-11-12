@@ -5,6 +5,7 @@
  * H3_SEEDVR2_FIXTURE (a safetensors written by the dump tool, see
  * UPSCALE_PLAN appendix A.7). Skips the GPU part when either is missing. */
 #include "h3_seedvr2.h"
+#include "h3_seedvr2_internal.h"
 #include "h3_safetensors.h"
 
 #include <math.h>
@@ -131,6 +132,65 @@ static void test_bad_emb(void) {
     expect_bad_emb("2560x64", "2560x4", "1x1", "emb_in.proj_in.biases has an unexpected group size");
 }
 
+/* A vae.safetensors holding only encoder.conv_in: weight (O, kt, kh, kw, I)
+ * = [128, depth, 3, 3, 3] and bias [128], F16 zeros. */
+static int write_conv_in(const char *path, int depth) {
+    size_t wbytes = (size_t)128 * depth * 3 * 3 * 3 * 2, bbytes = 128 * 2;
+    char json[512];
+    int len = snprintf(json, sizeof(json),
+                       "{\"encoder.conv_in.weight\":{\"dtype\":\"F16\",\"shape\":[128,%d,3,3,3],\"data_offsets\":[0,%zu]},"
+                       "\"encoder.conv_in.bias\":{\"dtype\":\"F16\",\"shape\":[128],\"data_offsets\":[%zu,%zu]}}",
+                       depth, wbytes, wbytes, wbytes + bbytes);
+    if (len <= 0 || (size_t)len >= sizeof(json)) return 0;
+    unsigned char prefix[8];
+    for (int i = 0; i < 8; i++) prefix[i] = (unsigned char)((uint64_t)len >> (8 * i));
+    void *zeros = calloc(wbytes + bbytes, 1);
+    FILE *f = fopen(path, "wb");
+    int ok = zeros && f && fwrite(prefix, 1, 8, f) == 8 && fwrite(json, 1, (size_t)len, f) == (size_t)len &&
+             fwrite(zeros, 1, wbytes + bbytes, f) == wbytes + bbytes;
+    if (f && fclose(f) != 0) ok = 0;
+    free(zeros);
+    return ok;
+}
+
+/* The grid conv (gconv_t) holds at most 3 * 3 * 3 taps: a temporal depth
+ * above 3 is refused at load; depths 3 and 2 still load (this file ends
+ * after conv_in, so the load stops at the first resnet's missing tensors). */
+static void test_vae_kernel_depth(void) {
+    char error[512] = {0};
+    h3_gpu *gpu = h3_gpu_create("h3_shaders.metal", error, sizeof(error));
+    if (!gpu) { printf("skip: SeedVR2 VAE kernel depth (no GPU: %s)\n", error); return; }
+    char dir[] = "/tmp/h3sv2-depth-test-XXXXXX", path[128];
+    CHECK(mkdtemp(dir) != NULL);
+    snprintf(path, sizeof(path), "%s/vae.safetensors", dir);
+    static const int depths[3] = {4, 3, 2};
+    for (int i = 0; i < 3; i++) {
+        CHECK(write_conv_in(path, depths[i]));
+        h3_st_header h;
+        CHECK(h3_st_read_header(path, &h, error, sizeof(error)));
+        for (int nax = 0; nax <= h3_gpu_has_tensor_ops(gpu); nax++)
+            for (int temporal = 0; temporal < 2; temporal++) {
+                h3_seedvr2 *m = calloc(1, sizeof(*m));
+                CHECK(m != NULL);
+                m->gpu = gpu; m->nax_vae = nax; m->vae_temporal = temporal;
+                error[0] = '\0';
+                CHECK(!sv2_load_vae(m, &h, error, sizeof(error)));
+                if (depths[i] > 3)
+                    CHECK(strstr(error, "encoder.conv_in.weight has 4 temporal taps, at most 3") != NULL);
+                else
+                    CHECK(strstr(error, "encoder.down_blocks.0.resnets.0.norm1.weight is missing") != NULL);
+                sv2_free_vae(m);
+                free(m);
+            }
+        h3_st_free_header(&h);
+    }
+    unlink(path);
+    rmdir(dir);
+    h3_gpu_free(gpu);
+    printf("ok: SeedVR2 VAE temporal kernel depth (%d checks)\n", tests_run);
+}
+
+
 static float *load_tensor(const h3_st_header *h, const char *name, size_t expected) {
     const h3_st_tensor *t = h3_st_find(h, name);
     if (!t || t->dtype != H3_DTYPE_F32) { fprintf(stderr, "fixture: %s missing or not F32\n", name); exit(1); }
@@ -172,6 +232,7 @@ int main(void) {
     printf("ok: SeedVR2 window partition (%d checks)\n", tests_run);
     test_bad_emb();
     printf("ok: SeedVR2 rejects mis-sized emb_in tensors (%d checks)\n", tests_run);
+    test_vae_kernel_depth();
     const char *dir = getenv("H3_SEEDVR2_DIR");
     char fallback[1024];
     if (!dir) {

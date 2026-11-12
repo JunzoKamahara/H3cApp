@@ -50,6 +50,11 @@ static int load_conv(h3_seedvr2 *m, const h3_st_header *h, const char *prefix, i
              name, (int)t->shape[0], kt, kh, kw, (int)t->shape[4], out, kernel, kernel, in);
         return 0;
     }
+    if (t->shape[1] > 3) {   /* the grid conv (gconv_t) holds at most 3 * 3 * 3 taps */
+        fail(error, error_size, "SeedVR2: %s has %llu temporal taps, at most 3", name,
+             (unsigned long long)t->shape[1]);
+        return 0;
+    }
     float *w5 = sv2_read_f16_as_f32(h, name, (uint64_t)out * kt * kh * kw * in, error, error_size);
     if (!w5) return 0;
     int keep = m->vae_temporal ? kt : 1;   /* temporal taps kept (video) or summed (image) */
@@ -658,6 +663,10 @@ static int gconv_t(h3_seedvr2 *m, const gact *x, const sv2_conv *c, const gact *
     int k = c->kernel, head = 0, state_frames = 0;
     const h3_gpu_tensor *state = NULL;
     gact dq = {0};   /* an int8 state read back to BF16 for this conv */
+    if ((int64_t)c->kt * k * k > 27) {
+        fail(error, error_size, "SeedVR2 VAE (grid): %dx%dx%d taps, at most 27", c->kt, k, k);
+        return 0;
+    }
     if (c->kt > 1) {
         if (!ctx) { fail(error, error_size, "SeedVR2 VAE (grid): temporal weights on a still image"); return 0; }
         if (ctx->mode == SV2_CAUSAL_ACTIVE && ctx->mem[c->slot]) {
