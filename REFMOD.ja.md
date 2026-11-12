@@ -231,6 +231,8 @@ RefMod フォルダに入れてください。
 ## API
 
 [ローカル API](API.ja.md) からも使えます（`Authorization: Bearer <トークン>` が必要です）。
+下の例では [API.ja.md](API.ja.md) と同じく、このヘッダーを標準入力から渡します。
+その Mac の他のアカウントは、コマンドラインを `ps` で読めるためです。
 
 - 一覧: `GET /api/refmods`
 - 作成: `POST /api/refmods/extract`（作成中は `GET /api/status` の
@@ -239,16 +241,18 @@ RefMod フォルダに入れてください。
   `{"path", "strength", "member"}` を入れます。
 
 ```bash
-TOKEN=$(cat "$HOME/Library/Application Support/H3cApp/api-token")
+TOKEN_FILE="$HOME/Library/Application Support/H3cApp/api-token"
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" |
 curl -X POST http://127.0.0.1:8420/api/refmods/extract \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -H @- -H "Content-Type: application/json" \
   -d '{"path": "/Users/me/Pictures/cat.png", "name": "cat"}'
 ```
 
 ```bash
-TOKEN=$(cat "$HOME/Library/Application Support/H3cApp/api-token")
+TOKEN_FILE="$HOME/Library/Application Support/H3cApp/api-token"
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" |
 curl -X POST http://127.0.0.1:8420/api/generate \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -H @- -H "Content-Type: application/json" \
   -d '{"prompt": "a cat walks through a garden",
        "reference_paths": [{"path": "/Users/me/Library/Application Support/H3cApp/RefMods/cat.safetensors", "strength": 0.8}]}'
 ```

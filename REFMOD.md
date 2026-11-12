@@ -245,7 +245,8 @@ reputation are treated.
 ## API
 
 The [local API](API.md) can do all of this (it needs `Authorization: Bearer
-<token>`).
+<token>`). As in [API.md](API.md), the examples pass that header on standard
+input: other accounts on the Mac can read a command line with `ps`.
 
 - List: `GET /api/refmods`
 - Make: `POST /api/refmods/extract` (`refmod_extracting` in `GET /api/status` is
@@ -254,16 +255,18 @@ The [local API](API.md) can do all of this (it needs `Authorization: Bearer
   `reference_paths` of `POST /api/generate`.
 
 ```bash
-TOKEN=$(cat "$HOME/Library/Application Support/H3cApp/api-token")
+TOKEN_FILE="$HOME/Library/Application Support/H3cApp/api-token"
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" |
 curl -X POST http://127.0.0.1:8420/api/refmods/extract \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -H @- -H "Content-Type: application/json" \
   -d '{"path": "/Users/me/Pictures/cat.png", "name": "cat"}'
 ```
 
 ```bash
-TOKEN=$(cat "$HOME/Library/Application Support/H3cApp/api-token")
+TOKEN_FILE="$HOME/Library/Application Support/H3cApp/api-token"
+printf 'Authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" |
 curl -X POST http://127.0.0.1:8420/api/generate \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -H @- -H "Content-Type: application/json" \
   -d '{"prompt": "a cat walks through a garden",
        "reference_paths": [{"path": "/Users/me/Library/Application Support/H3cApp/RefMods/cat.safetensors", "strength": 0.8}]}'
 ```
