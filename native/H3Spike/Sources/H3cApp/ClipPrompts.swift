@@ -206,6 +206,12 @@ struct CustomClipsSheet: View {
             if let prompt = file.prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 viewModel.prompt = prompt
             }
+            // The file can be anyone's: what it names is copied into the
+            // project only from inside it (with none open, from nowhere -
+            // nothing is inside the file itself).
+            viewModel.noteInputsNamedOnDisk(file.clips.flatMap(\.paths),
+                                            for: viewModel.project?.url ?? URL(fileURLWithPath: path),
+                                            keeping: viewModel.formInputPaths)
             viewModel.customClips = file.clips
             viewModel.chained = true
             viewModel.chainCustom = true
@@ -399,6 +405,7 @@ private struct CustomClipRow: View {
     /// which members to use (one row each), anything else is one row. A
     /// file (or bundle member) already there is not added twice.
     private func addReference(path: String) {
+        viewModel.noteInputsChosen([path])
         let kind = referenceKind(forPath: path)
         if kind == .refmod, let info = try? H3RefModInfo.inspect(path: path), info.isBundle {
             bundleChoice = RefModBundleChoice(path: path, info: info)
@@ -417,7 +424,10 @@ private struct CustomClipRow: View {
             }
             Spacer()
             Button(path.wrappedValue == nil ? String(localized: "選ぶ…") : String(localized: "変更…")) {
-                if let chosen = chooseFile(allowedContentTypes: imageTypes) { path.wrappedValue = chosen }
+                if let chosen = chooseFile(allowedContentTypes: imageTypes) {
+                    viewModel.noteInputsChosen([chosen])
+                    path.wrappedValue = chosen
+                }
             }
             .font(.caption)
             if path.wrappedValue != nil {
@@ -444,7 +454,10 @@ private struct CustomClipRow: View {
                         .foregroundStyle(palette.textSecondary)
                 }
                 Button(clip.audioPath == nil ? String(localized: "選ぶ…") : String(localized: "変更…")) {
-                    if let chosen = chooseFile(allowedContentTypes: forcedAudioTypes) { clip.audioPath = chosen }
+                    if let chosen = chooseFile(allowedContentTypes: forcedAudioTypes) {
+                        viewModel.noteInputsChosen([chosen])
+                        clip.audioPath = chosen
+                    }
                 }
                 .font(.caption)
                 TextField("開始位置", value: $clip.audioOffset, format: .number.precision(.fractionLength(0 ... 2)))

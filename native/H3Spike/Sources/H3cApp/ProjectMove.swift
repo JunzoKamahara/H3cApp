@@ -89,7 +89,9 @@ extension ProjectFiles {
         func carried(_ path: String) -> String {
             if let moved = whereMoved(path) { return moved }
             let resolvedPath = resolved(path, in: source)
-            guard stored(resolvedPath, in: source) != resolvedPath, fm.fileExists(atPath: resolvedPath) else {
+            // Inside it with links resolved too: a record can be anyone's.
+            guard stored(resolvedPath, in: source) != resolvedPath, isInside(resolvedPath, folder: source),
+                  fm.fileExists(atPath: resolvedPath) else {
                 return path
             }
             if let copy = copied[resolvedPath] { return copy }

@@ -62,12 +62,23 @@ extension GenerationViewModel {
         }
         var draft = record.draft
         draft.seedFixed = false
+        // The record is a file in the folder, which anyone could have
+        // written - but not an imported video's lip sync, the form's own.
+        var named = draft
+        if record.importedFrom != nil { named.forcedAudio = nil }
+        noteInputsNamedOnDisk(named.inputPaths(in: project.url), for: project.url, keeping: formInputPaths)
+        let formAudio = forcedAudioPath
         // An imported video has no lip sync of its own: keep the form's.
         if record.importedFrom != nil {
             draft.forcedAudio = forcedAudioPath.map { ProjectFiles.stored($0, in: project.url) }
             draft.forcedAudioOffset = forcedAudioPath == nil ? nil : forcedAudioOffset
         }
         let missing = applyDraft(draft, projectURL: project.url)
+        // Kept as it was also when making it relative changed its path.
+        if record.importedFrom != nil, let formAudio, let audio = forcedAudioPath,
+           let folder = fileNamedInputs[formAudio] {
+            fileNamedInputs[audio] = folder
+        }
         if !missing.isEmpty {
             let names = missing.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", ")
             projectMessage = String(localized: "登録されていない追加モデル（LoRA）は使えません: \(names)")

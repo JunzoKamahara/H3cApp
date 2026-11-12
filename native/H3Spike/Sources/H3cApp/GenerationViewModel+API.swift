@@ -1026,6 +1026,8 @@ extension GenerationViewModel {
                 clip.audioOffset = (item["audio_offset"] as? NSNumber)?.doubleValue ?? 0
                 clips.append(clip)
             }
+            // The API's paths are its caller's choice, as picked files are.
+            noteInputsChosen(clips.flatMap(\.paths))
             customClips = clips
             chainCustom = true
             chained = true
@@ -1117,11 +1119,13 @@ extension GenerationViewModel {
             }
             creationMethod = .image
             imageInputMode = .firstLastFrame
+            noteInputsChosen([firstFrame, lastFrame].compactMap { $0 })
             firstFramePath = firstFrame
             lastFramePath = lastFrame
         } else if !references.isEmpty {
             creationMethod = .image
             imageInputMode = .referenceImage
+            noteInputsChosen(references.map(\.path))
             referenceImages = references
         } else {
             creationMethod = .text
@@ -1171,6 +1175,7 @@ extension GenerationViewModel {
                 }
                 offset = number.doubleValue
             }
+            noteInputsChosen([path])
             forcedAudioPath = path
             forcedAudioOffset = offset
         } else {

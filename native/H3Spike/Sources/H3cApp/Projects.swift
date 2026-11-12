@@ -106,6 +106,13 @@ struct ProjectDraft: Codable, Equatable {
         draft.customClips = customClips?.map { $0.mappingPaths(map) }
         return draft
     }
+
+    /// The input files the draft names (those copied into a project), as
+    /// applyDraft puts them in the form: relative ones against `projectURL`.
+    func inputPaths(in projectURL: URL) -> [String] {
+        ([firstFrame, lastFrame, forcedAudio].compactMap { $0 } + references.map(\.path)
+            + (customClips ?? []).flatMap(\.paths)).map { ProjectFiles.resolved($0, in: projectURL) }
+    }
 }
 
 /// project.json
@@ -455,6 +462,18 @@ enum ProjectFiles {
         return URL(fileURLWithPath: path).standardizedFileURL.path.hasPrefix(folder)
     }
 
+    /// Whether `path` is inside `folder` once every symbolic link in both is
+    /// resolved (false when either isn't there).
+    static func isInside(_ path: String, folder: URL) -> Bool {
+        func real(_ path: String) -> String? {
+            guard let resolved = realpath(path, nil) else { return nil }
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+        guard let file = real(path), let root = real(folder.path) else { return false }
+        return file.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+    }
+
     /// Copies a file into the project's references folder (once: an identical
     /// file already there is reused) and returns the copy's path. Only files
     /// already in references/ stay where they are - a generated video used as
@@ -463,8 +482,19 @@ enum ProjectFiles {
     /// main actor.
     static func importReference(_ path: String, into projectURL: URL) throws -> String {
         if isImported(path, in: projectURL) { return path }
+        // A file (or a link to one, copied as the link): not a folder, whose
+        // whole contents would be copied, nor a device or a pipe.
+        var info = stat()
+        guard stat(path, &info) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ENOENT) }
+        guard info.st_mode & S_IFMT == S_IFREG else { throw POSIXError(.EFTYPE) }
         let folder = projectURL.appendingPathComponent(referencesFolder, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // The project's own folder, not a link to another place (a project
+        // folder can come from anyone): the copy is written into it.
+        var folderInfo = stat()
+        guard lstat(folder.path, &folderInfo) == 0, folderInfo.st_mode & S_IFMT == S_IFDIR else {
+            throw POSIXError(.ENOTDIR)
+        }
         let source = URL(fileURLWithPath: path)
         let stem = source.deletingPathExtension().lastPathComponent
         let ext = source.pathExtension
@@ -664,6 +694,26 @@ extension GenerationViewModel {
         return missing
     }
 
+    /// The form's input files: the ones copied into its project.
+    var formInputPaths: [String] {
+        [firstFramePath, lastFramePath, forcedAudioPath].compactMap { $0 } + referenceImages.map(\.path)
+            + customClips.flatMap(\.paths)
+    }
+
+    /// A file on disk (project.json, a video's record, a storyboard) named
+    /// these input paths for `folder` (fileNamedInputs). Those in `keeping`
+    /// (what the form already held, which is copied into the open project
+    /// anyway) stay as they were.
+    func noteInputsNamedOnDisk(_ paths: [String], for folder: URL, keeping: [String] = []) {
+        let kept = Set(keeping)
+        for path in paths where !kept.contains(path) { fileNamedInputs[path] = folder }
+    }
+
+    /// The user picked these files: they are copied in like any other.
+    func noteInputsChosen(_ paths: [String]) {
+        for path in paths { fileNamedInputs[path] = nil }
+    }
+
     // MARK: Open / create / close
 
     func createProject(name: String, parent: URL) {
@@ -796,6 +846,9 @@ extension GenerationViewModel {
     /// were: copy them into the project (an identical file already there is
     /// reused) off the main actor, and point the record at the copies.
     private func importRecordReferences(at recordURL: URL, projectURL: URL) {
+        // As for the form's (referencesToImport): a path a file on disk named
+        // only from inside the folder it was named for.
+        let named = fileNamedInputs
         Task { [weak self] in
             let changed = await Task.detached(priority: .utility) { () -> Bool in
                 guard let data = try? Data(contentsOf: recordURL),
@@ -803,6 +856,7 @@ extension GenerationViewModel {
                 else { return false }
                 func imported(_ path: String) -> String {
                     guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path),
+                          named[path].map({ ProjectFiles.isInside(path, folder: $0) }) ?? true,
                           let copy = try? ProjectFiles.importReference(path, into: projectURL)
                     else { return path }
                     return ProjectFiles.stored(copy, in: projectURL)
@@ -844,7 +898,10 @@ extension GenerationViewModel {
         return project != nil
     }
 
-    private func attachProject(url: URL, file: ProjectFile, applyingDraft: Bool) throws {
+    /// `draftOnDisk`: `file` was read from the folder's project.json (rather
+    /// than being the form this window just saved), which anyone could have
+    /// written.
+    private func attachProject(url: URL, file: ProjectFile, applyingDraft: Bool, draftOnDisk: Bool = true) throws {
         if project?.url.standardizedFileURL == url.standardizedFileURL { return }
         if let owner = ProjectStore.shared.owner(of: url), owner !== self {
             guard !AppModels.shared.isShown(owner) else { throw ProjectError.alreadyOpen(file.name) }
@@ -854,6 +911,7 @@ extension GenerationViewModel {
         }
         closeProject(explicitly: false)
         if applyingDraft {
+            if draftOnDisk { noteInputsNamedOnDisk(file.draft.inputPaths(in: url), for: url) }
             let missing = applyDraft(file.draft, projectURL: url)
             if !missing.isEmpty {
                 let names = missing.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", ")
@@ -981,6 +1039,14 @@ extension GenerationViewModel {
         let saved = file
         let source = project.url
         let shown = resultURL.map { ProjectFiles.stored($0.path, in: source) }
+        // Input paths a file on disk named, as they will be once the form is
+        // the saved draft again in the moved folder (worked out now, while
+        // the files are where the paths say).
+        var namedAfterMove: [String: URL] = [:]
+        for (path, folder) in fileNamedInputs {
+            let moved = ProjectFiles.resolved(ProjectFiles.stored(path, in: source), in: destination)
+            namedAfterMove[moved] = folder.standardizedFileURL == source.standardizedFileURL ? destination : folder
+        }
         // Nothing writes into the folder while it moves (it can take a
         // while to another volume).
         projectAutosave = nil
@@ -1006,10 +1072,11 @@ extension GenerationViewModel {
         ProjectStore.shared.forget(source)
         self.project = nil
         lastSavedProjectFile = nil
+        fileNamedInputs.merge(namedAfterMove) { _, moved in moved }
         do {
             // The form again from the saved draft, so its files are the
-            // moved ones.
-            try attachProject(url: destination, file: saved, applyingDraft: true)
+            // moved ones. The form's own: what was picked stays picked.
+            try attachProject(url: destination, file: saved, applyingDraft: true, draftOnDisk: false)
         } catch {
             projectMessage = error.localizedDescription
             return false
@@ -1106,12 +1173,14 @@ extension GenerationViewModel {
     }
 
     /// The form's input files that still have to be copied into the project.
+    /// One a file on disk named (rather than the user picking it) only from
+    /// inside the folder it was named for: project.json or a record can name
+    /// any file the user can read.
     private func referencesToImport(for projectURL: URL) -> [String] {
-        var paths = [firstFramePath, lastFramePath, forcedAudioPath].compactMap { $0 } + referenceImages.map(\.path)
-            + customClips.flatMap(\.paths)
-        paths = paths.filter {
-            !ProjectFiles.isImported($0, in: projectURL) && FileManager.default.fileExists(atPath: $0)
-                && !failedReferenceImports.contains(projectURL.path + "\n" + $0)
+        let paths = formInputPaths.filter { path in
+            !ProjectFiles.isImported(path, in: projectURL) && FileManager.default.fileExists(atPath: path)
+                && !failedReferenceImports.contains(projectURL.path + "\n" + path)
+                && fileNamedInputs[path].map { ProjectFiles.isInside(path, folder: $0) } ?? true
         }
         return Array(Set(paths))
     }
@@ -1223,6 +1292,8 @@ extension GenerationViewModel {
         var draft = record.draft
         draft.seedFixed = true
         draft.seed = record.seed
+        // The record is a file in the folder, which anyone could have written.
+        noteInputsNamedOnDisk(draft.inputPaths(in: project.url), for: project.url, keeping: formInputPaths)
         let missing = applyDraft(draft, projectURL: project.url)
         if !missing.isEmpty {
             let names = missing.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", ")

@@ -688,6 +688,12 @@ final class GenerationViewModel: ObservableObject {
     /// folder the app was denied): not retried automatically, since every
     /// autosave would otherwise retry and re-raise the error once a second.
     var failedReferenceImports: Set<String> = []
+    /// Input paths that a file on disk put into the form (project.json, a
+    /// video's record, a storyboard) rather than the user picking them, and
+    /// the folder each was named for. Such a file can be anyone's, so one of
+    /// these is copied into a project only from inside that folder
+    /// (ProjectFiles.isInside); picking the file again makes it the user's.
+    var fileNamedInputs: [String: URL] = [:]
     private var batchState: BatchState?
 
     private(set) var engine: H3Engine?
@@ -850,15 +856,22 @@ final class GenerationViewModel: ObservableObject {
     // MARK: Image pickers
 
     func pickFirstFrame() {
-        if let path = chooseFile(allowedContentTypes: imageTypes) { firstFramePath = path }
+        if let path = chooseFile(allowedContentTypes: imageTypes) {
+            noteInputsChosen([path])
+            firstFramePath = path
+        }
     }
 
     func pickLastFrame() {
-        if let path = chooseFile(allowedContentTypes: imageTypes) { lastFramePath = path }
+        if let path = chooseFile(allowedContentTypes: imageTypes) {
+            noteInputsChosen([path])
+            lastFramePath = path
+        }
     }
 
     func pickForcedAudio() {
         if let path = chooseFile(allowedContentTypes: forcedAudioTypes) {
+            noteInputsChosen([path])
             if path != forcedAudioPath { forcedAudioOffset = 0 }
             forcedAudioPath = path
         }
@@ -873,6 +886,7 @@ final class GenerationViewModel: ObservableObject {
     /// Adds one picked file: a RefMod bundle asks which members to use
     /// (pendingRefModBundle), anything else becomes one row.
     func addReference(path: String) {
+        noteInputsChosen([path])
         let kind = referenceKind(forPath: path)
         if kind == .refmod, let info = try? H3RefModInfo.inspect(path: path), info.isBundle {
             pendingRefModBundle = RefModBundleChoice(path: path, info: info)
