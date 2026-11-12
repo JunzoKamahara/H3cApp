@@ -429,15 +429,35 @@ private extension GenerationViewModel {
     /// The record of the video at `url` (the .json next to it, or the temp
     /// result's), and for a joined video its clips' records.
     func recordForExport(_ url: URL) -> (record: ProjectVideoRecord, clips: [ProjectVideoRecord])? {
-        func load(_ video: URL) -> ProjectVideoRecord? {
-            (try? Data(contentsOf: video.deletingPathExtension().appendingPathExtension("json")))
+        func decode(_ recordURL: URL) -> ProjectVideoRecord? {
+            (try? Data(contentsOf: recordURL))
                 .flatMap { try? ProjectFiles.decoder.decode(ProjectVideoRecord.self, from: $0) }
+        }
+        func load(_ video: URL) -> ProjectVideoRecord? {
+            decode(video.deletingPathExtension().appendingPathExtension("json"))
+        }
+        func realPath(_ path: String) -> String? {
+            path.withCString { raw in
+                guard let real = realpath(raw, nil) else { return nil }
+                defer { free(real) }
+                return String(cString: real)
+            }
         }
         guard let record = load(url)
             ?? temporaryResultRecord.flatMap({ $0.video == url.lastPathComponent ? $0 : nil }) else { return nil }
         let projectURL = project?.url
-        let clips = (record.joinedClips ?? []).compactMap { stored in
-            projectURL.flatMap { load(URL(fileURLWithPath: ProjectFiles.resolved(stored, in: $0))) }
+        // The record can name any path (absolute, "../", through a symbolic
+        // link), and what is read here goes into the exported file: only a
+        // clip's record that is in this project, once links are resolved, is
+        // read - one anywhere else is left out.
+        let projectRoot = projectURL.flatMap { realPath($0.path) }
+            .map { $0.hasSuffix("/") ? $0 : $0 + "/" }
+        let clips = (record.joinedClips ?? []).compactMap { stored -> ProjectVideoRecord? in
+            guard let projectURL, let projectRoot else { return nil }
+            let video = URL(fileURLWithPath: ProjectFiles.resolved(stored, in: projectURL))
+            guard let recordPath = realPath(video.deletingPathExtension().appendingPathExtension("json").path),
+                  recordPath.hasPrefix(projectRoot) else { return nil }
+            return decode(URL(fileURLWithPath: recordPath))
         }
         return (record, clips)
     }
