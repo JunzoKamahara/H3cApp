@@ -48,6 +48,9 @@ struct ModelManagerView: View {
 
     /// The upscaler model whose setup sheet is open.
     @State private var upscalerSetup: UpscalerModelRef?
+    /// Bumped when a setup sheet closes: what it downloaded or removed is
+    /// on disk, not in any state the rows would follow.
+    @State private var upscalerVersion = 0
 
     private enum Section: String, CaseIterable, Identifiable {
         case models, loras, refmods, upscalers
@@ -713,6 +716,7 @@ struct ModelManagerView: View {
                         Button(item.model.isReady ? "管理…" : "準備…") { upscalerSetup = item }
                     }
                     .padding(.vertical, 4)
+                    .id("\(item.id)-\(upscalerVersion)")
                 }
                 HStack(alignment: .top, spacing: H3Spacing.md) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -730,7 +734,7 @@ struct ModelManagerView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(H3Spacing.md)
         }
-        .sheet(item: $upscalerSetup) { item in
+        .sheet(item: $upscalerSetup, onDismiss: { upscalerVersion += 1 }) { item in
             item.model.setupView(busy: isGenerating) { upscalerSetup = nil }
         }
     }
