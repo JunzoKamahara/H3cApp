@@ -98,7 +98,7 @@ iCloud Drive、Dropboxなど）配下にあると、その同期デーモンがS
 単なる不安定さと決めつける前に、チェックアウト先が同期対象ディレクトリ
 内でないか確認してください。
 
-高速モードにはccvが必要です。[tools/ccv_eval/README.md](tools/ccv_eval/README.md)
+高速モードにはccvが必要です。[tools/ccv_eval/README.md](../tools/ccv_eval/README.md)
 の手順でパッチを当てたMPS対応のccvをビルドし、そのパスを両方の手順に渡します
 （リリースの`.dmg`はこの方法でビルドしています）。
 

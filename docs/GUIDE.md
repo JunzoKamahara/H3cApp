@@ -2,7 +2,7 @@
 
 [English](GUIDE.md) | [日本語](GUIDE.ja.md)
 
-For your first video, start with the [README](README.md) or [illustrated getting-started guide](https://junzokamahara.github.io/H3cApp/en/getting-started.html). This guide explains projects, continuation and joined generation.
+For your first video, start with the [README](../README.md) or [illustrated getting-started guide](https://junzokamahara.github.io/H3cApp/en/getting-started.html). This guide explains projects, continuation and joined generation.
 
 ## Projects
 

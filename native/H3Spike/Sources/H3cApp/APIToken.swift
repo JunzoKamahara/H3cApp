@@ -6,7 +6,7 @@ import Security
 /// secret only this user can read: 32 random bytes as hex, new each time
 /// the server starts (unless other devices may use it, see APIHost), kept
 /// in a file of mode 0600 (`api-token` in the app's Application Support
-/// folder) and sent as `Authorization: Bearer <token>`. See API.md.
+/// folder) and sent as `Authorization: Bearer <token>`. See docs/API.md.
 struct APIToken: Sendable {
     let value: String
 

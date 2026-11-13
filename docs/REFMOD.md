@@ -293,7 +293,7 @@ and making bundles.
 
 The RefMod format and arithmetic follow ComfyUI-MiniMaxH3Mod (MIT License, by
 Luisa), but none of its code is included
-([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). A RefMod made in H3cApp is
+([THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)). A RefMod made in H3cApp is
 encoded by the VAE of the MiniMax H3 model (MiniMax H3 Community License). The
 rights to the images, videos and audio it was made from stay with their owners.
 Which conditions apply when you share or use a RefMod is your judgement, based

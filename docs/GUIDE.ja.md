@@ -2,7 +2,7 @@
 
 [English](GUIDE.md) | [日本語](GUIDE.ja.md)
 
-初めての方は[README](README.ja.md)や[画面付きの使い方ガイド](https://junzokamahara.github.io/H3cApp/getting-started.html)からご覧ください。ここではプロジェクトの扱い、動画の続きを作る方法と「つなげて生成」を詳しく説明します。
+初めての方は[README](../README.ja.md)や[画面付きの使い方ガイド](https://junzokamahara.github.io/H3cApp/getting-started.html)からご覧ください。ここではプロジェクトの扱い、動画の続きを作る方法と「つなげて生成」を詳しく説明します。
 
 ## プロジェクト
 

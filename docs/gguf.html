@@ -211,7 +211,7 @@
     <section class="section section-narrow" id="hyperflow" aria-labelledby="hyperflow-title">
       <h2 id="hyperflow-title">HyperFlow H3 Flash（試験的）</h2>
       <p>v0.8.0から、Video Rebirthの<a href="https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash">HyperFlow H3 Flash</a>（MiniMax H3の派生モデル）のGGUFも取り込めます。4・6・8ステップで動画と音声を作るモデルで、Turbo LoRA（4ステップ）と同じくらいの画質で、ちらつきが少なめです。LoRAや速度プリセットは使えません。見比べた映像・時間・使い方は<a href="hyperflow.html">HyperFlow H3 Flashのページ</a>をご覧ください。</p>
-      <p>v0.8.1から、ComfyUI用に配られているint8形式（ConvRotを含む）のDiTも取り込めます。1つの<code>.safetensors</code>ファイルで、取り込みの手順はGGUFと同じです。形式は「INT8 ConvRot」（回転なしは「INT8」）と表示されます。読み込むときに通常の重みに戻して計算するので、ComfyUIでの速度は当てはまりません。HyperFlow H3 Flashのint8版（<code>fl2va_int8_convrot_comfyui/</code>・<code>ref2va_int8_convrot_comfyui/</code>）も、この形式として取り込めます。くわしくは<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/GGUF.ja.md#comfyui-の-int8-形式convrotの-dit">GGUF.ja.md</a>をご覧ください。</p>
+      <p>v0.8.1から、ComfyUI用に配られているint8形式（ConvRotを含む）のDiTも取り込めます。1つの<code>.safetensors</code>ファイルで、取り込みの手順はGGUFと同じです。形式は「INT8 ConvRot」（回転なしは「INT8」）と表示されます。読み込むときに通常の重みに戻して計算するので、ComfyUIでの速度は当てはまりません。HyperFlow H3 Flashのint8版（<code>fl2va_int8_convrot_comfyui/</code>・<code>ref2va_int8_convrot_comfyui/</code>）も、この形式として取り込めます。くわしくは<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/docs/GGUF.ja.md#comfyui-の-int8-形式convrotの-dit">GGUF.ja.md</a>をご覧ください。</p>
     </section>
 
     <section class="section section-narrow" id="delete" aria-labelledby="delete-title">
@@ -231,7 +231,7 @@
         <li>Qwenの文章の部分・画像の部分（Qwen3-VL-32B-Instruct）には<a href="https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF">Apache License 2.0</a>が適用されます。</li>
         <li>それぞれの配布元のライセンスも確認してください。ダウンロードと利用の前に各ライセンスを読み、その条件に従ってください。</li>
       </ul>
-      <p class="small muted">仕組みとAPIの詳細は、GitHubの<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/GGUF.ja.md">GGUF.ja.md</a>を参照してください。</p>
+      <p class="small muted">仕組みとAPIの詳細は、GitHubの<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/docs/GGUF.ja.md">GGUF.ja.md</a>を参照してください。</p>
     </section>
   </main>
 

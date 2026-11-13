@@ -46,7 +46,7 @@ These figures are **model storage sizes, not RAM requirements**. The GGUF config
 
 On supported M5 Macs, an optional speed-up cache uses about **19 GB of extra disk space per model**; using Ref2VA as well adds another cache of about 19 GB for it. Leave additional space for downloads, temporary files and generated videos. Models can be stored on an external SSD.
 
-See [GGUF model details](GGUF.md) for the available model combinations. [HyperFlow H3 Flash](GGUF.md#hyperflow-h3-flash), a 4/6/8-step derivative of MiniMax H3, can also be imported (its DiT is about 9 GB at Q4_K_M). A DiT in ComfyUI's int8 quantization (with or without ConvRot) [can be imported too](GGUF.md#comfyui-int8-convrot-dits).
+See [GGUF model details](docs/GGUF.md) for the available model combinations. [HyperFlow H3 Flash](docs/GGUF.md#hyperflow-h3-flash), a 4/6/8-step derivative of MiniMax H3, can also be imported (its DiT is about 9 GB at Q4_K_M). A DiT in ComfyUI's int8 quantization (with or without ConvRot) [can be imported too](docs/GGUF.md#comfyui-int8-convrot-dits).
 
 ## Install and create your first video
 
@@ -62,15 +62,15 @@ For screenshots and step-by-step instructions, visit the [Getting Started guide]
 
 ## Guides and developer documentation
 
-- [Continuing and joining videos](GUIDE.md)
-- [Model downloads and GGUF imports](GGUF.md)
-- [Making and using RefMods (saved references)](REFMOD.md)
+- [Continuing and joining videos](docs/GUIDE.md)
+- [Model downloads and GGUF imports](docs/GGUF.md)
+- [Making and using RefMods (saved references)](docs/REFMOD.md)
 - [User guide and advanced settings](https://junzokamahara.github.io/H3cApp/en/guide.html)
-- [Technical reference](TECHNICAL.md) · [Local API](API.md) · [Building from source](BUILD.md)
+- [Technical reference](docs/TECHNICAL.md) · [Local API](docs/API.md) · [Building from source](docs/BUILD.md)
 - [FAQ](https://junzokamahara.github.io/H3cApp/en/faq.html) · [Report an issue](https://github.com/JunzoKamahara/H3cApp/issues)
 
 ## Publishing videos and licenses
 
 When publishing a generated video, **clearly disclose that it was AI-generated**, as required by MiniMax H3's usage policy. **Export Video…** can add “AI-generated with MiniMax H3” to the video (on by default). You can also use the platform's AI label or mention it in the description. The app includes AI-generation information in MP4 metadata.
 
-H3cApp is under the [MIT License](LICENSE), based on [antirez/h3.c](https://github.com/antirez/h3.c). **The model has separate license terms**; review the [MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) before use. See [third-party notices](THIRD_PARTY_NOTICES.md) and [technical metadata/license notes](TECHNICAL.md#license).
+H3cApp is under the [MIT License](LICENSE), based on [antirez/h3.c](https://github.com/antirez/h3.c). **The model has separate license terms**; review the [MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) before use. See [third-party notices](THIRD_PARTY_NOTICES.md) and [technical metadata/license notes](docs/TECHNICAL.md#license).

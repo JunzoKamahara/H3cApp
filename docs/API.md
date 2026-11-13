@@ -2,18 +2,18 @@
 
 [English](API.md) | [日本語](API.ja.md)
 
-This is a developer reference for scripting H3cApp locally. The app must be running. See the [README](README.md) for installation.
+This is a developer reference for scripting H3cApp locally. The app must be running. See the [README](../README.md) for installation.
 
 ## API
 
 While `H3cApp.app` is running it serves a plain JSON API on
 `http://127.0.0.1:8420` — implemented over raw POSIX sockets (see
-[HTTPServer.swift](native/H3Spike/Sources/H3cApp/HTTPServer.swift)), not
+[HTTPServer.swift](../native/H3Spike/Sources/H3cApp/HTTPServer.swift)), not
 Network.framework or any third-party server, and with no separate process
 to start or stop. It drives the app's primary `GenerationViewModel`/engine
 instance — the one the first window shows (see
-[AppModels.swift](native/H3Spike/Sources/H3cApp/AppModels.swift) and
-[GenerationViewModel+API.swift](native/H3Spike/Sources/H3cApp/GenerationViewModel+API.swift)).
+[AppModels.swift](../native/H3Spike/Sources/H3cApp/AppModels.swift) and
+[GenerationViewModel+API.swift](../native/H3Spike/Sources/H3cApp/GenerationViewModel+API.swift)).
 It keeps answering with every window closed, as long as the app runs;
 closing a window closes its project, so open one with
 `POST /api/project/open` when needed. There is only ever one job at a time,
@@ -88,7 +88,7 @@ language should read the file and set the header in its own code.
 | Field | Default | Notes |
 |---|---|---|
 | `prompt` | — | Required. |
-| `size_profile` | `"square"` | A preset `<shape>-<size>` with shape `square`, `landscape` or `portrait` and size `small`, `medium` or `large`, plus `-x2` for the 2x upscaled output (e.g. `landscape-large-x2`: 960x544 upscaled to 1920x1088); or `custom-<W>x<H>` / `custom-<W>x<H>-x2` for a finished size of W x H (multiples of 32, or of 64 with `-x2`, which generates at half that size); the generated size must be at most 600,000 pixels with 256-1344 per side. The older names `smallSquare`, `square`, `landscapeNative`, `landscapeUpscaled`, `portraitNative` and `portraitUpscaled` still work and stand for the matching small/medium presets (see `SizeProfile` in [GenerationModels.swift](native/H3Spike/Sources/H3cApp/GenerationModels.swift)). |
+| `size_profile` | `"square"` | A preset `<shape>-<size>` with shape `square`, `landscape` or `portrait` and size `small`, `medium` or `large`, plus `-x2` for the 2x upscaled output (e.g. `landscape-large-x2`: 960x544 upscaled to 1920x1088); or `custom-<W>x<H>` / `custom-<W>x<H>-x2` for a finished size of W x H (multiples of 32, or of 64 with `-x2`, which generates at half that size); the generated size must be at most 600,000 pixels with 256-1344 per side. The older names `smallSquare`, `square`, `landscapeNative`, `landscapeUpscaled`, `portraitNative` and `portraitUpscaled` still work and stand for the matching small/medium presets (see `SizeProfile` in [GenerationModels.swift](../native/H3Spike/Sources/H3cApp/GenerationModels.swift)). |
 | `seconds` | `5` | 1–15. |
 | `steps` | `20`, or the first enabled Turbo LoRA's recommended steps; `6` with a HyperFlow H3 Flash model | 3–40; 4, 6 or 8 when the active model is HyperFlow H3 Flash ([GGUF](GGUF.md#hyperflow-h3-flash)), which also answers `400` with the reason for LoRAs, a speed preset other than `quality`, `reuse` other than 1, `dit_layers` other than 50, `sampler: "renoise"` and an `audio_shift` other than 3. |
 | `reuse` | `2` | 1–3. The faster speed modes run at 1 whatever this is. |

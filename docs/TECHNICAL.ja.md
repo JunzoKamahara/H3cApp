@@ -2,7 +2,7 @@
 
 [English](TECHNICAL.md) | [日本語](TECHNICAL.ja.md)
 
-従来のREADME（v0.6.4）にあった実装詳細や実測値を移した技術資料です。生成時間は一例であり、性能を保証しません。初めて使う方は[README](README.ja.md)をご覧ください。
+従来のREADME（v0.6.4）にあった実装詳細や実測値を移した技術資料です。生成時間は一例であり、性能を保証しません。初めて使う方は[README](../README.ja.md)をご覧ください。
 
 関連資料：[ローカルAPI](API.ja.md) · [ビルド・テスト](BUILD.ja.md) · [GGUFモデル](GGUF.ja.md)
 
@@ -71,7 +71,7 @@
   M5・24GBの横長・中では、出来上がる動画1秒あたり約105秒かかります。
   手順は[つなげて生成の使い方](GUIDE.ja.md#つなげて生成の使い方)。
 - **メモリ連動の参照動画サイズ調整**: 大きな参照動画は、マシンの物理
-  メモリ搭載量に応じて（[h3_host.c](src/core/h3_host.c)内の
+  メモリ搭載量に応じて（[h3_host.c](../src/core/h3_host.c)内の
   `h3_reference_max_pixels()`）モデルに渡す前に自動的に縮小されます。
   マシンの余力に関わらず常に同じ固定上限を狙うのではありません。なぜ
   これが重要かは下の
@@ -204,7 +204,7 @@
   なし（Python/huggingface_hub不要）でHugging Faceから直接ダウンロード
   でき、初回起動時に自動的に案内されます — 素朴だが再開可能なURLSession
   ベースのダウンローダーです。詳細は
-  [ModelDownloader.swift](native/H3Spike/Sources/H3cApp/ModelDownloader.swift)。
+  [ModelDownloader.swift](../native/H3Spike/Sources/H3cApp/ModelDownloader.swift)。
 - **組み込みローカルAPI**: `127.0.0.1`上で動くプレーンなHTTP/JSON API。
   生のPOSIXソケット上でアプリ自身が提供しており（Network.framework・
   サードパーティサーバー不要）、ウィンドウと全く同じジョブ/エンジン状態を
@@ -213,9 +213,9 @@
 ## つなげて生成のしくみ
 
 つなげて生成は、「前の動画の続きを作る」を順に繰り返し、最後に重なりで
-つなぐものです。続きを作る部分はエンジン（[h3_conditioning.c](src/core/h3_conditioning.c)。[h3.c](src/core/h3.c)から呼ぶ）に、連なりの
-管理とつなぐ処理はアプリ（[Continuation.swift](native/H3Spike/Sources/H3cApp/Continuation.swift)、
-[ChainGeneration.swift](native/H3Spike/Sources/H3cApp/ChainGeneration.swift)）
+つなぐものです。続きを作る部分はエンジン（[h3_conditioning.c](../src/core/h3_conditioning.c)。[h3.c](../src/core/h3.c)から呼ぶ）に、連なりの
+管理とつなぐ処理はアプリ（[Continuation.swift](../native/H3Spike/Sources/H3cApp/Continuation.swift)、
+[ChainGeneration.swift](../native/H3Spike/Sources/H3cApp/ChainGeneration.swift)）
 にあります。
 
 1. **潜在を残す。** 生成のたびに、デコードする前の潜在を`.h3lt`ファイルに
@@ -297,7 +297,7 @@ DiTの約37GiBのBF16重みは、生成のたびに何らかの形でGPUに供�
 | LoRA | 対応 | 対応 | 対応 |
 
 キャッシュ形式の詳細 — バージョン管理、`model_kind`/`model_id`の不一致
-検出 — は[h3_attention_cache.c](src/model/h3_attention_cache.c)にあります。
+検出 — は[h3_attention_cache.c](../src/model/h3_attention_cache.c)にあります。
 キャッシュは独立したステップとして
 `build_attention_cache <FL2VA/transformer dir> <output file>`
 （`make build_attention_cache`）で作成することもでき、モデルの
@@ -344,8 +344,8 @@ DiTのチェックポイントのうち約24GiBはAdaLNです。ブロックご�
 `libh3.a`を直接リンクする人向けのもので、アプリ自身は通常の利用では
 これらに頼らず、同じ内部オプションを自前のUIと`H3GenerationParams`
 経由で操作しています。それぞれソース中の使用箇所
-（[h3_dit.c](src/model/h3_dit.c)、[h3_gpu.m](src/gpu/h3_gpu.m)、
-[h3_attention_cache.c](src/model/h3_attention_cache.c)から辿るのがおすすめ）に
+（[h3_dit.c](../src/model/h3_dit.c)、[h3_gpu.m](../src/gpu/h3_gpu.m)、
+[h3_attention_cache.c](../src/model/h3_attention_cache.c)から辿るのがおすすめ）に
 ドキュメント化されています。
 
 ### 全注意（full attention）の実行のしかた（issue #2）
@@ -487,7 +487,7 @@ yarn.」、シード7、各1回、リクエストから動画ファイル完成�
 
 ## LoRA
 
-LoRAをキャッシュファイルへ融合することはありません。[h3_lora.c](src/model/h3_lora.c)が
+LoRAをキャッシュファイルへ融合することはありません。[h3_lora.c](../src/model/h3_lora.c)が
 生成ごとに各ファイルを一度読み、テンソルをエンジン自身の重みの並びに対応付け
 （ComfyUIとdiffusersはアテンションのq/k/vを連続して格納しますが、公式
 チェックポイントはヘッドごとに交互に並んでいます。diffusersはさらにSwiGLUの
@@ -517,8 +517,8 @@ ComfyUIの`lcm`サンプラーと同じ計算で、LCMやDMD系のLoRAでよく�
 `x0 = x + σ·v`を作り、次のステップは新しいノイズを次のσの量だけ加えた
 `x = (1 − σ次)·x0 + σ次·ε`から始めます。ノイズはシード・ステップ・要素の
 番号から作るハッシュ乱数なので、同じシードなら同じ動画になります
-（`h3_params.sampler`。[h3_host.c](src/core/h3_host.c)、
-[h3_shaders.metal](src/gpu/h3_shaders.metal)の`h3_renoise_bf16`）。re-noiseは毎ステップ
+（`h3_params.sampler`。[h3_host.c](../src/core/h3_host.c)、
+[h3_shaders_blocks.metal](../src/gpu/h3_shaders_blocks.metal)の`h3_renoise_bf16`）。re-noiseは毎ステップ
 計算するので、ノイズ除去の再利用は1になります。また、エンジンの標準（3）と
 違う音声のシフト値で学習されたLoRAもあります（`h3_params.audio_sigma_shift`）。
 
@@ -558,7 +558,7 @@ Ref2VAの参照は一度エンコードされてキャッシュされるので�
 するか、denoisingステップ数を減らすか、`reuse`の値を上げてください。
 極端なケースは、メモリ不足を招く前に明確なエラーで拒否されます
 （MPSGraphフォールバック経路の512MiBアテンションマスク上限、
-[h3_gpu_attention.m](src/gpu/h3_gpu_attention.m)参照）。
+[h3_gpu_attention.m](../src/gpu/h3_gpu_attention.m)参照）。
 
 ### 実行前の判定
 
@@ -865,9 +865,9 @@ NVIDIA の Open-H3-Regenerate-2K の手順から LMS Sharp の部分を除いた
 
 ## ライセンス
 
-MIT — [LICENSE](LICENSE)を参照。サードパーティ表示（`h3_shaders.metal`内の
+MIT — [LICENSE](../LICENSE)を参照。サードパーティ表示（`h3_shaders.metal`内の
 一部設計はccvのFlashAttention実装を基にしています）は
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)にあります。推論エンジンは
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)にあります。推論エンジンは
 Salvatore Sanfilippo氏による
 [antirez/h3.c](https://github.com/antirez/h3.c)を起源としています。
 

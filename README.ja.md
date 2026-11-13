@@ -46,7 +46,7 @@ M1〜M4のMacでも、常駐かSSDストリーミングの計算方式を利用�
 
 M5で高速化用のキャッシュを作る場合は、**モデルごとに約19GB**の追加容量が必要です。Ref2VAも使う場合は、Ref2VA用のキャッシュとしてさらに約19GBが必要です。ダウンロード中のファイルや生成動画の保存用にも余裕を確保してください。モデルは外付けSSDにも保存できます。
 
-詳しくは[GGUFモデルの説明](GGUF.ja.md)を参照してください。4・6・8ステップで生成するMiniMax H3の派生モデル[HyperFlow H3 Flash](GGUF.ja.md#hyperflow-h3-flash)も取り込めます（DiTはQ4_K_Mで約9GB）。ComfyUI用のint8量子化（ConvRotを含む）のDiTも[取り込めます](GGUF.ja.md#comfyui-の-int8-形式convrotの-dit)。
+詳しくは[GGUFモデルの説明](docs/GGUF.ja.md)を参照してください。4・6・8ステップで生成するMiniMax H3の派生モデル[HyperFlow H3 Flash](docs/GGUF.ja.md#hyperflow-h3-flash)も取り込めます（DiTはQ4_K_Mで約9GB）。ComfyUI用のint8量子化（ConvRotを含む）のDiTも[取り込めます](docs/GGUF.ja.md#comfyui-の-int8-形式convrotの-dit)。
 
 ## インストールと最初の動画
 
@@ -62,15 +62,15 @@ M5で高速化用のキャッシュを作る場合は、**モデルごとに約1
 
 ## さらに詳しく
 
-- [動画の続きを作る・つなげて生成する](GUIDE.ja.md)
-- [GGUFモデルのダウンロードと取り込み](GGUF.ja.md)
-- [RefMod（保存した参照）の作り方と使い方](REFMOD.ja.md)
+- [動画の続きを作る・つなげて生成する](docs/GUIDE.ja.md)
+- [GGUFモデルのダウンロードと取り込み](docs/GGUF.ja.md)
+- [RefMod（保存した参照）の作り方と使い方](docs/REFMOD.ja.md)
 - [操作ガイドと詳細設定](https://junzokamahara.github.io/H3cApp/guide.html)
-- [技術資料](TECHNICAL.ja.md) · [ローカルAPI](API.ja.md) · [ソースからのビルド](BUILD.ja.md)
+- [技術資料](docs/TECHNICAL.ja.md) · [ローカルAPI](docs/API.ja.md) · [ソースからのビルド](docs/BUILD.ja.md)
 - [よくある質問](https://junzokamahara.github.io/H3cApp/faq.html) · [不具合の報告](https://github.com/JunzoKamahara/H3cApp/issues)
 
 ## 動画の公開とライセンス
 
 生成した動画を公開するときは、MiniMax H3の利用条件に従い、**AIで生成したことを明示してください**。「動画を書き出す…」では、映像に「AI-generated with MiniMax H3」の表示を入れられます（初期設定でオン）。投稿先のAI生成ラベルや説明欄で示す方法もあります。動画ファイルのメタデータにもAI生成情報が記録されます。
 
-H3cApp本体は[MITライセンス](LICENSE)で公開され、[antirez/h3.c](https://github.com/antirez/h3.c)を基にしています。**モデルには別のライセンス**が適用されます。利用前に[MiniMax H3のライセンス](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE)などを確認してください。[第三者ライセンス表記](THIRD_PARTY_NOTICES.md)と[動画メタデータの技術説明](TECHNICAL.ja.md#ライセンス)も参照できます。
+H3cApp本体は[MITライセンス](LICENSE)で公開され、[antirez/h3.c](https://github.com/antirez/h3.c)を基にしています。**モデルには別のライセンス**が適用されます。利用前に[MiniMax H3のライセンス](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE)などを確認してください。[第三者ライセンス表記](THIRD_PARTY_NOTICES.md)と[動画メタデータの技術説明](docs/TECHNICAL.ja.md#ライセンス)も参照できます。

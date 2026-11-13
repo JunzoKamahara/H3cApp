@@ -98,7 +98,7 @@ the build with a spurious "disk I/O error" — if you see that, check whether
 your checkout is inside a synced directory before assuming it's flaky.
 
 Fast mode needs ccv: build a patched, MPS-enabled ccv checkout as described
-in [tools/ccv_eval/README.md](tools/ccv_eval/README.md), then pass its path to
+in [tools/ccv_eval/README.md](../tools/ccv_eval/README.md), then pass its path to
 both steps (the release `.dmg` is built this way):
 
 ```sh

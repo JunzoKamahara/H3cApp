@@ -277,7 +277,7 @@ RefMod を画像に戻して Qwen に見せる実験的な経路、動画をま�
 ## ライセンス
 
 RefMod の形式と計算は ComfyUI-MiniMaxH3Mod（MIT License、作者 Luisa）に合わせて
-いますが、そのコードは含んでいません（[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）。
+いますが、そのコードは含んでいません（[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)）。
 H3cApp で作る RefMod は、MiniMax H3 のモデル（MiniMax H3 Community License）の VAE で
 符号化したものです。元にした画像・動画・音声の権利は元の持ち主にあります。作った
 RefMod を配るときや使うときに、どの条件が当てはまるかは、モデルのライセンスと元の

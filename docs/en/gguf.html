@@ -211,7 +211,7 @@
     <section class="section section-narrow" id="hyperflow" aria-labelledby="hyperflow-title">
       <h2 id="hyperflow-title">HyperFlow H3 Flash (experimental)</h2>
       <p>From v0.8.0, H3cApp can also import the GGUF files of <a href="https://huggingface.co/VideoRebirthAI/hyperflow-h3-flash">HyperFlow H3 Flash</a> by Video Rebirth, a MiniMax H3 derivative. It makes video and sound in 4, 6 or 8 steps, with picture quality about on par with the Turbo LoRA (4 steps) and less flicker. LoRAs and the speed presets do not apply. For side-by-side clips, timings and how to use it, see <a href="hyperflow.html">the HyperFlow H3 Flash page</a>.</p>
-      <p>From v0.8.1, an int8 DiT distributed for ComfyUI (with or without ConvRot) can be imported too. It is a single <code>.safetensors</code> file and the steps are the same as for a GGUF; the format shows as “INT8 ConvRot” (“INT8” without the rotation). H3cApp restores the plain weights as it loads the file and computes as usual, so ComfyUI's speed does not carry over. HyperFlow H3 Flash's int8 files (<code>fl2va_int8_convrot_comfyui/</code>, <code>ref2va_int8_convrot_comfyui/</code>) are imported the same way. Details are in <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/GGUF.md#comfyui-int8-convrot-dits">GGUF.md</a>.</p>
+      <p>From v0.8.1, an int8 DiT distributed for ComfyUI (with or without ConvRot) can be imported too. It is a single <code>.safetensors</code> file and the steps are the same as for a GGUF; the format shows as “INT8 ConvRot” (“INT8” without the rotation). H3cApp restores the plain weights as it loads the file and computes as usual, so ComfyUI's speed does not carry over. HyperFlow H3 Flash's int8 files (<code>fl2va_int8_convrot_comfyui/</code>, <code>ref2va_int8_convrot_comfyui/</code>) are imported the same way. Details are in <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/docs/GGUF.md#comfyui-int8-convrot-dits">GGUF.md</a>.</p>
     </section>
 
     <section class="section section-narrow" id="delete" aria-labelledby="delete-title">
@@ -231,7 +231,7 @@
         <li>Qwen's text and image parts (Qwen3-VL-32B-Instruct) are under the <a href="https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct-GGUF">Apache License 2.0</a>.</li>
         <li>Check each source's own license as well. Read each license before downloading and using them, and follow their terms.</li>
       </ul>
-      <p class="small muted">For how it works and the API, see <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/GGUF.md">GGUF.md</a> on GitHub.</p>
+      <p class="small muted">For how it works and the API, see <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/docs/GGUF.md">GGUF.md</a> on GitHub.</p>
     </section>
   </main>
 

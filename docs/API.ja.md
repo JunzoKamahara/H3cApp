@@ -2,18 +2,18 @@
 
 [English](API.md) | [日本語](API.ja.md)
 
-同じMac上のスクリプトなどからH3cAppを操作する開発者向けの仕様です。H3cApp本体を起動して利用します。インストールは[README](README.ja.md)をご覧ください。
+同じMac上のスクリプトなどからH3cAppを操作する開発者向けの仕様です。H3cApp本体を起動して利用します。インストールは[README](../README.ja.md)をご覧ください。
 
 ## API
 
 `H3cApp.app`が起動している間、`http://127.0.0.1:8420`でプレーンな
 JSON APIを提供します — 生のPOSIXソケットで実装されており
-（[HTTPServer.swift](native/H3Spike/Sources/H3cApp/HTTPServer.swift)参照）、
+（[HTTPServer.swift](../native/H3Spike/Sources/H3cApp/HTTPServer.swift)参照）、
 Network.frameworkやサードパーティ製サーバーは使っていません。別プロセスの
 起動・停止も不要です。このAPIは、アプリの主となる`GenerationViewModel`/
 エンジンのインスタンス（最初のウィンドウが表示するもの）を操作します
-（[AppModels.swift](native/H3Spike/Sources/H3cApp/AppModels.swift)、
-[GenerationViewModel+API.swift](native/H3Spike/Sources/H3cApp/GenerationViewModel+API.swift)参照）。
+（[AppModels.swift](../native/H3Spike/Sources/H3cApp/AppModels.swift)、
+[GenerationViewModel+API.swift](../native/H3Spike/Sources/H3cApp/GenerationViewModel+API.swift)参照）。
 アプリが起動していれば、ウィンドウをすべて閉じても受け付けます。ウィンドウを
 閉じるとそのプロジェクトも閉じるので、必要なら`POST /api/project/open`で
 開いてください。ジョブは常に1つだけで、そのインスタンスを表示している
@@ -88,7 +88,7 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | フィールド | 既定値 | 備考 |
 |---|---|---|
 | `prompt` | — | 必須。 |
-| `size_profile` | `"square"` | プリセット`<形>-<大きさ>`（形は`square`・`landscape`・`portrait`、大きさは`small`・`medium`・`large`）。2倍に拡大した出力は末尾に`-x2`（例: `landscape-large-x2`は960×544を1920×1088に拡大）。または完成サイズを表す`custom-<幅>x<高さ>`／`custom-<幅>x<高さ>-x2`（32の倍数。`-x2`はその半分で生成するため64の倍数）。生成するサイズは60万ピクセル以下で1辺256〜1344。以前の名前`smallSquare`、`square`、`landscapeNative`、`landscapeUpscaled`、`portraitNative`、`portraitUpscaled`もそのまま使え、対応する小・中のプリセットを表します（[GenerationModels.swift](native/H3Spike/Sources/H3cApp/GenerationModels.swift)の`SizeProfile`参照）。 |
+| `size_profile` | `"square"` | プリセット`<形>-<大きさ>`（形は`square`・`landscape`・`portrait`、大きさは`small`・`medium`・`large`）。2倍に拡大した出力は末尾に`-x2`（例: `landscape-large-x2`は960×544を1920×1088に拡大）。または完成サイズを表す`custom-<幅>x<高さ>`／`custom-<幅>x<高さ>-x2`（32の倍数。`-x2`はその半分で生成するため64の倍数）。生成するサイズは60万ピクセル以下で1辺256〜1344。以前の名前`smallSquare`、`square`、`landscapeNative`、`landscapeUpscaled`、`portraitNative`、`portraitUpscaled`もそのまま使え、対応する小・中のプリセットを表します（[GenerationModels.swift](../native/H3Spike/Sources/H3cApp/GenerationModels.swift)の`SizeProfile`参照）。 |
 | `seconds` | `5` | 1〜15。 |
 | `steps` | `20`、またはオンにした最初のTurbo LoRAの推奨ステップ数。HyperFlow H3 Flash のモデルでは `6` | 3〜40。使用中のモデルが HyperFlow H3 Flash（[GGUF](GGUF.ja.md#hyperflow-h3-flash)）のときは 4・6・8 だけで、LoRA、`quality` 以外の速度、1 以外の `reuse`、50 以外の `dit_layers`、`sampler: "renoise"`、3 以外の `audio_shift` には理由付きの `400` を返します。 |
 | `reuse` | `2` | 1〜3。高速・最速ではこの値にかかわらず1で動く。 |
