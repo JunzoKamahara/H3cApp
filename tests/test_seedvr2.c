@@ -160,7 +160,7 @@ static int write_conv_in(const char *path, int depth) {
 }
 
 /* The grid conv (gconv_t) holds at most 3 * 3 * 3 taps: a temporal depth
- * above 3 is refused at load; depths 3 and 2 still load (this file ends
+ * above 3, or none, is refused at load; depths 3 and 2 still load (this file ends
  * after conv_in, so the load stops at the first resnet's missing tensors). */
 static void test_vae_kernel_depth(void) {
     char error[512] = {0};
@@ -169,8 +169,8 @@ static void test_vae_kernel_depth(void) {
     char dir[] = "/tmp/h3sv2-depth-test-XXXXXX", path[128];
     CHECK(mkdtemp(dir) != NULL);
     snprintf(path, sizeof(path), "%s/vae.safetensors", dir);
-    static const int depths[3] = {4, 3, 2};
-    for (int i = 0; i < 3; i++) {
+    static const int depths[4] = {4, 0, 3, 2};
+    for (int i = 0; i < 4; i++) {
         CHECK(write_conv_in(path, depths[i]));
         h3_st_header h;
         CHECK(h3_st_read_header(path, &h, error, sizeof(error)));
@@ -181,8 +181,8 @@ static void test_vae_kernel_depth(void) {
                 m->gpu = gpu; m->nax_vae = nax; m->vae_temporal = temporal;
                 error[0] = '\0';
                 CHECK(!sv2_load_vae(m, &h, error, sizeof(error)));
-                if (depths[i] > 3)
-                    CHECK(strstr(error, "encoder.conv_in.weight has 4 temporal taps, at most 3") != NULL);
+                if (depths[i] < 1 || depths[i] > 3)
+                    CHECK(strstr(error, "encoder.conv_in.weight has") && strstr(error, "temporal taps, expected 1 to 3"));
                 else
                     CHECK(strstr(error, "encoder.down_blocks.0.resnets.0.norm1.weight is missing") != NULL);
                 sv2_free_vae(m);

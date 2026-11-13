@@ -50,8 +50,10 @@ static int load_conv(h3_seedvr2 *m, const h3_st_header *h, const char *prefix, i
              name, (int)t->shape[0], kt, kh, kw, (int)t->shape[4], out, kernel, kernel, in);
         return 0;
     }
-    if (t->shape[1] > 3) {   /* the grid conv (gconv_t) holds at most 3 * 3 * 3 taps */
-        fail(error, error_size, "SeedVR2: %s has %llu temporal taps, at most 3", name,
+    /* The grid conv (gconv_t) holds at most 3 * 3 * 3 taps, and none is no
+     * kernel at all (pack_nax_conv would read one from an empty buffer). */
+    if (t->shape[1] < 1 || t->shape[1] > 3) {
+        fail(error, error_size, "SeedVR2: %s has %llu temporal taps, expected 1 to 3", name,
              (unsigned long long)t->shape[1]);
         return 0;
     }
