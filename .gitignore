@@ -3,7 +3,7 @@ misc/
 MiniMax-H3/
 outputs/
 .ruff_cache/
-lora/
+/lora
 
 # Compiler and test outputs.
 build/
