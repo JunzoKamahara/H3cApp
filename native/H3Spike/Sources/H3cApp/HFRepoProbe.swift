@@ -337,16 +337,23 @@ enum HFRepoProbe {
         guard let http = response as? HTTPURLResponse, http.statusCode == 206 || http.statusCode == 200 else {
             throw ProbeError.http((response as? HTTPURLResponse)?.statusCode ?? -1)
         }
-        let skip = http.statusCode == 200 ? Int(from) : 0
-        let wanted = skip + Int(count)
+        // With the whole file, the bytes before the range are passed over,
+        // not kept; and not when that is more than a header can be (an
+        // offset a file's header gave could be most of a model).
+        var skip = http.statusCode == 200 ? from : 0
+        guard skip <= 256 << 20 else {
+            stream.task.cancel()
+            throw ProbeError.short
+        }
         var data = Data()
-        data.reserveCapacity(wanted)
+        data.reserveCapacity(Int(min(count, 256 << 20)))
         for try await byte in stream {
+            if skip > 0 { skip -= 1; continue }
             data.append(byte)
-            if data.count >= wanted { break }
+            if Int64(data.count) >= count { break }
         }
         stream.task.cancel()
-        return skip > 0 ? data.subdata(in: min(skip, data.count) ..< data.count) : data
+        return data
     }
 
     enum ProbeError: LocalizedError {
