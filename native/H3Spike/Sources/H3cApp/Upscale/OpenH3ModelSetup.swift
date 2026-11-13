@@ -319,6 +319,11 @@ final class OpenH3Setup: ObservableObject {
                 }
             }
             guard !Task.isCancelled else { return }
+            // A merge left by a run that ended between saving the record
+            // and deleting it: verified, and the refiner is cut from it.
+            if OpenH3Model.verified, OpenH3Model.refinerPresent, OpenH3Model.mergedPresent {
+                try? FileManager.default.removeItem(atPath: OpenH3Model.mergedPath)
+            }
             phase = .done
         } catch is CancellationError {
             phase = .idle
