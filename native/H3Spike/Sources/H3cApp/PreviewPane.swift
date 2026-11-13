@@ -429,12 +429,9 @@ private extension GenerationViewModel {
     /// The record of the video at `url` (the .json next to it, or the temp
     /// result's), and for a joined video its clips' records.
     func recordForExport(_ url: URL) -> (record: ProjectVideoRecord, clips: [ProjectVideoRecord])? {
-        func decode(_ recordURL: URL) -> ProjectVideoRecord? {
-            (try? Data(contentsOf: recordURL))
-                .flatMap { try? ProjectFiles.decoder.decode(ProjectVideoRecord.self, from: $0) }
-        }
         func load(_ video: URL) -> ProjectVideoRecord? {
-            decode(video.deletingPathExtension().appendingPathExtension("json"))
+            (try? Data(contentsOf: video.deletingPathExtension().appendingPathExtension("json")))
+                .flatMap { try? ProjectFiles.decoder.decode(ProjectVideoRecord.self, from: $0) }
         }
         func realPath(_ path: String) -> String? {
             path.withCString { raw in
@@ -449,15 +446,24 @@ private extension GenerationViewModel {
         // The record can name any path (absolute, "../", through a symbolic
         // link), and what is read here goes into the exported file: only a
         // clip's record that is in this project, once links are resolved, is
-        // read - one anywhere else is left out.
+        // read - one anywhere else is left out. The file is opened once and
+        // that descriptor is what is checked and read, so swapping the path
+        // afterwards changes nothing.
         let projectRoot = projectURL.flatMap { realPath($0.path) }
             .map { $0.hasSuffix("/") ? $0 : $0 + "/" }
         let clips = (record.joinedClips ?? []).compactMap { stored -> ProjectVideoRecord? in
             guard let projectURL, let projectRoot else { return nil }
             let video = URL(fileURLWithPath: ProjectFiles.resolved(stored, in: projectURL))
-            guard let recordPath = realPath(video.deletingPathExtension().appendingPathExtension("json").path),
-                  recordPath.hasPrefix(projectRoot) else { return nil }
-            return decode(URL(fileURLWithPath: recordPath))
+            let fd = open(video.deletingPathExtension().appendingPathExtension("json").path,
+                          O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+            guard fd >= 0 else { return nil }
+            let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            var info = stat()
+            var real = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+            guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+                  fcntl(fd, F_GETPATH, &real) == 0, String(cString: real).hasPrefix(projectRoot),
+                  let data = try? file.readToEnd() else { return nil }
+            return try? ProjectFiles.decoder.decode(ProjectVideoRecord.self, from: data)
         }
         return (record, clips)
     }
