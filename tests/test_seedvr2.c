@@ -126,10 +126,16 @@ static void expect_bad_emb(const char *weight_dims, const char *scales_dims, con
 }
 
 static void test_bad_emb(void) {
+    /* h3_seedvr2_open makes its GPU before it reads emb_in. */
+    char error[512] = {0};
+    h3_gpu *gpu = h3_gpu_create("h3_shaders.metal", error, sizeof(error));
+    if (!gpu) { printf("skip: SeedVR2 mis-sized emb_in tensors (no GPU: %s)\n", error); return; }
+    h3_gpu_free(gpu);
     expect_bad_emb("1x1", "1x1", "1x1", "emb_in.proj_in.weight is not a U32 [2560, 64] 8-bit weight");
     expect_bad_emb("2560x16", "2560x4", "2560x4", "emb_in.proj_in.weight is not a U32 [2560, 64] 8-bit weight");
     expect_bad_emb("2560x64", "1x1", "2560x4", "emb_in.proj_in.scales has an unexpected group size");
     expect_bad_emb("2560x64", "2560x4", "1x1", "emb_in.proj_in.biases has an unexpected group size");
+    printf("ok: SeedVR2 rejects mis-sized emb_in tensors (%d checks)\n", tests_run);
 }
 
 /* A vae.safetensors holding only encoder.conv_in: weight (O, kt, kh, kw, I)
@@ -231,7 +237,6 @@ int main(void) {
     test_windows();
     printf("ok: SeedVR2 window partition (%d checks)\n", tests_run);
     test_bad_emb();
-    printf("ok: SeedVR2 rejects mis-sized emb_in tensors (%d checks)\n", tests_run);
     test_vae_kernel_depth();
     const char *dir = getenv("H3_SEEDVR2_DIR");
     char fallback[1024];
