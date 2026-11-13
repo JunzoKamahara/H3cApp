@@ -518,23 +518,26 @@ enum ProjectFiles {
         let folder = projectURL.appendingPathComponent(referencesFolder, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // The project's own folder, not a link to another place (a project
-        // folder can come from anyone): the copy is written into it.
-        var folderInfo = stat()
-        guard lstat(folder.path, &folderInfo) == 0, folderInfo.st_mode & S_IFMT == S_IFDIR else {
-            throw POSIXError(.ENOTDIR)
-        }
+        // folder can come from anyone): the copy is written into it. Opened
+        // once, and every name below is looked up in that opened folder, so
+        // making it a link afterwards sends nothing elsewhere.
+        let directory = open(folder.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard directory >= 0 else { throw POSIXError(.ENOTDIR) }
+        defer { close(directory) }
         let source = URL(fileURLWithPath: path)
         let stem = source.deletingPathExtension().lastPathComponent
         let ext = source.pathExtension
-        var destination = folder.appendingPathComponent(source.lastPathComponent)
+        var name = source.lastPathComponent
         var counter = 2
-        while FileManager.default.fileExists(atPath: destination.path) {
-            if holdsSameBytes(fd, size: info.st_size, asFileAt: destination.path) {
-                return destination.path
+        var existing = stat()
+        while fstatat(directory, name, &existing, AT_SYMLINK_NOFOLLOW) == 0 {
+            if holdsSameBytes(fd, size: info.st_size, asFile: name, in: directory) {
+                return folder.appendingPathComponent(name).path
             }
-            destination = folder.appendingPathComponent(ext.isEmpty ? "\(stem) \(counter)" : "\(stem) \(counter).\(ext)")
+            name = ext.isEmpty ? "\(stem) \(counter)" : "\(stem) \(counter).\(ext)"
             counter += 1
         }
+        let destination = folder.appendingPathComponent(name)
         // The copy would keep the source's mode, but the project folder may
         // be one others can read while the source wasn't: make it owner-only
         // in a private folder (on the same volume, so still a clone) before
@@ -558,14 +561,28 @@ enum ProjectFiles {
                 throw posixError()
             }
         }
-        try FileManager.default.moveItem(at: staged, to: destination)
+        // Into the opened folder, never over a file that appeared meanwhile.
+        if renameatx_np(AT_FDCWD, staged.path, directory, name, UInt32(RENAME_EXCL)) != 0 {
+            // The private folder was on another volume: the bytes, then.
+            guard errno == EXDEV else { throw posixError() }
+            let out = openat(directory, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode)
+            guard out >= 0 else { throw posixError() }
+            defer { close(out) }
+            guard lseek(fd, 0, SEEK_SET) == 0,
+                  fcopyfile(fd, out, nil, copyfile_flags_t(COPYFILE_DATA)) == 0, fchmod(out, mode) == 0 else {
+                let failure = posixError()
+                unlinkat(directory, name, 0)
+                throw failure
+            }
+        }
         return destination.path
     }
 
-    /// Whether the regular file at `path` (not a link to one) holds the same
-    /// bytes as the open file `fd`, whose read position is left alone.
-    private static func holdsSameBytes(_ fd: Int32, size: off_t, asFileAt path: String) -> Bool {
-        let other = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+    /// Whether the regular file `name` in the open folder `directory` (not a
+    /// link to one) holds the same bytes as the open file `fd`, whose read
+    /// position is left alone.
+    private static func holdsSameBytes(_ fd: Int32, size: off_t, asFile name: String, in directory: Int32) -> Bool {
+        let other = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard other >= 0 else { return false }
         defer { close(other) }
         var info = stat()
