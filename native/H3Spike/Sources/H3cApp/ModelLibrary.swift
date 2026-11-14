@@ -75,12 +75,17 @@ struct H3ModelEntry: Identifiable, Codable, Equatable {
     /// legacy folder. The API's delete_files trusts only false
     /// (ModelRemovalPlan.make). Optional so saved lists still decode.
     var addedThroughAPI: Bool?
+    /// What the model makes (GenerationKind): "image" for a still-image
+    /// model, absent for the video models. Optional so saved lists still
+    /// decode.
+    var kind: String?
 
-    init(id: UUID = UUID(), name: String, path: String, addedThroughAPI: Bool? = nil) {
+    init(id: UUID = UUID(), name: String, path: String, addedThroughAPI: Bool? = nil, kind: String? = nil) {
         self.id = id
         self.name = name
         self.path = path
         self.addedThroughAPI = addedThroughAPI
+        self.kind = kind
     }
 }
 
@@ -196,6 +201,10 @@ struct LoRAProvenance: Equatable {
 final class ModelLibrary: ObservableObject {
     @Published private(set) var models: [H3ModelEntry] = []
     @Published private(set) var activeModelID: UUID?
+    /// The still-image models, in a list of their own: versions from before
+    /// images read `models` and would load every entry there as a video model.
+    @Published private(set) var imageModels: [H3ModelEntry] = []
+    @Published private(set) var activeImageModelID: UUID?
     @Published private(set) var loras: [LoRAEntry] = []
     @Published private(set) var refmods: [RefModEntry] = []
     /// RefMod headers, read in the background like LoRA headers.
@@ -226,12 +235,15 @@ final class ModelLibrary: ObservableObject {
     private var listsObserver: NSObjectProtocol?
     private static let modelsKey = "H3ModelLibrary.models"
     private static let activeModelKey = "H3ModelLibrary.activeModelID"
+    private static let imageModelsKey = "H3ModelLibrary.imageModels"
+    private static let activeImageModelKey = "H3ModelLibrary.activeImageModelID"
     private static let lorasKey = "H3ModelLibrary.loras"
     private static let refmodsKey = "H3ModelLibrary.refmods"
     /// Before stacking: the one selected LoRA. Read once to migrate.
     private static let legacyActiveLoRAKey = "H3ModelLibrary.activeLoRAID"
 
     var activeModel: H3ModelEntry? { models.first { $0.id == activeModelID } }
+    var activeImageModel: H3ModelEntry? { imageModels.first { $0.id == activeImageModelID } }
     /// The stack the next generation applies, in list order.
     var enabledLoRAs: [LoRAEntry] { loras.filter(\.enabled) }
 
@@ -241,6 +253,8 @@ final class ModelLibrary: ObservableObject {
         refmods = Self.decodeArray(RefModEntry.self, key: Self.refmodsKey)
         syncRefModFolder()
         activeModelID = UUID(uuidString: defaults.string(forKey: Self.activeModelKey) ?? "")
+        imageModels = Self.decodeArray(H3ModelEntry.self, key: Self.imageModelsKey)
+        activeImageModelID = Self.storedImageModelID(in: imageModels)
         listsObserver = NotificationCenter.default.addObserver(
             forName: Self.listsChanged, object: nil, queue: .main
         ) { [weak self] note in
@@ -374,6 +388,42 @@ final class ModelLibrary: ObservableObject {
         guard models.contains(where: { $0.id == id }) else { return }
         activeModelID = id
         persistActiveModel()
+    }
+
+    // MARK: Still-image models
+
+    func addImageModel(path: String, name: String? = nil) {
+        let entry = H3ModelEntry(name: name ?? (path as NSString).lastPathComponent, path: path,
+                                 addedThroughAPI: false, kind: GenerationKind.image.rawValue)
+        imageModels.append(entry)
+        if activeImageModelID == nil { selectImageModel(id: entry.id) }
+        persistImageModels()
+    }
+
+    func removeImageModel(id: UUID) {
+        imageModels.removeAll { $0.id == id }
+        if activeImageModelID == id {
+            activeImageModelID = imageModels.first?.id
+            defaults.set(activeImageModelID?.uuidString, forKey: Self.activeImageModelKey)
+        }
+        persistImageModels()
+    }
+
+    func selectImageModel(id: UUID) {
+        guard imageModels.contains(where: { $0.id == id }) else { return }
+        activeImageModelID = id
+        defaults.set(id.uuidString, forKey: Self.activeImageModelKey)
+    }
+
+    /// The image model last chosen, or the first one.
+    private static func storedImageModelID(in models: [H3ModelEntry]) -> UUID? {
+        let stored = UUID(uuidString: UserDefaults.standard.string(forKey: activeImageModelKey) ?? "")
+        return models.first { $0.id == stored }?.id ?? models.first?.id
+    }
+
+    private func persistImageModels() {
+        Self.encodeArray(imageModels, key: Self.imageModelsKey)
+        NotificationCenter.default.post(name: Self.listsChanged, object: self)
     }
 
     // MARK: LoRA
@@ -735,6 +785,8 @@ final class ModelLibrary: ObservableObject {
             let stored = UUID(uuidString: defaults.string(forKey: Self.activeModelKey) ?? "")
             activeModelID = models.first { $0.id == stored }?.id ?? models.first?.id
         }
+        imageModels = Self.decodeArray(H3ModelEntry.self, key: Self.imageModelsKey)
+        if activeImageModel == nil { activeImageModelID = Self.storedImageModelID(in: imageModels) }
         for entry in loras where loraInfoCache[entry.path] == nil { requestLoRAInfo(path: entry.path) }
     }
 

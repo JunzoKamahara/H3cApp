@@ -130,9 +130,20 @@ struct ProjectFile: Codable {
     var updatedAt: Date
     var batchCount: Int
     var draft: ProjectDraft
-    /// A window's 無題のプロジェクト (ProjectStore.untitledDirectory) until
-    /// it is saved under a name. Absent in named projects.
+    /// A window's 無題のプロジェクト until it is saved under a name. Absent
+    /// in named projects. `untitled` is what versions up to 0.9 wrote, for
+    /// projects in ProjectStore.legacyUntitledDirectory; those versions
+    /// delete an untitled project that holds no video, so one made since
+    /// images (which may hold only images) says so as `untitledProject`
+    /// instead, in ProjectStore.untitledDirectory, and they leave it alone.
     var untitled: Bool? = nil
+    var untitledProject: Bool? = nil
+    /// What the composer was making (GenerationKind); absent: videos.
+    var generationKind: String? = nil
+    /// The image side of the form. Absent in projects from before images.
+    var imageDraft: ImageDraft? = nil
+
+    var isUntitled: Bool { untitled == true || untitledProject == true }
 }
 
 /// The .json next to each generated video: the request exactly as it ran.
@@ -186,6 +197,9 @@ struct ProjectVideoRecord: Codable {
     var upscaleWindowFrames: Int? = nil
     var upscaleOverlapFrames: Int? = nil
     var upscaleBlend: Bool? = nil
+    /// The project image its first frame is (ProjectImageRecord.assetID),
+    /// when the video was made from one.
+    var sourceImage: String? = nil
 }
 
 struct OpenProject: Equatable {
@@ -325,15 +339,27 @@ final class ProjectStore: ObservableObject {
     // MARK: 無題のプロジェクト
 
     /// Where windows keep their untitled projects until they are saved
-    /// under a name: Application Support/H3cApp/Untitled/<folder>.
+    /// under a name: Application Support/H3cApp/UntitledProjects/<folder>.
+    /// Not legacyUntitledDirectory: versions up to 0.9 delete, at launch,
+    /// every project there that holds no video - an image-only one too.
     static var untitledDirectory: URL {
+        URL(fileURLWithPath: h3AppSupportDirectory, isDirectory: true)
+            .appendingPathComponent("UntitledProjects", isDirectory: true)
+    }
+
+    /// Application Support/H3cApp/Untitled: the untitled projects of
+    /// versions up to 0.9, which stay where they are.
+    static var legacyUntitledDirectory: URL {
         URL(fileURLWithPath: h3AppSupportDirectory, isDirectory: true)
             .appendingPathComponent("Untitled", isDirectory: true)
     }
 
-    /// Whether `url` is a folder in untitledDirectory.
+    static var untitledDirectories: [URL] { [untitledDirectory, legacyUntitledDirectory] }
+
+    /// Whether `url` is a folder in one of the untitled directories.
     static func isUntitledFolder(_ url: URL) -> Bool {
-        url.standardizedFileURL.deletingLastPathComponent().path == untitledDirectory.standardizedFileURL.path
+        let parent = url.standardizedFileURL.deletingLastPathComponent().path
+        return untitledDirectories.contains { $0.standardizedFileURL.path == parent }
     }
 
     /// A fresh folder for a new untitled project (not created yet).
@@ -356,13 +382,14 @@ final class ProjectStore: ObservableObject {
     /// untitledDirectory, so no two untitled projects share a name.
     func untitledName() -> String {
         var taken = Set(openOwners.values.compactMap { $0.owner?.project }.filter(\.untitled).map(\.name))
-        let folder = Self.untitledDirectory
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where !name.hasPrefix(".") {
-            // A folder left with no project.json (emptied, swept at launch)
-            // is no project.
-            if let file = try? ProjectFiles.read(folder.appendingPathComponent(name, isDirectory: true)),
-               file.untitled == true {
-                taken.insert(file.name)
+        for folder in Self.untitledDirectories {
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where !name.hasPrefix(".") {
+                // A folder left with no project.json (emptied, swept at launch)
+                // is no project.
+                if let file = try? ProjectFiles.read(folder.appendingPathComponent(name, isDirectory: true)),
+                   file.isUntitled {
+                    taken.insert(file.name)
+                }
             }
         }
         let first = String(localized: "無題のプロジェクト")
@@ -392,17 +419,36 @@ final class ProjectStore: ObservableObject {
         return String(localized: "\(file.name)（\(date)）")
     }
 
-    /// At launch: untitled projects left with no video in them (the app quit
-    /// or crashed before their window closed), except the one to reopen.
+    /// The project folders すべてのプロジェクト looks in: the recent ones,
+    /// those in the default folder (~/Movies/H3cApp) and the untitled ones.
+    /// A project kept elsewhere and not opened lately is not found - there
+    /// is no register of all projects.
+    func galleryProjectFolders() -> [URL] {
+        var folders = existingRecents
+        for parent in [Self.defaultParentDirectory] + Self.untitledDirectories {
+            let names = ((try? FileManager.default.contentsOfDirectory(atPath: parent.path)) ?? []).sorted()
+            folders += names.filter { !$0.hasPrefix(".") }.map { parent.appendingPathComponent($0, isDirectory: true) }
+        }
+        var seen = Set<String>()
+        return folders.filter { url in
+            seen.insert(url.standardizedFileURL.path).inserted
+                && FileManager.default.fileExists(atPath: url.appendingPathComponent(ProjectFiles.projectFileName).path)
+        }
+    }
+
+    /// At launch: untitled projects left with no video or image in them (the
+    /// app quit or crashed before their window closed), except the one to
+    /// reopen.
     func sweepEmptyUntitledProjects() {
-        let folder = Self.untitledDirectory
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return }
-        for name in names where !name.hasPrefix(".") {
-            let url = folder.appendingPathComponent(name, isDirectory: true)
-            guard url.standardizedFileURL.path != lastOpened?.standardizedFileURL.path,
-                  !ProjectFiles.containsVideo(url) else { continue }
-            try? FileManager.default.removeItem(at: url)
-            forget(url)
+        for folder in Self.untitledDirectories {
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { continue }
+            for name in names where !name.hasPrefix(".") {
+                let url = folder.appendingPathComponent(name, isDirectory: true)
+                guard url.standardizedFileURL.path != lastOpened?.standardizedFileURL.path,
+                      !ProjectFiles.containsOutput(url) else { continue }
+                try? FileManager.default.removeItem(at: url)
+                forget(url)
+            }
         }
     }
 }
@@ -796,7 +842,8 @@ extension GenerationViewModel {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             let now = Date()
             let file = ProjectFile(name: trimmed, createdAt: now, updatedAt: now, batchCount: 1,
-                                   draft: currentDraft())
+                                   draft: currentDraft(), generationKind: storedGenerationKind,
+                                   imageDraft: currentImageDraft())
             try ProjectFiles.write(file, to: url)
             // The current form becomes the project's; its references are
             // copied in on the first save below.
@@ -930,6 +977,7 @@ extension GenerationViewModel {
                           named[path].map({ ProjectFiles.isInside(path, folder: $0) }) ?? true,
                           let copy = try? ProjectFiles.importReference(path, into: projectURL, inside: named[path])
                     else { return path }
+                    ProjectFiles.importImageSidecars(of: path, toCopy: copy)
                     return ProjectFiles.stored(copy, in: projectURL)
                 }
                 let before = record.draft
@@ -990,8 +1038,14 @@ extension GenerationViewModel {
             }
         }
         batchCount = file.batchCount.clamped(to: batchCountRange)
+        if applyingDraft {
+            // A project from before images opens as it was: making videos.
+            generationKind = file.generationKind.flatMap(GenerationKind.init(rawValue:)) ?? .video
+            // Its own image side, or a blank one: not the last project's.
+            applyImageDraft(file.imageDraft ?? .blank)
+        }
         project = OpenProject(url: url, name: file.name, createdAt: file.createdAt,
-                              untitled: file.untitled == true)
+                              untitled: file.isUntitled)
         lastSavedProjectFile = file
         ProjectStore.shared.noteOpened(url, by: self)
         reloadProjectVideos()
@@ -1014,10 +1068,13 @@ extension GenerationViewModel {
             self.resultURL = nil
             lastResult = nil
         }
-        // An untitled project with no video made in it has nothing to keep:
-        // it goes. One with videos stays, listed under 最近のプロジェクト.
+        if let displayedImage, displayedImage.url.standardizedFileURL.path.hasPrefix(folder) {
+            self.displayedImage = nil
+        }
+        // An untitled project with no video or image made in it has nothing
+        // to keep: it goes. One with any stays, listed under 最近のプロジェクト.
         if project.untitled, !isGenerating, !isUpscalingVideo, !isImportingVideo, !isExportingJoined,
-           !ProjectFiles.containsVideo(project.url) {
+           !isImportingImages, !ProjectFiles.containsOutput(project.url) {
             ProjectStore.shared.forget(project.url)
             let references = project.url.appendingPathComponent(ProjectFiles.referencesFolder, isDirectory: true)
             if ((try? FileManager.default.contentsOfDirectory(atPath: references.path)) ?? []).isEmpty {
@@ -1033,6 +1090,7 @@ extension GenerationViewModel {
         }
         self.project = nil
         projectVideos = []
+        projectImages = []
         lastSavedProjectFile = nil
     }
 
@@ -1050,7 +1108,8 @@ extension GenerationViewModel {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             let now = Date()
             let file = ProjectFile(name: store.untitledName(), createdAt: now, updatedAt: now,
-                                   batchCount: batchCount, draft: currentDraft(), untitled: true)
+                                   batchCount: batchCount, draft: currentDraft(), untitledProject: true,
+                                   generationKind: storedGenerationKind, imageDraft: currentImageDraft())
             try ProjectFiles.write(file, to: url)
             try attachProject(url: url, file: file, applyingDraft: false)
             saveProjectIfChanged(force: true)
@@ -1070,14 +1129,14 @@ extension GenerationViewModel {
     /// Whether closing would only swap an empty untitled project for another.
     var closingProjectChangesNothing: Bool {
         guard let project, project.untitled else { return false }
-        return projectVideos.isEmpty
+        return projectVideos.isEmpty && projectImages.isEmpty
     }
 
     /// Why the project's files can't be moved now (nil when they can): a
     /// generation, an enlargement, an import or an export writing them.
     var projectFilesBusyReason: String? {
         guard isGenerating || isUpscalingVideo || isImportingVideo || isExportingJoined
-                || isMovingProjectFiles || referenceImportTask != nil else { return nil }
+                || isImportingImages || isMovingProjectFiles || referenceImportTask != nil else { return nil }
         return String(localized: "生成・拡大・取り込み・書き出し・ファイルの移動が終わってから、もう一度お試しください。")
     }
 
@@ -1106,6 +1165,7 @@ extension GenerationViewModel {
         guard var file = lastSavedProjectFile else { return false }
         file.name = trimmed
         file.untitled = nil
+        file.untitledProject = nil
         file.updatedAt = Date()
         let saved = file
         let source = project.url
@@ -1206,6 +1266,7 @@ extension GenerationViewModel {
 
     func reloadProjectVideos() {
         projectVideos = project.map { ProjectFiles.videos(in: $0.url) } ?? []
+        reloadProjectImages()
     }
 
     // MARK: Saving
@@ -1231,9 +1292,13 @@ extension GenerationViewModel {
         draft.continueFrom = draft.continueFrom.map { ProjectFiles.stored($0, in: project.url) }
         draft.references = draft.references.map { $0.mappingPath { ProjectFiles.stored($0, in: project.url) } }
         draft = draft.mappingClipPaths { ProjectFiles.stored($0, in: project.url) }
-        guard force || draft != file.draft || batchCount != file.batchCount else { return }
+        let imageDraft = currentImageDraft()
+        guard force || draft != file.draft || batchCount != file.batchCount
+                || storedGenerationKind != file.generationKind || imageDraft != file.imageDraft else { return }
         file.draft = draft
         file.batchCount = batchCount
+        file.generationKind = storedGenerationKind
+        file.imageDraft = imageDraft
         file.updatedAt = Date()
         do {
             try ProjectFiles.write(file, to: project.url)
@@ -1271,7 +1336,9 @@ extension GenerationViewModel {
                 var results: [String: Result<String, Error>] = [:]
                 for path in paths {
                     results[path] = Result {
-                        try ProjectFiles.importReference(path, into: projectURL, inside: named[path])
+                        let copy = try ProjectFiles.importReference(path, into: projectURL, inside: named[path])
+                        ProjectFiles.importImageSidecars(of: path, toCopy: copy)
+                        return copy
                     }
                 }
                 return results

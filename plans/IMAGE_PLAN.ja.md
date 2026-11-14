@@ -137,6 +137,8 @@
 
 推論を待たずに着手できる。既存の画像ファイルを「生成済み画像」として取り込んで一巡させる。
 
+状態: 実装済み（ブランチ `image-phase1`、2026-11-15）。結果と、下の記述から変えた点は付録 B。
+
 **モードと下書き**
 
 - `GenerationModels.swift` に `GenerationKind { video, image }` を追加する。`CreationMethod.image`（`GenerationModels.swift:275`、「画像を入力して動画を作る」）は名前も意味も変えない。
@@ -183,7 +185,7 @@
 - `/api/generate` に `kind` を足すか `/api/generate-image` を新設し、`/api/result/image`、`/api/project` の一覧に画像を足す（`GenerationViewModel+API.swift`）。`docs/API.md` と `docs/API.ja.md` を更新する。
 - 文言は `Packaging/ja.lproj` と `Packaging/en.lproj` の `Localizable.strings` に足す。
 
-完了条件: 既存画像で、モード往復・保存・ギャラリー・動画への受け渡しが一巡する。旧プロジェクトが動画として開く。画像だけの無題プロジェクトが再起動後も残る。
+完了条件: 既存画像で、モード往復・保存・ギャラリー・動画への受け渡しが一巡する。旧プロジェクトが動画として開く。画像だけの無題プロジェクトが再起動後も残る。（満たした。付録 B.2）
 
 ### フェーズ 2: 公式画像推論
 
@@ -267,7 +269,7 @@
 
 ## 7. リスク
 
-- **旧版との併用でデータが消える。** 旧版は起動時に、mp4 を含まない無題プロジェクトを削除する（`sweepEmptyUntitledProjects`、`Projects.swift:397`）。新版で作った画像だけの無題プロジェクトは、旧版を一度起動すると消える。対策: 新版は無題プロジェクトの置き場所を別のフォルダにする。
+- **旧版との併用でデータが消える。** 旧版は起動時に、mp4 を含まない無題プロジェクトを削除する（`sweepEmptyUntitledProjects`、`Projects.swift:397`）。新版で作った画像だけの無題プロジェクトは、旧版を一度起動すると消える。対策: 新版は無題プロジェクトの置き場所を別のフォルダにする。フォルダだけでは足りず、`project.json` の印も変えた（付録 B.1）。
 - **旧版で新形式を開いて保存すると画像の下書きが落ちる。** 追加キーは省略可能なので旧版でも開けるが、旧版が `project.json` を書き直すと `imageDraft` は消える。`images/` のファイルは残る。
 - **音声なし経路の変更が動画に波及する。** 変更は「音声行ゼロを許す」に限り、動画のコード経路は分岐させない。
 - **低解像度での品質。** 公式の対応域の外で使うことになる。フェーズ 0 で決める。
@@ -505,3 +507,51 @@
 - PNG に AI 生成の識別子を入れるのは推奨。別紙 A の 12 に備えて、メタデータ（tEXt/iTXt か XMP）に入れる方針を 5 章のフェーズ 1 に足す価値がある。
 - V.5 の「通報窓口」を配布アプリとしてどう満たすかは未決。動画版の扱い（`THIRD_PARTY_NOTICES.md`）と合わせて決める。
 
+## 付録 B. フェーズ 1 の結果
+
+### B.1 実装したものと、計画から変えた点（2026-11-15、ブランチ `image-phase1`）
+
+新規ファイルは `ImageModels.swift`（種別、サイズ、下書き、記録、`images/` の読み書き）、`ImageMetadata.swift`（PNG の読み書きと AI 生成表示）、`GenerationViewModel+Images.swift`（取り込み、表示、受け渡し）。既存の変更は `Projects.swift`、`GenerationViewModel.swift`、`GenerationViewModel+API.swift`、`ModelLibrary.swift`、`CreationFormView.swift`、`PreviewPane.swift`、`ProjectViews.swift`、`SettingsPresets.swift`、両言語の `Localizable.strings`、`docs/API.md`、`docs/API.ja.md`。
+
+計画どおりに入れたもの: `GenerationKind`、`ImageSizeProfile`（標準 1024 級・大 2048 級・動画用）、`ProjectFile` の `generationKind` と `imageDraft`、`ProjectImageRecord`、`images/` への保存（隠し名で書いてから改名）、動画と画像を並べる一覧、サムネイルのキャッシュ（`images/.thumbnails/`）、プレビューの画像表示、受け渡し 3 種、`ProjectVideoRecord.sourceImage`、`importReference` に続く記録と潜在の複製、「すべてのプロジェクト」（最近の項目、`~/Movies/H3cApp` 直下、無題プロジェクト）。
+
+計画から変えた点:
+
+| 計画 | 実際 | 理由 |
+| - | - | - |
+| 種別のメニューとモデル名のチップを、プロンプト欄のツールバー先頭に置く | 種別のメニューはパネル上段（`topRow`）の先頭。モデルのチップは画像モードのツールバーだけに置く | ツールバーに 2 つ足すと、動画側のチップと「続きを生成」がパネル幅（640 pt）に収まらない。実測で約 20 pt、続きのボタンが出るとさらに超えた。動画のモデルはウィンドウのツールバーにある |
+| `H3ModelEntry` に `kind` を足し、同じ一覧に置く | `kind` は足した。画像モデルは別の一覧（`H3ModelLibrary.imageModels`、`activeImageModelID`）に置く | 旧版は `models` の全項目を動画モデルとして読み込む |
+| 無題プロジェクトの置き場所を別のフォルダにする | フォルダを `UntitledProjects/` にし、`project.json` の印も `untitledProject` に変えた。旧フォルダ `Untitled/` の旧プロジェクトはそのまま扱う | 旧版は、最後に開いたプロジェクトを起動時に開き直し、閉じるときに「`untitled` で動画なし」なら消す。フォルダを変えただけでは、画像だけの無題プロジェクトがこの経路で消える |
+| PNG の AI 生成表示を `GenerationMetadata.swift` と `AIDisclosure.swift` に足す | `ImageMetadata.swift` に書いた。XMP（iTXt）に IPTC の AI 項目を入れる | MP4 のボックス操作とは共有する部分が無い |
+| `/api/generate` に `kind` を足すか `/api/generate-image` を新設 | `/api/generate` に `kind` を足した（`image` は 501）。ほかに `/api/kind`、`/api/project/import-image`、`show-image`、`use-image`、`delete-image`、`/api/result/image`、`GET /api/status` の `form` | 取り込みと受け渡しを API からも行えるようにした。確認の自動化にも使う |
+
+取り込みの扱い: PNG はバイト単位でそのまま置く。ほかの形式は向きを正して PNG にし、元のメタデータを引き継ぐ（元画像が持つ出自の情報を落とさない）。取り込んだ画像に AI 生成の印は付けない。記録には `importedFrom` を書く。
+
+### B.2 確認したこと
+
+`tools/image_phase1/roundtrip_check.py`（モデル不要、API 経由、42 項目）がすべて通る。アプリは別名の複製を、ホームを作業フォルダへ向けて動かすので、導入済みアプリのプロジェクトと設定には触れない。確かめている内容:
+
+- 新しいウィンドウは動画モードで、無題プロジェクトは `UntitledProjects/` にでき、`project.json` に旧版が反応する印が無い。
+- 旧版の無題プロジェクトは、動画があれば残り、空なら掃除される。
+- 画像ファイル（PNG と、横倒しで保存された JPEG）を取り込める。PNG はバイト一致、JPEG は正しい向きになる。記録にハッシュ、ID、画素サイズが入る。画像でないファイルは理由を返して何も足さない。
+- プレビューへの表示と `GET /api/result/image`。
+- 受け渡し 3 種で動画のフォームが切り替わり、画像が `references/` へ記録ごと複製され、`project.json` が相対パスで保存される。生成は始まらない。
+- アプリを強制終了して起動し直しても、画像だけの無題プロジェクトが残り、開き直され、画像モードと受け渡し済みのフォームが戻る。
+- 旧形式のプロジェクトは動画プロジェクトとして開き、`project.json` に画像用のキーが増えない。
+
+別に手で確かめたこと:
+
+- 取り込んだ画像を最初の画像にして、手元の動画モデル（GGUF、SSD ストリーミング、256×256、1 秒、4 ステップ）で動画を生成した。動画の記録の `sourceImage` に画像の ID が入り、`GET /api/project` の `source_image` に出る。プレビューは画像から動画へ切り替わる。
+- `ImageMetadata` の AI 生成表示は、単体のプログラムで PNG に書いて読み戻した（IPTC の `DigitalSourceType`、`AISystemUsed`、`AISystemVersionUsed`、`AIPromptInformation`、`dc:description`、`xmp:CreatorTool`）。生成経路がまだ無いので、アプリからは呼ばれていない。
+- 画面（画像モード、動画モード、一覧、すべてのプロジェクト）はスクリーンショットで確認した。
+- `native/H3Spike/check_localizations.sh`: 1229 キー、不足 0。
+
+### B.3 まだ無いもの、確かめていないこと
+
+- 画像の生成（フェーズ 2）。画像モードの生成ボタンは常に無効で、「画像モデルを追加」から開くモデル管理には、まだ画像モデルの導入口が無い（フェーズ 3）。
+- 画像モードの seed の入力欄。下書きと記録には項目がある。
+- 画像の削除は、操作と API を書いたが実行していない（ファイルがゴミ箱に入るため）。
+- 画像を別のプロジェクトへ移す操作。無題プロジェクトの保存（フォルダごとの移動）では一緒に動く。
+- 「すべてのプロジェクト」にある別プロジェクトの動画は、参照に使うことと Finder での表示だけができる。
+- リリースビルド（`package_app.sh`）での表示と英語表示。確認はデバッグビルドを直接起動して行ったので、文言は日本語のキーのまま出ている。
+- 旧版（0.9.0）を実際に起動しての併用試験。旧版の動作はコードから読んだもの。

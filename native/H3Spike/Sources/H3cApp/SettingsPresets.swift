@@ -191,6 +191,10 @@ extension GenerationViewModel {
         applyDraft(draft, projectURL: nil)
         batchCount = 1
         applyDefaultSettings()
+        // The image side too: a new window makes videos, from nothing.
+        generationKind = .video
+        applyImageDraft(.blank)
+        displayedImage = nil
     }
 
     /// The default preset, or the app's own defaults when none is set.

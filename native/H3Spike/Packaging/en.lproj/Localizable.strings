@@ -311,7 +311,6 @@
 "新規プロジェクト…" = "New Project…";
 "プロジェクトを開く…" = "Open Project…";
 "最近のプロジェクト" = "Recent Projects";
-"プロジェクトの動画…" = "Project Videos…";
 "プロジェクトを閉じる" = "Close Project";
 "プロジェクトなし" = "No Project";
 "新規プロジェクト" = "New Project";
@@ -1260,3 +1259,52 @@
 
 /* OpenH3Regenerate.swift */
 "Open-H3 再生成は通常のMiniMax-H3モデルで動きます。モデル管理で通常のモデルに切り替えると使えます。" = "Open-H3 regeneration runs on a regular MiniMax-H3 model. Switch to one in Model Management to use it.";
+
+/* Still images: ImageModels.swift, GenerationViewModel+Images.swift, CreationFormView.swift, PreviewPane.swift, ProjectViews.swift */
+"動画をつくるか、画像をつくるかを切り替えます。それぞれのプロンプトと設定は別々に保たれます" = "Switch between making videos and making images. Each keeps its own prompt and settings";
+"同じプロンプトと設定で、シードを変えて続けて生成し、プロジェクトに保存します" = "Generates one after another with the same prompt and settings and a different seed each, saving them in the project";
+"手元の画像ファイルをプロジェクトの画像として取り込みます（PNGに変換して保存します）" = "Brings image files into the project as its images (saved as PNG)";
+"画像をつくる（Enter / ⌘Return）" = "Make Image (Enter / ⌘Return)";
+"画像をつくる" = "Make Image";
+"つくるもの" = "Make";
+"画像モデル" = "Image model";
+"画像モデルを追加" = "Add Image Model";
+"画像モデル: %@" = "Image model: %@";
+"画像をつくるモデルがまだありません。モデル管理から追加します" = "There is no model for making images yet. Add one in Model Management";
+"動画用（%@）" = "For video (%@)";
+"枚数" = "Count";
+"%lld 枚" = "%lld images";
+"%lld枚" = "×%lld";
+"画像を削除できませんでした（詳細: %@）" = "Could not delete the image (details: %@)";
+"画像を取り込んでいます…" = "Importing images…";
+"画像モデルがまだ追加されていません。手元の画像は「取り込む」でプロジェクトに入れられます" = "No image model has been added yet. Use Import to bring your own images into the project";
+"画像の内容を入力してください" = "Describe the image";
+"この版では、まだ画像を生成できません" = "This version cannot generate images yet";
+"動画の開始画像用" = "For a video's first frame";
+"画像を取り込めませんでした（詳細: %@）" = "Could not import the image (details: %@)";
+"動画用" = "For video";
+"画像として読み込めません: %@" = "Cannot be read as an image: %@";
+"画像をPNGに変換できませんでした。" = "Could not convert the image to PNG.";
+"取り込んだ画像: %@" = "Imported image: %@";
+"ここに画像が表示されます" = "Your image will appear here";
+"下のパネルの「取り込む」で、手元の画像をプロジェクトに入れられます。" = "Use Import in the panel below to bring your own images into the project.";
+"この画像から動画を作る" = "Make a Video from This Image";
+"この画像を最初の画像にして、動画をつくる準備をします（生成は始めません）" = "Sets this image as the first frame, ready to make a video (does not start generating)";
+"最後の画像に使う" = "Use as Last Frame";
+"参照画像に追加" = "Add as Reference Image";
+"参照画像を使うには、このモデルにRef2VAを追加する必要があります。モデル管理の「Ref2VAを追加…」から追加できます。画像は参照に入れてあります" = "Reference images need Ref2VA added to this model: use \"Add Ref2VA…\" in Model Management. The image has been added to the references";
+"プロジェクトの動画と画像…" = "Project Videos and Images…";
+"すべて" = "All";
+"このプロジェクト" = "This Project";
+"すべてのプロジェクト" = "All Projects";
+"この画像を削除しますか？" = "Delete this image?";
+"動画 %lld本 ・ 画像 %lld枚" = "%lld videos · %lld images";
+"範囲" = "Scope";
+"すべてのプロジェクト: 最近開いたプロジェクト、既定の保存先（ムービー › H3cApp）にあるプロジェクト、無題のプロジェクトを探します" = "All Projects: looks in recently opened projects, projects in the default folder (Movies › H3cApp) and untitled projects";
+"まだ動画も画像もありません。生成した動画と画像はここに保存されます。" = "No videos or images yet. Generated videos and images are saved here.";
+"まだ画像はありません。生成した画像と、取り込んだ画像はここに保存されます。" = "No images yet. Generated and imported images are saved here.";
+"画像と設定の記録をゴミ箱に移動します。" = "The image and its settings record will be moved to the Trash.";
+"ほかのプロジェクトを調べています…" = "Looking through other projects…";
+"この動画を参照動画としてパネルに追加します（このプロジェクトにコピーされます）" = "Adds this video to the panel as a reference video (it is copied into this project)";
+"この画像をプレビューに表示します" = "Shows this image in the preview";
+"動画を作る" = "Make Video";

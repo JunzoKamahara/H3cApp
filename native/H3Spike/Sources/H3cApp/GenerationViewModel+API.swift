@@ -101,6 +101,10 @@ extension GenerationViewModel {
             return .json(200, ["ok": true])
         case ("GET", "/api/result/video"):
             return resultVideoResponse()
+        case ("GET", "/api/result/image"):
+            // The project image in the preview, as PNG.
+            guard let image = displayedImage else { return .error(404, "no image is shown") }
+            return .file(atPath: image.url.path, contentType: "image/png")
         case ("GET", "/api/preview"):
             // 途中の様子 as PNG: the latest picture of the running generation.
             guard let image = denoisePreviewImage,
@@ -224,6 +228,10 @@ extension GenerationViewModel {
             return projectResponse()
         case ("POST", "/api/project/import-video"):
             return handleProjectRequest(request)
+        case ("POST", "/api/project/import-image"), ("POST", "/api/project/show-image"),
+             ("POST", "/api/project/use-image"), ("POST", "/api/project/delete-image"),
+             ("POST", "/api/kind"):
+            return handleImageRequest(request)
         case ("POST", "/api/project/new"), ("POST", "/api/project/open"), ("POST", "/api/project/close"),
             ("POST", "/api/project/upscale-video"),
             ("POST", "/api/upscale-file"),
@@ -600,6 +608,21 @@ extension GenerationViewModel {
             "stage_title": stageTitle,
             "stage_detail": stageDetail,
             "result_available": resultURL != nil,
+            // What the composer makes ("video" or "image"), and the inputs
+            // the video form holds (set by hand, by a restore or by
+            // POST /api/project/use-image).
+            "generation_kind": generationKind.rawValue,
+            "form": [
+                "prompt": prompt,
+                "creation_method": creationMethod.rawValue,
+                "image_input_mode": imageInputMode.rawValue,
+                "first_frame": firstFramePath as Any? ?? NSNull(),
+                "last_frame": lastFramePath as Any? ?? NSNull(),
+                "references": referenceImages.map(\.path),
+                "image": ["prompt": imagePrompt, "size": imageSizeProfile.rawValue,
+                          "width": Int(imageSizeProfile.dimensions.width),
+                          "height": Int(imageSizeProfile.dimensions.height), "count": imageCount],
+            ] as [String: Any],
         ]
         if let state = refModExtraction {
             body["refmod_extract_phase"] = state.phase
@@ -641,6 +664,25 @@ extension GenerationViewModel {
             "importing_video": isImportingVideo,
             "upscaling_video": isUpscalingVideo,
             "upscale_progress": upscaleProgress,
+            // Still images (images/ in the project): whether image files are
+            // being brought in, the one in the preview, and all of them.
+            "importing_images": isImportingImages,
+            "displayed_image": displayedImage.map { $0.url.lastPathComponent as Any } ?? NSNull(),
+            "images": projectImages.map { image -> [String: Any] in
+                var item: [String: Any] = ["file": image.url.lastPathComponent, "path": image.url.path,
+                                           "has_latent": image.latentURL != nil]
+                if let record = image.record {
+                    item["asset_id"] = record.assetID
+                    item["width"] = record.width
+                    item["height"] = record.height
+                    item["completed_at"] = formatter.string(from: record.completedAt)
+                    item["imported_from"] = record.importedFrom as Any? ?? NSNull()
+                    if let seed = record.seed { item["seed"] = seed }
+                    if let prompt = record.prompt { item["prompt"] = prompt }
+                    if let seconds = record.generationSeconds { item["generation_seconds"] = seconds }
+                }
+                return item
+            },
             "videos": projectVideos.map { video -> [String: Any] in
                 var item: [String: Any] = ["file": video.url.lastPathComponent, "path": video.url.path]
                 if let record = video.record {
@@ -649,6 +691,8 @@ extension GenerationViewModel {
                     item["generation_seconds"] = record.generationSeconds
                     item["continued_from"] = record.draft.continueFrom
                         .map { URL(fileURLWithPath: $0).lastPathComponent as Any } ?? NSNull()
+                    // The project image its first frame is (an image's "asset_id").
+                    if let source = record.sourceImage { item["source_image"] = source }
                     if let clips = record.joinedClips {
                         item["joined_clips"] = clips
                         item["planned_clips"] = record.chainPlannedClips as Any? ?? NSNull()
@@ -658,6 +702,66 @@ extension GenerationViewModel {
                 return item
             },
         ])
+    }
+
+    /// Still images. POST /api/kind {"kind": "video" | "image"} switches what
+    /// the composer makes. POST /api/project/import-image {"path"} or
+    /// {"paths": [...]} brings image files into the open project as PNG (an
+    /// untitled project is started if none is open); answers at once, and
+    /// they are listed by GET /api/project once in. POST
+    /// /api/project/show-image {"image"} shows one in the preview. POST
+    /// /api/project/use-image {"image", "as": "first_frame" | "last_frame" |
+    /// "reference"} hands it to the video form without generating. POST
+    /// /api/project/delete-image {"image"} moves it to the Trash.
+    private func handleImageRequest(_ request: HTTPRequest) -> HTTPResponse {
+        let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+        guard !isGenerating else { return .error(409, "a generation is running") }
+        projectMessage = nil
+        if request.path == "/api/kind" {
+            guard let kind = (json["kind"] as? String).flatMap(GenerationKind.init(rawValue:)) else {
+                return .error(400, "\"kind\" must be \"video\" or \"image\"")
+            }
+            generationKind = kind
+            return .json(200, ["ok": true, "generation_kind": kind.rawValue])
+        }
+        if request.path == "/api/project/import-image" {
+            var paths = (json["paths"] as? [String]) ?? []
+            if let path = json["path"] as? String { paths.append(path) }
+            guard !paths.isEmpty, paths.allSatisfy({ FileManager.default.fileExists(atPath: $0) }) else {
+                return .error(400, "\"path\" (or \"paths\") must name existing image files")
+            }
+            guard !isImportingImages else { return .error(409, "images are already being imported") }
+            importImages(from: paths.map { URL(fileURLWithPath: $0) })
+            guard isImportingImages else {
+                return .error(400, projectMessage ?? "the images could not be imported")
+            }
+            return .json(202, ["ok": true, "count": paths.count])
+        }
+        guard project != nil else { return .error(400, "no project is open") }
+        guard let name = json["image"] as? String,
+              let image = projectImages.first(where: { $0.url.lastPathComponent == name }) else {
+            return .error(400, "\"image\" must name a file listed under \"images\" by GET /api/project")
+        }
+        switch request.path {
+        case "/api/project/show-image":
+            showProjectImage(image)
+        case "/api/project/use-image":
+            switch json["as"] as? String {
+            case "first_frame"?: makeVideo(from: image)
+            case "last_frame"?: useImageAsLastFrame(image)
+            case "reference"?:
+                if !addImageAsReference(image) {
+                    return .json(200, ["ok": true, "warning": "the active model has no Ref2VA: add it before generating with references (POST /api/models/add_ref2va)"])
+                }
+            default:
+                return .error(400, "\"as\" must be \"first_frame\", \"last_frame\" or \"reference\"")
+            }
+            return .json(200, ["ok": true, "generation_kind": generationKind.rawValue])
+        default:
+            deleteProjectImage(image)
+        }
+        if let projectMessage { return .error(400, projectMessage) }
+        return projectResponse()
     }
 
     /// POST /api/project/join {"video": name}: joins the continuation chain
@@ -887,6 +991,18 @@ extension GenerationViewModel {
             }
             count = value
         }
+        // "kind": "video" (the default). Images cannot be generated yet.
+        switch json["kind"] as? String {
+        case nil, "video"?:
+            if json["kind"] != nil && !(json["kind"] is String) { return .error(400, "\"kind\" must be \"video\" or \"image\"") }
+        case "image"?:
+            return .error(501, "image generation is not available in this version")
+        default:
+            return .error(400, "\"kind\" must be \"video\" or \"image\"")
+        }
+        guard !isGenerating else { return .error(409, "a generation is already running") }
+        // This request makes a video, whatever the window's composer shows.
+        generationKind = .video
         // "from_form": true generates from the form as it is (e.g. a
         // project's saved form) instead of replacing it from this body.
         if let value = json["from_form"] {
@@ -894,7 +1010,7 @@ extension GenerationViewModel {
                 return .error(400, "\"from_form\" must be true or false")
             }
             if number.boolValue {
-                let extra = Set(json.keys).subtracting(["from_form", "count"])
+                let extra = Set(json.keys).subtracting(["from_form", "count", "kind"])
                 guard extra.isEmpty else {
                     return .error(400, "\"from_form\" can't be combined with \(extra.sorted().joined(separator: ", "))")
                 }

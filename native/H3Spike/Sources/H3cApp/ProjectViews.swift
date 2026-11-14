@@ -46,7 +46,7 @@ struct ProjectMenuItems: View {
         }
         .disabled(recents.isEmpty)
         Divider()
-        Button("プロジェクトの動画…") { viewModel.showingProjectVideos = true }
+        Button("プロジェクトの動画と画像…") { viewModel.showingProjectVideos = true }
             .disabled(viewModel.project == nil)
         Button("表示中の動画を参照に使う") {
             if let url = viewModel.resultURL { viewModel.useVideoAsReference(url) }
@@ -330,10 +330,53 @@ struct BatchProjectSheet: View {
 }
 
 /// The open project's videos, newest first.
+/// What the project's list shows: everything, or one kind.
+enum GalleryFilter: String, CaseIterable, Identifiable {
+    case all, videos, images
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return String(localized: "すべて")
+        case .videos: return String(localized: "動画")
+        case .images: return String(localized: "画像")
+        }
+    }
+}
+
+/// Whose videos and images the list shows.
+enum GalleryScope: String, CaseIterable, Identifiable {
+    case project, all
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .project: return String(localized: "このプロジェクト")
+        case .all: return String(localized: "すべてのプロジェクト")
+        }
+    }
+}
+
+/// Another project's videos and images, for すべてのプロジェクト.
+struct GalleryProject: Identifiable {
+    let url: URL
+    let name: String
+    let images: [ProjectImage]
+    let videos: [ProjectVideo]
+    var id: String { url.path }
+}
+
+/// The project's videos and images in one list, newest first.
 struct ProjectVideosSheet: View {
     @ObservedObject var viewModel: GenerationViewModel
     @Binding var isPresented: Bool
     @State private var pendingDelete: ProjectVideo?
+    @State private var pendingImageDelete: ProjectImage?
+    @State private var filter: GalleryFilter = .all
+    @State private var scope: GalleryScope = .project
+    /// The other projects, read when すべてのプロジェクト is chosen.
+    @State private var otherProjects: [GalleryProject] = []
+    @State private var loadingOthers = false
     @State private var tree: [VideoNode] = []
     /// 2倍に拡大した動画をつくる…: shown from here, this being a sheet.
     @State private var upscaleRequest: GenerationViewModel.PendingUpscale?
@@ -344,20 +387,37 @@ struct ProjectVideosSheet: View {
         VStack(alignment: .leading, spacing: H3Spacing.md) {
             HStack {
                 Text(viewModel.project?.name ?? "").font(.headline)
-                Text("\(viewModel.projectVideos.count)本").foregroundStyle(.secondary)
+                Text("動画 \(viewModel.projectVideos.count)本 ・ 画像 \(viewModel.projectImages.count)枚")
+                    .foregroundStyle(.secondary)
                 Spacer()
+                Picker("範囲", selection: $scope) {
+                    ForEach(GalleryScope.allCases) { Text($0.label).tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("すべてのプロジェクト: 最近開いたプロジェクト、既定の保存先（ムービー › H3cApp）にあるプロジェクト、無題のプロジェクトを探します")
+                Picker("表示", selection: $filter) {
+                    ForEach(GalleryFilter.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
                 Button("閉じる") { isPresented = false }
                     .keyboardShortcut(.cancelAction)
             }
-            if viewModel.projectVideos.isEmpty {
-                Text("まだ動画はありません。生成した動画はここに保存されます。")
+            if scope == .all {
+                allProjectsList
+            } else if tree.isEmpty {
+                Text(emptyText)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 // Joined videos lead; the clips they were joined from fold
                 // under them (a joined video can itself be a clip of another).
                 List(tree, children: \.children) { node in
-                    if let video = node.video {
+                    if let image = node.image {
+                        imageRow(image)
+                    } else if let video = node.video {
                         row(video, clipIndex: node.clipIndex)
                     } else {
                         missingRow(node)
@@ -372,6 +432,16 @@ struct ProjectVideosSheet: View {
             tree = buildTree()
         }
         .onChange(of: viewModel.projectVideos) { _, _ in tree = buildTree() }
+        .onChange(of: viewModel.projectImages) { _, _ in tree = buildTree() }
+        .onChange(of: filter) { _, _ in tree = buildTree() }
+        .onChange(of: scope) { _, scope in if scope == .all { loadOtherProjects() } }
+        .confirmationDialog("この画像を削除しますか？", isPresented: Binding(
+            get: { pendingImageDelete != nil }, set: { if !$0 { pendingImageDelete = nil } }
+        ), presenting: pendingImageDelete) { image in
+            Button("ゴミ箱に移動", role: .destructive) { viewModel.deleteProjectImage(image) }
+        } message: { _ in
+            Text("画像と設定の記録をゴミ箱に移動します。")
+        }
         .sheet(item: $upscaleRequest) { pending in
             UpscaleSheet(viewModel: viewModel, pending: pending) { upscaleRequest = nil }
         }
@@ -486,6 +556,184 @@ struct ProjectVideosSheet: View {
         .padding(.vertical, 2)
     }
 
+    // MARK: すべてのプロジェクト
+
+    /// This project first, then the others, each under its name. Another
+    /// project's items can be shown and handed to the form (they are copied
+    /// into this project when used); changing them is done in their project.
+    private var allProjectsList: some View {
+        List {
+            if !tree.isEmpty {
+                Section(viewModel.project?.name ?? "") {
+                    OutlineGroup(tree, children: \.children) { node in
+                        if let image = node.image {
+                            imageRow(image)
+                        } else if let video = node.video {
+                            row(video, clipIndex: node.clipIndex)
+                        } else {
+                            missingRow(node)
+                        }
+                    }
+                }
+            }
+            ForEach(otherProjects) { project in
+                let images = filter == .videos ? [] : project.images
+                let videos = filter == .images ? [] : project.videos
+                if !images.isEmpty || !videos.isEmpty {
+                    // An untitled one by its name and date: several share a name.
+                    Section(ProjectStore.isUntitledFolder(project.url)
+                            ? ProjectStore.shared.displayName(for: project.url) : project.name) {
+                        ForEach(images) { imageRow($0, foreign: true) }
+                        ForEach(videos) { foreignVideoRow($0) }
+                    }
+                }
+            }
+            if loadingOthers {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("ほかのプロジェクトを調べています…").font(.caption).foregroundStyle(.secondary)
+                }
+            } else if tree.isEmpty && otherProjects.isEmpty {
+                Text(emptyText).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func loadOtherProjects() {
+        guard !loadingOthers else { return }
+        let current = viewModel.project?.url.standardizedFileURL.path
+        let folders = ProjectStore.shared.galleryProjectFolders().filter { $0.standardizedFileURL.path != current }
+        loadingOthers = true
+        Task {
+            otherProjects = await Task.detached(priority: .userInitiated) {
+                folders.compactMap { url -> GalleryProject? in
+                    guard let file = try? ProjectFiles.read(url) else { return nil }
+                    let images = ProjectFiles.images(in: url), videos = ProjectFiles.videos(in: url)
+                    guard !images.isEmpty || !videos.isEmpty else { return nil }
+                    return GalleryProject(url: url, name: file.name, images: images, videos: videos)
+                }
+            }.value
+            loadingOthers = false
+        }
+    }
+
+    /// A video of another project: it can be used as a reference here.
+    private func foreignVideoRow(_ video: ProjectVideo) -> some View {
+        HStack(spacing: H3Spacing.md) {
+            VideoThumbnail(url: video.url, size: 56)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(video.url.lastPathComponent)
+                    .font(.callout.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let record = video.record {
+                    Text(summary(record)).font(.caption).foregroundStyle(.secondary)
+                    Text(record.draft.prompt).font(.caption).lineLimit(1).truncationMode(.tail)
+                }
+            }
+            Spacer()
+            Button("参照に使う") {
+                viewModel.useVideoAsReference(video.url)
+                isPresented = false
+            }
+            .disabled(viewModel.isGenerating)
+            .help("この動画を参照動画としてパネルに追加します（このプロジェクトにコピーされます）")
+            Button("Finderで表示") { NSWorkspace.shared.activateFileViewerSelecting([video.url]) }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var emptyText: String {
+        switch filter {
+        case .all: return String(localized: "まだ動画も画像もありません。生成した動画と画像はここに保存されます。")
+        case .videos: return String(localized: "まだ動画はありません。生成した動画はここに保存されます。")
+        case .images: return String(localized: "まだ画像はありません。生成した画像と、取り込んだ画像はここに保存されます。")
+        }
+    }
+
+    /// `foreign`: an image of another project (すべてのプロジェクト).
+    private func imageRow(_ image: ProjectImage, foreign: Bool = false) -> some View {
+        HStack(spacing: H3Spacing.md) {
+            Button { show(image) } label: {
+                ImageThumbnail(url: image.url, size: 72)
+                    .overlay(alignment: .bottomTrailing) {
+                        // So a still is not taken for a video's thumbnail.
+                        Image(systemName: "photo")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(4)
+                            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 4))
+                            .padding(3)
+                    }
+            }
+            .buttonStyle(.plain)
+            .disabled(viewModel.isGenerating)
+            .help("この画像をプレビューに表示します")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(image.url.lastPathComponent)
+                    .font(.callout.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let record = image.record {
+                    Text(imageSummary(record)).font(.caption).foregroundStyle(.secondary)
+                    if let prompt = record.prompt {
+                        Text(prompt)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                } else {
+                    Text("設定の記録がありません").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button("表示") { show(image) }
+                .disabled(viewModel.isGenerating)
+                .help("この画像をプレビューに表示します")
+            Button("動画を作る") {
+                viewModel.makeVideo(from: image)
+                isPresented = false
+            }
+            .disabled(viewModel.isGenerating)
+            .help("この画像を最初の画像にして、動画をつくる準備をします（生成は始めません）")
+            Menu("その他") {
+                ImageHandoffButtons(viewModel: viewModel, image: image) { isPresented = false }
+                Button("設定を戻す") {
+                    viewModel.restoreProjectImage(image)
+                    isPresented = false
+                }
+                .disabled(image.record?.draft == nil)
+                Divider()
+                Button("Finderで表示") { NSWorkspace.shared.activateFileViewerSelecting([image.url]) }
+                if !foreign {
+                    Divider()
+                    Button("削除…", role: .destructive) { pendingImageDelete = image }
+                }
+            }
+            .fixedSize()
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func show(_ image: ProjectImage) {
+        viewModel.showProjectImage(image)
+        isPresented = false
+    }
+
+    private func imageSummary(_ record: ProjectImageRecord) -> String {
+        var parts = [String(localized: "画像"), "\(record.width)×\(record.height)"]
+        if let source = record.importedFrom {
+            parts.append(String(localized: "取り込んだ画像: \(source)"))
+        } else {
+            if let model = record.model { parts.append(model.name) }
+            if let seed = record.seed { parts.append(String(localized: "シード \(seed)")) }
+            if let seconds = record.generationSeconds {
+                parts.append(String(localized: "生成時間 \(formatElapsed(seconds))"))
+            }
+        }
+        return parts.joined(separator: summarySeparator)
+    }
+
     /// Whether the video sits in the project's own folder (not in chains/).
     private func isInProjectFolder(_ video: ProjectVideo) -> Bool {
         guard let project = viewModel.project else { return false }
@@ -497,9 +745,16 @@ struct ProjectVideosSheet: View {
     private func buildTree() -> [VideoNode] {
         guard let project = viewModel.project else { return [] }
         let included = Set(viewModel.projectVideos.flatMap { $0.record?.joinedClips ?? [] })
-        return viewModel.projectVideos
+        let videos = filter == .images ? [] : viewModel.projectVideos
             .filter { !included.contains(ProjectFiles.stored($0.url.path, in: project.url)) }
             .map { node(for: $0, path: $0.id, parentID: "", clipIndex: nil, depth: 0) }
+        let images = filter == .videos ? [] : viewModel.projectImages.map {
+            VideoNode(id: "image/" + $0.id, path: $0.id, video: nil, clipIndex: nil, children: nil, image: $0)
+        }
+        // Both are named by when they were made: one list, newest first.
+        return (videos + images).sorted {
+            URL(fileURLWithPath: $0.path).lastPathComponent > URL(fileURLWithPath: $1.path).lastPathComponent
+        }
     }
 
     private func node(for video: ProjectVideo?, path: String, parentID: String,
@@ -723,13 +978,56 @@ struct VideoThumbnail: View {
     }
 }
 
-/// One row of the project's video tree; a missing clip has no video.
+/// A project image's small copy, cached in images/.thumbnails/ (made
+/// again when missing or older than the image).
+struct ImageThumbnail: View {
+    let url: URL
+    var size: CGFloat = 72
+    @State private var image: NSImage?
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if let image {
+                Image(nsImage: image).resizable().scaledToFit()
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .task(id: url) {
+            let url = url
+            image = await Task.detached(priority: .utility) { Self.thumbnail(for: url) }.value
+        }
+    }
+
+    private nonisolated static func thumbnail(for url: URL) -> NSImage? {
+        let cache = ProjectFiles.imageThumbnailURL(for: url)
+        func modified(_ url: URL) -> Date? {
+            (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        }
+        if let cached = modified(cache), let source = modified(url), cached >= source,
+           let image = NSImage(contentsOf: cache) {
+            return image
+        }
+        guard let small = ImageMetadata.thumbnail(at: url, maxSide: 216) else { return nil }
+        if let jpeg = ImageMetadata.jpegData(small, quality: 0.8) {
+            try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            try? jpeg.write(to: cache, options: .atomic)
+        }
+        return NSImage(cgImage: small, size: NSSize(width: small.width, height: small.height))
+    }
+}
+
+/// One row of the project's list: a video (with the clips it was joined
+/// from under it; a missing clip has no video) or an image.
 struct VideoNode: Identifiable {
     let id: String
     let path: String
     let video: ProjectVideo?
     let clipIndex: Int?
     let children: [VideoNode]?
+    var image: ProjectImage? = nil
 }
 
 /// "5.2秒", "1分30.5秒".

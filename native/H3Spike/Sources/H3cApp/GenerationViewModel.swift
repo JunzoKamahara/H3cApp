@@ -456,7 +456,7 @@ final class GenerationViewModel: ObservableObject {
     /// several, one video's with "×3本" after it. A つなげて生成 makes one
     /// video whatever 本数 holds (its menu is off then).
     var draftEstimateText: String? {
-        guard !promptIsEmpty, !isGenerating, let seconds = draftEstimatedSeconds else { return nil }
+        guard generationKind == .video, !promptIsEmpty, !isGenerating, let seconds = draftEstimatedSeconds else { return nil }
         let minutes = max(Int((seconds / 60).rounded(.up)), 1)
         let hours = minutes / 60, rest = minutes % 60
         var text = minutes < 60 ? String(localized: "目安 約\(minutes)分")
@@ -646,9 +646,28 @@ final class GenerationViewModel: ObservableObject {
 
     // MARK: Result - immutable once set, independent of the live draft.
     // Set from Projects.swift too (showing a saved project video).
-    @Published var resultURL: URL?
+    @Published var resultURL: URL? {
+        // The preview shows one thing: a video takes the image's place.
+        didSet { if resultURL != nil { displayedImage = nil } }
+    }
     @Published var resultAspectRatio: CGFloat = 1
     @Published var lastResult: ResolvedResult?
+
+    // MARK: Still images (see GenerationViewModel+Images.swift)
+    /// What the composer makes. The video form keeps its state while images
+    /// are being made, and the other way round.
+    @Published var generationKind: GenerationKind = .video
+    @Published var imagePrompt: String = ""
+    @Published var imageSizeProfile: ImageSizeProfile = .default
+    @Published var imageSeedFixed = false
+    @Published var imageSeedText: String = ""
+    /// 枚数: images per press of generate.
+    @Published var imageCount: Int = 1
+    @Published var projectImages: [ProjectImage] = []
+    /// The project image in the preview (instead of a video).
+    @Published var displayedImage: ProjectImage?
+    /// Image files are being brought into the project (importImages).
+    @Published var isImportingImages = false
 
     // MARK: Project (see Projects.swift) - nil: results are temp files.
     @Published var project: OpenProject?
@@ -979,8 +998,10 @@ final class GenerationViewModel: ObservableObject {
     // MARK: Validation (UI-07: block generation with a locatable reason
     // instead of a generic disabled button)
 
+    /// Of the prompt the composer shows: the video's or the image's.
     var promptIsEmpty: Bool {
-        prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        (generationKind == .image ? imagePrompt : prompt)
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// The seed field's own error, shown next to it in 詳細設定 whatever
@@ -992,6 +1013,8 @@ final class GenerationViewModel: ObservableObject {
     }
 
     var validationMessage: String? {
+        // Images have their own model and engine: nothing below applies.
+        if generationKind == .image { return imageValidationMessage }
         guard case .ready = engineState else { return nil } // covered by engine status instead
         // The form is set to continue the video only once it is in.
         if isImportingVideo {
@@ -1053,13 +1076,15 @@ final class GenerationViewModel: ObservableObject {
     }
 
     var canGenerate: Bool {
-        engineState == .ready && !isGenerating && !isBuildingCache && !isImportingVideo
+        if generationKind == .image { return canGenerateImage }
+        return engineState == .ready && !isGenerating && !isBuildingCache && !isImportingVideo
             && !isMovingProjectFiles && validationMessage == nil
     }
 
     // MARK: Summary text shown above the primary button, and in "設定を見る"
 
     var draftSummaryText: String {
+        if generationKind == .image { return imageDraftSummaryText }
         var parts = [sizeProfile.label, durationLabel]
         if usesCustomClips {
             let total = String(format: "%.1f", customClipsTotalSeconds)
@@ -1463,7 +1488,8 @@ final class GenerationViewModel: ObservableObject {
             sampler: request.sampling.renoise ? "renoise" : nil,
             audioSigmaShift: request.sampling.audioShift > 0 ? Double(request.sampling.audioShift) : nil,
             soundLateness: request.soundLateness,
-            latentSoundLateness: request.soundLateness)
+            latentSoundLateness: request.soundLateness,
+            sourceImage: request.params.firstFrame.flatMap(ProjectFiles.sourceImageID(forFrame:)))
         GenerationMetadata.tag(url, record: record)
         if let projectURL = request.projectURL {
             if let stored = storeInProject(videoAt: url, projectURL: projectURL, record: record,

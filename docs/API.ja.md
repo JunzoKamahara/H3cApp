@@ -55,9 +55,10 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | メソッド | パス | 内容 |
 |---|---|---|
 | `POST` | `/api/generate` | ジョブを開始。JSONボディで現在のドラフトを完全に置き換えます（下記参照）。開始できれば`202`、リクエスト不正なら`400`、ジョブ実行中なら`409`。 |
-| `GET` | `/api/status` | エンジン/ジョブの状態、進捗割合、フェーズ/ステージ文言、エラーメッセージ、結果が用意できているか。複数本の生成やつなげて生成の間は、`batch`に`index`・`total`・`chained`と、全体の`elapsed_seconds`・`estimated_remaining_seconds`（今の1本の見積りに、残りの本数分の見積りをこれまでの実際の速さで補正して足したもの）が入る。最上位の`estimated_remaining_seconds`は今の1本の値。 |
+| `GET` | `/api/status` | エンジン/ジョブの状態、進捗割合、フェーズ/ステージ文言、エラーメッセージ、結果が用意できているか。複数本の生成やつなげて生成の間は、`batch`に`index`・`total`・`chained`と、全体の`elapsed_seconds`・`estimated_remaining_seconds`（今の1本の見積りに、残りの本数分の見積りをこれまでの実際の速さで補正して足したもの）が入る。最上位の`estimated_remaining_seconds`は今の1本の値。`generation_kind`はパネルがつくるもの（`video`か`image`）、`form`はフォームが持っている入力で、動画側の`prompt`・`creation_method`・`image_input_mode`・`first_frame`・`last_frame`・`references`（パス）と、`image`の下に画像側の`prompt`・`size`・`width`・`height`・`count`が入る。 |
 | `POST` | `/api/cancel` | 実行中のジョブがあれば中止。 |
 | `GET` | `/api/result/video` | 現在の結果を`video/mp4`としてストリーミング。結果が無いか、次のジョブの`generate()`呼び出しで削除された後は`404`。 |
+| `GET` | `/api/result/image` | プレビューに表示しているプロジェクトの画像を`image/png`で返す。表示していなければ`404`。 |
 | `GET` | `/api/models` | 登録済みH3モデルディレクトリ一覧（id・名前・パス・アクティブかどうか）。 |
 | `GET` | `/api/refmods` | RefModの一覧（モデル管理のRefMod）。各ファイルの`id`・`name`・`path`と、ヘッダから`format_version`・`bundle`・`file_name`・`members`（`index`、`kind`はimage/video/audio、`mode`はfull/compressed、`latent_t`/`latent_h`/`latent_w`、`tokens`、`name`、`source`、`pool`、`optimize_steps`、`supported`）。ファイルを読み込み中は`null`、読めないときは`error`も。 |
 | `POST` | `/api/refmods/extract` | `{"path", "name"?, "mode"?, "resolution_cap"?, "latent_frames"?, "max_seconds"?}` 画像・動画・音声のファイルからFullのRefModをRefModフォルダに作る。`mode`は`full`だけ（`compressed`は`400`。H3cAppは圧縮のRefModを作らなくなった。読み込みはできる）、`resolution_cap`は短辺の上限ピクセル（省略時1024）、`latent_frames`は動画から使うコマ数（省略時16）、`max_seconds`は使う音声の秒数（省略時15）。`"path"`の代わりに`"paths": [...]`で2〜32枚の静止画を1つのRefModにまとめる（上流の"stack"。1枚が潜在の1コマになり順に並ぶ。`resolution_cap`の省略時は512。1枚目が画面の大きさを決め、ほかはそれを覆うよう拡大縮小して中央を切り取る）。書く前に`202`で`{"output"}`（できるファイル）を返す。ほかを作成中は`409`。生成が走っていればエンジンの待ち行列でその後に始まり、`GET /api/status`の`refmod_extracting`・`refmod_extract_phase`・`refmod_extract_progress`（その段階の0〜1）・`refmod_extract_name`で進み具合、`message`で結果が分かる。 |
@@ -68,10 +69,10 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `POST` | `/api/upscalers/swiftVR/remove-original` | 変換したあとで、ダウンロードした元の重み（約20GB）を削除します。変換したキャッシュは残り、SwiftVRはそのまま使えます。`{"ok", "freed_bytes", "cache"}`を返します。元の重みが無いとき、このMac用にまだ変換していないとき、準備の最中は409。変換し直すには、もう一度ダウンロードが必要です。 |
 | `POST` | `/api/upscalers/seedVR2/setup` | `{"confirm_license": true}`で、mlx-community/SeedVR2-3B-mlx-int8の固定したrevisionの一覧を取り、足りないファイル（約4.7GB、中断しても続きから）をダウンロードし、各ファイルのSHA-256をそのrevisionと照合し（違うファイルは削除して`setup`に名前を出す）、Apache License 2.0の本文と記録を重みの隣に保存します。変換はありません（エンジンがそのファイルを読みます）。`{"ok", "setup"}`を返し、確認なしは400、すでに動いているときは409。`seedVR2`と`seedVR2Video`については`GET /api/upscalers`が`model_directory`・`model_installed`・`license_accepted`・`setup`・`revision`・`declared_license`・`verified`・`verified_at`を返し、`seedVR2Video`はさらに動画の切り方`window_frames`（17）・`overlap_frames`（5）・`blend`（`hann`）を返します。 |
 | `POST` | `/api/upscalers/openH3/setup` | `{"confirm_license": true}`で、Efficient-Large-Model/Open-H3-Regenerate-2Kの固定したrevisionの一覧を取り、足りないファイル（結合LoRA FP32 約12.5GB、潜在アップスケーラ 691MB、ライセンス等。中断しても続きから。LoRAフォルダにLightX2V Turbo v1.2の同じ版が無ければそれも1.4GB）をダウンロードし、各ファイルのSHA-256をそのrevisionと照合し（違うファイルは削除して`setup`に名前を出す）、結合LoRAから精緻化の部分（ランク0〜383）だけをBF16で取り出して（`extracting`、約4.2GB）結合ファイルを削除し、記録を保存します。`{"ok", "setup"}`を返し、確認なしは400、すでに動いているときは409。`openH3`については`GET /api/upscalers`が`model_directory`・`model_installed`・`license_accepted`・`setup`（`extracting`を含む）・`revision`・`declared_license`（MiniMax H3 Community License）・`verified`・`verified_at`・`turbo`（使うTurboのパス）・`max_pixels`を返します。 `GET /api/upscalers`の`openH3`には、選べる強さの`strengths`（`id`・`label`・`sigmas`）と`default_strength`も入る。 |
-| `GET` | `/api/project` | 開いているプロジェクト（名前・パス・`untitled`（ウィンドウの無題のプロジェクト。保存するまで Application Support/H3cApp/Untitled に置かれる）・本数・動画一覧（ファイル・シード・完成日時・生成時間・`continued_from`・`can_continue`、つないだ動画なら`joined_clips`・`planned_clips`））。 |
+| `GET` | `/api/project` | 開いているプロジェクト（名前・パス・`untitled`（ウィンドウの無題のプロジェクト。保存するまで Application Support/H3cApp/UntitledProjects に置かれる。0.9以前のものは Untitled のまま）・本数・動画一覧（ファイル・シード・完成日時・生成時間・`continued_from`・`can_continue`、つないだ動画なら`joined_clips`・`planned_clips`。`source_image`は、最初の画像にしたプロジェクトの画像の`asset_id`））。画像は`images`に並ぶ（ファイル・パス・`asset_id`・`width`・`height`・完成日時・ファイルから取り込んだものは`imported_from`・`has_latent`、生成したものは`seed`・`prompt`・生成時間）。`importing_images`は取り込み中か、`displayed_image`はプレビューに出ている画像。 |
 | `POST` | `/api/project/new` | `{"name", "directory"?}` 今のフォームからプロジェクトを作って開く（既定の場所は`~/Movies/H3cApp`）。 |
 | `POST` | `/api/project/open` | `{"path"}` プロジェクトのフォルダを開く。フォームは保存時の状態になる。 |
-| `POST` | `/api/project/close` | 閉じる。ウィンドウは新しい無題のプロジェクトで続く（`{"ok": true, "untitled": true}`）。動画のない無題のプロジェクトは削除される。 |
+| `POST` | `/api/project/close` | 閉じる。ウィンドウは新しい無題のプロジェクトで続く（`{"ok": true, "untitled": true}`）。動画も画像もない無題のプロジェクトは削除される。 |
 | `POST` | `/api/project/save` | `{"name", "directory"?}` 開いている無題のプロジェクトに名前を付ける。フォルダが動画・記録・潜在ファイルごと `directory/name`（既定の directory は `~/Movies/H3cApp`）に移り、プロジェクトがその名前になる。移動を待ってプロジェクトを返す。名前のあるプロジェクトや既にあるフォルダには `400`、生成・拡大・取り込み・書き出し・ほかの移動の間は `409`。 |
 | `POST` | `/api/project/move-video` | `{"video", "project"}` その動画をプロジェクトのフォルダ `project` に移す。記録と潜在ファイル、つなげて生成した動画ならもとの動画のフォルダ（`chains/<名前>`）も一緒に移り、記録が使う入力ファイルは移動先の `references` にコピーされる。移動先で使われている名前には `-2`、`-3`… が付く。移動を待って `{"ok", "project", "video"}`（移動先での名前）を返す。理由付きの `400`（プロジェクトでない、同じプロジェクト）、ファイルの書き込み中は `409`。 |
 | `POST` | `/api/project/restore` | `{"video"}` その動画のリクエストをシード固定でフォームに戻す。 |
@@ -82,6 +83,11 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `POST` | `/api/upscale-file` | `{"path", "output", "upscaler"?, "scale"?}` どの動画ファイルでも、拡大して`output`（`.mp4`のパス）に書き出す。拡大の方法と倍率は上と同じ。`output`の隣の隠しファイルに書き出し、終わってから置き換えるので、拡大に失敗したり中止したりしても、既にある`output`はそのまま残る。`output`が入力そのもの（`..`やシンボリックリンク、ハードリンクでの別名も含む）なら`400`。別のサイトのWebページから送られたもの（別の`Origin`、または`Sec-Fetch-Site: cross-site`/`same-site`）には`403`を返す。スクリプトや`curl`は影響を受けない。`409`は上と同じ。すぐに返り、進み具合と結果は上と同じく分かる。 |
 | `POST` | `/api/upscale/cancel` | 実行中の拡大を止める。書きかけのファイルは消す。実行中でなければ`409`。 |
 | `POST` | `/api/project/import-video` | `{"path", "size_profile"?, "carry_frames"?, "crop_position"?}` ほかで作った動画の続きをつくるため、その動画を、動画の大きさに近い大きさ（`size_profile`が`"current"`なら今の大きさ、大きさの名前ならその大きさ）と24fpsに変換してプロジェクトに取り込み、フォームをその続きにする。`carry_frames`は引き継ぐコマ数（22・39・56、省略時22）。`crop_position`（`[x, y]`、それぞれ0〜1、省略時`[0.5, 0.5]`）は、縦横比が違うときに残す部分の位置（`[0, 0.5]`で左端）。取り込む前に`{"video"}`（付く名前）を返し、変換が終わると`GET /api/project`に並んで`continue_from`に使える。 |
+| `POST` | `/api/kind` | `{"kind": "video" \| "image"}` パネルがつくるものを切り替える。プロンプトと設定は動画と画像で別々に保たれる。 |
+| `POST` | `/api/project/import-image` | `{"path"}` または `{"paths": [...]}` 画像ファイルを、開いているプロジェクトの画像として取り込む（プロジェクトの`images/`。開いていなければ無題のプロジェクトを始める）。PNGはそのまま、ほかの形式は向きを正してPNGに変換し、元のメタデータを引き継ぐ。それぞれに取り込み元のファイル名を書いた記録が付き、AI生成の印は付けない。すぐに`{"ok", "count"}`を返し、取り込みが終わると`GET /api/project`に並ぶ（実行中は`importing_images`、読めなかったファイルは`message`）。 |
+| `POST` | `/api/project/show-image` | `{"image"}` その画像（`GET /api/project`の`images`にあるファイル名）をプレビューに表示する。 |
+| `POST` | `/api/project/use-image` | `{"image", "as"}` その画像を動画のフォームに渡す。生成は始めない。`"as": "first_frame"`で最初の画像にする（動画のプロンプトが空なら画像のプロンプトを入れる）、`"last_frame"`で最後の画像にする、`"reference"`で参照画像に追加する（使用中のモデルにRef2VAがなければ応答に`warning`が付く）。パネルは動画に切り替わり、画像はほかの入力と同じくプロジェクトの`references`へ、記録と一緒にコピーされる。 |
+| `POST` | `/api/project/delete-image` | `{"image"}` 画像と記録、潜在ファイルをゴミ箱に移動する。 |
 
 `POST /api/generate`のボディフィールド（`prompt`以外はすべて省略可）:
 
@@ -109,7 +115,8 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `sampler` / `audio_shift` | LoRAの設定に従う | [ステップの進め方と音声シフト](TECHNICAL.ja.md#ステップの進め方と音声シフト)を、このジョブだけ上書きする（`"auto"`・`"euler"`・`"renoise"`、0は自動）。比較テスト用。 |
 | `lora_name` / `lora_scale` | なし | `loras`の旧・単一LoRA形式。`loras`を指定した場合は無視される。 |
 | `count` | `1` | 1〜20。シードを変えて続けて生成する本数。2以上はプロジェクトを開いているときだけ。 |
-| `from_form` | `false` | `true`でフォームの今の状態から生成する（`/api/project/restore`の後など）。併用できるのは`count`だけ。 |
+| `from_form` | `false` | `true`でフォームの今の状態から生成する（`/api/project/restore`の後など）。併用できるのは`count`（と`kind`）だけ。 |
+| `kind` | `"video"` | つくるもの。`"image"`は`501`を返す（画像の生成はまだできない）。省略すると動画をつくり、パネルも動画に切り替わる。 |
 
 範囲外の値や型の違う値（整数の項目に`true`、`"5"`、`2.5`など）は、使える
 範囲を示した`400`になります。黙って範囲内に収めたり丸めたりはしません。

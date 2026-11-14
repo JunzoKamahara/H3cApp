@@ -24,8 +24,19 @@ private let promptSuggestions = [
     "A golden retriever splashes into a lake to fetch a stick.",
 ]
 
-private func randomPromptSuggestion(excluding current: String? = nil) -> String {
-    promptSuggestions.filter { $0 != current }.randomElement() ?? promptSuggestions[0]
+// The same for the image side.
+private let imagePromptSuggestions = [
+    "A portrait photograph of an elderly potter in a sunlit workshop, shaping a clay bowl on a wheel, shelves of glazed ceramics behind him, shallow depth of field, natural window light.",
+    "A yellow enamel teapot and a white cup on a blue wooden table, with a small handwritten sign that reads \"OPEN\" leaning against the teapot.",
+    "A red fox standing in fresh snow at the edge of a pine forest, soft morning light, photorealistic.",
+    "Anime style, hand-drawn look. A girl with short pink hair in a blue school uniform stands on a seaside road, bright summer clouds behind her.",
+    "A lighthouse on a rocky cliff at sunset, long exposure, waves blurred into mist.",
+    "A bowl of ramen on a wooden counter, steam rising, seen from above.",
+]
+
+private func randomPromptSuggestion(for kind: GenerationKind = .video, excluding current: String? = nil) -> String {
+    let suggestions = kind == .image ? imagePromptSuggestions : promptSuggestions
+    return suggestions.filter { $0 != current }.randomElement() ?? suggestions[0]
 }
 
 struct CreationFormView: View {
@@ -62,15 +73,19 @@ struct CreationFormView: View {
             dragHandle
             if !isCollapsed {
                 topRow
-                if viewModel.creationMethod == .image {
-                    imageInputSection
-                }
-                if viewModel.continuation != nil {
-                    continuationSection
-                }
-                lipSyncSection
-                if viewModel.isChained {
-                    ClipPromptsSection(viewModel: viewModel, showingEditor: $showingClipEditor)
+                // The image side has none of these: no input images,
+                // continuation, lip sync or clips.
+                if viewModel.generationKind == .video {
+                    if viewModel.creationMethod == .image {
+                        imageInputSection
+                    }
+                    if viewModel.continuation != nil {
+                        continuationSection
+                    }
+                    lipSyncSection
+                    if viewModel.isChained {
+                        ClipPromptsSection(viewModel: viewModel, showingEditor: $showingClipEditor)
+                    }
                 }
                 promptSection
             }
@@ -225,28 +240,37 @@ struct CreationFormView: View {
         .help("形・大きさ・長さと詳細設定をまとめて保存・適用します（プロンプトは含みません）")
     }
 
+    /// What is made (videos or images) leads; the rest is the video's: its
+    /// 作り方, and the presets and 詳細設定, which hold the video's settings.
+    /// (The prompt box's own row has no room for the switch: with it, the
+    /// video's chips and 続きを生成 no longer fit the panel.)
     private var topRow: some View {
         HStack(spacing: H3Spacing.sm) {
-            Picker("作り方", selection: $viewModel.creationMethod) {
-                ForEach(CreationMethod.allCases) { method in
-                    Text(method.label).tag(method)
+            kindMenu
+            if viewModel.generationKind == .video {
+                Picker("作り方", selection: $viewModel.creationMethod) {
+                    ForEach(CreationMethod.allCases) { method in
+                        Text(method.label).tag(method)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 170)
+
+                Spacer(minLength: 0)
+
+                presetMenu
+
+                Button {
+                    viewModel.showingAdvancedSettings = true
+                } label: {
+                    Label(viewModel.hasSettingsChanges ? String(localized: "詳細設定・変更あり") : String(localized: "詳細設定"),
+                          systemImage: "slider.horizontal.3")
+                }
+                .help("詳細設定を開く（⌘,）")
+            } else {
+                Spacer(minLength: 0)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 200)
-
-            Spacer(minLength: 0)
-
-            presetMenu
-
-            Button {
-                viewModel.showingAdvancedSettings = true
-            } label: {
-                Label(viewModel.hasSettingsChanges ? String(localized: "詳細設定・変更あり") : String(localized: "詳細設定"),
-                      systemImage: "slider.horizontal.3")
-            }
-            .help("詳細設定を開く（⌘,）")
         }
     }
 
@@ -469,16 +493,21 @@ struct CreationFormView: View {
             // prompt box. Return generates, Shift+Return starts a new line.
             VStack(spacing: 0) {
                 ZStack(alignment: .topLeading) {
-                    PromptTextView(text: $viewModel.prompt, suggestion: promptSuggestion,
+                    // Each side has its own prompt, kept while the other is used.
+                    PromptTextView(text: viewModel.generationKind == .image ? $viewModel.imagePrompt : $viewModel.prompt,
+                                   suggestion: promptSuggestion,
                                    onSubmit: { viewModel.requestGenerate() },
                                    onComposingChange: { promptComposing = $0 })
                     .frame(height: 84)
-                    .onChange(of: viewModel.prompt.isEmpty) { wasEmpty, isEmpty in
+                    .onChange(of: shownPrompt.isEmpty) { wasEmpty, isEmpty in
                         if isEmpty && !wasEmpty {
-                            promptSuggestion = randomPromptSuggestion(excluding: promptSuggestion)
+                            promptSuggestion = randomPromptSuggestion(for: viewModel.generationKind, excluding: promptSuggestion)
                         }
                     }
-                    if viewModel.prompt.isEmpty && !promptComposing {
+                    .onChange(of: viewModel.generationKind) { _, kind in
+                        promptSuggestion = randomPromptSuggestion(for: kind)
+                    }
+                    if shownPrompt.isEmpty && !promptComposing {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(promptSuggestion)
                                 .font(.body)
@@ -493,14 +522,24 @@ struct CreationFormView: View {
                     }
                 }
                 HStack(spacing: H3Spacing.sm) {
-                    aspectMenu
-                    sizeMenu
-                    durationMenu
-                    // Several videos are kept in a project: without one,
-                    // generating asks for it (BatchProjectSheet).
-                    batchMenu
-                    Spacer(minLength: 0)
-                    continueButtons
+                    if viewModel.generationKind == .image {
+                        // The video's model is in the window's toolbar.
+                        imageModelMenu
+                        imageAspectMenu
+                        imageSizeMenu
+                        imageCountMenu
+                        Spacer(minLength: 0)
+                        importImagesButton
+                    } else {
+                        aspectMenu
+                        sizeMenu
+                        durationMenu
+                        // Several videos are kept in a project: without one,
+                        // generating asks for it (BatchProjectSheet).
+                        batchMenu
+                        Spacer(minLength: 0)
+                        continueButtons
+                    }
                     generateButton
                 }
                 .padding(.horizontal, 8)
@@ -514,6 +553,154 @@ struct CreationFormView: View {
             )
 
         }
+    }
+
+    /// The prompt the box shows: the video's or the image's.
+    private var shownPrompt: String {
+        viewModel.generationKind == .image ? viewModel.imagePrompt : viewModel.prompt
+    }
+
+    // MARK: 動画・画像の切り替えと画像モデル
+
+    private var kindMenu: some View {
+        Menu {
+            Picker("つくるもの", selection: $viewModel.generationKind) {
+                ForEach(GenerationKind.allCases) { kind in
+                    Label(kind.label, systemImage: kind.systemImage).tag(kind)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            composerChip(systemImage: viewModel.generationKind.systemImage, text: viewModel.generationKind.label)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(viewModel.isGenerating)
+        .help("動画をつくるか、画像をつくるかを切り替えます。それぞれのプロンプトと設定は別々に保たれます")
+    }
+
+    /// The image model in use. Without one, the way to add it.
+    private var imageModelMenu: some View {
+        let active = library.activeImageModel
+        return Menu {
+            if !library.imageModels.isEmpty {
+                Picker("画像モデル", selection: Binding(
+                    get: { active?.id },
+                    set: { id in if let id { library.selectImageModel(id: id) } }
+                )) {
+                    ForEach(library.imageModels) { model in
+                        Text(model.name).tag(Optional(model.id))
+                    }
+                }
+                .pickerStyle(.inline)
+                Divider()
+            }
+            Button("モデル管理…") { showingModelManager = true }
+        } label: {
+            composerChip(systemImage: "cube",
+                         text: active.map { shortModelName($0.name) } ?? String(localized: "画像モデルを追加"))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(viewModel.isGenerating)
+        .help(active.map { String(localized: "画像モデル: \($0.name)") }
+              ?? String(localized: "画像をつくるモデルがまだありません。モデル管理から追加します"))
+    }
+
+    /// A model's name cut to fit the chip (the full one is in its help).
+    private func shortModelName(_ name: String) -> String {
+        name.count > 14 ? name.prefix(13) + "…" : name
+    }
+
+    // MARK: 画像の形・大きさ・枚数
+
+    private var imageAspectMenu: some View {
+        Menu {
+            Picker("画面の形", selection: Binding(
+                get: { viewModel.imageSizeProfile.shape },
+                set: { shape in
+                    // Keep 標準/大, or the video canvas, when the shape changes.
+                    let current = viewModel.imageSizeProfile
+                    viewModel.imageSizeProfile = current.tier.map { .preset(shape, $0) } ?? .videoCanvas(shape)
+                }
+            )) {
+                ForEach(AspectShape.allCases) { shape in
+                    Label(shape.label, systemImage: shape.systemImage).tag(shape)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            composerChip(systemImage: viewModel.imageSizeProfile.shape.systemImage,
+                         text: viewModel.imageSizeProfile.shape.label)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("画面の形")
+    }
+
+    private var imageSizeMenu: some View {
+        Menu {
+            let current = viewModel.imageSizeProfile
+            Picker("大きさ", selection: $viewModel.imageSizeProfile) {
+                ForEach(ImageSizeTier.allCases) { tier in
+                    let profile = ImageSizeProfile.preset(current.shape, tier)
+                    Text("\(tier.label)（\(profile.resolutionLabel)）").tag(profile)
+                }
+                // The video's own canvas: such an image starts a video of
+                // the same size as it is.
+                let video = ImageSizeProfile.videoCanvas(current.shape)
+                Text("動画用（\(video.resolutionLabel)）").tag(video)
+                if current.tier == nil && !current.isVideoCanvas {
+                    Text(current.resolutionLabel).tag(current)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            composerChip(systemImage: "arrow.up.left.and.arrow.down.right", text: viewModel.imageSizeProfile.tierLabel)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("大きさ（\(viewModel.imageSizeProfile.label)）")
+    }
+
+    private var imageCountMenu: some View {
+        Menu {
+            Picker("枚数", selection: $viewModel.imageCount) {
+                ForEach([1, 2, 3, 4, 5, 6, 8, 10, 15, 20], id: \.self) { value in
+                    Text("\(value) 枚").tag(value)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            composerChip(systemImage: "square.stack.3d.down.right",
+                         text: String(localized: "\(viewModel.imageCount)枚"))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("同じプロンプトと設定で、シードを変えて続けて生成し、プロジェクトに保存します")
+    }
+
+    /// Image files into the project's images, without generating.
+    private var importImagesButton: some View {
+        Button {
+            viewModel.chooseAndImportImages()
+        } label: {
+            composerChip(systemImage: "square.and.arrow.down", text: String(localized: "取り込む"), menu: false)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .disabled(viewModel.isImportingImages || viewModel.isGenerating)
+        .help("手元の画像ファイルをプロジェクトの画像として取り込みます（PNGに変換して保存します）")
     }
 
     // MARK: 画面の形・長さ (プロンプト欄の下端)
@@ -684,7 +871,7 @@ struct CreationFormView: View {
     private func composerChip(systemImage: String, text: String, menu: Bool = true) -> some View {
         HStack(spacing: 5) {
             Image(systemName: systemImage)
-            Text(text)
+            Text(text).lineLimit(1)
             if menu {
                 Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
             }
@@ -709,7 +896,7 @@ struct CreationFormView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(collapsedPromptLine)
                                 .font(.callout)
-                                .foregroundStyle(viewModel.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? palette.textSecondary : palette.textPrimary)
+                                .foregroundStyle(viewModel.promptIsEmpty ? palette.textSecondary : palette.textPrimary)
                                 .lineLimit(1)
                             statusText.lineLimit(1)
                         }
@@ -725,7 +912,7 @@ struct CreationFormView: View {
 
                 // The prompt box (and its buttons) is hidden while collapsed;
                 // 続きを生成 shows here too, as a finished video collapses it.
-                continueButtons
+                if viewModel.generationKind == .video { continueButtons }
                 generateButton
             } else {
                 statusText
@@ -752,7 +939,7 @@ struct CreationFormView: View {
     }
 
     private var collapsedPromptLine: String {
-        let firstLine = viewModel.prompt
+        let firstLine = shownPrompt
             .split(whereSeparator: \.isNewline)
             .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         return firstLine.map(String.init) ?? String(localized: "プロンプトを入力")
@@ -777,8 +964,11 @@ struct CreationFormView: View {
         .buttonStyle(.plain)
         .disabled(!generateEnabled)
         .keyboardShortcut(.return, modifiers: .command)
-        .help(viewModel.isGenerating ? String(localized: "中止") : String(localized: "動画をつくる（Enter / ⌘Return）"))
-        .accessibilityLabel(viewModel.isGenerating ? String(localized: "中止") : String(localized: "動画をつくる"))
+        .help(viewModel.isGenerating ? String(localized: "中止")
+              : viewModel.generationKind == .image ? String(localized: "画像をつくる（Enter / ⌘Return）")
+              : String(localized: "動画をつくる（Enter / ⌘Return）"))
+        .accessibilityLabel(viewModel.isGenerating ? String(localized: "中止")
+                            : viewModel.generationKind == .image ? String(localized: "画像をつくる") : String(localized: "動画をつくる"))
     }
 
     private var generateEnabled: Bool {

@@ -34,11 +34,19 @@ struct PreviewPane: View {
             Text("プレビュー").font(.system(size: 14, weight: .semibold)).foregroundStyle(palette.textPrimary)
             Text(statusLabel).font(.caption).foregroundStyle(palette.textSecondary)
             Spacer()
-            if viewModel.resultURL != nil, let result = viewModel.lastResult {
+            if let image = shownImage {
+                ImageActionsView(viewModel: viewModel, image: image)
+                    .fixedSize()
+            } else if viewModel.resultURL != nil, let result = viewModel.lastResult {
                 ResultActionsView(viewModel: viewModel, result: result)
                     .fixedSize()
             }
         }
+    }
+
+    /// The project image the stage shows, unless a generation is running.
+    private var shownImage: ProjectImage? {
+        viewModel.isGenerating ? nil : viewModel.displayedImage
     }
 
     private var statusLabel: String {
@@ -50,6 +58,14 @@ struct PreviewPane: View {
                     : String(localized: "動画を生成しています（\(batch.index)/\(batch.total)本目）")
             }
             return String(localized: "動画を生成しています")
+        }
+        if let image = shownImage {
+            var parts = [image.url.lastPathComponent]
+            if let record = image.record {
+                parts.append("\(record.width)×\(record.height)")
+                if let source = record.importedFrom { parts.append(String(localized: "取り込んだ画像: \(source)")) }
+            }
+            return parts.joined(separator: summarySeparator)
         }
         if let url = viewModel.resultURL {
             var label = String(localized: "できあがりました")
@@ -67,7 +83,10 @@ struct PreviewPane: View {
 
     @ViewBuilder
     private var centerContent: some View {
-        if let url = viewModel.resultURL {
+        if let image = shownImage {
+            ImagePreviewView(url: image.url)
+                .id(image.url)
+        } else if let url = viewModel.resultURL {
             ResultPlayerView(url: url, aspectRatio: viewModel.resultAspectRatio,
                              nativeSize: viewModel.lastResult.map {
                                  CGSize(width: CGFloat($0.sizeProfile.dimensions.width),
@@ -87,13 +106,20 @@ struct PreviewPane: View {
 
     private var emptyStateView: some View {
         VStack(spacing: H3Spacing.md) {
-            Image(systemName: "video")
+            Image(systemName: viewModel.generationKind.systemImage)
                 .font(.system(size: 32))
                 .foregroundStyle(palette.textSecondary)
-            Text("ここに動画が表示されます").font(.body).foregroundStyle(palette.textSecondary)
-            Text("下のパネルで内容を決めて、動画をつくりましょう。")
-                .font(.caption)
-                .foregroundStyle(palette.textSecondary)
+            if viewModel.generationKind == .image {
+                Text("ここに画像が表示されます").font(.body).foregroundStyle(palette.textSecondary)
+                Text("下のパネルの「取り込む」で、手元の画像をプロジェクトに入れられます。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+            } else {
+                Text("ここに動画が表示されます").font(.body).foregroundStyle(palette.textSecondary)
+                Text("下のパネルで内容を決めて、動画をつくりましょう。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+            }
             if let error = viewModel.errorMessage {
                 Text(error)
                     .font(.caption)
@@ -210,6 +236,73 @@ struct PreviewPane: View {
                     .foregroundStyle(palette.textSecondary)
             }
             Divider().frame(maxWidth: 260).padding(.top, H3Spacing.sm)
+        }
+    }
+}
+
+/// A project image on the stage, fitted to it.
+private struct ImagePreviewView: View {
+    let url: URL
+    @State private var image: NSImage?
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ZStack {
+            H3Palette(colorScheme).stage
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: H3Radius.stage))
+        .task(id: url) {
+            let url = url
+            image = await Task.detached(priority: .userInitiated) {
+                ImageMetadata.loadImage(at: url).map {
+                    NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height))
+                }
+            }.value
+        }
+    }
+}
+
+/// What can be done with the image on the stage: hand it to the video form.
+private struct ImageActionsView: View {
+    @ObservedObject var viewModel: GenerationViewModel
+    let image: ProjectImage
+
+    var body: some View {
+        HStack(spacing: H3Spacing.sm) {
+            Button("この画像から動画を作る") { viewModel.makeVideo(from: image) }
+                .help("この画像を最初の画像にして、動画をつくる準備をします（生成は始めません）")
+            Menu("その他") {
+                ImageHandoffButtons(viewModel: viewModel, image: image)
+                Divider()
+                Button("Finderで表示") { NSWorkspace.shared.activateFileViewerSelecting([image.url]) }
+            }
+            .fixedSize()
+        }
+    }
+}
+
+/// 最後の画像に使う / 参照画像に追加, shared by the preview and the list.
+struct ImageHandoffButtons: View {
+    @ObservedObject var viewModel: GenerationViewModel
+    let image: ProjectImage
+    var onDone: () -> Void = {}
+
+    var body: some View {
+        Button("最後の画像に使う") {
+            viewModel.useImageAsLastFrame(image)
+            onDone()
+        }
+        Button("参照画像に追加") {
+            if !viewModel.addImageAsReference(image) {
+                viewModel.projectMessage = String(localized: "参照画像を使うには、このモデルにRef2VAを追加する必要があります。モデル管理の「Ref2VAを追加…」から追加できます。画像は参照に入れてあります")
+            }
+            onDone()
         }
     }
 }
