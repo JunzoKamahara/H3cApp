@@ -290,6 +290,17 @@ $(BIN)/h3_real_dit_schedule_test: $(OBJ)/test_real_dit_schedule.o $(LIB_OBJ)
 $(BIN)/h3_real_dit_test: $(OBJ)/test_real_dit.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# Phase-0 probe of plans/IMAGE_PLAN.ja.md: how far the loaders get with a
+# MiniMax H3 Image DiT (needs that checkpoint, or a sparse stand-in of it;
+# not in `make test`).
+$(BIN)/h3_image_dit_probe: $(OBJ)/image_dit_probe.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
+# Phase-0 helper: this engine's text embedding of a prompt in the layout
+# h3-image-mlx's DiT stage reads (needs a text encoder; not in `make test`).
+$(BIN)/h3_image_text_embed: $(OBJ)/image_text_embed.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 $(BIN)/h3_semantic_dit_test: $(OBJ)/test_semantic_dit.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
@@ -474,7 +485,7 @@ PROGRAMS := h3_options h3_model_family_tests build_attention_cache build_vsr_cac
 	h3_repro_check h3_real_audio_vae_test h3_real_audio_encoder_test h3_real_video_encoder_test \
 	h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests h3_real_refmod_test \
 	h3_real_qwen_vision_test h3_real_multimodal_text_test h3_real_ref_video_text_test h3_real_prompt_test \
-	h3_real_dit_block_test h3_real_dit_schedule_test h3_real_dit_test h3_semantic_dit_test \
+	h3_real_dit_block_test h3_real_dit_schedule_test h3_real_dit_test h3_image_dit_probe h3_image_text_embed h3_semantic_dit_test \
 	h3_dit_bench h3_dit_bench_864 h3_real_video_vae_test h3_real_vsr_test \
 	h3_vsr_bench h3_int8_bench h3_vsr_run h3_semantic_vae_test
 .PHONY: $(PROGRAMS)
