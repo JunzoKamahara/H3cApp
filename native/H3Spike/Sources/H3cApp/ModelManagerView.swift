@@ -20,6 +20,8 @@ struct ModelManagerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var section: Section = .models
+    @State private var showingImageModelSetup = false
+    @State private var imageModelMessage: String?
     @State private var renamingModelID: UUID?
     @State private var renamingLoRAID: UUID?
     @State private var renameText: String = ""
@@ -53,11 +55,12 @@ struct ModelManagerView: View {
     @State private var upscalerVersion = 0
 
     private enum Section: String, CaseIterable, Identifiable {
-        case models, loras, refmods, upscalers
+        case models, images, loras, refmods, upscalers
         var id: String { rawValue }
         var label: String {
             switch self {
             case .models: return String(localized: "H3モデル")
+            case .images: return String(localized: "画像モデル")
             case .loras: return "LoRA"
             case .refmods: return "RefMod"
             case .upscalers: return String(localized: "拡大モデル")
@@ -90,6 +93,7 @@ struct ModelManagerView: View {
 
             switch section {
             case .models: modelsSection
+            case .images: imageModelsSection
             case .loras: lorasSection
             case .refmods: refmodsSection
             case .upscalers: upscalersSection
@@ -736,6 +740,84 @@ struct ModelManagerView: View {
         }
         .sheet(item: $upscalerSetup, onDismiss: { upscalerVersion += 1 }) { item in
             item.model.setupView(busy: isGenerating) { upscalerSetup = nil }
+        }
+    }
+
+    // MARK: Image models
+
+    /// The still-image models: apart from the H3 (video) models, with their
+    /// own selection. One the app downloaded is managed in its setup sheet;
+    /// any other is a folder the user points at.
+    private var imageModelsSection: some View {
+        VStack(spacing: 0) {
+            if library.imageModels.isEmpty {
+                emptyState(String(localized: "登録された画像モデルはありません。"))
+            } else {
+                List {
+                    ForEach(library.imageModels) { model in
+                        HStack(spacing: H3Spacing.md) {
+                            Image(systemName: model.id == library.activeImageModelID ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(model.id == library.activeImageModelID ? palette.accent : palette.textSecondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(model.name).font(.callout)
+                                Text(model.path).font(.caption).foregroundStyle(palette.textSecondary)
+                                    .lineLimit(1).truncationMode(.middle)
+                                if !FileManager.default.fileExists(atPath: model.path) {
+                                    Text("フォルダが見つかりません").font(.caption).foregroundStyle(palette.errorColor)
+                                }
+                            }
+                            Spacer()
+                            if model.id != library.activeImageModelID {
+                                Button("使用する") { library.selectImageModel(id: model.id) }
+                            }
+                            if model.path == H3ImageModel.directory {
+                                Button("管理…") { showingImageModelSetup = true }
+                            } else {
+                                Button("一覧から外す") { library.removeImageModel(id: model.id) }
+                                    .help("一覧から外すだけで、フォルダは削除しません")
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+                .listStyle(.inset)
+            }
+            if let imageModelMessage {
+                Text(imageModelMessage).font(.caption).foregroundStyle(palette.errorColor)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, H3Spacing.md).padding(.top, H3Spacing.sm)
+            }
+            HStack {
+                Text("静止画をつくるモデル（MiniMax H3 Image）です。動画モデルとは別に選びます。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+                Spacer()
+                Button("フォルダを追加…") { addImageModelFolder() }
+                Button(H3ImageModel.complete ? String(localized: "ダウンロードしたモデルを管理…")
+                                             : String(localized: "ダウンロードして追加…")) {
+                    showingImageModelSetup = true
+                }
+            }
+            .padding(H3Spacing.md)
+        }
+        .sheet(isPresented: $showingImageModelSetup) {
+            H3ImageModelSetupView(library: library) { showingImageModelSetup = false }
+        }
+    }
+
+    private func addImageModelFolder() {
+        guard let path = chooseDirectory() else { return }
+        if let existing = library.imageModels.first(where: { $0.path == path }) {
+            library.selectImageModel(id: existing.id)
+            imageModelMessage = nil
+            return
+        }
+        do {
+            _ = try H3ImageEngine(modelDirectory: path)
+            library.addImageModel(path: path)
+            imageModelMessage = nil
+        } catch {
+            imageModelMessage = String(localized: "画像モデルとして使えません（詳細: \(error.localizedDescription)）")
         }
     }
 

@@ -60,8 +60,10 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `GET` | `/api/result/video` | 現在の結果を`video/mp4`としてストリーミング。結果が無いか、次のジョブの`generate()`呼び出しで削除された後は`404`。 |
 | `GET` | `/api/result/image` | プレビューに表示しているプロジェクトの画像を`image/png`で返す。表示していなければ`404`。 |
 | `GET` | `/api/models` | 登録済みH3モデルディレクトリ一覧（id・名前・パス・アクティブかどうか）。 |
-| `GET` | `/api/image-models` | 登録済みの画像モデルのフォルダ（id・名前・パス・使用中か）。画像モデルのフォルダは`transformer/`（MiniMax H3 ImageのDiT）、`vae/`（画像VAEと`config.json`）、`text_encoder/`と`tokenizer/`（動画モデルと同じもの）を持つ。 |
+| `GET` | `/api/image-models` | 登録済みの画像モデルのフォルダ（id・名前・パス・使用中か）。画像モデルのフォルダは`transformer/`（MiniMax H3 ImageのDiT）、`vae/`（画像VAEと`config.json`）、`text_encoder/`と`tokenizer/`（動画モデルと同じもの）を持つ。`setup`はアプリ自身がダウンロードするモデルの状態: `phase`（`idle`・`listing`・`downloading`・`copying the text encoder`・`verifying`・`done`・`failed: ...`）、`directory`、`installed`、`verified`（すべての重みのSHA-256が固定した版と一致）、`repo`、`revision`、`license`、`license_url`、`download_bytes`、ダウンロード中は`downloaded_bytes`／`total_bytes`。 |
 | `POST` | `/api/image-models/add` | `{"path", "name"?}` 画像モデルのフォルダを登録して使用中にする。フォルダが画像モデルでなければ（部品が足りない、transformerが動画モデル）理由付きの`400`。一覧を返す。 |
+| `POST` | `/api/image-models/setup` | `{"confirm_license": true}` 導入画面のボタンと同じ処理を始める。Comfy-Org/MiniMax-H3-Imageの固定した版からMiniMax H3 ImageのDiTとVAEをダウンロードし（約22GB、再開可）、MiniMaxAI/MiniMax-H3-ImageからVAEの設定・トークナイザ・ライセンス本文を取得し、導入済みの動画モデルのテキストエンコーダを複製し（同じボリュームならクローン）、各ファイルのSHA-256を照合し（一致しないファイルは削除して名前を返す）、記録を重みの隣に書き、モデルを登録する。確認がなければ`400`（MiniMax-H3-Image Community License Agreementが適用される。動画モデルとは別の契約で、EU・英国・韓国・米国ではモデルも生成した画像も使えない）。実行中は`409`。先に動画モデルの導入が必要。一覧を返すので、`GET /api/image-models`の`setup.phase`を見て完了を待つ。 |
+| `POST` | `/api/image-models/setup/cancel` | 導入を止める（実行中でなければ`409`）。ダウンロードは続きから再開できる。 |
 | `GET` | `/api/refmods` | RefModの一覧（モデル管理のRefMod）。各ファイルの`id`・`name`・`path`と、ヘッダから`format_version`・`bundle`・`file_name`・`members`（`index`、`kind`はimage/video/audio、`mode`はfull/compressed、`latent_t`/`latent_h`/`latent_w`、`tokens`、`name`、`source`、`pool`、`optimize_steps`、`supported`）。ファイルを読み込み中は`null`、読めないときは`error`も。 |
 | `POST` | `/api/refmods/extract` | `{"path", "name"?, "mode"?, "resolution_cap"?, "latent_frames"?, "max_seconds"?}` 画像・動画・音声のファイルからFullのRefModをRefModフォルダに作る。`mode`は`full`だけ（`compressed`は`400`。H3cAppは圧縮のRefModを作らなくなった。読み込みはできる）、`resolution_cap`は短辺の上限ピクセル（省略時1024）、`latent_frames`は動画から使うコマ数（省略時16）、`max_seconds`は使う音声の秒数（省略時15）。`"path"`の代わりに`"paths": [...]`で2〜32枚の静止画を1つのRefModにまとめる（上流の"stack"。1枚が潜在の1コマになり順に並ぶ。`resolution_cap`の省略時は512。1枚目が画面の大きさを決め、ほかはそれを覆うよう拡大縮小して中央を切り取る）。書く前に`202`で`{"output"}`（できるファイル）を返す。ほかを作成中は`409`。生成が走っていればエンジンの待ち行列でその後に始まり、`GET /api/status`の`refmod_extracting`・`refmod_extract_phase`・`refmod_extract_progress`（その段階の0〜1）・`refmod_extract_name`で進み具合、`message`で結果が分かる。 |
 | `POST` | `/api/refmods/extract/cancel` | 作成中のRefModを止める（なければ`409`）。 |
@@ -90,6 +92,7 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `POST` | `/api/project/show-image` | `{"image"}` その画像（`GET /api/project`の`images`にあるファイル名）をプレビューに表示する。 |
 | `POST` | `/api/project/use-image` | `{"image", "as"}` その画像を動画のフォームに渡す。生成は始めない。`"as": "first_frame"`で最初の画像にする（動画のプロンプトが空なら画像のプロンプトを入れる）、`"last_frame"`で最後の画像にする、`"reference"`で参照画像に追加する（使用中のモデルにRef2VAがなければ応答に`warning`が付く）。パネルは動画に切り替わり、画像はほかの入力と同じくプロジェクトの`references`へ、記録と一緒にコピーされる。 |
 | `POST` | `/api/project/delete-image` | `{"image"}` 画像と記録、潜在ファイルをゴミ箱に移動する。 |
+| `POST` | `/api/project/move-image` | `{"image", "project"}` その画像を、記録と潜在ファイルごとプロジェクトのフォルダ`project`へ移す（同じ名前があれば`-2`、`-3`…が付く）。移動を待って`{"ok", "project", "image"}`を返す。失敗は理由付きの`400`、ファイルの書き込み中は`409`。 |
 
 `POST /api/generate`のボディフィールド（`prompt`以外はすべて省略可）:
 

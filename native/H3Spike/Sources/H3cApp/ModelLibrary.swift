@@ -415,6 +415,18 @@ final class ModelLibrary: ObservableObject {
         defaults.set(id.uuidString, forKey: Self.activeImageModelKey)
     }
 
+    /// Lists an image model folder for every window's library (each
+    /// reloads the shared list), unless it is listed already. For a model
+    /// the app itself installed (H3ImageModelSetup), which has no window.
+    static func registerImageModel(path: String, name: String) {
+        var models = decodeArray(H3ModelEntry.self, key: imageModelsKey)
+        guard !models.contains(where: { $0.path == path }) else { return }
+        models.append(H3ModelEntry(name: name, path: path, addedThroughAPI: false,
+                                   kind: GenerationKind.image.rawValue))
+        encodeArray(models, key: imageModelsKey)
+        NotificationCenter.default.post(name: listsChanged, object: nil)
+    }
+
     /// The image model last chosen, or the first one.
     private static func storedImageModelID(in models: [H3ModelEntry]) -> UUID? {
         let stored = UUID(uuidString: UserDefaults.standard.string(forKey: activeImageModelKey) ?? "")

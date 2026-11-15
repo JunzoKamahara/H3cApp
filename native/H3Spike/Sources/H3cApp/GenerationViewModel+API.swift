@@ -228,7 +228,8 @@ extension GenerationViewModel {
             return projectResponse()
         case ("POST", "/api/project/import-video"):
             return handleProjectRequest(request)
-        case ("GET", "/api/image-models"), ("POST", "/api/image-models/add"):
+        case ("GET", "/api/image-models"), ("POST", "/api/image-models/add"),
+             ("POST", "/api/image-models/setup"), ("POST", "/api/image-models/setup/cancel"):
             return handleImageModelsRequest(request)
         case ("POST", "/api/project/import-image"), ("POST", "/api/project/show-image"),
              ("POST", "/api/project/use-image"), ("POST", "/api/project/delete-image"),
@@ -243,7 +244,8 @@ extension GenerationViewModel {
             return handleProjectRequest(request)
         case ("POST", "/api/project/join"):
             return await handleJoinRequest(request)
-        case ("POST", "/api/project/save"), ("POST", "/api/project/move-video"):
+        case ("POST", "/api/project/save"), ("POST", "/api/project/move-video"),
+             ("POST", "/api/project/move-image"):
             return await handleProjectFilesRequest(request)
         case ("GET", "/api/upscalers"):
             // The enlargement methods: which can be chosen now and why not
@@ -769,7 +771,20 @@ extension GenerationViewModel {
     /// /api/image-models/add {"path", "name"?} lists one (after checking it)
     /// and makes it the active one.
     private func handleImageModelsRequest(_ request: HTTPRequest) -> HTTPResponse {
-        if request.method == "POST" {
+        let setup = H3ImageModelSetup.shared
+        if request.path == "/api/image-models/setup/cancel" {
+            guard setup.isBusy else { return .error(409, "the image model is not being set up") }
+            setup.cancel()
+        } else if request.path == "/api/image-models/setup" {
+            // The same chain as the sheet's button: {"confirm_license": true}
+            // says the caller has read what the license asks.
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard (json["confirm_license"] as? NSNumber)?.boolValue == true else {
+                return .error(400, "\"confirm_license\": true is required: the \(H3ImageModel.licenseName) applies (\(H3ImageModel.licenseURL.absoluteString)); it excludes the EU, the UK, the Republic of Korea and the USA, also for the images made")
+            }
+            guard !setup.isBusy else { return .error(409, "the image model is already being set up") }
+            setup.start(videoModelPaths: ([library.activeModel].compactMap { $0 } + library.models).map(\.path))
+        } else if request.method == "POST" {
             let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
             guard let path = json["path"] as? String else { return .error(400, "\"path\" is required") }
             projectMessage = nil
@@ -778,10 +793,26 @@ extension GenerationViewModel {
                 return .error(400, reason)
             }
         }
-        return .json(200, ["models": library.imageModels.map { model -> [String: Any] in
-            ["id": model.id.uuidString, "name": model.name, "path": model.path,
-             "active": model.id == library.activeImageModelID]
-        }])
+        return .json(200, [
+            "models": library.imageModels.map { model -> [String: Any] in
+                ["id": model.id.uuidString, "name": model.name, "path": model.path,
+                 "active": model.id == library.activeImageModelID]
+            },
+            // The model the app downloads itself (POST /api/image-models/setup).
+            "setup": [
+                "phase": setup.phase.apiText,
+                "directory": H3ImageModel.directory,
+                "installed": H3ImageModel.complete,
+                "verified": H3ImageModel.verified,
+                "repo": H3ImageModel.weightsRepo,
+                "revision": H3ImageModel.weightsRevision,
+                "license": H3ImageModel.licenseName,
+                "license_url": H3ImageModel.licenseURL.absoluteString,
+                "download_bytes": H3ImageModel.downloadBytes,
+                "downloaded_bytes": setup.downloader.downloadedBytes,
+                "total_bytes": setup.downloader.totalBytes,
+            ] as [String: Any],
+        ])
     }
 
     /// Still images. POST /api/kind {"kind": "video" | "image"} switches what
@@ -885,6 +916,23 @@ extension GenerationViewModel {
             }
             projectMessage = nil
             return projectResponse()
+        }
+        if request.path == "/api/project/move-image" {
+            // {"image", "project"}: the image with its record and latent.
+            guard let name = json["image"] as? String,
+                  let image = projectImages.first(where: { $0.url.lastPathComponent == name }) else {
+                return .error(400, "\"image\" must name a file listed under \"images\" by GET /api/project")
+            }
+            guard let path = json["project"] as? String else { return .error(400, "\"project\" (a project folder) is required") }
+            if let failure = await moveProjectImage(image, to: URL(fileURLWithPath: path, isDirectory: true)) {
+                return .error(400, failure)
+            }
+            let moved = projectMessageFile?.lastPathComponent
+            projectMessage = nil
+            projectMessageFile = nil
+            var response: [String: Any] = ["ok": true, "project": path]
+            response["image"] = moved
+            return .json(200, response)
         }
         guard let name = json["video"] as? String,
               let video = projectVideos.first(where: { $0.url.lastPathComponent == name }) else {

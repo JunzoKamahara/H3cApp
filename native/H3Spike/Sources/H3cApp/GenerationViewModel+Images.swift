@@ -121,8 +121,11 @@ extension GenerationViewModel {
         let fixedSeed = imageSeedFixed ? UInt64(imageSeedText) : nil
         let prompt = imagePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let projectURL = project.url
+        let installed = model.path == H3ImageModel.directory
         let request = ImageStoreRequest(
             projectURL: projectURL, draft: draft, modelName: model.name,
+            modelSource: installed ? H3ImageModel.weightsRepo : nil,
+            modelRevision: installed ? H3ImageModel.weightsRevision : nil,
             deviceLine: engineState == .ready ? deviceLine : nil, appVersion: Self.appVersion,
             recordsPrompt: GenerationMetadata.exportsSettings)
         imageBatchStopped = false
@@ -295,6 +298,43 @@ extension GenerationViewModel {
         reloadProjectImages()
     }
 
+    /// 別のプロジェクトに移動: the image, its record and latent go to the
+    /// project at `destination`. Returns nil when done, else why not. A
+    /// video made from it keeps its own copy in references/.
+    func moveProjectImage(_ image: ProjectImage, to destination: URL) async -> String? {
+        guard let project else { return String(localized: "プロジェクトが開いていません。") }
+        if let busy = projectFilesBusyReason { return busy }
+        let target = destination.standardizedFileURL
+        guard target.path != project.url.standardizedFileURL.path else {
+            return String(localized: "移動先が今のプロジェクトです。ほかのプロジェクトを選んでください。")
+        }
+        guard (try? ProjectFiles.read(target)) != nil else {
+            return ProjectError.notAProject(target.path).localizedDescription
+        }
+        guard FileManager.default.fileExists(atPath: image.url.path) else {
+            return String(localized: "画像が見つかりません: \(image.url.lastPathComponent)")
+        }
+        isMovingProjectFiles = true
+        defer { isMovingProjectFiles = false }
+        let source = image.url
+        let result = await Task.detached(priority: .userInitiated) {
+            Result { try ProjectFiles.moveImage(source, to: target) }
+        }.value
+        switch result {
+        case .failure(let error):
+            reloadProjectImages()
+            return String(localized: "画像を移動できませんでした（詳細: \(error.localizedDescription)）")
+        case .success(let moved):
+            if displayedImage?.url == source { displayedImage = nil }
+            reloadProjectImages()
+            ProjectStore.shared.owner(of: target)?.reloadProjectImages()
+            let projectName = (try? ProjectFiles.read(target).name) ?? target.lastPathComponent
+            projectMessage = String(localized: "\(source.lastPathComponent)を「\(projectName)」に移動しました（\(moved.lastPathComponent)）")
+            projectMessageFile = moved
+            return nil
+        }
+    }
+
     // MARK: Handing an image to the video form
 
     /// この画像から動画を作る: the video form starts from this image. The
@@ -346,6 +386,9 @@ struct ImageStoreRequest: Sendable {
     let projectURL: URL
     let draft: ImageDraft
     let modelName: String
+    /// The repository and revision of a model the app installed itself.
+    let modelSource: String?
+    let modelRevision: String?
     let deviceLine: String?
     let appVersion: String
     /// Whether the PNG's own metadata carries the prompt (the record
@@ -395,7 +438,8 @@ struct ImageStoreRequest: Sendable {
             ProjectImageRecord(
                 assetID: UUID().uuidString, image: name, sha256: sha256, completedAt: completedAt,
                 width: result.width, height: result.height, appVersion: appVersion, draft: pinned,
-                model: .init(name: modelName), seed: String(result.seed), seedWasRandom: seedWasRandom,
+                model: .init(name: modelName, source: modelSource, revision: modelRevision),
+                seed: String(result.seed), seedWasRandom: seedWasRandom,
                 steps: result.steps, sigmas: result.sigmas.map(Double.init),
                 generationSeconds: generationSeconds, deviceLine: deviceLine)
         }

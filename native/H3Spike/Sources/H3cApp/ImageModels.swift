@@ -374,6 +374,50 @@ extension ProjectFiles {
         return ProjectImage(url: imageURL, record: record)
     }
 
+    /// Moves an image with its record and latent into another project's
+    /// images/, under its own name unless that is taken there (then with
+    /// "-2", "-3"...). The thumbnail stays behind as nothing: it is made
+    /// again. Returns where the image is now. Moves files: off the main actor.
+    static func moveImage(_ image: URL, to destinationProject: URL) throws -> URL {
+        let folder = imagesURL(in: destinationProject)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let stem = image.deletingPathExtension().lastPathComponent
+        var base = stem
+        var counter = 2
+        while FileManager.default.fileExists(atPath: folder.appendingPathComponent(base + ".png").path) {
+            base = "\(stem)-\(counter)"
+            counter += 1
+        }
+        let destination = folder.appendingPathComponent(base + ".png")
+        // The record first, rewritten for the new name; the image last, so
+        // neither project ever lists an image without its record.
+        var moved: [URL] = []
+        do {
+            let latent = imageLatentURL(for: image)
+            let hasLatent = FileManager.default.fileExists(atPath: latent.path)
+            if var record = imageRecord(for: image) {
+                record.image = destination.lastPathComponent
+                if hasLatent { record.latent?.file = imageLatentURL(for: destination).lastPathComponent }
+                try encoder.encode(record).write(to: imageRecordURL(for: destination), options: .withoutOverwriting)
+                moved.append(imageRecordURL(for: destination))
+            }
+            if hasLatent {
+                try FileManager.default.moveItem(at: latent, to: imageLatentURL(for: destination))
+                moved.append(imageLatentURL(for: destination))
+            }
+            try FileManager.default.moveItem(at: image, to: destination)
+        } catch {
+            // Back as it was: the latent returns, the new record goes.
+            let latent = imageLatentURL(for: destination)
+            if moved.contains(latent) { try? FileManager.default.moveItem(at: latent, to: imageLatentURL(for: image)) }
+            try? FileManager.default.removeItem(at: imageRecordURL(for: destination))
+            throw error
+        }
+        try? FileManager.default.removeItem(at: imageRecordURL(for: image))
+        try? FileManager.default.removeItem(at: imageThumbnailURL(for: image))
+        return destination
+    }
+
     /// Next to a copy made by importReference: the image's record and
     /// latent, when `source` is an image of a project (it has a record
     /// naming it). The copy then still says which image it is and can be

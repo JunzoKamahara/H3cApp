@@ -248,6 +248,64 @@ The app shows the license line in its download sheets and records the model
 in each video's metadata. Which conditions apply to a use is the user's
 judgement; the app records facts and labels nothing "commercial".
 
+## MiniMax H3 Image (the still-image model; no weights bundled)
+
+H3cApp makes still images with MiniMax H3 Image
+([MiniMaxAI/MiniMax-H3-Image](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image))
+using the engine's own C/Metal code: the image VAE decoder
+(`src/model/h3_image_vae.c`), the DiT's still-image paths (`h3_dit_setup.c`,
+`h3_dit_block.c`, `h3_dit.c`) and the entry point (`src/core/h3_image.c`).
+The model's structure, sampler and tile rules were taken from MiniMax's
+published sources and from [Anionex/h3-image-mlx](https://github.com/Anionex/h3-image-mlx)
+(Apache-2.0; its Metal kernels are MIT, Copyright (c) 2026 David Dalcu),
+which was also run as a tool to produce the reference outputs the engine is
+checked against (`tools/image_phase0`, `tools/image_phase2`). No code from
+those projects ships in the app.
+
+The weights are **not bundled**. The app downloads, after the user has read
+the license notice in its setup sheet:
+
+- from [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image)
+  at revision `892de7cb61df49753bf15145a711154803a355cb` (2026-11-10): the
+  ComfyUI int8 + ConvRot DiT (SHA-256
+  `83eb140f1ff95c068f8a6886e6d3f3d0d4ab2e07bb2fe6d2ef992a51146ee622`) and
+  the fp16 VAE (SHA-256
+  `d80e9c2e5cfc9844869961ff5a58c9a9e52182df6bfb30b26018dd7f348721af`);
+- from MiniMaxAI/MiniMax-H3-Image at revision
+  `492fd8c4eca666f1085f57e30738c1e0d86b3439`: `vae/config.json` and
+  `tokenizer/tokenizer.json`;
+- the license text, `LICENSE` of MiniMaxAI/MiniMax-H3-Image at revision
+  `5f90473023975e6271b0ed1dd84c4e88e4bbc6d3` (SHA-256
+  `0ec3bb5e6d9e885fa2aaf15e84689e50fd51f42b53fa24d3a64ed9d8c76d423b`; it
+  last changed on 2026-11-11, when the address for authorization requests
+  was corrected), saved beside the weights with a record of every file's
+  hash (`H3IMAGE_PROVENANCE.json`).
+
+The text encoder is the video model's (Qwen3-VL language layers, see
+above), copied from a video model already installed.
+
+Both model cards declare `license: other` /
+`license_name: minimax-h3-image-community-license-agreement`. This is the
+[MiniMax-H3-Image Community License Agreement](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/5f90473023975e6271b0ed1dd84c4e88e4bbc6d3/LICENSE),
+a different agreement from the video model's. Among its terms: it applies
+only in its Applicable Territory, which excludes the European Union, the
+United Kingdom, the Republic of Korea and the United States of America, for
+the model and for what is made with it; a prior written authorization from
+MiniMax is required above 1 million USD of annualized revenue or for
+Hosted Services to third parties; a commercial product or service displays
+"MiniMax-H3-Image"; machine-generated content is disclosed as such when
+published; the model may not be used to improve other AI models. The
+notice the license gives for redistribution reads: "MiniMax-H3-Image is
+licensed under the MiniMax-H3-Image Community License Agreement, Copyright
+© 2026 MiniMax. All Rights Reserved."
+
+The app shows these points and the link to the full text before the
+download, marks every generated image as AI-generated in its metadata
+(IPTC `DigitalSourceType` `trainedAlgorithmicMedia`, `AISystemUsed`
+"MiniMax H3 Image"), and records the model in each image's record. Which
+conditions apply to a use is the user's judgement; the app records facts
+and labels nothing "commercial".
+
 ## RefMod file format (ComfyUI-MiniMaxH3Mod)
 
 The RefMod files the app reads and writes (`h3_refmod.c`) follow the format

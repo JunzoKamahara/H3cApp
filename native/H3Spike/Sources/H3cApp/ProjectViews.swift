@@ -382,6 +382,7 @@ struct ProjectVideosSheet: View {
     @State private var upscaleRequest: GenerationViewModel.PendingUpscale?
     /// 別のプロジェクトに移動…: the video to move.
     @State private var moveRequest: ProjectVideo?
+    @State private var moveImageRequest: ProjectImage?
 
     var body: some View {
         VStack(alignment: .leading, spacing: H3Spacing.md) {
@@ -447,6 +448,11 @@ struct ProjectVideosSheet: View {
         }
         .sheet(item: $moveRequest) { video in
             MoveVideoSheet(viewModel: viewModel, store: ProjectStore.shared, video: video) { moveRequest = nil }
+        }
+        .sheet(item: $moveImageRequest) { image in
+            MoveVideoSheet(viewModel: viewModel, store: ProjectStore.shared, video: nil, image: image) {
+                moveImageRequest = nil
+            }
         }
         .confirmationDialog("この動画を削除しますか？", isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
@@ -706,6 +712,9 @@ struct ProjectVideosSheet: View {
                 Divider()
                 Button("Finderで表示") { NSWorkspace.shared.activateFileViewerSelecting([image.url]) }
                 if !foreign {
+                    Button("別のプロジェクトに移動…") { moveImageRequest = image }
+                        .disabled(viewModel.projectFilesBusyReason != nil)
+                        .help("この画像を、設定の記録と潜在ファイルごと別のプロジェクトに移します")
                     Divider()
                     Button("削除…", role: .destructive) { pendingImageDelete = image }
                 }
@@ -826,7 +835,9 @@ struct ProjectVideosSheet: View {
 struct MoveVideoSheet: View {
     @ObservedObject var viewModel: GenerationViewModel
     @ObservedObject var store: ProjectStore
-    let video: ProjectVideo
+    /// What moves: a video, or (then nil) `image`.
+    let video: ProjectVideo?
+    var image: ProjectImage? = nil
     var close: () -> Void
     @State private var selection: URL?
     @State private var chosenElsewhere: URL?
@@ -844,7 +855,7 @@ struct MoveVideoSheet: View {
 
     /// What goes along besides the video, record and latent.
     private var note: String? {
-        guard let clips = video.record?.joinedClips, !clips.isEmpty else { return nil }
+        guard let video, let clips = video.record?.joinedClips, !clips.isEmpty else { return nil }
         return viewModel.chainFolder(of: video) != nil
             ? String(localized: "つなげて生成したもとの\(clips.count)本の動画も一緒に移ります。")
             : String(localized: "つないで書き出した動画です。もとの\(clips.count)本の動画は、このプロジェクトに残ります。")
@@ -853,9 +864,15 @@ struct MoveVideoSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: H3Spacing.md) {
             Text("別のプロジェクトに移動").font(.headline)
-            Text("「\(video.url.lastPathComponent)」を、選んだプロジェクトに移します。設定の記録と潜在ファイル（続きの生成やOpen-H3 再生成に使います）も一緒に移り、使っている参照ファイルは移動先のプロジェクトにコピーします。")
-                .font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
+            if let video {
+                Text("「\(video.url.lastPathComponent)」を、選んだプロジェクトに移します。設定の記録と潜在ファイル（続きの生成やOpen-H3 再生成に使います）も一緒に移り、使っている参照ファイルは移動先のプロジェクトにコピーします。")
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let image {
+                Text("「\(image.url.lastPathComponent)」を、選んだプロジェクトに移します。設定の記録と潜在ファイルも一緒に移ります。この画像からつくった動画は、今のプロジェクトに残ります。")
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let note {
                 Text(note).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -908,11 +925,13 @@ struct MoveVideoSheet: View {
         guard let selection else { return }
         error = nil
         Task {
-            if let failure = await viewModel.moveProjectVideo(video, to: selection) {
-                error = failure
-            } else {
-                close()
+            var failure: String?
+            if let video {
+                failure = await viewModel.moveProjectVideo(video, to: selection)
+            } else if let image {
+                failure = await viewModel.moveProjectImage(image, to: selection)
             }
+            if let failure { error = failure } else { close() }
         }
     }
 

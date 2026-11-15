@@ -57,6 +57,7 @@ struct CreationFormView: View {
     /// The input file shown in Quick Look (clicking its name).
     @State private var quickLookURL: URL?
     @State private var showingClipEditor = false
+    @State private var showingImageModelSetup = false
     /// 「RefModとして保存…」 for this reference (RefModExtractSheet).
     @State private var refModSources: RefModSources?
     @State private var promptSuggestion = randomPromptSuggestion()
@@ -107,6 +108,11 @@ struct CreationFormView: View {
         .onChange(of: panelHeight) { _, _ in offset = clamped(offset) }
         .onChange(of: bounds) { _, _ in offset = clamped(offset) }
         .quickLookPreview($quickLookURL)
+        .sheet(isPresented: $showingImageModelSetup) {
+            H3ImageModelSetupView(library: library, busy: viewModel.isGeneratingImage) {
+                showingImageModelSetup = false
+            }
+        }
         .sheet(isPresented: $showingClipEditor) {
             CustomClipsSheet(viewModel: viewModel, library: library, isPresented: $showingClipEditor)
         }
@@ -597,6 +603,7 @@ struct CreationFormView: View {
                 .pickerStyle(.inline)
                 Divider()
             }
+            Button("画像モデルをダウンロード…") { showingImageModelSetup = true }
             Button("画像モデルのフォルダを追加…") { viewModel.chooseAndAddImageModel() }
             if let active {
                 Button("「\(active.name)」を一覧から外す") { library.removeImageModel(id: active.id) }
@@ -612,7 +619,7 @@ struct CreationFormView: View {
         .fixedSize()
         .disabled(viewModel.isGenerating)
         .help(active.map { String(localized: "画像モデル: \($0.name)") }
-              ?? String(localized: "画像をつくるモデルがまだありません。モデルのフォルダを選んで追加します"))
+              ?? String(localized: "画像をつくるモデルがまだありません。ダウンロードするか、モデルのフォルダを選んで追加します"))
     }
 
     /// A model's name cut to fit the chip (the full one is in its help).

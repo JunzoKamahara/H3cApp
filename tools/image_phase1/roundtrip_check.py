@@ -155,8 +155,10 @@ print("== images into the project")
 check(api("/api/kind", {"kind": "image"})[1].get("generation_kind") == "image", "POST /api/kind switches to images")
 check(api("/api/kind", {"kind": "audio"})[0] == 400, "an unknown kind is refused")
 check(api("/api/generate", {"kind": "image", "prompt": "x"})[0] == 409, "generating an image is refused without an image model")
-check(api("/api/image-models")[1] == {"models": []}
+models = api("/api/image-models")[1]
+check(models["models"] == [] and models["setup"]["phase"] == "idle" and not models["setup"]["installed"]
       and api("/api/image-models/add", {"path": work})[0] == 400, "a folder that is no image model is not registered")
+check(api("/api/image-models/setup", {})[0] == 400, "the image model is not downloaded without the license confirmation")
 check(api("/api/project/import-image", {"path": "/nonexistent.png"})[0] == 400, "a missing file is refused")
 code, body = api("/api/project/import-image", {"paths": [sample_png, sample_jpg]})
 check(code == 202 and body.get("count") == 2, "two image files are accepted")
@@ -224,14 +226,27 @@ f = form()
 check(f["creation_method"] == "image" and os.path.basename(f["first_frame"] or "") == from_png["file"],
       "the video form kept what was handed to it")
 
+print("== an image moved to another project")
+code, body = api("/api/project/move-image", {"image": from_jpg["file"], "project": old_named})
+moved = os.path.join(old_named, "images", from_jpg["file"])
+check(code == 200 and body.get("image") == from_jpg["file"] and os.path.exists(moved)
+      and json.load(open(moved[:-4] + ".json"))["assetID"] == from_jpg["asset_id"],
+      "move-image takes the image and its record to the other project")
+check([image["file"] for image in project()["images"]] == [from_png["file"]]
+      and not os.path.exists(from_jpg["path"]) and not os.path.exists(from_jpg["path"][:-4] + ".json"),
+      "and it is gone from this one")
+check(api("/api/project/move-image", {"image": from_png["file"], "project": work})[0] == 400,
+      "a folder that is no project is refused")
+
 print("== a project from before images")
 code, body = api("/api/project/open", {"path": old_named})
 check(code == 200 and body.get("name") == "Old project", "it opens")
 check(api("/api/status")[1]["generation_kind"] == "video" and form()["prompt"] == "an old video",
       "as a video project, with its form")
 p = project()
-check(p["images"] == [] and [video["file"] for video in p["videos"]] == ["20261001-000000_seed1.mp4"],
-      "with its video and no images")
+check([image["file"] for image in p["images"]] == [from_jpg["file"]]
+      and [video["file"] for video in p["videos"]] == ["20261001-000000_seed1.mp4"],
+      "with its video, and the image moved into it")
 check(os.path.exists(os.path.join(untitled, "images", from_png["file"])),
       "the untitled project left behind keeps its images")
 old_file = json.load(open(os.path.join(old_named, "project.json")))
