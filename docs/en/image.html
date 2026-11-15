@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en" data-alt-href="../image.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="../assets/js/lang.js"></script>
+  <title>Making and editing still images — H3cApp</title>
+  <meta name="description" content="Still images in H3cApp from v0.10.0: make pictures from a prompt, change them with reference images and instructions, and turn one into the first frame of a video. The two image models (MiniMax H3 Image and P-H3-Image), times and licenses.">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/image.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/image.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/image.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/image.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:locale:alternate" content="ja_JP">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="Making and editing still images — H3cApp">
+  <meta property="og:description" content="Make a picture from a prompt, change it with an instruction, then set it in motion. On your Mac.">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/image.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image-en.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="../assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="../assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="../assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="Site">
+        <ul>
+          <li><a href="./#examples">Examples</a></li>
+          <li><a href="./#requirements">Requirements</a></li>
+          <li><a href="getting-started.html">Getting started</a></li>
+          <li><a href="guide.html">Guide</a></li>
+          <li><a href="image.html" aria-current="page">Images</a></li>
+          <li><a href="gguf.html">GGUF</a></li>
+          <li><a href="faq.html">Troubleshooting</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="../image.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>Making and editing still images</h1>
+      <p class="lead">From v0.10.0, H3cApp makes still images in the same window as videos. Draw a picture from a prompt, change one of your own with an instruction, and use the result as the first frame of a video. All of it runs on your Mac.</p>
+      <nav class="toc" aria-label="On this page">
+        <p>On this page</p>
+        <ol>
+          <li><a href="#examples">Examples</a></li>
+          <li><a href="#models">The two image models</a></li>
+          <li><a href="#setup">Installing a model</a></li>
+          <li><a href="#make">Making images</a></li>
+          <li><a href="#edit">Editing images</a></li>
+          <li><a href="#video">From a picture to a video</a></li>
+          <li><a href="#time">How long it takes</a></li>
+          <li><a href="#license">Licenses</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section" id="examples" aria-labelledby="examples-title">
+      <h2 id="examples-title">Examples</h2>
+      <p><strong>Every picture on this page is AI-generated</strong> (by H3cApp's image generation with P-H3-Image; Powered by MiniMax H3). They are shrunk to JPEG for the page.</p>
+      <div class="examples">
+        <figure class="example">
+          <div class="media media-still">
+            <img src="../assets/image/teapot.jpg" width="1024" height="1024" loading="lazy" alt="A yellow enamel teapot and a white cup on a blue wooden table, with a small handwritten sign reading OPEN leaning against the teapot.">
+          </div>
+          <figcaption>
+            <p class="spec">From text · 1024×1024</p>
+            <p class="small muted">8 steps, seed 1. Took 35 s (M5, 24 GB).</p>
+            <p class="prompt">A yellow enamel teapot and a white cup on a blue wooden table, with a small handwritten sign that reads "OPEN" leaning against the teapot.</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media media-still">
+            <img src="../assets/image/teapot-edit.jpg" width="1024" height="1024" loading="lazy" alt="The picture on the left, edited: the white cup is now a small green ceramic bird; the teapot, the sign and the table are unchanged.">
+          </div>
+          <figcaption>
+            <p class="spec">Edit, with the left picture as reference · 1024×1024</p>
+            <p class="small muted">8 steps, seed 5. Took 2 min 17 s (M5, 24 GB).</p>
+            <p class="prompt">Edit &lt;Picture 1&gt;. Replace the white cup with a small green ceramic bird. Keep the teapot, the sign and the table.</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media media-still">
+            <img src="../assets/image/fisherman.jpg" width="960" height="1292" loading="lazy" alt="Close-up profile of an elderly fisherman in a navy knit cap on a harbor at dawn, low sun from the left showing deep wrinkles, sun spots and stubble.">
+          </div>
+          <figcaption>
+            <p class="spec">From text · Extra Large (2496×3360, about 8 megapixels)</p>
+            <p class="small muted">8 steps, seed 7. Took 3 min 58 s (M5, 24 GB).</p>
+            <p class="prompt">A close-up portrait photograph by an experienced documentary photographer of an elderly Japanese fisherman on a harbor at dawn, his weathered face filling the frame, deep wrinkles, sun spots and stubble on his cheeks, a faded navy knit cap, soft side light from the low sun on the left, shallow depth of field.</p>
+          </figcaption>
+        </figure>
+      </div>
+      <figure class="example detail-figure">
+        <div class="media media-still">
+          <img src="../assets/image/fisherman-crop.jpg" width="800" height="800" loading="lazy" alt="A part of the fisherman picture around the eye and cheek, cut out without shrinking: wrinkles, pores, spots and eyelashes in fine detail.">
+        </div>
+        <figcaption>
+          <p class="spec">Part of the Extra Large picture (800×800 at full size)</p>
+          <p class="small muted">P-H3-Image does best at 8 megapixels. Seen without shrinking, the skin is drawn down to fine detail.</p>
+        </figcaption>
+      </figure>
+      <p class="small muted">Made during development by running the same processing as v0.10.0 from the command line. The same prompt and seed can give different results on another Mac or with other settings.</p>
+    </section>
+
+    <section class="section section-narrow" id="models" aria-labelledby="models-title">
+      <h2 id="models-title">The two image models</h2>
+      <p>Still images use an image model separate from the video model. There are two to choose from; you can install both and switch with the model menu in the panel.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col"></th><th scope="col">MiniMax H3 Image</th><th scope="col">P-H3-Image</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Made by</th><td>MiniMax</td><td>Pruna AI (an image model built on MiniMax H3)</td></tr>
+            <tr><th scope="row">Download</th><td>About 22 GB. It uses the text encoder of your installed video model, so the video model comes first.</td><td>About 29 GB (no video model needed). With a video model installed, about 10 GB instead: the included LoRA is applied to the video model's DiT (generation takes about twice as long).</td></tr>
+            <tr><th scope="row">Steps</th><td>6</td><td>8</td></tr>
+            <tr><th scope="row">Strengths</th><td>Speed, and edits with many references</td><td>Photographic texture. Best at 8 megapixels (the “<span class="ui">Extra Large</span>” size)</td></tr>
+            <tr><th scope="row">References for an edit</th><td>Up to 16 (15 for square pictures)</td><td>Up to 8</td></tr>
+            <tr><th scope="row">License</th><td>MiniMax-H3-Image Community License Agreement (separate from the video model's)</td><td>MiniMax H3 Community License Agreement (the same as the video model's)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="setup" aria-labelledby="setup-title">
+      <h2 id="setup-title">Installing a model</h2>
+      <ol class="steps">
+        <li><strong>Choose “<span class="ui">Image</span>” with the switch at the panel's top left.</strong> The video side and the image side each keep their own prompt and settings.</li>
+        <li><strong>Pick the model to install from the model menu.</strong> There are three: “<span class="ui">Download Image Model (MiniMax H3 Image)…</span>”, “<span class="ui">Download Image Model (P-H3-Image)…</span>” and “<span class="ui">Download Image Model (P-H3-Image, Using the Video Model)…</span>”.</li>
+        <li><strong>Read the license summary shown and start the download.</strong> If it stops, the next start resumes where it left off. When it finishes, every file is checked against the pinned version before the model is registered.</li>
+      </ol>
+      <p class="small">The same downloads can be started from the image models in the “<span class="ui">Model Manager</span>”.</p>
+    </section>
+
+    <section class="section section-narrow" id="make" aria-labelledby="make-title">
+      <h2 id="make-title">Making images</h2>
+      <ol class="steps">
+        <li><strong>Write a prompt.</strong> With P-H3-Image, say in the first sentence what kind of photo or picture it is, and describe the scene concretely.</li>
+        <li><strong>Choose shape, size and count.</strong> Shapes are Square, Landscape and Portrait. Sizes are “<span class="ui">Standard</span>” (1024×1024 or 1344×768), “<span class="ui">Large</span>” (twice that), “<span class="ui">Extra Large</span>” (about 8 megapixels, 2912×2912 or 3808×2176) and “<span class="ui">For video</span>” (the video's size). Count is 1 to 20.</li>
+        <li><strong>Press the generate button.</strong></li>
+      </ol>
+      <ul>
+        <li><strong>Seed</strong>: the seed control at the top of the panel chooses between a new seed every time and a fixed one. With a fixed seed, the same settings give the same picture. When making several, only the first uses that seed.</li>
+        <li><strong>Where pictures go</strong>: into the project's <code>images</code> folder as a PNG with its settings record (.json) and latent file. The PNG carries metadata saying it is AI-generated. They are listed with the videos under “<span class="ui">Project Videos and Images…</span>”.</li>
+        <li><strong>Import</strong>: “<span class="ui">Import</span>” makes an image file of yours one of the project's pictures (saved as PNG).</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="edit" aria-labelledby="edit-title">
+      <h2 id="edit-title">Editing images</h2>
+      <p>Give reference pictures and say in the prompt how to change them, and you get the changed picture. The same image model does the edit, so there is nothing more to download.</p>
+      <ol class="steps">
+        <li><strong>Choose the picture to edit.</strong> Press “<span class="ui">Edit This Image</span>” on a picture in the preview or the list. For a file of your own, use “<span class="ui">Add Reference Images…</span>” at the top of the panel.</li>
+        <li><strong>Write what to change and what to keep.</strong> Call the references by number, like <code>&lt;Picture 1&gt;</code> (pressing the <code>&lt;Picture 1&gt;</code> under a reference puts it in the prompt).<br>Example: <code>Edit &lt;Picture 1&gt;. Replace the white cup with a small green ceramic bird. Keep the teapot, the sign and the table.</code></li>
+        <li><strong>Press the generate button.</strong></li>
+      </ol>
+      <ul>
+        <li><strong>Several references</strong>: line up several; the numbers follow the order, which you can change with a right-click. Example: <code>Edit &lt;Picture 1&gt;. Replace the cup with the bird from &lt;Picture 2&gt;.</code> More references take more time and memory; an estimate of the memory needed appears under them.</li>
+        <li><strong>Size</strong>: adding the first reference sets the size to that picture's shape. You can change it afterwards. With P-H3-Image it is set within 4 to 8 megapixels, where the model edits best.</li>
+        <li><strong>Say what to keep</strong>: with P-H3-Image, <code>Edit &lt;Picture 1&gt;.</code> is put in front of your instruction. Describe the result you want and what must stay (faces, poses, background, light); without that, it tends to redraw the whole picture.</li>
+        <li><strong>Record</strong>: an edited picture's record lists the pictures it came from. Reference files are copied to the project's <code>references</code> folder.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="video" aria-labelledby="video-title">
+      <h2 id="video-title">From a picture to a video</h2>
+      <p>Press “<span class="ui">Make a Video from This Image</span>” on a picture to set up a video that starts from it (if the video prompt is empty, the picture's prompt goes in too). Under “<span class="ui">More</span>” it can become the last frame or a reference instead. Settle the opening shot as a still first, then set it in motion, instead of generating the start of a video again and again.</p>
+      <p class="small">How to make the video is in the Guide's <a href="guide.html#images">Making video from images</a>.</p>
+    </section>
+
+    <section class="section section-narrow" id="time" aria-labelledby="time-title">
+      <h2 id="time-title">How long it takes</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">What</th><th scope="col">MiniMax H3 Image</th><th scope="col">P-H3-Image</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">1024×1024</th><td class="num">about 35 s</td><td class="num">about 35 s</td></tr>
+            <tr><th scope="row">2048×2048</th><td class="num">about 1 min 40 s</td><td class="num">about 1 min 50 s</td></tr>
+            <tr><th scope="row">2912×2912 (Extra Large)</th><td class="num">—</td><td class="num">about 4 min</td></tr>
+            <tr><th scope="row">Edit: one reference to 1024×1024</th><td class="num">about 1 min 20 s</td><td class="num">about 2 min 20 s</td></tr>
+            <tr><th scope="row">Edit: one reference to 2048×2048</th><td class="num">about 2 min 40 s</td><td class="num">about 5 min</td></tr>
+          </tbody>
+          <caption>Rough times per picture on an M5 with 24 GB (— means not measured). P-H3-Image used through the video model's DiT and the LoRA (about 10 GB) takes about twice as long.</caption>
+        </table>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="license-title">
+      <h2 id="license-title">Licenses</h2>
+      <ul>
+        <li><strong>MiniMax H3 Image</strong>: comes under the <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/5f90473023975e6271b0ed1dd84c4e88e4bbc6d3/LICENSE">MiniMax-H3-Image Community License Agreement</a>, a separate agreement from the video model's. In the EU, the UK, South Korea and the US, neither the model nor the pictures made with it may be used.</li>
+        <li><strong>P-H3-Image</strong>: comes under the same <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE">MiniMax H3 Community License Agreement</a> as the video model. Products and services using it display “Powered by MiniMax H3”.</li>
+        <li>For both, the app shows the main points and a link to the full text before the download. When you publish generated pictures, say they are AI-generated (the PNG metadata always records it). The video model's license is summarized in <a href="faq.html#license">Licenses and terms</a>.</li>
+      </ul>
+      <p class="small muted">For the details, see <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/docs/GUIDE.md">GUIDE.md</a> and <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a> on GitHub.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">Report a problem (Issues)</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md">README</a></li>
+        <li><a href="faq.html#license">License</a></li>
+        <li><a href="../image.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+      </ul>
+      <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). Videos are generated with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>, a video generation model by MiniMax, which comes under its own license, the MiniMax H3 Community License.</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -195,6 +195,16 @@ h1 {
   font-size: clamp(30px, 5vw, 48px);
 }
 
+/* Keeps each phrase of a heading on one line; lines break between them. */
+.phrase {
+  display: inline-block;
+}
+
+/* The top page's catchphrase sits in the narrower hero column. */
+.hero h1 {
+  font-size: clamp(28px, 3.6vw, 36px);
+}
+
 h2 {
   font-size: clamp(24px, 3.4vw, 32px);
 }
@@ -434,6 +444,26 @@ code {
   height: 100%;
   object-fit: contain;
   background: var(--stage);
+}
+
+/* Still images: a square stage at every width, the picture fitted inside. */
+.example .media-still {
+  position: relative;
+  aspect-ratio: 1 / 1;
+}
+
+.example .media-still img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* One still shown at 100 % below the examples (the image page). */
+.detail-figure {
+  max-width: 520px;
+  margin-top: 24px;
 }
 
 .example figcaption {

@@ -35,6 +35,7 @@
           <li><a href="./#requirements">動作条件</a></li>
           <li><a href="getting-started.html">はじめ方</a></li>
           <li><a href="guide.html" aria-current="page">使い方</a></li>
+          <li><a href="image.html">静止画</a></li>
           <li><a href="gguf.html">GGUF</a></li>
           <li><a href="faq.html">困ったとき</a></li>
           <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
@@ -62,6 +63,7 @@
           <li><a href="#prompts">プロンプトの書き方</a></li>
           <li><a href="#lora">追加モデル（LoRA）を使う（任意）</a></li>
           <li><a href="#advanced">上級者向け</a></li>
+          <li><a href="image.html">静止画をつくる・編集する（別ページ、v0.10.0から）</a></li>
           <li><a href="upscale.html">動画の拡大の解説（別ページ）</a></li>
           <li><a href="refmod.html">RefMod（保存した参照）の解説（別ページ）</a></li>
           <li><a href="settings.html">詳細設定の解説（別ページ）</a></li>
@@ -89,6 +91,7 @@
         <li><strong>参照</strong>：キャラクターの画像を参照に入れ、「そのキャラクターが公園を歩く」といったプロンプトで新しい場面をつくる。</li>
       </ul>
       <p class="small">プロンプト欄のファイル名をクリックすると、使っている画像や動画の中身を確認できます。生成した動画も、プレビューの「<span class="ui">参照に使う</span>」で参照に追加できます。</p>
+      <p class="small">v0.10.0からは、最初の画像にする1枚をH3cAppの中でつくれます。パネルを「<span class="ui">画像</span>」に切り替えて静止画をつくり、「<span class="ui">この画像から動画を作る</span>」を押します。くわしくは<a href="image.html">静止画をつくる・編集する</a>のページにあります。</p>
       <h3>RefMod（保存した参照）</h3>
       <p>参照の行の「<span class="ui">RefModとして保存…</span>」で、その画像・動画・音声を一度だけ符号化して小さなファイル（.safetensors）に保存できます。保存したRefModは「<span class="ui">モデル管理</span>」の「<span class="ui">RefMod</span>」に並び、参照の「<span class="ui">RefModを追加…</span>」でどの生成にも入れられます。毎回符号化しないので速く、テキストエンコーダには見せないのでプロンプトに <code>&lt;Picture n&gt;</code> は要りません。作られるRefModは通常の参照と同じ中身を保つFullで、同じキャラクターの画像を何枚かまとめることもできます。ComfyUI の ComfyUI-MiniMaxH3Mod で作ったファイル（圧縮のものも）も読めます。作り方と使い方は<a href="refmod.html">RefMod（保存した参照）を使う</a>のページで詳しく説明しています。</p>
     </section>

@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="../assets/js/lang.js"></script>
-  <title>H3cApp — AI video with sound, made on your Mac</title>
-  <meta name="description" content="H3cApp is a macOS app that turns text and images into short videos with sound on your Apple Silicon Mac, using the MiniMax H3 video model. How to download, install, get the model and make a first video.">
+  <title>H3cApp — Picture it. Move it. Hear it. All on your Mac.</title>
+  <meta name="description" content="H3cApp is a macOS app that makes still images from text and short videos with sound from text and images on your Apple Silicon Mac, using the MiniMax H3 video model and its image models. How to download, install, get the model and make a first video.">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/">
@@ -14,8 +14,8 @@
   <meta property="og:locale" content="en_US">
   <meta property="og:locale:alternate" content="ja_JP">
   <meta property="og:site_name" content="H3cApp">
-  <meta property="og:title" content="H3cApp — AI video with sound, made on your Mac">
-  <meta property="og:description" content="A macOS app that turns text and images into short videos with sound on Apple Silicon. A ready-to-use app: no Python or PyTorch setup.">
+  <meta property="og:title" content="H3cApp — Picture it. Move it. Hear it. All on your Mac.">
+  <meta property="og:description" content="A macOS app that makes still images from text and short videos with sound from text and images on Apple Silicon. A ready-to-use app: no Python or PyTorch setup.">
   <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/">
   <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image-en.jpg">
   <meta property="og:image:width" content="1200">
@@ -37,6 +37,7 @@
           <li><a href="#requirements">Requirements</a></li>
           <li><a href="getting-started.html">Getting started</a></li>
           <li><a href="guide.html">Guide</a></li>
+          <li><a href="image.html">Images</a></li>
           <li><a href="gguf.html">GGUF</a></li>
           <li><a href="faq.html">Troubleshooting</a></li>
           <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
@@ -50,14 +51,14 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-copy">
         <p class="eyebrow">H3cApp for macOS</p>
-        <h1 id="hero-title">AI video with sound, made on your Mac.</h1>
-        <p class="lead">H3cApp is a macOS app that turns text and images into short videos with sound, using MiniMax H3, a video generation model by MiniMax. Generation runs on your Apple Silicon Mac. It is a ready-to-use app, so there is no Python or PyTorch environment to set up.</p>
+        <h1 id="hero-title"><span class="phrase">Picture it.</span> <span class="phrase">Move it.</span> <span class="phrase">Hear it.</span><br><span class="phrase">All on your Mac.</span></h1>
+        <p class="lead">H3cApp is a macOS app built on MiniMax H3, a video generation model by MiniMax, and its image models. It draws still images from text, then turns them, or text alone, into short videos with motion and sound. Since v0.10.0 it also makes and edits still images. Generation runs on your Apple Silicon Mac. It is a ready-to-use app, so there is no Python or PyTorch environment to set up.</p>
         <p class="powered">Powered by <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a> — an independent app, not an official MiniMax product.</p>
         <div class="cta-row">
           <a class="button button-primary" href="https://github.com/JunzoKamahara/H3cApp/releases/latest">Download the latest version</a>
           <a class="button button-secondary" href="getting-started.html">How to get started</a>
         </div>
-        <p class="cta-note">For Apple Silicon Macs with macOS 15 Sequoia or later. The MiniMax H3 model is a separate download (about 144 GB and up for the official model, or about 35–45 GB as a <a href="gguf.html">quantized model (GGUF)</a>) and comes under MiniMax H3's own license.</p>
+        <p class="cta-note">For Apple Silicon Macs with macOS 15 Sequoia or later. The MiniMax H3 model is a separate download (about 144 GB and up for the official model, or about 35–45 GB as a <a href="gguf.html">quantized model (GGUF)</a>) and comes under MiniMax H3's own license. Still images need an image model as well (about 10–29 GB).</p>
       </div>
       <figure class="hero-shot">
         <img src="../assets/images/app-window-en.jpg" width="1520" height="1304" alt="The H3cApp window in English. The preview shows a generated landscape video of a person playing guitar in a stone plaza at dusk, with Export Video…, Settings Used…, Use as Reference and Show in Finder buttons above it, and the collapsed prompt panel with a summary line and the up-arrow generate button below.">
@@ -77,6 +78,7 @@
 
     <section class="section" id="examples" aria-labelledby="examples-title">
       <h2 id="examples-title">Examples</h2>
+      <h3 id="examples-videos">Videos</h3>
       <p>These videos were generated with H3cApp v0.4.4 (model: MiniMax H3) from the prompts below. All of them have sound; press play to hear it (nothing plays automatically).</p>
       <div class="examples">
         <figure class="example">
@@ -119,6 +121,32 @@
         </figure>
       </div>
       <p class="small muted">The videos are re-encoded for the web. The same prompt and seed can give different results on another Mac or with other settings. The author also has <a href="https://youtu.be/PZrm470rGo0">a video on YouTube</a> (external site).</p>
+      <h3 id="examples-images">Still images</h3>
+      <p>AI-generated by v0.10.0's image generation (model: P-H3-Image, Powered by MiniMax H3). The second picture is the first one changed by an instruction. Shrunk to JPEG for the page.</p>
+      <div class="examples">
+        <figure class="example">
+          <div class="media media-still"><img src="../assets/image/teapot.jpg" width="1024" height="1024" loading="lazy" alt="A yellow enamel teapot and a white cup on a blue wooden table, with a small handwritten sign reading OPEN leaning against the teapot."></div>
+          <figcaption>
+            <p class="spec">From text · 1024×1024</p>
+            <p class="small muted">8 steps, seed 1. Took 35 s (M5, 24 GB).</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media media-still"><img src="../assets/image/teapot-edit.jpg" width="1024" height="1024" loading="lazy" alt="The first picture edited: the white cup is now a small green ceramic bird; everything else is unchanged."></div>
+          <figcaption>
+            <p class="spec">Edit of the first picture · 1024×1024</p>
+            <p class="small muted">“Replace the white cup with a small green ceramic bird; keep the teapot, the sign and the table.” Took 2 min 17 s (M5, 24 GB).</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media media-still"><img src="../assets/image/fisherman.jpg" width="960" height="1292" loading="lazy" alt="Close-up profile of an elderly fisherman in a navy knit cap on a harbor at dawn."></div>
+          <figcaption>
+            <p class="spec">From text · Extra Large (2496×3360, about 8 megapixels)</p>
+            <p class="small muted">8 steps, seed 7. Took 3 min 58 s (M5, 24 GB).</p>
+          </figcaption>
+        </figure>
+      </div>
+      <p class="small"><a href="image.html#examples">See the prompts and a crop at full size</a></p>
     </section>
 
     <section class="section" id="features" aria-labelledby="features-title">
@@ -128,6 +156,11 @@
           <h3>Turn text into video</h3>
           <p>From a text prompt, H3cApp makes a video (MP4) with matching picture and sound. Lengths run from 1 to 15 seconds in one generation; joined generation makes longer videos from clips one after another. Landscape, square or portrait.</p>
           <p class="small"><a href="getting-started.html#first-video">Make your first video</a></p>
+        </li>
+        <li>
+          <h3>Draw and edit still images</h3>
+          <p>Make still images from text, and change your own or generated pictures with instructions such as “replace the cup with a small bird” (from v0.10.0). Pictures go up to 8 megapixels, and the one you like can become the first frame of a video.</p>
+          <p class="small"><a href="image.html">Making and editing still images</a></p>
         </li>
         <li>
           <h3>Bring an image to life</h3>
@@ -196,11 +229,15 @@
               <td>MiniMax H3 Ref2VA: another 144.1 GB or so, about 288.1 GB (268.3 GiB) in total. Add it when you need it.</td>
             </tr>
             <tr>
+              <th scope="row">AI model (still images, from v0.10.0)</th>
+              <td>MiniMax H3 Image: about 22 GB (needs the video model). P-H3-Image: about 29 GB, or about 10 GB using the video model. Add one when you need it.</td>
+            </tr>
+            <tr>
               <th scope="row">Other space</th>
               <td>About 19.3 GB per int8 cache (when used on an M5-class Mac), generated videos, copies of reference files, and working space.</td>
             </tr>
           </tbody>
-          <caption>As of October 10, 2026, version 0.4.4. Model sizes are the totals of the Hugging Face file listing. The app labels sizes “GB” but computes them in GiB (1 GiB = 1,073,741,824 bytes), so FL2VA shows as about 134.2.</caption>
+          <caption>As of October 10, 2026, version 0.4.4 (the still-image models: version 0.10.0). Model sizes are the totals of the Hugging Face file listing. The app labels sizes “GB” but computes them in GiB (1 GiB = 1,073,741,824 bytes), so FL2VA shows as about 134.2.</caption>
         </table>
       </div>
       <div class="warn" id="model-license">

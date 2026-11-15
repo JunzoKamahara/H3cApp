@@ -170,12 +170,21 @@ version at the time not recorded, so not presented as a v0.4.4 measurement):
 | `docs/assets/images/app-composer.jpg` | real v0.4.4 window relaunched with a scratch project (panel expanded, empty preview), resized to 1600 px | same; the window frame default was enlarged for the shot and restored afterwards |
 | `docs/assets/images/app-lora.jpg`, `app-lora-en.jpg` | モデル管理 → LoRA tab (sheet only, 1100x900 px, light), the lightx2v Turbo fl2v 4step v1.2 LoRA (unchecked, ステップの進め方 自動（Euler）) and DMAD full_critic (checked, 自動（re-noise）, 音声シフト placeholder 2) | `screencapture -l` of the signed v0.4.7 build, ja and `-AppleLanguages (en)`, taken 2026-10-14 while macOS was in light appearance (the old v0.4.4 shots were dark), cropped to the sheet and scaled from 1119 px to 1100 px wide |
 | `docs/assets/images/app-advanced.jpg`, `app-advanced-en.jpg` | 詳細設定 sheet right after 既定に戻す (scrolled to the top, 1064x1268 px, light; the dark appearance could not be forced), no project open | `screencapture -l` of the dev build (AdvancedSettingsView unchanged since v0.4.4); the ja shot's estimate reflects a 1 s length, the en shot's 5 s |
-| `docs/assets/images/og-image.jpg` | 1200x630 share image: app icon, title, and a frame of ex2 | composed with Pillow (Hiragino) |
+| `docs/assets/images/og-image.jpg`, `og-image-en.jpg` | 1200x630 share image: app icon, title, and a frame of ex2. Since 2026-11-16 (v0.10.0 site) the catchphrase reads 描く。動かす。鳴らす。／すべてMacの中で。 and "Picture it. Move it. / Hear it. All on your Mac.", with a subtitle naming still images | composed with Pillow (Hiragino W6/W3, Helvetica); the 2026-11-16 versions repaint the text panel of the previous English image, which has no text over the photo |
+| `docs/assets/image/teapot.jpg` | P-H3-Image, from text, 1024x1024, seed 1, 8 steps, teapot prompt (`misc/image-phase0/prompts.json`); 35.1 s on M5 24 GB | `build/bin/h3_image_cli` on the all-int8 P-H3-Image folder, 2026-11-15, image phase 8 (the same libh3 path as v0.10.0, run from the command line, not the app); JPEG q84 |
+| `docs/assets/image/teapot-edit.jpg` | P-H3-Image edit of teapot (1024x1024 PNG as `<Picture 1>`), 1024x1024, seed 5, prompt `Edit <Picture 1>. Replace the white cup with a small green ceramic bird. Keep the teapot, the sign and the table.`; 137.3 s | same tool and day |
+| `docs/assets/image/fisherman.jpg`, `fisherman-crop.jpg` | P-H3-Image, from text, 2496x3360 (about 8.4 MP), seed 7, fisherman prompt (on `image.html`); 237.6 s. Shown at 960x1292; the crop is 800x800 at full resolution, x 1100-1900, y 1200-2000 | same tool and day |
 | icons | from `native/H3Spike/Packaging/AppIcon.icns` | `iconutil`, `sips` |
 
 Web encoding: H.264 High, CRF 24 (preset slow), yuv420p, AAC 128 kbps,
 `+faststart`; PSNR against the app's output 43.2 dB (ex2) and 45.9 dB (ex3);
 posters are the frame at 2.5 s. The three files total about 1.1 MB.
+
+The still images are AI-generated and labeled so on `index.html`
+#examples-images and `image.html` #examples ("Powered by MiniMax H3"; P-H3-Image
+comes under the MiniMax H3 Community License). Generation times are the
+command line's wall-clock times. To redo them from the released app, generate
+with the same prompt, size and seed through the API (`"kind": "image"`).
 
 External: author's YouTube video https://youtu.be/PZrm470rGo0 ("走る少女２",
 channel OSU-DS-kamahara; public per oEmbed 2026-10-10; content not viewed,

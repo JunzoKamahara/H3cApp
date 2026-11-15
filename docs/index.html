@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="assets/js/lang.js"></script>
-  <title>H3cApp — Macで、音のあるAI動画を。</title>
-  <meta name="description" content="H3cAppは、MiniMaxの動画生成モデルMiniMax H3を使い、Apple SiliconのMac上で文章や画像から音声付きの動画をつくるmacOSアプリです。ダウンロード、インストール、モデルの準備、最初の動画づくりまでを案内します。">
+  <title>H3cApp — 描く。動かす。鳴らす。すべてMacの中で。</title>
+  <meta name="description" content="H3cAppは、MiniMaxの動画生成モデルMiniMax H3とその画像モデルを使い、Apple SiliconのMac上で文章から静止画を、文章や画像から音声付きの動画をつくるmacOSアプリです。ダウンロード、インストール、モデルの準備、最初の動画づくりまでを案内します。">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/">
@@ -14,8 +14,8 @@
   <meta property="og:locale" content="ja_JP">
   <meta property="og:locale:alternate" content="en_US">
   <meta property="og:site_name" content="H3cApp">
-  <meta property="og:title" content="H3cApp — Macで、音のあるAI動画を。">
-  <meta property="og:description" content="Apple SiliconのMac上で、文章や画像から音声付きの動画をつくるmacOSアプリ。配布アプリなので、PythonやPyTorchの環境構築は不要です。">
+  <meta property="og:title" content="H3cApp — 描く。動かす。鳴らす。すべてMacの中で。">
+  <meta property="og:description" content="Apple SiliconのMac上で、文章から静止画を、文章や画像から音声付きの動画をつくるmacOSアプリ。配布アプリなので、PythonやPyTorchの環境構築は不要です。">
   <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/">
   <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image.jpg">
   <meta property="og:image:width" content="1200">
@@ -37,6 +37,7 @@
           <li><a href="#requirements">動作条件</a></li>
           <li><a href="getting-started.html">はじめ方</a></li>
           <li><a href="guide.html">使い方</a></li>
+          <li><a href="image.html">静止画</a></li>
           <li><a href="gguf.html">GGUF</a></li>
           <li><a href="faq.html">困ったとき</a></li>
           <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
@@ -50,14 +51,14 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-copy">
         <p class="eyebrow">H3cApp for macOS</p>
-        <h1 id="hero-title">Macで、音のあるAI動画を。</h1>
-        <p class="lead">H3cAppは、MiniMaxの動画生成モデル「MiniMax H3」を使って、文章や画像から音声付きの動画をつくるmacOSアプリです。生成はApple SiliconのMacの中で行います。ダウンロードして使う配布アプリなので、PythonやPyTorchの環境構築は必要ありません。</p>
+        <h1 id="hero-title"><span class="phrase">描く。</span><span class="phrase">動かす。</span><span class="phrase">鳴らす。</span><br><span class="phrase">すべてMacの中で。</span></h1>
+        <p class="lead">H3cAppは、MiniMaxの動画生成モデル「MiniMax H3」と、その画像モデルを使うmacOSアプリです。文章から静止画を描き、その画像や文章から動きと音のある動画をつくります。v0.10.0からは、静止画の生成と編集もできるようになりました。生成はApple SiliconのMacの中で行います。ダウンロードして使う配布アプリなので、PythonやPyTorchの環境構築は必要ありません。</p>
         <p class="powered">Powered by <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a> — MiniMax の公式製品ではない、独立したアプリです。</p>
         <div class="cta-row">
           <a class="button button-primary" href="https://github.com/JunzoKamahara/H3cApp/releases/latest">最新版をダウンロード</a>
           <a class="button button-secondary" href="getting-started.html">はじめ方を見る</a>
         </div>
-        <p class="cta-note">Apple SiliconのMac・macOS 15 Sequoia以降が対象です。アプリとは別に、MiniMax H3のモデルのダウンロードが必要です（公式のモデルで約144GB〜、<a href="gguf.html">量子化モデル（GGUF）</a>なら約35〜45GB）。モデルにはMiniMax H3独自のライセンスが適用されます。</p>
+        <p class="cta-note">Apple SiliconのMac・macOS 15 Sequoia以降が対象です。アプリとは別に、MiniMax H3のモデルのダウンロードが必要です（公式のモデルで約144GB〜、<a href="gguf.html">量子化モデル（GGUF）</a>なら約35〜45GB）。静止画には、別に画像モデル（約10〜29GB）を入れます。モデルにはMiniMax H3独自のライセンスが適用されます。</p>
       </div>
       <figure class="hero-shot">
         <img src="assets/images/app-window.jpg" width="1520" height="1304" alt="H3cAppのウィンドウ。プレビューに生成した横長の動画（夕暮れの石畳の広場でギターを弾く人）が表示され、上に「動画を書き出す…」「使用した設定…」「参照に使う」のボタン、下に折りたたんだパネルとプロンプトの要約、上向き矢印の生成ボタンがある。">
@@ -77,6 +78,7 @@
 
     <section class="section" id="examples" aria-labelledby="examples-title">
       <h2 id="examples-title">生成例</h2>
+      <h3 id="examples-videos">動画</h3>
       <p>H3cApp v0.4.4（モデルはMiniMax H3）で、下のプロンプトから実際に生成した動画です。どれも音声付きです。再生ボタンを押すと音も流れます（自動では再生しません）。</p>
       <div class="examples">
         <figure class="example">
@@ -119,6 +121,32 @@
         </figure>
       </div>
       <p class="small muted">表示用に動画を圧縮し直しています。同じプロンプトとシードでも、Macの機種や設定によって結果は変わることがあります。<a href="https://youtu.be/PZrm470rGo0">作者がYouTubeで公開している動画</a>もあります（外部サイト）。</p>
+      <h3 id="examples-images">静止画</h3>
+      <p>v0.10.0の画像生成の処理（モデルはP-H3-Image、Powered by MiniMax H3）で、AIが生成した画像です。2枚目は、1枚目を参照にして指示どおりに直したものです。表示用にJPEGに縮小しています。</p>
+      <div class="examples">
+        <figure class="example">
+          <div class="media media-still"><img src="assets/image/teapot.jpg" width="1024" height="1024" loading="lazy" alt="青い木のテーブルに、黄色いホーローのティーポットと白いカップ。ポットに手書きで「OPEN」と書いた札が立てかけてある。"></div>
+          <figcaption>
+            <p class="spec">プロンプトから・1024×1024</p>
+            <p class="small muted">8ステップ／シード1。生成時間 35秒（M5・24GB）</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media media-still"><img src="assets/image/teapot-edit.jpg" width="1024" height="1024" loading="lazy" alt="1枚目を編集した画像。白いカップが緑色の陶器の小鳥に替わり、ほかはそのまま残っている。"></div>
+          <figcaption>
+            <p class="spec">編集・1枚目を参照に・1024×1024</p>
+            <p class="small muted">「白いカップを緑の陶器の小鳥に替え、ポット・札・テーブルは残す」。生成時間 2分17秒（M5・24GB）</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media media-still"><img src="assets/image/fisherman.jpg" width="960" height="1292" loading="lazy" alt="夜明けの港で、紺のニット帽をかぶった年配の漁師の横顔のクローズアップ。"></div>
+          <figcaption>
+            <p class="spec">プロンプトから・特大（2496×3360、約8メガピクセル）</p>
+            <p class="small muted">8ステップ／シード7。生成時間 3分58秒（M5・24GB）</p>
+          </figcaption>
+        </figure>
+      </div>
+      <p class="small"><a href="image.html#examples">プロンプトと等倍の切り出しを見る</a></p>
     </section>
 
     <section class="section" id="features" aria-labelledby="features-title">
@@ -128,6 +156,11 @@
           <h3>文章を動画に</h3>
           <p>文章（プロンプト）から、映像と音声がそろった動画（MP4）をつくります。長さは1回の生成で1〜15秒です。「つなげて生成」なら、短い動画を順につないで、もっと長い動画をつくれます。画面の形は横長・正方形・縦長から選べます。</p>
           <p class="small"><a href="getting-started.html#first-video">最初の1本をつくる</a></p>
+        </li>
+        <li>
+          <h3>静止画を描く・直す</h3>
+          <p>文章から静止画をつくり、手元の画像や生成した画像を「カップを小鳥に替えて」のような指示で直せます（v0.10.0から）。8メガピクセルまでの大きさで描け、気に入った1枚はそのまま動画の最初の画像にできます。</p>
+          <p class="small"><a href="image.html">静止画をつくる・編集する</a></p>
         </li>
         <li>
           <h3>画像から動きを作る</h3>
@@ -196,11 +229,15 @@
               <td>MiniMax H3のRef2VA：さらに約144.1GB。合計約288.1GB（268.3GiB）。必要になってから追加できます。</td>
             </tr>
             <tr>
+              <th scope="row">AIモデル（静止画、v0.10.0から）</th>
+              <td>MiniMax H3 Image：約22GB（動画モデルが必要）。P-H3-Image：約29GB、または動画モデルを使って約10GB。必要になってから追加できます。</td>
+            </tr>
+            <tr>
               <th scope="row">そのほかに必要な容量</th>
               <td>int8キャッシュ（M5クラスで使う場合）1つにつき約19.3GB、生成した動画、参照ファイルのコピー、作業用の空き容量。</td>
             </tr>
           </tbody>
-          <caption>2026年10月10日時点・v0.4.4の情報。モデルの容量はHugging Faceのファイル一覧の合計です。アプリの画面では「GB」と表示されますが、計算はGiB（1GiB＝1,073,741,824バイト）で、FL2VAは約134.2と表示されます。</caption>
+          <caption>2026年10月10日時点・v0.4.4の情報（静止画のモデルはv0.10.0）。モデルの容量はHugging Faceのファイル一覧の合計です。アプリの画面では「GB」と表示されますが、計算はGiB（1GiB＝1,073,741,824バイト）で、FL2VAは約134.2と表示されます。</caption>
         </table>
       </div>
       <div class="warn" id="model-license">

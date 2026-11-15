@@ -10,6 +10,8 @@ docs/
   index.html              top page (#examples #features #requirements #flow #performance #download)
   getting-started.html    #install #models #compute #first-video
   guide.html              #images #projects #speed #size #prompts #lora #advanced
+  image.html              still images (v0.10.0): #examples #models #setup #make
+                          #edit #video #time #license
   settings.html           詳細設定 explained, in dialog order: #overview #size #steps
                           #compute #speed #reuse #layers #seed #lora #presets
                           (not in the top nav; linked from the guide TOC and #speed)
@@ -21,6 +23,7 @@ docs/
   assets/js/main.js       copy buttons only
   assets/images/          app-window.jpg, app-composer.jpg, app-lora.jpg, app-advanced.jpg, og-image.jpg, icons
   assets/video/           ex1-3.mp4 and posters
+  assets/image/           still-image examples (teapot, teapot-edit, fisherman, crop)
   .nojekyll  robots.txt  sitemap.xml
 plans/website-facts.md    sources for every number and UI name (not published)
 plans/note-handoff.md     brief for the note article (not published)

@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ja" data-alt-href="en/image.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="assets/js/lang.js"></script>
+  <title>静止画をつくる・編集する — H3cApp</title>
+  <meta name="description" content="H3cApp v0.10.0からの静止画の生成と編集。プロンプトから画像をつくり、参照画像と指示で直し、そのまま動画の最初の画像にできます。2つの画像モデル（MiniMax H3 ImageとP-H3-Image）の違い、時間の目安、ライセンス。">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/image.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/image.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/image.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/image.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="静止画をつくる・編集する — H3cApp">
+  <meta property="og:description" content="プロンプトから画像をつくり、参照画像と指示で直し、そのまま動画にする。Macの中で。">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/image.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へ移動</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="サイト内">
+        <ul>
+          <li><a href="./#examples">生成例</a></li>
+          <li><a href="./#requirements">動作条件</a></li>
+          <li><a href="getting-started.html">はじめ方</a></li>
+          <li><a href="guide.html">使い方</a></li>
+          <li><a href="image.html" aria-current="page">静止画</a></li>
+          <li><a href="gguf.html">GGUF</a></li>
+          <li><a href="faq.html">困ったとき</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="en/image.html?lang=en" hreflang="en" lang="en">English</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>静止画をつくる・編集する</h1>
+      <p class="lead">H3cApp v0.10.0から、動画と同じウィンドウで静止画もつくれます。プロンプトから1枚の画像をつくる、手元の画像を指示どおりに直す、できた画像をそのまま動画の最初の画像にする。どれもMacの中で行います。</p>
+      <nav class="toc" aria-label="このページの内容">
+        <p>このページの内容</p>
+        <ol>
+          <li><a href="#examples">生成例</a></li>
+          <li><a href="#models">2つの画像モデル</a></li>
+          <li><a href="#setup">モデルを入れる</a></li>
+          <li><a href="#make">画像をつくる</a></li>
+          <li><a href="#edit">画像を編集する</a></li>
+          <li><a href="#video">画像から動画へ</a></li>
+          <li><a href="#time">時間の目安</a></li>
+          <li><a href="#license">ライセンス</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section" id="examples" aria-labelledby="examples-title">
+      <h2 id="examples-title">生成例</h2>
+      <p><strong>このページの画像は、すべてAIで生成したものです</strong>（H3cAppの画像生成の処理で、P-H3-Imageを使用。Powered by MiniMax H3）。表示用にJPEGに縮小しています。</p>
+      <div class="examples">
+        <figure class="example">
+          <div class="media media-still">
+            <img src="assets/image/teapot.jpg" width="1024" height="1024" loading="lazy" alt="青い木のテーブルに、黄色いホーローのティーポットと白いカップ。ポットに手書きで「OPEN」と書いた小さな札が立てかけてある。">
+          </div>
+          <figcaption>
+            <p class="spec">プロンプトから・1024×1024</p>
+            <p class="small muted">8ステップ／シード1。生成時間 35秒（M5・24GB）</p>
+            <p class="prompt">A yellow enamel teapot and a white cup on a blue wooden table, with a small handwritten sign that reads "OPEN" leaning against the teapot.</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media media-still">
+            <img src="assets/image/teapot-edit.jpg" width="1024" height="1024" loading="lazy" alt="左の画像を編集したもの。白いカップが緑色の陶器の小鳥に替わり、ティーポット、札、テーブルはそのまま残っている。">
+          </div>
+          <figcaption>
+            <p class="spec">編集・左の画像を参照に・1024×1024</p>
+            <p class="small muted">8ステップ／シード5。生成時間 2分17秒（M5・24GB）</p>
+            <p class="prompt">Edit &lt;Picture 1&gt;. Replace the white cup with a small green ceramic bird. Keep the teapot, the sign and the table.</p>
+          </figcaption>
+        </figure>
+        <figure class="example">
+          <div class="media media-still">
+            <img src="assets/image/fisherman.jpg" width="960" height="1292" loading="lazy" alt="夜明けの港で、紺のニット帽をかぶった年配の漁師の横顔のクローズアップ。低い朝日が左から当たり、深いしわやしみ、無精ひげが写っている。">
+          </div>
+          <figcaption>
+            <p class="spec">プロンプトから・特大（2496×3360、約8メガピクセル）</p>
+            <p class="small muted">8ステップ／シード7。生成時間 3分58秒（M5・24GB）</p>
+            <p class="prompt">A close-up portrait photograph by an experienced documentary photographer of an elderly Japanese fisherman on a harbor at dawn, his weathered face filling the frame, deep wrinkles, sun spots and stubble on his cheeks, a faded navy knit cap, soft side light from the low sun on the left, shallow depth of field.</p>
+          </figcaption>
+        </figure>
+      </div>
+      <figure class="example detail-figure">
+        <div class="media media-still">
+          <img src="assets/image/fisherman-crop.jpg" width="800" height="800" loading="lazy" alt="上の漁師の画像から、目と頬のあたりを縮小せずに切り出したもの。肌のしわ、毛穴、しみ、まつげが細かく描かれている。">
+        </div>
+        <figcaption>
+          <p class="spec">特大の画像の一部（800×800を等倍で切り出し）</p>
+          <p class="small muted">P-H3-Imageは8メガピクセルで最も良くなるモデルです。縮小せずに見ると、肌の細部まで描かれているのが分かります。</p>
+        </figcaption>
+      </figure>
+      <p class="small muted">開発中に、v0.10.0と同じ処理をコマンドラインから実行してつくりました。同じプロンプトとシードでも、Macの機種や設定によって結果は変わることがあります。</p>
+    </section>
+
+    <section class="section section-narrow" id="models" aria-labelledby="models-title">
+      <h2 id="models-title">2つの画像モデル</h2>
+      <p>静止画には、動画とは別の画像モデルを使います。2つから選べ、両方を入れてパネルのモデルのメニューで切り替えることもできます。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col"></th><th scope="col">MiniMax H3 Image</th><th scope="col">P-H3-Image</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">つくった人</th><td>MiniMax</td><td>Pruna AI（MiniMax H3をもとにした画像用のモデル）</td></tr>
+            <tr><th scope="row">ダウンロード</th><td>約22GB。テキストエンコーダは入っている動画モデルのものを使うので、先に動画モデルが必要です。</td><td>約29GB（動画モデルは不要）。動画モデルが入っていれば、そのDiTに付属のLoRAを当てる形で約10GBに減らせます（生成にはおよそ2倍の時間がかかります）。</td></tr>
+            <tr><th scope="row">ステップ数</th><td>6</td><td>8</td></tr>
+            <tr><th scope="row">得意なこと</th><td>速さと、多くの参照を使う編集</td><td>写真らしい質感。8メガピクセル（大きさの「<span class="ui">特大</span>」）で最も良くなります</td></tr>
+            <tr><th scope="row">編集の参照</th><td>16枚まで（正方形の画像なら15枚まで）</td><td>8枚まで</td></tr>
+            <tr><th scope="row">ライセンス</th><td>MiniMax-H3-Image Community License Agreement（動画モデルとは別の契約）</td><td>MiniMax H3 Community License Agreement（動画モデルと同じ）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="setup" aria-labelledby="setup-title">
+      <h2 id="setup-title">モデルを入れる</h2>
+      <ol class="steps">
+        <li><strong>パネル左上の切り替えで「<span class="ui">画像</span>」を選びます。</strong>動画側と画像側は、それぞれ自分のプロンプトと設定を持ちます。</li>
+        <li><strong>モデルのメニューから、入れるモデルを選びます。</strong>「<span class="ui">画像モデルをダウンロード（MiniMax H3 Image）…</span>」「<span class="ui">画像モデルをダウンロード（P-H3-Image）…</span>」「<span class="ui">画像モデルをダウンロード（P-H3-Image、動画モデルを使う）…</span>」の3つがあります。</li>
+        <li><strong>表示されるライセンスの要点を確認して、ダウンロードを始めます。</strong>途中で止めても、次は続きから再開します。終わると、すべてのファイルを固定した版と照合してから登録します。</li>
+      </ol>
+      <p class="small">「<span class="ui">モデル管理</span>」の画像モデルの欄からも、同じダウンロードを始められます。</p>
+    </section>
+
+    <section class="section section-narrow" id="make" aria-labelledby="make-title">
+      <h2 id="make-title">画像をつくる</h2>
+      <ol class="steps">
+        <li><strong>プロンプトを書きます。</strong>P-H3-Imageでは、「何の写真・絵か」を最初の一文で書き、場面を具体的に書くと良くなります。</li>
+        <li><strong>形・大きさ・枚数を選びます。</strong>形は正方形・横長・縦長。大きさは「<span class="ui">標準</span>」（1024×1024や1344×768）、「<span class="ui">大</span>」（その2倍）、「<span class="ui">特大</span>」（約8メガピクセルの2912×2912や3808×2176）、「<span class="ui">動画用</span>」（動画と同じ大きさ）。枚数は1〜20枚です。</li>
+        <li><strong>生成ボタンを押します。</strong></li>
+      </ol>
+      <ul>
+        <li><strong>シード</strong>：パネル上部の「<span class="ui">シード</span>」で、毎回変えるか固定するかを選べます。固定すると、同じ設定で同じ画像ができます。複数枚をつくるときは、1枚目だけがそのシードを使います。</li>
+        <li><strong>保存先</strong>：画像はプロジェクトの<code>images</code>フォルダに、PNGと設定の記録（.json）、潜在ファイルの組で保存されます。PNGには、AIで生成したことを示すメタデータが入ります。「<span class="ui">プロジェクトの動画と画像…</span>」に、動画と一緒に並びます。</li>
+        <li><strong>取り込む</strong>：「<span class="ui">取り込む</span>」で、手元の画像ファイルをプロジェクトの画像にできます（PNGに変換して保存します）。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="edit" aria-labelledby="edit-title">
+      <h2 id="edit-title">画像を編集する</h2>
+      <p>参照画像を渡し、どう変えるかをプロンプトで指示すると、直した画像ができます。同じ画像モデルが編集も行うので、追加のダウンロードは要りません。</p>
+      <ol class="steps">
+        <li><strong>編集する画像を選びます。</strong>プレビューか一覧で、画像の「<span class="ui">この画像を編集</span>」を押します。手元のファイルを使うときは、パネル上部の「<span class="ui">参照画像を追加…</span>」で選びます。</li>
+        <li><strong>変えたいことと、残したいことを書きます。</strong>参照画像は <code>&lt;Picture 1&gt;</code> のように番号で呼びます（参照の下の <code>&lt;Picture 1&gt;</code> を押すと、プロンプトに入ります）。<br>例：<code>Edit &lt;Picture 1&gt;. Replace the white cup with a small green ceramic bird. Keep the teapot, the sign and the table.</code></li>
+        <li><strong>生成ボタンを押します。</strong></li>
+      </ol>
+      <ul>
+        <li><strong>複数の参照</strong>：参照は何枚か並べられます。番号は並び順で、右クリックで前後を入れ替えられます。例：<code>Edit &lt;Picture 1&gt;. Replace the cup with the bird from &lt;Picture 2&gt;.</code> 枚数が増えるほど時間とメモリが増えます。参照の下に、必要なメモリの目安が出ます。</li>
+        <li><strong>大きさ</strong>：最初の参照を入れたとき、つくる画像の大きさをその画像の形に合わせます。あとから変えられます。P-H3-Imageでは、4〜8メガピクセル（最もよく編集できる範囲）に合わせます。</li>
+        <li><strong>残したいものを書く</strong>：P-H3-Imageでは、指示の前に <code>Edit &lt;Picture 1&gt;.</code> が自動で付きます。変えたい結果と、残したいもの（顔、姿勢、背景、光など）を書いてください。残すものを書かないと、全体を描き直しがちです。</li>
+        <li><strong>記録</strong>：編集でつくった画像の記録には、もとにした画像が残ります。参照のファイルは、プロジェクトの<code>references</code>フォルダにコピーされます。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="video" aria-labelledby="video-title">
+      <h2 id="video-title">画像から動画へ</h2>
+      <p>画像の「<span class="ui">この画像から動画を作る</span>」を押すと、その画像を最初の画像にして動画の準備をします（動画のプロンプトが空なら、画像のプロンプトも入ります）。「<span class="ui">その他</span>」から、最後の画像や参照画像にもできます。思いどおりの1枚を静止画で決めてから動かせば、動画の最初の場面を何度も生成し直さずに済みます。</p>
+      <p class="small">動画のつくり方は<a href="guide.html#images">使い方の「画像から動画をつくる」</a>にあります。</p>
+    </section>
+
+    <section class="section section-narrow" id="time" aria-labelledby="time-title">
+      <h2 id="time-title">時間の目安</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">つくるもの</th><th scope="col">MiniMax H3 Image</th><th scope="col">P-H3-Image</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">1024×1024</th><td class="num">約35秒</td><td class="num">約35秒</td></tr>
+            <tr><th scope="row">2048×2048</th><td class="num">約1分40秒</td><td class="num">約1分50秒</td></tr>
+            <tr><th scope="row">2912×2912（特大）</th><td class="num">—</td><td class="num">約4分</td></tr>
+            <tr><th scope="row">編集：参照1枚から1024×1024</th><td class="num">約1分20秒</td><td class="num">約2分20秒</td></tr>
+            <tr><th scope="row">編集：参照1枚から2048×2048</th><td class="num">約2分40秒</td><td class="num">約5分</td></tr>
+          </tbody>
+          <caption>M5・メモリ24GBでの目安（1枚あたり。—は計っていないもの）。P-H3-Imageを動画モデルのDiTとLoRAで使う形（約10GB）では、およそ2倍の時間がかかります。</caption>
+        </table>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="license-title">
+      <h2 id="license-title">ライセンス</h2>
+      <ul>
+        <li><strong>MiniMax H3 Image</strong>：<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/5f90473023975e6271b0ed1dd84c4e88e4bbc6d3/LICENSE">MiniMax-H3-Image Community License Agreement</a>が適用されます。動画モデルとは別の契約です。EU・英国・韓国・米国では、モデルもつくった画像も使えません。</li>
+        <li><strong>P-H3-Image</strong>：動画モデルと同じ<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE">MiniMax H3 Community License Agreement</a>が適用されます。このモデルを使った製品やサービスには「Powered by MiniMax H3」と表示します。</li>
+        <li>どちらも、ダウンロードの前にアプリが要点とライセンス本文へのリンクを表示します。生成した画像を公開するときは、AIで生成したことを示してください（PNGのメタデータには、いつも記録します）。動画モデルのライセンスの要点は<a href="faq.html#license">ライセンスと利用条件</a>にあります。</li>
+      </ul>
+      <p class="small muted">仕組みの詳細は、GitHubの<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/docs/GUIDE.ja.md#静止画をつくる編集する">GUIDE.ja.md</a>と<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a>にあります。</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">不具合の報告（Issues）</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.ja.md">README</a></li>
+        <li><a href="faq.html#license">ライセンス</a></li>
+        <li><a href="en/image.html?lang=en" hreflang="en" lang="en">English</a></li>
+      </ul>
+      <p>H3cApp：大阪成蹊大学データサイエンス学部 鎌原淳三／Junzo Kamahara</p>
+      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画の生成にはMiniMaxの動画生成モデル<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>を使っています。モデルにはMiniMax H3独自のライセンス（MiniMax H3 Community License）が適用されます。</p>
+    </div>
+  </footer>
+</body>
+</html>
