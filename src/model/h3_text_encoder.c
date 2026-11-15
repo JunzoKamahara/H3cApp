@@ -243,6 +243,26 @@ static int read_weight_bf16(const h3_weight_store *store, const char *name,
         fail(error, error_size, "required weight is absent: %s", name);
         return 0;
     }
+    if (h3_weight_is_comfy_int8(store, tensor)) {
+        /* A ComfyUI int8 text encoder (P-H3-Image's int8_convrot file):
+         * restored on this prefetch thread like a GGUF one. */
+        uint64_t elements = ndim == 2 ? shape[0] * shape[1] : 0;
+        if (ndim != 2 || tensor->shape[0] != shape[0] ||
+            tensor->shape[1] != shape[1] || elements > SIZE_MAX) {
+            fail(error, error_size, "weight %s shape mismatch", name);
+            return 0;
+        }
+        uint16_t *bf16 = malloc((size_t)elements * sizeof(*bf16));
+        int ok = bf16 &&
+            h3_weight_comfy_int8_read_bf16(store, header, tensor, bf16,
+                                           (size_t)elements, error,
+                                           error_size) &&
+            h3_gpu_tensor_write_bf16(destination, bf16, (size_t)elements);
+        free(bf16);
+        if (!ok && error && error_size && !error[0])
+            fail(error, error_size, "cannot expand %s", name);
+        return ok;
+    }
     h3_quant_type quant = (h3_quant_type)tensor->quant;
     if (quant == H3_QUANT_NONE && tensor->dtype == H3_DTYPE_F32)
         quant = H3_QUANT_F32; /* converted below like any expansion */

@@ -41,7 +41,9 @@ struct H3ImageModel: Identifiable, Hashable {
     }
 
     let kind: Kind
-    var id: String { kind.rawValue }
+    /// The install: "h3", "ph3" (P-H3-Image's own DiT, all int8) or
+    /// "ph3-lora" (a video model's FL2VA DiT with P-H3-Image's LoRA).
+    let id: String
     let displayName: String
     let folderName: String
     let weightsRepo: String
@@ -58,12 +60,16 @@ struct H3ImageModel: Identifiable, Hashable {
     let licenseAcceptedKey: String
     let provenanceNote: String
     let declaration: String
+    /// It takes the FL2VA DiT of a video model already installed (copied
+    /// into transformer/) and applies the LoRA in lora/ to it.
+    var usesVideoTransformer = false
 
-    static func == (a: H3ImageModel, b: H3ImageModel) -> Bool { a.kind == b.kind }
-    func hash(into hasher: inout Hasher) { hasher.combine(kind) }
+    static func == (a: H3ImageModel, b: H3ImageModel) -> Bool { a.id == b.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 
     static let licenseFile = "LICENSE"
     static let textEncoderFolder = "text_encoder"
+    static let transformerFolder = "transformer"
     static let provenanceFile = "H3IMAGE_PROVENANCE.json"
 
     // MARK: MiniMax H3 Image
@@ -81,7 +87,7 @@ struct H3ImageModel: Identifiable, Hashable {
     }
 
     static let h3 = H3ImageModel(
-        kind: .h3, displayName: "MiniMax H3 Image", folderName: "MiniMax-H3-Image",
+        kind: .h3, id: "h3", displayName: "MiniMax H3 Image", folderName: "MiniMax-H3-Image",
         weightsRepo: h3Repo, weightsRevision: h3Revision, weightsRevisionDate: "2026-11-10",
         licenseName: "MiniMax-H3-Image Community License Agreement",
         licenseURL: URL(string: "https://huggingface.co/\(h3OfficialRepo)/blob/\(h3LicenseRevision)/LICENSE")!,
@@ -127,8 +133,22 @@ struct H3ImageModel: Identifiable, Hashable {
         URL(string: "https://huggingface.co/\(ph3DiffusersRepo)/resolve/\(ph3DiffusersRevision)/\(repoPath)")!
     }
 
+    private static let ph3TextEncoder = Weight(
+        repoPath: "text_encoders/p-h3-image_text_encoder_int8_convrot.safetensors",
+        localPath: "text_encoder/p-h3-image_text_encoder_int8_convrot.safetensors",
+        bytes: 5_120_870_504,
+        sha256: "fb42c9ff0597e61729475d0b48b69b591ffe06d0b442a79dde22b14fadbe1c0f")
+    private static let ph3VAE = Weight(
+        repoPath: "vae/p-h3-image_vae_int8_convrot.safetensors",
+        localPath: "vae/p-h3-image_vae_int8_convrot.safetensors",
+        bytes: 3_146_996_440,
+        sha256: "583e0d43354b6b833aa9a0815a5fac831b1ef6d0c19a7eaa0616980a3dab5ffe")
+
+    /// P-H3-Image's own DiT, text encoder and VAE, all int8 + ConvRot
+    /// (about 29 GB; the bf16 text encoder and VAE, 6.5 GB more, gave the
+    /// same pictures - plans/IMAGE_PLAN.ja.md, appendix J).
     static let ph3 = H3ImageModel(
-        kind: .ph3, displayName: "P-H3-Image", folderName: "P-H3-Image",
+        kind: .ph3, id: "ph3", displayName: "P-H3-Image", folderName: "P-H3-Image",
         weightsRepo: ph3Repo, weightsRevision: ph3Revision, weightsRevisionDate: "2026-11-03",
         licenseName: "MiniMax H3 Community License Agreement",
         licenseURL: URL(string: "https://huggingface.co/\(ph3Repo)/blob/\(ph3Revision)/LICENSE")!,
@@ -139,16 +159,42 @@ struct H3ImageModel: Identifiable, Hashable {
                    localPath: "transformer/p-h3-image_int8_convrot.safetensors",
                    bytes: 21_213_068_840,
                    sha256: "b156fd4fe9d169e58cb2b07f9594ec740ff8f0e052d62b009e6dd034de5865e7"),
-            Weight(repoPath: "text_encoders/p-h3-image_text_encoder_bf16.safetensors",
-                   localPath: "text_encoder/p-h3-image_text_encoder_bf16.safetensors",
-                   bytes: 9_138_027_824,
-                   sha256: "ae0c83cb35207dcc0a81361768094a5d1e3f92d1a95b8ff75a0328dfefbbc3d8"),
-            Weight(repoPath: "vae/p-h3-image_vae_bf16.safetensors",
-                   localPath: "vae/p-h3-image_vae_bf16.safetensors",
-                   bytes: 5_559_036_680,
-                   sha256: "a1f2a7a98d0f2d1e761656fc5701dd43d7cf46d1bbdaa5d866a3e961e97487d7"),
+            ph3TextEncoder, ph3VAE,
         ],
-        smallFiles: [
+        smallFiles: ph3SmallFiles,
+        sharesTextEncoder: false,
+        licenseAcceptedKey: "h3c-app.ph3ImageModelLicenseAcceptedAt",
+        provenanceNote: "P-H3-Image by Pruna AI: the DiT, the text encoder (Qwen3-VL-4B with its text connector) and the VAE, all int8 + ConvRot, are \(ph3Repo)'s files, with its LICENSE, LICENSE-APACHE and NOTICE; vae/config.json and tokenizer/tokenizer.json are from \(ph3DiffusersRepo) at \(ph3DiffusersRevision).",
+        declaration: ph3Declaration)
+
+    /// P-H3-Image on a video model's own FL2VA DiT: Pruna AI's LoRA, which
+    /// P-H3-Image's DiT is FL2VA with merged, and the int8 text encoder and
+    /// VAE (about 10 GB). Slower: the DiT runs as the video model's does.
+    static let ph3LoRA = H3ImageModel(
+        kind: .ph3, id: "ph3-lora", displayName: "P-H3-Image LoRA", folderName: "P-H3-Image-LoRA",
+        weightsRepo: ph3Repo, weightsRevision: ph3Revision, weightsRevisionDate: "2026-11-03",
+        licenseName: "MiniMax H3 Community License Agreement",
+        licenseURL: URL(string: "https://huggingface.co/\(ph3Repo)/blob/\(ph3Revision)/LICENSE")!,
+        officialURL: URL(string: "https://huggingface.co/\(ph3DiffusersRepo)")!,
+        authorizationURL: nil,
+        weights: [
+            Weight(repoPath: "loras/p-h3-image_lora_bf16.safetensors",
+                   localPath: "lora/p-h3-image_lora_bf16.safetensors",
+                   bytes: 1_956_195_360,
+                   sha256: "0e9013ae2873e3415dcb7bb59a9677293bdbdb6f663e138a79bb9bdced00ea61"),
+            ph3TextEncoder, ph3VAE,
+        ],
+        smallFiles: ph3SmallFiles,
+        sharesTextEncoder: false,
+        licenseAcceptedKey: "h3c-app.ph3ImageModelLicenseAcceptedAt",
+        provenanceNote: "P-H3-Image by Pruna AI as its LoRA on a video model's FL2VA DiT: lora/, the text encoder (Qwen3-VL-4B with its text connector) and the VAE, int8 + ConvRot, are \(ph3Repo)'s files, with its LICENSE, LICENSE-APACHE and NOTICE; vae/config.json and tokenizer/tokenizer.json are from \(ph3DiffusersRepo) at \(ph3DiffusersRevision).",
+        declaration: ph3Declaration,
+        usesVideoTransformer: true)
+
+    private static let ph3Declaration =
+        "Model card of this revision: license_name minimax-h3-community-license-agreement (Qwen3-VL-4B parts: Apache-2.0)"
+
+    private static let ph3SmallFiles = [
             SmallFile(url: ph3Diffusers("vae/config.json"), localPath: "vae/config.json",
                       sha256: "63d82611cd65279518d52b42b38eef80580cb7bac0c04b3afbba41b37d597ca7"),
             SmallFile(url: ph3Diffusers("tokenizer/tokenizer.json"), localPath: "tokenizer/tokenizer.json",
@@ -159,13 +205,9 @@ struct H3ImageModel: Identifiable, Hashable {
                       sha256: "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a"),
             SmallFile(url: ph3File("NOTICE"), localPath: "NOTICE",
                       sha256: "f518e346f0c20d4ea2c70c0c953add326d5594df7e0bcbcb647e21dec1f8b89f"),
-        ],
-        sharesTextEncoder: false,
-        licenseAcceptedKey: "h3c-app.ph3ImageModelLicenseAcceptedAt",
-        provenanceNote: "P-H3-Image by Pruna AI: the DiT (int8 + ConvRot), the text encoder (Qwen3-VL-4B with its text connector, bf16) and the VAE (bf16) are \(ph3Repo)'s files, with its LICENSE, LICENSE-APACHE and NOTICE; vae/config.json and tokenizer/tokenizer.json are from \(ph3DiffusersRepo) at \(ph3DiffusersRevision).",
-        declaration: "Model card of this revision: license_name minimax-h3-community-license-agreement (Qwen3-VL-4B parts: Apache-2.0)")
+    ]
 
-    static let all = [h3, ph3]
+    static let all = [h3, ph3, ph3LoRA]
 
     /// The model the app installed at this folder, if it is one.
     static func installed(at path: String) -> H3ImageModel? {
@@ -192,9 +234,14 @@ struct H3ImageModel: Identifiable, Hashable {
         !((try? FileManager.default.contentsOfDirectory(atPath: path(Self.textEncoderFolder))) ?? []).isEmpty
     }
 
+    var hasTransformer: Bool {
+        !((try? FileManager.default.contentsOfDirectory(atPath: path(Self.transformerFolder))) ?? []).isEmpty
+    }
+
     /// Everything the engine needs: the folder is an image model.
     var complete: Bool {
         weightsPresent && smallFiles.allSatisfy { fileSize($0.localPath) != nil } && hasTextEncoder
+            && (!usesVideoTransformer || hasTransformer)
     }
 
     var licenseAcceptedAt: Date? {
@@ -225,6 +272,7 @@ struct H3ImageModel: Identifiable, Hashable {
         case mismatch(file: String)
         case smallFile(String, String)
         case noTextEncoder
+        case noVideoTransformer
         case copy(String)
 
         var errorDescription: String? {
@@ -237,6 +285,8 @@ struct H3ImageModel: Identifiable, Hashable {
                 return String(localized: "「\(file)」を取得できませんでした（詳細: \(detail)）")
             case .noTextEncoder:
                 return String(localized: "画像モデルは、動画モデルと同じテキストエンコーダを使います。先に動画モデル（MiniMax-H3）を導入してから、もう一度お試しください。")
+            case .noVideoTransformer:
+                return String(localized: "この組み合わせは、導入済みの動画モデル（MiniMax-H3、FL2VA）のDiTを使います。先に動画モデルを導入してから、もう一度お試しください。")
             case .copy(let detail):
                 return String(localized: "テキストエンコーダを複製できませんでした（詳細: \(detail)）")
             }
@@ -276,11 +326,29 @@ struct H3ImageModel: Identifiable, Hashable {
         }
     }
 
+    /// The video model whose FL2VA DiT the LoRA install uses.
+    static func transformerSource(in modelPaths: [String]) -> String? {
+        modelPaths.map { $0 + "/FL2VA/transformer" }.first { folder in
+            !((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []).isEmpty
+        }
+    }
+
+    /// Copies a video model's FL2VA DiT (a clone where the volume makes
+    /// one), as shareTextEncoder copies the text encoder.
+    func shareTransformer(from source: String) throws {
+        if hasTransformer { return }
+        try shareFolder(from: source, to: Self.transformerFolder)
+    }
+
     /// Copies a video model's text encoder (a clone where the volume makes
     /// one) unless one is here already. Copies files: off the main actor.
     func shareTextEncoder(from source: String) throws {
-        let destination = path(Self.textEncoderFolder)
         if hasTextEncoder { return }
+        try shareFolder(from: source, to: Self.textEncoderFolder)
+    }
+
+    private func shareFolder(from source: String, to folder: String) throws {
+        let destination = path(folder)
         try? FileManager.default.removeItem(atPath: destination)
         let staging = destination + ".copying"
         try? FileManager.default.removeItem(atPath: staging)
@@ -296,7 +364,8 @@ struct H3ImageModel: Identifiable, Hashable {
 
     /// Hashes the weights against the pinned revision and writes the
     /// record. A file whose hash differs is deleted and named in the error.
-    func verify(textEncoderSource: String?, progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
+    func verify(textEncoderSource: String?, transformerSource: String? = nil,
+                progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
         let total = downloadBytes
         var done: Int64 = 0
         var record: [String: SwiftVRModel.ProvenanceEntry] = [:]
@@ -327,6 +396,9 @@ struct H3ImageModel: Identifiable, Hashable {
         if let textEncoderSource {
             note += " text_encoder/ is a copy of the video model's at \(textEncoderSource) (the same Qwen3-VL language layers)."
         }
+        if let transformerSource {
+            note += " transformer/ is a copy of the video model's FL2VA DiT at \(transformerSource), to which lora/ is applied at strength 1."
+        }
         let provenance = SwiftVRModel.Provenance(
             repo: weightsRepo, revision: weightsRevision, revisionDate: weightsRevisionDate,
             declaredLicense: licenseName, declaration: declaration,
@@ -356,10 +428,10 @@ struct H3ImageModel: Identifiable, Hashable {
 @MainActor
 final class H3ImageModelSetup: ObservableObject {
     static let shared = H3ImageModelSetup(model: .h3)
-    static let ph3 = H3ImageModelSetup(model: .ph3)
+    private static let others = [H3ImageModel.ph3, H3ImageModel.ph3LoRA].map(H3ImageModelSetup.init(model:))
 
     static func of(_ model: H3ImageModel) -> H3ImageModelSetup {
-        model.kind == .ph3 ? ph3 : shared
+        others.first { $0.model == model } ?? shared
     }
 
     let model: H3ImageModel
@@ -425,6 +497,12 @@ final class H3ImageModelSetup: ObservableObject {
             guard !model.sharesTextEncoder || hasTextEncoder || source != nil else {
                 throw H3ImageModel.SetupError.noTextEncoder
             }
+            let hasTransformer = model.hasTransformer
+            let transformerSource = model.usesVideoTransformer
+                ? H3ImageModel.transformerSource(in: videoModelPaths) : nil
+            guard !model.usesVideoTransformer || hasTransformer || transformerSource != nil else {
+                throw H3ImageModel.SetupError.noVideoTransformer
+            }
             var fetched = false
             if !model.weightsPresent { fetched = try await download() }
             try Task.checkCancellation()
@@ -436,10 +514,16 @@ final class H3ImageModelSetup: ObservableObject {
                     try model.shareTextEncoder(from: source)
                 }.value
             }
+            if !hasTransformer, let transformerSource {
+                phase = .sharing
+                try await Task.detached(priority: .userInitiated) {
+                    try model.shareTransformer(from: transformerSource)
+                }.value
+            }
             try Task.checkCancellation()
             if fetched || !model.verified {
                 phase = .verifying(done: 0, total: 0)
-                try await model.verify(textEncoderSource: source) { done, total in
+                try await model.verify(textEncoderSource: source, transformerSource: transformerSource) { done, total in
                     Task { @MainActor in
                         if case .verifying = self.phase { self.phase = .verifying(done: done, total: total) }
                     }
@@ -545,8 +629,10 @@ struct H3ImageModelSetupView: View {
                 Text(verbatim: model.displayName).font(.headline).foregroundStyle(palette.textSecondary)
             }
             Group {
-                if model.kind == .ph3 {
-                    Text("静止画をつくるモデル「P-H3-Image」（Pruna AI、MiniMax H3を基にした画像用のモデル）の重みを、Hugging Faceの\(model.weightsRepo)（ComfyUI用、DiTはint8版、テキストエンコーダとVAEはbf16版、revision \(String(model.weightsRevision.prefix(8)))、\(model.weightsRevisionDate)）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約\(gigabytes(model.downloadBytes))が「\(model.directory)」に置かれます。動画モデルは要りません。文章からの生成と、参照画像（8枚まで）を使った編集ができます。")
+                if model.usesVideoTransformer {
+                    Text("静止画をつくるモデル「P-H3-Image」（Pruna AI）を、導入済みの動画モデルのDiT（FL2VA）に、付属のLoRAを当てて使います。LoRAとテキストエンコーダ・VAE（int8版）を、Hugging Faceの\(model.weightsRepo)（revision \(String(model.weightsRevision.prefix(8)))、\(model.weightsRevisionDate)）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約\(gigabytes(model.downloadBytes))が「\(model.directory)」に置かれます。動画モデルのDiTは複製して使います（同じディスクなら容量は増えません）。生成には、P-H3-Image本体のおよそ2倍の時間がかかります。")
+                } else if model.kind == .ph3 {
+                    Text("静止画をつくるモデル「P-H3-Image」（Pruna AI、MiniMax H3を基にした画像用のモデル）の重み（DiT・テキストエンコーダ・VAE、どれもint8版）を、Hugging Faceの\(model.weightsRepo)（ComfyUI用、revision \(String(model.weightsRevision.prefix(8)))、\(model.weightsRevisionDate)）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約\(gigabytes(model.downloadBytes))が「\(model.directory)」に置かれます。動画モデルは要りません。文章からの生成と、参照画像（8枚まで）を使った編集ができます。")
                 } else {
                     Text("静止画をつくるモデル「MiniMax H3 Image」の重みを、Hugging Faceの\(model.weightsRepo)（ComfyUI用のint8版、revision \(String(model.weightsRevision.prefix(8)))、\(model.weightsRevisionDate)）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約\(gigabytes(model.downloadBytes))が「\(model.directory)」に置かれます。テキストエンコーダは、導入済みの動画モデルのものを複製して使います（同じディスクなら容量は増えません）。")
                 }
@@ -659,6 +745,13 @@ struct H3ImageModelSetupView: View {
                 Text(verificationText).font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if model.usesVideoTransformer {
+                GridRow {
+                    Text("DiT").font(.caption).foregroundStyle(palette.textSecondary)
+                    Text(transformerText).font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if model.sharesTextEncoder {
                 GridRow {
                     Text("テキストエンコーダ").font(.caption).foregroundStyle(palette.textSecondary)
@@ -684,6 +777,15 @@ struct H3ImageModelSetupView: View {
                 }
             }
         }
+    }
+
+    private var transformerText: String {
+        _ = version; _ = setup.phase
+        if model.hasTransformer { return String(localized: "動画モデルのDiTを複製済み") }
+        if H3ImageModel.transformerSource(in: videoModelPaths) != nil {
+            return String(localized: "導入済みの動画モデル（FL2VA）から複製します")
+        }
+        return String(localized: "動画モデルがありません。先に動画モデル（MiniMax-H3）を導入してください")
     }
 
     private var textEncoderText: String {
@@ -716,7 +818,11 @@ struct H3ImageModelSetupView: View {
         case .sharing:
             HStack {
                 ProgressView().controlSize(.small)
-                Text("テキストエンコーダを複製しています…").font(.caption).foregroundStyle(palette.textSecondary)
+                if model.usesVideoTransformer {
+                    Text("動画モデルのDiTを複製しています…").font(.caption).foregroundStyle(palette.textSecondary)
+                } else {
+                    Text("テキストエンコーダを複製しています…").font(.caption).foregroundStyle(palette.textSecondary)
+                }
             }
         case .verifying(let done, let total):
             VStack(alignment: .leading, spacing: 4) {

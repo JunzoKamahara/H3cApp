@@ -739,6 +739,7 @@ struct CreationFormView: View {
             }
             Button("画像モデルをダウンロード（MiniMax H3 Image）…") { imageModelSetup = .h3 }
             Button("画像モデルをダウンロード（P-H3-Image）…") { imageModelSetup = .ph3 }
+            Button("画像モデルをダウンロード（P-H3-Image、動画モデルを使う）…") { imageModelSetup = .ph3LoRA }
             Button("画像モデルのフォルダを追加…") { viewModel.chooseAndAddImageModel() }
             if let active {
                 Button("「\(active.name)」を一覧から外す") { library.removeImageModel(id: active.id) }

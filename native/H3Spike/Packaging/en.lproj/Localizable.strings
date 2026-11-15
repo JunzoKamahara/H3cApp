@@ -1399,7 +1399,6 @@
 "画像モデルをダウンロード（MiniMax H3 Image）…" = "Download Image Model (MiniMax H3 Image)…";
 "画像モデルをダウンロード（P-H3-Image）…" = "Download Image Model (P-H3-Image)…";
 "画像モデル「%@」は、まだ画像の編集（参照画像）に対応していません。参照画像を外してください" = "The image model \"%@\" cannot edit pictures (take reference images) yet. Remove the reference images";
-"静止画をつくるモデル「P-H3-Image」（Pruna AI、MiniMax H3を基にした画像用のモデル）の重みを、Hugging Faceの%@（ComfyUI用、DiTはint8版、テキストエンコーダとVAEはbf16版、revision %@、%@）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約%@が「%@」に置かれます。動画モデルは要りません。文章からの生成と、参照画像（8枚まで）を使った編集ができます。" = "Downloads the weights of the still-image model \"P-H3-Image\" (Pruna AI's image model based on MiniMax H3) from %@ on Hugging Face (for ComfyUI: the DiT in int8, the text encoder and the VAE in bf16; revision %@, %@) and checks each file's SHA-256 against the record of that revision. About %@ is placed in \"%@\". No video model is needed. It makes images from text and edits pictures with up to 8 reference images.";
 "P-H3-Imageには、動画モデル（MiniMax H3）と同じ「%@」が適用されます。テキストエンコーダのうちQwen3-VL-4Bに由来する部分はApache License 2.0です。おもな条件は次のとおりです。" = "P-H3-Image is under the \"%@\", the same agreement as the video model (MiniMax H3). The parts of its text encoder that come from Qwen3-VL-4B are under the Apache License 2.0. The main conditions are:";
 "・EU、英国、韓国、米国では使えません（日本は対象地域に含まれます）。" = "• It may not be used in the EU, the UK, the Republic of Korea or the USA (Japan is within the territory).";
 "・商用の製品やサービスの年間売上が2,000万米ドルを超える場合は、MiniMaxの事前の書面許諾が必要です。" = "• If your commercial products and services make more than USD 20 million a year, you need MiniMax's prior written authorization.";
@@ -1410,3 +1409,10 @@
 "%@を管理…" = "Manage %@…";
 "%@をダウンロード…" = "Download %@…";
 "特大" = "Extra Large";
+"画像モデルをダウンロード（P-H3-Image、動画モデルを使う）…" = "Download Image Model (P-H3-Image, Using the Video Model)…";
+"この組み合わせは、導入済みの動画モデル（MiniMax-H3、FL2VA）のDiTを使います。先に動画モデルを導入してから、もう一度お試しください。" = "This setup uses the DiT of an installed video model (MiniMax-H3, FL2VA). Install a video model first, then try again.";
+"静止画をつくるモデル「P-H3-Image」（Pruna AI）を、導入済みの動画モデルのDiT（FL2VA）に、付属のLoRAを当てて使います。LoRAとテキストエンコーダ・VAE（int8版）を、Hugging Faceの%@（revision %@、%@）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約%@が「%@」に置かれます。動画モデルのDiTは複製して使います（同じディスクなら容量は増えません）。生成には、P-H3-Image本体のおよそ2倍の時間がかかります。" = "Uses the still-image model \"P-H3-Image\" (Pruna AI) by applying its LoRA to the DiT (FL2VA) of an installed video model. Downloads the LoRA and the text encoder and VAE (int8) from %@ on Hugging Face (revision %@, %@) and checks each file's SHA-256 against the record of that revision. About %@ is placed in \"%@\". The video model's DiT is copied (on the same disk this takes no extra space). Images take about twice as long as with P-H3-Image's own DiT.";
+"静止画をつくるモデル「P-H3-Image」（Pruna AI、MiniMax H3を基にした画像用のモデル）の重み（DiT・テキストエンコーダ・VAE、どれもint8版）を、Hugging Faceの%@（ComfyUI用、revision %@、%@）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約%@が「%@」に置かれます。動画モデルは要りません。文章からの生成と、参照画像（8枚まで）を使った編集ができます。" = "Downloads the weights of the still-image model \"P-H3-Image\" (Pruna AI's image model based on MiniMax H3; the DiT, the text encoder and the VAE, all int8) from %@ on Hugging Face (for ComfyUI, revision %@, %@) and checks each file's SHA-256 against the record of that revision. About %@ is placed in \"%@\". No video model is needed. It makes images from text and edits pictures with up to 8 reference images.";
+"動画モデルのDiTを複製済み" = "Copied from the video model";
+"導入済みの動画モデル（FL2VA）から複製します" = "Copied from an installed video model (FL2VA)";
+"動画モデルのDiTを複製しています…" = "Copying the video model's DiT…";

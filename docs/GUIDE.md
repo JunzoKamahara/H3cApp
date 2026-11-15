@@ -50,7 +50,10 @@ their own prompt and settings.
   USA. Read what the sheet says before downloading.
 - **A second image model (P-H3-Image).** Pruna AI's image model built on
   MiniMax H3 can be used too. "Download Image Model (P-H3-Image)…" in the
-  model menu fetches about 36 GB; no video model is needed. It is strong at
+  model menu fetches about 29 GB; no video model is needed. With a video
+  model installed, "(P-H3-Image, Using the Video Model)…" brings that down to
+  about 10 GB: it applies P-H3-Image's LoRA to the video model's DiT, and
+  images take about twice as long. It is strong at
   photographic texture and at its best at 8 megapixels (the "Extra Large"
   size). On a 24 GB M5 a 1024×1024 image takes about 35 seconds, 2048×2048
   about 1 minute 50 seconds, and 2912×2912 about 4 minutes. It is under the

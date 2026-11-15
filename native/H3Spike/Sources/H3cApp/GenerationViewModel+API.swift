@@ -839,10 +839,11 @@ extension GenerationViewModel {
     /// /api/image-models/add {"path", "name"?} lists one (after checking it)
     /// and makes it the active one.
     private func handleImageModelsRequest(_ request: HTTPRequest) -> HTTPResponse {
-        // Which model a setup call is about: {"model": "ph3"} for P-H3-Image,
+        // Which install a setup call is about: {"model": "ph3"} for
+        // P-H3-Image, "ph3-lora" for P-H3-Image on a video model's DiT,
         // MiniMax H3 Image otherwise.
         let body = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
-        let chosen = (body["model"] as? String) == H3ImageModel.ph3.id ? H3ImageModel.ph3 : H3ImageModel.h3
+        let chosen = H3ImageModel.all.first { $0.id == body["model"] as? String } ?? H3ImageModel.h3
         let setup = H3ImageModelSetup.of(chosen)
         if request.path == "/api/image-models/setup/cancel" {
             guard setup.isBusy else { return .error(409, "the image model is not being set up") }
@@ -889,7 +890,7 @@ extension GenerationViewModel {
                  "active": model.id == library.activeImageModelID]
             },
             // The models the app downloads itself (POST /api/image-models/setup,
-            // {"model": "ph3"} for P-H3-Image); "setup" is MiniMax H3 Image's.
+            // {"model": "<id>"}); "setup" is MiniMax H3 Image's.
             "setup": describe(.h3),
             "setups": H3ImageModel.all.map(describe),
         ])

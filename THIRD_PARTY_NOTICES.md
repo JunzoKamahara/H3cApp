@@ -341,12 +341,15 @@ the license notice in its setup sheet:
 
 - from [PrunaAI/P-H3-Image-Comfy](https://huggingface.co/PrunaAI/P-H3-Image-Comfy)
   at revision `44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543` (2026-11-03): the
-  int8 + ConvRot DiT (SHA-256
-  `b156fd4fe9d169e58cb2b07f9594ec740ff8f0e052d62b009e6dd034de5865e7`), the
-  bf16 text encoder (SHA-256
-  `ae0c83cb35207dcc0a81361768094a5d1e3f92d1a95b8ff75a0328dfefbbc3d8`), the
-  bf16 VAE (SHA-256
-  `a1f2a7a98d0f2d1e761656fc5701dd43d7cf46d1bbdaa5d866a3e961e97487d7`), and
+  int8 + ConvRot text encoder (SHA-256
+  `fb42c9ff0597e61729475d0b48b69b591ffe06d0b442a79dde22b14fadbe1c0f`) and
+  VAE (SHA-256
+  `583e0d43354b6b833aa9a0815a5fac831b1ef6d0c19a7eaa0616980a3dab5ffe`), and
+  either the int8 + ConvRot DiT (SHA-256
+  `b156fd4fe9d169e58cb2b07f9594ec740ff8f0e052d62b009e6dd034de5865e7`) or,
+  for the install that uses an installed video model's FL2VA DiT (copied
+  into the image model's folder), the LoRA for MiniMax H3 (SHA-256
+  `0e9013ae2873e3415dcb7bb59a9677293bdbdb6f663e138a79bb9bdced00ea61`); and
   that repository's `LICENSE`, `LICENSE-APACHE` and `NOTICE`, saved beside
   the weights;
 - from PrunaAI/P-H3-Image at revision

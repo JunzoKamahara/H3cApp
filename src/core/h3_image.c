@@ -15,6 +15,7 @@
 #include "h3_vision_encoder.h"
 #include "h3_weights.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <math.h>
 #include <stdarg.h>
@@ -58,6 +59,10 @@ struct h3_image_ctx {
      * merged), run on one latent frame and two audio latents, with a
      * Qwen3-VL-4B text encoder and its text connector. */
     int ph3;
+    /* P-H3-Image as a LoRA: the one .safetensors in the folder's lora/,
+     * applied at strength 1 to the transformer (then a video model's
+     * FL2VA DiT); NULL when the transformer has it merged. */
+    char *lora;
     char *transformer;
     char *vae;
     char *text_encoder;
@@ -175,6 +180,7 @@ void h3_image_free(h3_image_ctx *ctx) {
     free(ctx->text_encoder);
     free(ctx->tokenizer);
     free(ctx->shaders);
+    free(ctx->lora);
     free(ctx);
 }
 
@@ -224,6 +230,25 @@ h3_image_ctx *h3_image_load_dir(const char *model_directory,
         return NULL;
     }
     if (!inspect_transformer(ctx, error, error_size)) {
+        h3_image_free(ctx);
+        return NULL;
+    }
+    char *lora_folder = join(model_directory, "lora");
+    DIR *folder = lora_folder ? opendir(lora_folder) : NULL;
+    int adapters = 0;
+    for (struct dirent *entry; folder && (entry = readdir(folder));) {
+        size_t length = strlen(entry->d_name);
+        if (entry->d_name[0] == '.' || length < 12 ||
+            strcmp(entry->d_name + length - 12, ".safetensors")) continue;
+        adapters++;
+        if (!ctx->lora) ctx->lora = join(lora_folder, entry->d_name);
+    }
+    if (folder) closedir(folder);
+    free(lora_folder);
+    if (adapters && (!ctx->ph3 || adapters != 1 || !ctx->lora)) {
+        fail(error, error_size, adapters != 1
+             ? "an image model's lora folder holds one adapter, not %d"
+             : "only P-H3-Image takes its DiT as a LoRA", adapters);
         h3_image_free(ctx);
         return NULL;
     }
@@ -775,6 +800,9 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
     /* The DiT on [text | references | image]: one latent frame, no audio;
      * P-H3-Image's on [text | audio | image], two audio latents. */
     began = now();
+    h3_lora adapter = {.path = ctx->lora, .strength = 1.0f};
+    const h3_lora *loras = ctx->lora ? &adapter : NULL;
+    size_t lora_count = ctx->lora ? 1 : 0;
     h3_sigma_schedule sigmas = {.steps = ctx->steps};
     for (int index = 0; index <= ctx->steps; index++)
         sigmas.video[index] = sigmas.audio[index] = ctx->sigmas[index];
@@ -789,12 +817,12 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
     dit = reference_count
         ? h3_dit_load_conditioned(ctx->transformer, ctx->shaders, &text,
             &layout, &sigmas, H3_DIT_BLOCKS, 1, 0, 1 /* SSD streaming */, 1.0f,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, loras, lora_count, NULL,
             condition_rows, condition_elements, NULL, 0,
             dit_progress, &state, error, error_size)
         : h3_dit_load_t2va(ctx->transformer, ctx->shaders, &text, &layout,
             &sigmas, H3_DIT_BLOCKS, 1, 0, 1 /* SSD streaming */, 1.0f,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, loras, lora_count, NULL,
             dit_progress, &state, error, error_size);
     if (!dit) goto done;
     free(condition_rows);

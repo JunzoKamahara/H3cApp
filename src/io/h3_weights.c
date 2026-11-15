@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 
 struct h3_weight_store {
@@ -579,6 +580,20 @@ static h3_gpu_tensor *load_split_patch_embed(const h3_weight_store *store,
  * BF16 one. SSD streaming reads the int8 payload as it is and restores it
  * on the GPU (h3_gpu_comfy_int8_expand), with the same arithmetic. */
 
+/* The restore's large scratch (a matrix at a time, up to hundreds of MB)
+ * straight from the VM and back: malloc keeps freed blocks of that size
+ * for reuse, and a model's worth of them added gigabytes to the peak. */
+static void *scratch_alloc(size_t bytes) {
+    if (!bytes) return NULL;
+    void *memory = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANON, -1, 0);
+    return memory == MAP_FAILED ? NULL : memory;
+}
+
+static void scratch_free(void *memory, size_t bytes) {
+    if (memory) munmap(memory, bytes);
+}
+
 typedef struct {
     const int8_t *source;
     const float *scales;
@@ -748,14 +763,14 @@ static h3_gpu_tensor *load_comfy_int8(const h3_weight_store *store,
     if (!comfy_int8_layout(store, tensor, &group, &scales, error, error_size))
         return NULL;
     size_t elements = (size_t)(rows * columns);
-    int8_t *source = malloc(elements);
+    int8_t *source = scratch_alloc(elements);
     comfy_int8_job job = {
         .source = source, .scales = scales, .scale_count = (size_t)rows,
         .rows = (size_t)rows, .rows_per_job = 64, .columns = (uint32_t)columns,
         .group = group, .qkv_inner = qkv_inner, .qkv_head_dim = qkv_head_dim,
     };
-    if (dtype == H3_DTYPE_BF16) job.bf16 = malloc(elements * sizeof(*job.bf16));
-    else job.f32 = malloc(elements * sizeof(*job.f32));
+    if (dtype == H3_DTYPE_BF16) job.bf16 = scratch_alloc(elements * sizeof(*job.bf16));
+    else job.f32 = scratch_alloc(elements * sizeof(*job.f32));
     atomic_init(&job.failed, 0);
     h3_gpu_tensor *result = NULL;
     int ok = source && (job.bf16 || job.f32) &&
@@ -767,18 +782,59 @@ static h3_gpu_tensor *load_comfy_int8(const h3_weight_store *store,
                          &job, comfy_int8_rows);
         ok = !atomic_load(&job.failed);
     }
-    free(source);
+    scratch_free(source, elements);
     free(scales);
     if (ok)
         result = job.bf16 ? h3_gpu_tensor_from_bf16(gpu, job.bf16, elements) :
                             h3_gpu_tensor_from_f32(gpu, job.f32, elements);
-    free(job.bf16);
-    free(job.f32);
+    scratch_free(job.bf16, job.bf16 ? elements * sizeof(*job.bf16) : 0);
+    scratch_free(job.f32, job.f32 ? elements * sizeof(*job.f32) : 0);
     if (!result)
         fail(error, error_size, "cannot expand %s (int8%s): %s", tensor->name,
              group ? " ConvRot" : "",
              detail[0] ? detail : ok ? h3_gpu_error(gpu) : "out of memory");
     return result;
+}
+
+int h3_weight_comfy_int8_read_bf16(const h3_weight_store *store,
+                                   const h3_st_header *header,
+                                   const h3_st_tensor *tensor,
+                                   uint16_t *destination, size_t count,
+                                   char *error, size_t error_size) {
+    if (!store || !header || !tensor || !destination ||
+        !h3_weight_is_comfy_int8(store, tensor) ||
+        tensor->shape[0] * tensor->shape[1] != count) {
+        fail(error, error_size, "invalid int8 restore of %s",
+             tensor ? tensor->name : "a weight");
+        return 0;
+    }
+    uint32_t group = 0;
+    float *scales = NULL;
+    if (!comfy_int8_layout(store, tensor, &group, &scales, error, error_size))
+        return 0;
+    uint64_t rows = tensor->shape[0], columns = tensor->shape[1];
+    int8_t *source = scratch_alloc(count);
+    comfy_int8_job job = {
+        .source = source, .scales = scales, .scale_count = (size_t)rows,
+        .rows = (size_t)rows, .rows_per_job = 64, .columns = (uint32_t)columns,
+        .group = group, .bf16 = destination,
+    };
+    atomic_init(&job.failed, 0);
+    char detail[256] = "";
+    int ok = source && h3_st_read_data(header, tensor, source, count, detail,
+                                       sizeof(detail));
+    if (ok) {
+        dispatch_apply_f((job.rows + job.rows_per_job - 1) / job.rows_per_job,
+                         dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
+                         &job, comfy_int8_rows);
+        ok = !atomic_load(&job.failed);
+    }
+    scratch_free(source, count);
+    free(scales);
+    if (!ok)
+        fail(error, error_size, "cannot expand %s (int8%s): %s", tensor->name,
+             group ? " ConvRot" : "", detail[0] ? detail : "out of memory");
+    return ok;
 }
 
 static h3_gpu_tensor *load_tensor(const h3_weight_store *store, h3_gpu *gpu,

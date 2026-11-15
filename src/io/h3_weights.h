@@ -61,6 +61,15 @@ int h3_weight_comfy_int8_scales(const h3_weight_store *store, h3_gpu *gpu,
                                 uint64_t row_begin, uint64_t row_count,
                                 uint32_t *group, h3_gpu_tensor **scales,
                                 char *error, size_t error_size);
+/* Restores a ComfyUI int8 weight (h3_weight_is_comfy_int8) into a host
+ * BF16 buffer of its rows x columns values, with the arithmetic of
+ * h3_weight_load_bf16 - for a caller that fills its own GPU tensor (the
+ * text encoder's layer prefetch). No QKV reordering. */
+int h3_weight_comfy_int8_read_bf16(const h3_weight_store *store,
+                                   const h3_st_header *header,
+                                   const h3_st_tensor *tensor,
+                                   uint16_t *destination, size_t count,
+                                   char *error, size_t error_size);
 /* Every tensor in the store, shard by shard (for tools that walk them). */
 size_t h3_weight_store_tensor_count(const h3_weight_store *store);
 const h3_st_tensor *h3_weight_store_tensor(const h3_weight_store *store,
