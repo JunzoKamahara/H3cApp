@@ -51,8 +51,8 @@ their own prompt and settings.
 - **Making an image.** Write a prompt and choose the shape (square, landscape,
   portrait), the size (Standard is 1024×1024 or 1344×768, Large twice that,
   "For video" the size of a video) and how many (1 to 20). On a 24 GB M5 a
-  1024×1024 image takes about a minute and a 2048×2048 one about two and a
-  half.
+  1024×1024 image takes about 35 seconds and a 2048×2048 one about a minute
+  and 40 seconds.
 - **Seed.** "Seed" at the top of the panel sets whether every image draws a
   new one or uses the one you give. A fixed seed makes the same image from
   the same settings. When several images are made, only the first uses it.
@@ -88,8 +88,9 @@ downloaded.
   memory; the memory needed is shown under the references.
 - **Size.** Adding the first reference sets the size of the image to be made
   to that picture's shape. It can be changed afterwards.
-- **Time.** On a 24 GB M5, an edit of one 1024×1024 reference takes about two
-  minutes, and an edit that makes a 2048×2048 image about four.
+- **Time.** On a 24 GB M5, an edit of one 1024×1024 reference takes about a
+  minute and 20 seconds, and an edit that makes a 2048×2048 image about two
+  minutes and 40 seconds.
 - **How references are read.** A reference is read at a short side of 1024
   pixels (a smaller picture is enlarged, a larger one reduced). An image
   generated in this app and used at its own size is taken by the latent file

@@ -1252,6 +1252,7 @@ void h3_dit_free(h3_dit *dit) {
     h3_dit_free_stream_slots(dit);
     h3_dit_free_attention_slot(&dit->attention_slots[0]);
     h3_dit_free_attention_slot(&dit->attention_slots[1]);
+    h3_dit_free_comfy_blocks(dit);
     free(dit->attention_cache_path);
     h3_dit_free_tensor(&dit->final_norm);
     h3_dit_free_tensor(&dit->final_video_w); h3_dit_free_tensor(&dit->final_video_b);

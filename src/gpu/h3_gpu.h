@@ -115,6 +115,16 @@ int h3_gpu_tensor_stream_file_prefix_i8(h3_gpu_tensor *tensor,
                                         uint64_t file_offset,
                                         size_t elements, char *error,
                                         size_t error_size);
+/* A streaming read of `count` runs of an I8 file into places of an I8
+ * tensor (run i: elements[i] values from file_offsets[i] to
+ * tensor_offsets[i]), through one descriptor: for a weight whose rows are
+ * stored in another order than the engine keeps them. */
+int h3_gpu_tensor_stream_file_runs_i8(h3_gpu_tensor *tensor,
+                                      const char *path, size_t count,
+                                      const size_t *tensor_offsets,
+                                      const uint64_t *file_offsets,
+                                      const size_t *elements,
+                                      char *error, size_t error_size);
 int h3_gpu_tensor_read_file_f32(h3_gpu_tensor *tensor, const char *path,
                                 uint64_t file_offset, size_t elements,
                                 char *error, size_t error_size);
@@ -208,6 +218,14 @@ int h3_gpu_comfy_int8_expand(h3_gpu *gpu, h3_gpu_tensor *output,
                              const h3_gpu_tensor *scales, uint32_t rows,
                              uint32_t columns, uint32_t group,
                              uint32_t qkv_inner, uint32_t qkv_head_dim);
+/* The ConvRot rotation of h3_gpu_comfy_int8_expand applied to activations,
+ * in place: rows x columns BF16 values, each run of `group` columns of a
+ * row (a power of 4 up to 256 that divides columns). It is its own inverse
+ * and transpose, so an int8 linear whose stored weight is rotated takes it
+ * as it is once its input has been through this - the weight is not
+ * restored at all. */
+int h3_gpu_hadamard_rows_bf16(h3_gpu *gpu, h3_gpu_tensor *values,
+                              uint32_t rows, uint32_t columns, uint32_t group);
 int h3_gpu_cast_bf16_to_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                             const h3_gpu_tensor *input, uint32_t elements);
 /* output[r, c] = F32(input[r, c]) + bias[c]; the epilogue for int8 linears
@@ -528,6 +546,25 @@ int h3_gpu_mlp_int8_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                          int use_slower_dynamic_fc1_k,
                          int use_int8_row_fc2,
                          int input_is_quantized);
+/* The same for ConvRot-rotated int8 weights taken as stored: `input` (not
+ * yet quantized; it is rotated in place) and the activation between the
+ * two linears are rotated by groups of fc1_group / fc2_group columns before
+ * they are quantized (h3_gpu_hadamard_rows_bf16). */
+int h3_gpu_mlp_int8_rotated_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                         h3_gpu_tensor *activated,
+                         h3_gpu_tensor *quantized_activation,
+                         h3_gpu_tensor *activation_scales,
+                         h3_gpu_tensor *input,
+                         const h3_gpu_tensor *fc1_weight,
+                         const h3_gpu_tensor *fc1_scales,
+                         const h3_gpu_tensor *fc2_weight,
+                         const h3_gpu_tensor *fc2_scales, uint32_t rows,
+                         uint32_t input_dim, uint32_t hidden_dim,
+                         uint32_t output_dim, uint32_t fc1_group,
+                         uint32_t fc2_group,
+                         int use_slower_grouped_quantizer,
+                         int use_slower_dynamic_fc1_k,
+                         int use_int8_row_fc2);
 int h3_gpu_silu_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                      const h3_gpu_tensor *input, uint32_t elements);
 int h3_gpu_rms_norm_bf16(h3_gpu *gpu, h3_gpu_tensor *output,

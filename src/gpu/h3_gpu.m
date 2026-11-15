@@ -347,6 +347,7 @@ h3_gpu *h3_gpu_create(const char *shader_source_path,
             @"h3_cast_f32_to_bf16",
             @"h3_cast_bf16_to_f32",
             @"h3_dequantize", @"h3_comfy_int8_expand",
+            @"h3_hadamard_rows_bf16",
             @"h3_cast_bf16_to_f32_bias",
             @"h3_cast_bf16_to_f16_qkv", @"h3_cast_f16_to_bf16_flat",
             @"h3_lora_add_rows_bf16", @"h3_lora_add_int8",
@@ -869,6 +870,62 @@ int h3_gpu_tensor_stream_file_prefix_i8(h3_gpu_tensor *opaque,
     return h3_gpu_tensor_read_file_mode(
         opaque, path, file_offset, elements, sizeof(int8_t), H3_GPU_I8,
         "I8", 3, error, error_size);
+}
+
+int h3_gpu_tensor_stream_file_runs_i8(h3_gpu_tensor *opaque,
+                                      const char *path, size_t count,
+                                      const size_t *tensor_offsets,
+                                      const uint64_t *file_offsets,
+                                      const size_t *elements,
+                                      char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    int valid = opaque && path && *path && count && tensor_offsets &&
+                file_offsets && elements && TENSOR(opaque).dtype == H3_GPU_I8;
+    for (size_t run = 0; valid && run < count; run++)
+        valid = elements[run] &&
+                tensor_offsets[run] <= TENSOR(opaque).elements &&
+                elements[run] <= TENSOR(opaque).elements - tensor_offsets[run] &&
+                file_offsets[run] <= INT64_MAX &&
+                (uint64_t)elements[run] <= (uint64_t)INT64_MAX - file_offsets[run];
+    if (!valid) {
+        if (error && error_size)
+            snprintf(error, error_size, "invalid I8 file read request");
+        return 0;
+    }
+    int descriptor = open(path, O_RDONLY | O_CLOEXEC);
+    if (descriptor < 0) {
+        if (error && error_size)
+            snprintf(error, error_size, "cannot open %s: %s", path,
+                     strerror(errno));
+        return 0;
+    }
+#ifdef F_NOCACHE
+    (void)fcntl(descriptor, F_NOCACHE, 1);
+#endif
+    unsigned char *base = TENSOR(opaque).buffer.contents;
+    for (size_t run = 0; run < count; run++) {
+        size_t completed = 0;
+        while (completed < elements[run]) {
+            ssize_t got = pread(descriptor,
+                                base + tensor_offsets[run] + completed,
+                                elements[run] - completed,
+                                (off_t)(file_offsets[run] + completed));
+            if (got < 0 && errno == EINTR) continue;
+            if (got <= 0) {
+                int detail = got < 0 ? errno : 0;
+                if (error && error_size)
+                    snprintf(error, error_size,
+                             "cannot read I8 payload from %s: %s", path,
+                             detail ? strerror(detail) :
+                                      "unexpected end of file");
+                close(descriptor);
+                return 0;
+            }
+            completed += (size_t)got;
+        }
+    }
+    close(descriptor);
+    return 1;
 }
 
 int h3_gpu_tensor_read_file_f32(h3_gpu_tensor *opaque, const char *path,

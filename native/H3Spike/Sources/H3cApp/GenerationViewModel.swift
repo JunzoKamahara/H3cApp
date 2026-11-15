@@ -1668,43 +1668,53 @@ final class GenerationViewModel: ObservableObject {
     }
 
     /// The engine's phases as the stage shows them. The share of the whole
-    /// each phase takes is from the 1024x1024 measurements (text ~10 s,
-    /// six steps ~48 s, decoding ~3 s).
+    /// each phase takes is from the 1024x1024 measurements on a 24 GB M5
+    /// (plans/IMAGE_PLAN.ja.md, appendix H): from text 9 s, the steps 22 s,
+    /// decoding 3 s; an edit of one picture reads it for about 10 s more and
+    /// its steps take 57 s.
     func imageGenerationProgress(phase: String, completed: Int, total: Int) {
         self.phase = phase
         let part = total > 0 ? Double(completed) / Double(total) : 0
         // An edit reads its pictures before and after the prompt; a plain
-        // image has neither phase and the prompt takes their share.
+        // image has neither phase.
         let editing = !imageEditReferences.isEmpty
+        // Where each phase begins, and where the last one ends.
+        let vision = 0.0
+        let text = editing ? 0.03 : 0.0
+        let reference = editing ? 0.17 : 0.26
+        let model = editing ? 0.27 : 0.26
+        let denoise = editing ? 0.28 : 0.29
+        let decode = editing ? 0.96 : 0.92
+        func within(_ begin: Double, _ end: Double) -> Double { begin + (end - begin) * part }
         switch phase {
         case "vision":
             stageTitle = String(localized: "参照画像を読み込んでいます")
             stageDetail = ""
-            progressBarFraction = 0.05 * part
+            progressBarFraction = within(vision, text)
         case "text encoder":
             stageTitle = String(localized: "プロンプトを読み込んでいます")
             stageDetail = ""
-            progressBarFraction = editing ? 0.05 + 0.07 * part : 0.15 * part
+            progressBarFraction = within(text, reference)
         case "reference":
             stageTitle = String(localized: "参照画像を変換しています")
             stageDetail = ""
-            progressBarFraction = 0.12 + 0.03 * part
+            progressBarFraction = within(reference, model)
         case "image model":
             stageTitle = String(localized: "画像モデルを準備しています")
             stageDetail = ""
-            progressBarFraction = 0.15 + 0.03 * part
+            progressBarFraction = within(model, denoise)
         case "denoise":
             stageTitle = String(localized: "ノイズ除去")
             stageDetail = String(localized: "\(min(completed + 1, total)) / \(total) ステップ")
-            progressBarFraction = 0.18 + 0.76 * part
+            progressBarFraction = within(denoise, decode)
         default:
             stageTitle = String(localized: "画像に変換しています")
             stageDetail = ""
-            progressBarFraction = 0.94 + 0.06 * part
+            progressBarFraction = within(decode, 1)
         }
         if let imageStartedAt { elapsedSeconds = Date().timeIntervalSince(imageStartedAt) }
         // Once the steps are under way, the pace so far says what is left.
-        if let fraction = progressBarFraction, fraction > 0.3, fraction < 1 {
+        if let fraction = progressBarFraction, fraction > 0.4, fraction < 1 {
             let remaining = elapsedSeconds * (1 - fraction) / fraction
             estimatedRemainingSeconds = remaining
             estimatedFinishDate = Date().addingTimeInterval(remaining)

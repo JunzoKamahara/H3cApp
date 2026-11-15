@@ -471,6 +471,14 @@ static int run_block(h3_dit *dit, unsigned index, int step,
             rope_sin, rows, HEADS, HEAD_DIM, ROPE_HALF, 1e-5f),
            "HyperFlow Q/K norm/RoPE");
     } else if (dit->int8_qkv && !h3_option("H3_DISABLE_INT8_QKV")) {
+        /* An int8 weight taken as stored is ConvRot-rotated: its input is
+         * rotated the same way first (comfy_direct; groups are 0 when the
+         * weight is not rotated). */
+        uint32_t qkv_group = dit->comfy_direct ?
+            dit->comfy_blocks[index].group[H3_COMFY_QKV] & 0x7fffffffu : 0;
+        if (qkv_group)
+            OP(h3_gpu_hadamard_rows_bf16(dit->gpu, dit->mod_attention, rows,
+                HIDDEN, qkv_group), "DiT QKV input rotation");
         OP(h3_gpu_grouped_qkv_linear_rope_int8(
             dit->gpu, dit->query, dit->key, dit->value,
             dit->int8_activation, dit->int8_activation_scales,
@@ -551,13 +559,20 @@ static int run_block(h3_dit *dit, unsigned index, int step,
                 dit->int8_activation_scales, dit->attention_heads,
                 weight->out_int8, weight->out_scales, rows, HEADS, HEAD_DIM,
                 HIDDEN), "DiT head-major int8 attention output");
-        else
+        else {
+            uint32_t out_group = dit->comfy_direct ?
+                dit->comfy_blocks[index].group[H3_COMFY_OUT] : 0;
+            if (out_group)
+                OP(h3_gpu_hadamard_rows_bf16(dit->gpu, dit->attention_heads,
+                    rows, INNER, out_group),
+                   "DiT attention output input rotation");
             OP(h3_gpu_linear_int8_bf16(
                 dit->gpu, dit->attention_output, dit->int8_activation,
                 dit->int8_activation_scales, dit->attention_heads,
                 weight->out_int8, weight->out_scales, rows, INNER, HIDDEN,
                 dit->use_slower_uncached_int8_scales),
                "DiT int8 attention output");
+        }
     } else {
         OP(h3_gpu_linear_bf16(dit->gpu, dit->attention_output,
             dit->attention_heads, weight->out, NULL, rows, INNER, HIDDEN),
@@ -636,6 +651,18 @@ static int run_block(h3_dit *dit, unsigned index, int step,
             OP(h3_gpu_linear_bf16(dit->gpu, mlp_output, dit->activated,
                 weight->fc2, NULL, rows, FFN, HIDDEN), "HyperFlow FC2");
         }
+    } else if (dit->comfy_direct) {
+        OP(h3_gpu_mlp_int8_rotated_bf16(
+            dit->gpu, mlp_output, dit->activated, dit->int8_activation,
+            dit->int8_activation_scales, dit->mod_mlp,
+            weight->fc1_int8, weight->fc1_scales,
+            weight->fc2_int8, weight->fc2_scales,
+            rows, HIDDEN, FFN, HIDDEN,
+            dit->comfy_blocks[index].group[H3_COMFY_FC1],
+            dit->comfy_blocks[index].group[H3_COMFY_FC2],
+            dit->use_slower_grouped_quantizer,
+            dit->use_slower_dynamic_fc1_k, dit->use_int8_row_fc2),
+           "DiT int8 MLP on rotated inputs");
     } else if (dit->int8_mlp &&
         (!h3_option("H3_DISABLE_INT8_MLP") ||
          !weight->fc1 || !weight->fc2)) {
@@ -905,7 +932,6 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
                                      error, error_size) ||
                     !patch_streamed_bf16(dit, block, weight, error,
                                          error_size)) return 0;
-
                 unsigned future = h3_dit_next_active_block(dit, block);
                 if (future == H3_DIT_BLOCKS)
                     future = h3_dit_first_active_block(dit);
@@ -948,6 +974,16 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
                     streamed_weight.fc1_scales = slot->fc1_scales;
                     streamed_weight.fc2_int8 = slot->fc2_int8;
                     streamed_weight.fc2_scales = slot->fc2_scales;
+                }
+                if (dit->comfy_direct) {
+                    /* The scales stay resident; only the int8 values
+                     * come through the slot. */
+                    const h3_dit_comfy_block *stored =
+                        &dit->comfy_blocks[block];
+                    streamed_weight.qkv_scales = stored->scales[H3_COMFY_QKV];
+                    streamed_weight.out_scales = stored->scales[H3_COMFY_OUT];
+                    streamed_weight.fc1_scales = stored->scales[H3_COMFY_FC1];
+                    streamed_weight.fc2_scales = stored->scales[H3_COMFY_FC2];
                 }
                 weight = &streamed_weight;
                 if (!patch_streamed_int8(dit, block, weight, error,

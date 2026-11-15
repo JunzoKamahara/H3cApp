@@ -270,6 +270,27 @@ int h3_gpu_dequantize(h3_gpu *opaque, h3_gpu_tensor *output,
         });
 }
 
+int h3_gpu_hadamard_rows_bf16(h3_gpu *opaque, h3_gpu_tensor *values,
+                              uint32_t rows, uint32_t columns, uint32_t group) {
+    H3GPU *gpu = GPU(opaque);
+    uint32_t power = 4;
+    while (power < group) power *= 4;
+    if (!rows || !columns || !group || group > 256 || power != group ||
+        columns % group ||
+        !h3_gpu_require_elements(gpu, values, (size_t)rows * columns,
+                                 @"rotation values") ||
+        TENSOR(values).dtype != H3_GPU_BF16) {
+        if (gpu) h3_gpu_set_error(gpu, @"invalid ConvRot rotation of activations");
+        return 0;
+    }
+    struct { uint32_t rows, columns, group; } args = {rows, columns, group};
+    return h3_gpu_dispatch_2d(gpu, @"h3_hadamard_rows_bf16", columns / group,
+        rows, ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(values).buffer offset:0 atIndex:0];
+            [encoder setBytes:&args length:sizeof(args) atIndex:1];
+        });
+}
+
 int h3_gpu_comfy_int8_expand(h3_gpu *opaque, h3_gpu_tensor *output,
                              const h3_gpu_tensor *raw,
                              const h3_gpu_tensor *scales, uint32_t rows,

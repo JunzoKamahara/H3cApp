@@ -1872,6 +1872,43 @@ kernel void h3_comfy_int8_expand(device const char *raw [[buffer(0)]],
         destination[i] = h3_f32_to_bf16(v[i] * scale);
 }
 
+// The same rotation on activations instead: rows x columns BF16 values, in
+// place, each run of `group` columns of a row transformed as the weight's
+// ConvRot group is. The rotation is its own inverse and transpose, so
+// (rotated weight) . (rotated input) is weight . input: an int8 linear can
+// take the rotated int8 weight as stored when its input is rotated first.
+// One thread does one group of one row.
+
+struct h3_hadamard_rows_args {
+    uint rows;
+    uint columns;
+    uint group;
+};
+
+kernel void h3_hadamard_rows_bf16(device ushort *values [[buffer(0)]],
+                                  constant h3_hadamard_rows_args &args [[buffer(1)]],
+                                  uint2 gid [[thread_position_in_grid]]) {
+    ulong first = ulong(gid.x) * args.group;
+    if (gid.y >= args.rows || first >= args.columns) return;
+    float v[256];
+    device ushort *row = values + ulong(gid.y) * args.columns + first;
+    for (uint i = 0; i < args.group; i++) v[i] = h3_bf16_to_f32(row[i]);
+    for (uint stride = 1; stride < args.group; stride *= 4) {
+        for (uint base = 0; base < args.group; base += 4 * stride) {
+            for (uint i = base; i < base + stride; i++) {
+                float a = v[i], b = v[i + stride];
+                float c = v[i + 2 * stride], d = v[i + 3 * stride];
+                float t = 0.5f * (a + b + c + d);
+                v[i] = t - d;
+                v[i + stride] = t - c;
+                v[i + 2 * stride] = t - b;
+                v[i + 3 * stride] = t - a;
+            }
+        }
+    }
+    for (uint i = 0; i < args.group; i++) row[i] = h3_f32_to_bf16(v[i]);
+}
+
 // --- Block-quantized weights (GGUF/ggml layouts, see h3_quant.c) ---------
 // One thread expands one block into BF16 (out_f32 == 0) or F32. The layouts
 // and formulas mirror h3_quant.c's reference dequantizers, which the tests

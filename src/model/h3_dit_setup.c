@@ -576,6 +576,9 @@ static int load_core(h3_dit *dit, h3_dit_progress progress, void *opaque,
             /* QKV/OUT/FC1/FC2 are all streamed; only norms stay resident. */
             if (!h3_dit_load_block_norms(dit, &dit->blocks[index], prefix,
                                   error, error_size)) return 0;
+            if (dit->comfy_direct &&
+                !h3_dit_prepare_comfy_block(dit, index, error, error_size))
+                return 0;
         } else if (dit->attention_stream) {
             if (!h3_dit_load_block_norms_and_mlp(dit, &dit->blocks[index], prefix,
                                          index, error, error_size))
@@ -1231,8 +1234,31 @@ static h3_dit *load_dit(const char *weight_directory,
                               !use_slower_bf16_attention_output &&
                               dit->sequence >= 128 &&
                               h3_gpu_has_int8_mlp(dit->gpu);
-    const char *attention_cache_path = h3_option("H3_ATTENTION_CACHE");
-    const char *attention_cache_dir = h3_option("H3_ATTENTION_CACHE_DIR");
+    /* A still-image checkpoint in ComfyUI's int8 (ConvRot) form, asked to
+     * stream: on a GPU with the int8 kernels its blocks are read into the
+     * int8 slots as they are stored and every linear's input is rotated,
+     * instead of each block being restored to BF16 on every step (which
+     * took as long as the block itself at 1024 x 1024).
+     * H3_IMAGE_INT8_DIRECT=0 keeps the restoring stream. */
+    const char *int8_direct = h3_option("H3_IMAGE_INT8_DIRECT");
+    if (dit->ssd_streaming && dit->image_model && !lora_count &&
+        (!int8_direct || strcmp(int8_direct, "0")) &&
+        dit->fused_mlp && !use_slower_bf16_mlp && !use_slower_bf16_qkv &&
+        !use_slower_bf16_attention_output && dit->sequence >= 128 &&
+        h3_gpu_has_int8_mlp(dit->gpu) && h3_dit_comfy_direct_available(dit)) {
+        dit->comfy_direct = 1;
+        dit->ssd_streaming = 0;
+        dit->int8_mlp = dit->int8_qkv = dit->int8_attention_out = 1;
+        /* The rotation goes between each AdaLN and its quantizer, and
+         * across the features of a row: neither the fused inputs nor the
+         * head-major attention output leave room for it. */
+        use_slower_unfused_int8_inputs = 1;
+        use_slower_row_major_attention_output = 1;
+    }
+    const char *attention_cache_path = dit->comfy_direct ? NULL :
+        h3_option("H3_ATTENTION_CACHE");
+    const char *attention_cache_dir = dit->comfy_direct ? NULL :
+        h3_option("H3_ATTENTION_CACHE_DIR");
     h3_cache_model_kind model_kind = h3_dit_detect_model_kind(weight_directory);
     char *selected_cache_path = NULL;
     if (attention_cache_path && *attention_cache_path &&
@@ -1327,6 +1353,11 @@ static h3_dit *load_dit(const char *weight_directory,
         dit->mlp_stream = want_mlp_stream;
     }
     free(selected_cache_path);
+    if (dit->comfy_direct) {
+        dit->attention_stream = 1;
+        dit->mlp_stream = 1;
+        fprintf(stderr, "h3: int8 blocks streamed as stored (inputs rotated)\n");
+    }
     dit->use_slower_row_major_attention_output =
         use_slower_row_major_attention_output;
     dit->use_slower_unfused_int8_inputs =

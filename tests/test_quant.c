@@ -588,6 +588,76 @@ static void test_comfy_int8(h3_gpu *gpu) {
             h3_gpu_tensor_free(part_out);
             h3_gpu_tensor_free(part_scales);
         }
+        /* The int8 values taken as stored: rotating a linear's input the
+         * same way (h3_gpu_hadamard_rows_bf16) gives what the restored
+         * weight gives on the input as it is. */
+        if (l != 0 && group) {
+            enum { INPUT_ROWS = 3 };
+            size_t input_count = (size_t)INPUT_ROWS * columns;
+            uint16_t *input16 = malloc(input_count * sizeof(*input16));
+            uint16_t *rotated16 = malloc(input_count * sizeof(*rotated16));
+            float *reference = malloc(columns * sizeof(*reference));
+            CHECK(input16 && rotated16 && reference);
+            for (size_t i = 0; i < input_count; i++) {
+                float value = lcg_float() * 3.0f;
+                uint32_t bits;
+                memcpy(&bits, &value, sizeof(bits));
+                input16[i] = (uint16_t)(bits >> 16);
+            }
+            h3_gpu_tensor *input = h3_gpu_tensor_from_bf16(gpu, input16, input_count);
+            CHECK(input && h3_gpu_begin(gpu));
+            CHECK(!h3_gpu_hadamard_rows_bf16(gpu, input, INPUT_ROWS, columns, 8));
+            CHECK(h3_gpu_hadamard_rows_bf16(gpu, input, INPUT_ROWS, columns, group));
+            CHECK(h3_gpu_submit(gpu));
+            CHECK(h3_gpu_tensor_read_bf16(input, rotated16, input_count));
+            double worst_rotation = 0.0, worst_product = 0.0;
+            for (uint32_t r = 0; r < INPUT_ROWS; r++) {
+                double norm = 0.0;
+                for (uint32_t c = 0; c < columns; c++) {
+                    reference[c] = bf16_value(input16[(size_t)r * columns + c]);
+                    norm += (double)reference[c] * reference[c];
+                }
+                CHECK(h3_convrot_rotate(reference, columns, group));
+                for (uint32_t c = 0; c < columns; c++)
+                    worst_rotation = fmax(worst_rotation, fabs(
+                        (double)bf16_value(rotated16[(size_t)r * columns + c]) -
+                        reference[c]) / (fabs((double)reference[c]) + 1e-3));
+                /* Against the first rows of the restored weight. */
+                for (uint32_t w = 0; w < 4 && w < rows; w++) {
+                    double want = 0.0, have = 0.0, weight_norm = 0.0;
+                    for (uint32_t c = 0; c < columns; c++) {
+                        double restored = got[(size_t)w * columns + c];
+                        want += restored * bf16_value(input16[(size_t)r * columns + c]);
+                        have += (double)quantized[l][(size_t)w * columns + c] *
+                                scales[l][w] *
+                                bf16_value(rotated16[(size_t)r * columns + c]);
+                        weight_norm += restored * restored;
+                    }
+                    worst_product = fmax(worst_product,
+                        fabs(have - want) / sqrt(norm * weight_norm));
+                }
+            }
+            printf("comfy int8 %-30s rotated input: values %.2e, product %.2e\n",
+                   layers[l].weight, worst_rotation, worst_product);
+            CHECK(worst_rotation <= 1.0 / 128.0);
+            CHECK(worst_product <= 1e-3);
+            /* Its own inverse, up to the BF16 rounding of each pass. */
+            CHECK(h3_gpu_begin(gpu));
+            CHECK(h3_gpu_hadamard_rows_bf16(gpu, input, INPUT_ROWS, columns, group));
+            CHECK(h3_gpu_submit(gpu));
+            CHECK(h3_gpu_tensor_read_bf16(input, rotated16, input_count));
+            double scale_of_values = 0.0, back = 0.0;
+            for (size_t i = 0; i < input_count; i++) {
+                double value = bf16_value(input16[i]);
+                scale_of_values = fmax(scale_of_values, fabs(value));
+                back = fmax(back, fabs((double)bf16_value(rotated16[i]) - value));
+            }
+            CHECK(back <= scale_of_values / 32.0);
+            h3_gpu_tensor_free(input);
+            free(input16);
+            free(rotated16);
+            free(reference);
+        }
         free(streamed);
         h3_gpu_tensor_free(raw);
         h3_gpu_tensor_free(expanded);

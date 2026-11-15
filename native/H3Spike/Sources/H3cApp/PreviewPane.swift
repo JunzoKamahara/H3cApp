@@ -38,7 +38,8 @@ struct PreviewPane: View {
             if let image = shownImage {
                 ImageActionsView(viewModel: viewModel, image: image)
                     .fixedSize()
-            } else if viewModel.resultURL != nil, let result = viewModel.lastResult {
+            } else if viewModel.resultURL != nil, !viewModel.isGeneratingImage,
+                      let result = viewModel.lastResult {
                 ResultActionsView(viewModel: viewModel, result: result)
                     .fixedSize()
             }
@@ -88,7 +89,11 @@ struct PreviewPane: View {
 
     @ViewBuilder
     private var centerContent: some View {
-        if let image = shownImage {
+        // An image being made shows its progress even when a video was left
+        // in the preview (a video stays there until something replaces it).
+        if viewModel.isGeneratingImage {
+            generatingView
+        } else if let image = shownImage {
             ImagePreviewView(url: image.url)
                 .id(image.url)
         } else if let url = viewModel.resultURL {

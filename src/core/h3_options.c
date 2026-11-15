@@ -157,6 +157,8 @@ static const h3_option_info options[] = {
      "The shortest sequence the bounded causal attention kernel is used for (0 turns it off)."},
     {"H3_HYPERFLOW_MPSGRAPH", "dit", "set",
      "HyperFlow factored linears through MPSGraph instead of the TensorOps kernel."},
+    {"H3_IMAGE_INT8_DIRECT", "dit-int8", "0",
+     "Still images: restore each ComfyUI int8 block to BF16 instead of using its int8 values as stored."},
     {"H3_INT8_ACTIVATION_CLIP", "dit-int8", "<fraction>",
      "Clip activations to this fraction of their row maximum before quantizing."},
     {"H3_INT8_FC1_KNOWN", "dit-int8", "0|1",

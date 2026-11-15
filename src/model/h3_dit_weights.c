@@ -798,7 +798,224 @@ void h3_dit_free_attention_slot(h3_dit_attention_slot *slot) {
     h3_dit_free_tensor(&slot->fc2_scales);
 }
 
+/* --- comfy_direct: ComfyUI int8 (ConvRot) blocks as stored ------------- */
+
+static const struct {
+    const char *name;
+    uint32_t rows, columns;
+} comfy_linears[H3_COMFY_LINEARS] = {
+    {"attn.qkv_proj.weight", INNER * 3, HIDDEN},
+    {"attn.out_proj.weight", HIDDEN, INNER},
+    {"mlp.fc1.weight", FFN * 2, HIDDEN},
+    {"mlp.fc2.weight", HIDDEN, FFN},
+};
+
+static const h3_st_tensor *comfy_linear(h3_dit *dit, unsigned layer,
+                                        unsigned linear,
+                                        const h3_st_header **header) {
+    char name[96];
+    snprintf(name, sizeof(name), "blocks.%u.%s", layer,
+             comfy_linears[linear].name);
+    const h3_st_tensor *tensor = h3_weight_find(dit->weights, name, header);
+    if (!tensor || !h3_weight_is_comfy_int8(dit->weights, tensor) ||
+        tensor->shape[0] != comfy_linears[linear].rows ||
+        tensor->shape[1] != comfy_linears[linear].columns ||
+        tensor->data_end - tensor->data_begin !=
+            (uint64_t)comfy_linears[linear].rows * comfy_linears[linear].columns)
+        return NULL;
+    return tensor;
+}
+
+int h3_dit_comfy_direct_available(h3_dit *dit) {
+    for (unsigned layer = 0; layer < H3_DIT_BLOCKS; layer++) {
+        if (!dit->block_active[layer]) continue;
+        for (unsigned linear = 0; linear < H3_COMFY_LINEARS; linear++)
+            if (!comfy_linear(dit, layer, linear, NULL)) return 0;
+    }
+    return 1;
+}
+
+void h3_dit_free_comfy_blocks(h3_dit *dit) {
+    if (!dit->comfy_blocks) return;
+    for (unsigned layer = 0; layer < H3_DIT_BLOCKS; layer++)
+        for (unsigned linear = 0; linear < H3_COMFY_LINEARS; linear++)
+            h3_dit_free_tensor(&dit->comfy_blocks[layer].scales[linear]);
+    free(dit->comfy_blocks);
+    dit->comfy_blocks = NULL;
+}
+
+int h3_dit_prepare_comfy_block(h3_dit *dit, unsigned layer, char *error,
+                               size_t error_size) {
+    if (!dit->comfy_blocks) {
+        dit->comfy_blocks = calloc(H3_DIT_BLOCKS, sizeof(*dit->comfy_blocks));
+        if (!dit->comfy_blocks) {
+            h3_dit_fail(error, error_size, "out of memory for the int8 blocks");
+            return 0;
+        }
+    }
+    h3_dit_comfy_block *block = &dit->comfy_blocks[layer];
+    for (unsigned linear = 0; linear < H3_COMFY_LINEARS; linear++) {
+        const h3_st_header *header = NULL;
+        const h3_st_tensor *tensor = comfy_linear(dit, layer, linear, &header);
+        uint32_t rows = comfy_linears[linear].rows;
+        uint32_t columns = comfy_linears[linear].columns;
+        uint32_t group = 0;
+        if (!tensor || !header ||
+            !h3_weight_comfy_int8_scales(dit->weights, dit->gpu, tensor, 0,
+                                         rows, &group, &block->scales[linear],
+                                         error, error_size)) {
+            if (error && error_size && !error[0])
+                h3_dit_fail(error, error_size,
+                     "block %u is not a ComfyUI int8 block", layer);
+            return 0;
+        }
+        uint32_t power = 4;
+        while (power < group) power *= 4;
+        if (group && (group > 256 || power != group || columns % group)) {
+            h3_dit_fail(error, error_size, "block %u: the int8 path rotates "
+                 "inputs by ConvRot groups up to 256 columns (%s has %u)",
+                 layer, comfy_linears[linear].name, group);
+            return 0;
+        }
+        block->path[linear] = header->path;
+        block->file_offset[linear] = tensor->file_offset;
+        block->group[linear] = group;
+        uint32_t inner = 0, head_dim = 0;
+        char name[96];
+        snprintf(name, sizeof(name), "blocks.%u.%s", layer,
+                 comfy_linears[linear].name);
+        if (linear == H3_COMFY_QKV &&
+            h3_weight_qkv_reorder(dit->weights, name, tensor, &inner,
+                                  &head_dim)) {
+            /* [all Q; all K; all V] to the engine's per-head [q; k; v], as
+             * the int8 values are placed when they are read. */
+            if (inner != INNER || head_dim != HEAD_DIM) {
+                h3_dit_fail(error, error_size,
+                     "block %u: unexpected QKV layout", layer);
+                return 0;
+            }
+            float *file_order = malloc(rows * sizeof(*file_order));
+            float *engine_order = malloc(rows * sizeof(*engine_order));
+            int ok = file_order && engine_order &&
+                     h3_gpu_tensor_read_f32(block->scales[linear], file_order,
+                                            rows);
+            for (uint32_t row = 0; ok && row < rows; row++) {
+                uint32_t part = row / INNER, within = row % INNER;
+                engine_order[(within / HEAD_DIM) * 3 * HEAD_DIM +
+                             part * HEAD_DIM + within % HEAD_DIM] =
+                    file_order[row];
+            }
+            ok = ok && h3_gpu_tensor_write_f32_range(block->scales[linear], 0,
+                                                     engine_order, rows);
+            free(file_order);
+            free(engine_order);
+            if (!ok) {
+                h3_dit_fail(error, error_size,
+                     "block %u: cannot reorder the QKV scales", layer);
+                return 0;
+            }
+            block->group[linear] |= 0x80000000u; /* rows are reordered */
+        }
+    }
+    return 1;
+}
+
+/* One reader thread's share of a block: a piece of one matrix. A single
+ * pread per matrix only reaches queue depth 1 (see h3_dit_read_stream_
+ * layer); pieces of about 38 MiB each keep ten requests outstanding. */
+typedef struct {
+    h3_dit_attention_job *job;
+    unsigned linear;
+    unsigned piece;
+    unsigned pieces;
+    int ok;
+    char error[512];
+} comfy_read;
+
+static const unsigned comfy_pieces[H3_COMFY_LINEARS] = {3, 1, 4, 2};
+enum { COMFY_READERS = 3 + 1 + 4 + 2 };
+
+static void *read_comfy_piece_thread(void *opaque) {
+    comfy_read *read = opaque;
+    h3_dit *dit = read->job->dit;
+    h3_dit_attention_slot *slot = &dit->attention_slots[read->job->slot];
+    const h3_dit_comfy_block *block = &dit->comfy_blocks[read->job->layer];
+    h3_gpu_tensor *targets[H3_COMFY_LINEARS] = {
+        slot->qkv_int8, slot->out_int8, slot->fc1_int8, slot->fc2_int8};
+    unsigned linear = read->linear;
+    if (!(block->group[linear] & 0x80000000u)) {
+        /* Rows in the engine's own order: a run of whole rows. */
+        uint32_t rows = comfy_linears[linear].rows;
+        uint32_t first = (uint32_t)((uint64_t)rows * read->piece / read->pieces);
+        uint32_t last = (uint32_t)((uint64_t)rows * (read->piece + 1) /
+                                   read->pieces);
+        size_t offset = (size_t)first * comfy_linears[linear].columns;
+        size_t count = (size_t)(last - first) * comfy_linears[linear].columns;
+        uint64_t file_offset = block->file_offset[linear] + offset;
+        read->ok = h3_gpu_tensor_stream_file_runs_i8(
+            targets[linear], block->path[linear], 1, &offset, &file_offset,
+            &count, read->error, sizeof(read->error));
+        return NULL;
+    }
+    /* QKV stored [all Q; all K; all V]: this piece is one of the three
+     * parts, a run per head into the engine's per-head [q; k; v]. */
+    enum { HEAD_COUNT = INNER / HEAD_DIM };
+    size_t tensor_offsets[HEAD_COUNT], counts[HEAD_COUNT];
+    uint64_t file_offsets[HEAD_COUNT];
+    size_t run_values = (size_t)HEAD_DIM * HIDDEN;
+    unsigned part = read->piece;
+    for (unsigned head = 0; head < HEAD_COUNT; head++) {
+        file_offsets[head] = block->file_offset[linear] +
+            ((uint64_t)part * INNER + (uint64_t)head * HEAD_DIM) * HIDDEN;
+        tensor_offsets[head] = ((size_t)head * 3 + part) * run_values;
+        counts[head] = run_values;
+    }
+    read->ok = h3_gpu_tensor_stream_file_runs_i8(
+        targets[linear], block->path[linear], HEAD_COUNT, tensor_offsets,
+        file_offsets, counts, read->error, sizeof(read->error));
+    return NULL;
+}
+
+static int read_comfy_layer(h3_dit_attention_job *job) {
+    double started = h3_dit_stream_now();
+    comfy_read reads[COMFY_READERS];
+    pthread_t threads[COMFY_READERS];
+    int started_thread[COMFY_READERS] = {0};
+    unsigned count = 0;
+    for (unsigned linear = 0; linear < H3_COMFY_LINEARS; linear++)
+        for (unsigned piece = 0; piece < comfy_pieces[linear]; piece++) {
+            reads[count] = (comfy_read){.job = job, .linear = linear,
+                                        .piece = piece,
+                                        .pieces = comfy_pieces[linear]};
+            if (pthread_create(&threads[count], NULL, read_comfy_piece_thread,
+                               &reads[count]) == 0)
+                started_thread[count] = 1;
+            else
+                read_comfy_piece_thread(&reads[count]);
+            count++;
+        }
+    job->ok = 1;
+    job->bytes = 0;
+    job->error[0] = '\0';
+    for (unsigned index = 0; index < count; index++) {
+        if (started_thread[index]) pthread_join(threads[index], NULL);
+        if (!reads[index].ok) {
+            job->ok = 0;
+            if (!job->error[0])
+                snprintf(job->error, sizeof(job->error), "%s",
+                         reads[index].error);
+        }
+    }
+    for (unsigned linear = 0; linear < H3_COMFY_LINEARS; linear++)
+        job->bytes += (uint64_t)comfy_linears[linear].rows *
+                      comfy_linears[linear].columns;
+    if (!job->ok) job->bytes = 0;
+    job->seconds = h3_dit_stream_now() - started;
+    return job->ok;
+}
+
 int h3_dit_read_attention_layer(h3_dit_attention_job *job) {
+    if (job->dit->comfy_direct) return read_comfy_layer(job);
     h3_dit_attention_slot *slot = &job->dit->attention_slots[job->slot];
     const char *path = job->dit->attention_cache_path;
     h3_attention_cache_offsets off;

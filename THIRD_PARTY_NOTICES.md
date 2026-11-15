@@ -255,9 +255,10 @@ H3cApp makes still images with MiniMax H3 Image
 using the engine's own C/Metal code: the image VAE decoder
 (`src/model/h3_image_vae.c`), the DiT's still-image paths (`h3_dit_setup.c`,
 `h3_dit_block.c`, `h3_dit.c`) and the entry point (`src/core/h3_image.c`).
-The model's structure, sampler and tile rules, and how reference images are
+The model's structure, sampler and tile rules, how reference images are
 presented for an edit (their sizes, the `Picture n: ` labels, the noise added
-to their rows), were taken from MiniMax's published sources and from
+to their rows), and computing on the int8 weights as stored by rotating each
+linear's input, were taken from MiniMax's published sources and from
 [Anionex/h3-image-mlx](https://github.com/Anionex/h3-image-mlx)
 (Apache-2.0; its Metal kernels are MIT, Copyright (c) 2026 David Dalcu),
 which was also run as a tool to produce the reference outputs the engine is

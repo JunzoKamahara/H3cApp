@@ -805,6 +805,27 @@ int h3_gpu_linear_int8_head_major_bf16(
         head_dim);
 }
 
+/* fc2_group: the activation between the two linears is rotated by groups
+ * of that many columns before it is quantized (0: not at all) - for an
+ * FC2 weight that is ConvRot-rotated and taken as stored. */
+static int h3_gpu_mlp_int8_body(h3_gpu *opaque, h3_gpu_tensor *output,
+                         h3_gpu_tensor *activated,
+                         h3_gpu_tensor *quantized_activation,
+                         h3_gpu_tensor *activation_scales,
+                         const h3_gpu_tensor *input,
+                         const h3_gpu_tensor *fc1_weight,
+                         const h3_gpu_tensor *fc1_scales,
+                         const h3_gpu_tensor *fc2_weight,
+                         const h3_gpu_tensor *fc2_scales,
+                         const h3_gpu_tensor *fc1_bf16,
+                         const h3_gpu_tensor *fc2_bf16, uint32_t rows,
+                         uint32_t input_dim, uint32_t hidden_dim,
+                         uint32_t output_dim,
+                         int use_slower_grouped_quantizer,
+                         int use_slower_dynamic_fc1_k,
+                         int use_int8_row_fc2,
+                         int input_is_quantized, uint32_t fc2_group);
+
 int h3_gpu_mlp_int8_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
                          h3_gpu_tensor *activated,
                          h3_gpu_tensor *quantized_activation,
@@ -822,6 +843,55 @@ int h3_gpu_mlp_int8_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
                          int use_slower_dynamic_fc1_k,
                          int use_int8_row_fc2,
                          int input_is_quantized) {
+    return h3_gpu_mlp_int8_body(opaque, output, activated,
+        quantized_activation, activation_scales, input, fc1_weight,
+        fc1_scales, fc2_weight, fc2_scales, fc1_bf16, fc2_bf16, rows,
+        input_dim, hidden_dim, output_dim, use_slower_grouped_quantizer,
+        use_slower_dynamic_fc1_k, use_int8_row_fc2, input_is_quantized, 0);
+}
+
+int h3_gpu_mlp_int8_rotated_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
+                         h3_gpu_tensor *activated,
+                         h3_gpu_tensor *quantized_activation,
+                         h3_gpu_tensor *activation_scales,
+                         h3_gpu_tensor *input,
+                         const h3_gpu_tensor *fc1_weight,
+                         const h3_gpu_tensor *fc1_scales,
+                         const h3_gpu_tensor *fc2_weight,
+                         const h3_gpu_tensor *fc2_scales, uint32_t rows,
+                         uint32_t input_dim, uint32_t hidden_dim,
+                         uint32_t output_dim, uint32_t fc1_group,
+                         uint32_t fc2_group,
+                         int use_slower_grouped_quantizer,
+                         int use_slower_dynamic_fc1_k,
+                         int use_int8_row_fc2) {
+    if (fc1_group &&
+        !h3_gpu_hadamard_rows_bf16(opaque, input, rows, input_dim, fc1_group))
+        return 0;
+    return h3_gpu_mlp_int8_body(opaque, output, activated,
+        quantized_activation, activation_scales, input, fc1_weight,
+        fc1_scales, fc2_weight, fc2_scales, NULL, NULL, rows, input_dim,
+        hidden_dim, output_dim, use_slower_grouped_quantizer,
+        use_slower_dynamic_fc1_k, use_int8_row_fc2, 0, fc2_group);
+}
+
+static int h3_gpu_mlp_int8_body(h3_gpu *opaque, h3_gpu_tensor *output,
+                         h3_gpu_tensor *activated,
+                         h3_gpu_tensor *quantized_activation,
+                         h3_gpu_tensor *activation_scales,
+                         const h3_gpu_tensor *input,
+                         const h3_gpu_tensor *fc1_weight,
+                         const h3_gpu_tensor *fc1_scales,
+                         const h3_gpu_tensor *fc2_weight,
+                         const h3_gpu_tensor *fc2_scales,
+                         const h3_gpu_tensor *fc1_bf16,
+                         const h3_gpu_tensor *fc2_bf16, uint32_t rows,
+                         uint32_t input_dim, uint32_t hidden_dim,
+                         uint32_t output_dim,
+                         int use_slower_grouped_quantizer,
+                         int use_slower_dynamic_fc1_k,
+                         int use_int8_row_fc2,
+                         int input_is_quantized, uint32_t fc2_group) {
     H3GPU *gpu = GPU(opaque);
     uint32_t padded_rows = (rows + 127u) & ~127u;
     uint32_t fc2_scale_groups = hidden_dim / 1024u;
@@ -966,6 +1036,9 @@ int h3_gpu_mlp_int8_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
         gpu.stats = stats;
     }
 
+    if (int8_fc2 && fc2_group &&
+        !h3_gpu_hadamard_rows_bf16(opaque, activated, rows, hidden_dim,
+                                   fc2_group)) return 0;
     if (int8_fc2 && grouped_fc2 &&
         !h3_gpu_quantize_bf16_int8_groups(
             opaque, quantized_activation, activation_scales, activated, rows,

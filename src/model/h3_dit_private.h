@@ -173,6 +173,19 @@ typedef struct {
     h3_gpu_tensor *fc2_scales;
 } h3_dit_attention_slot;
 
+/* A block's four dense linears as a ComfyUI int8 (ConvRot) checkpoint
+ * stores them, for comfy_direct: where each int8 payload is, its ConvRot
+ * group (0: not rotated) and its per-row scales (resident; the QKV's in the
+ * engine's per-head row order). */
+enum { H3_COMFY_QKV, H3_COMFY_OUT, H3_COMFY_FC1, H3_COMFY_FC2,
+       H3_COMFY_LINEARS };
+typedef struct {
+    const char *path[H3_COMFY_LINEARS];
+    uint64_t file_offset[H3_COMFY_LINEARS];
+    uint32_t group[H3_COMFY_LINEARS];
+    h3_gpu_tensor *scales[H3_COMFY_LINEARS];
+} h3_dit_comfy_block;
+
 #define H3_ATTENTION_CACHE_MAGIC "H3AC"
 
 #define H3_ATTENTION_CACHE_VERSION 3u
@@ -313,6 +326,13 @@ struct h3_dit {
     h3_dit_latent_preview latent_preview;
     void *latent_preview_opaque;
     h3_dit_attention_slot attention_slots[2];
+    /* The int8 slots filled straight from a ComfyUI int8 (ConvRot)
+     * checkpoint instead of an attention cache: the int8 values are used
+     * as stored, and each linear's input is rotated in place of the weight
+     * being restored (h3_gpu_hadamard_rows_bf16). attention_stream and
+     * mlp_stream are on, attention_cache_path is NULL. */
+    int comfy_direct;
+    h3_dit_comfy_block *comfy_blocks;
     unsigned attn_ready_layer;
     unsigned attn_ready_slot;
     uint64_t attn_stream_bytes;
@@ -472,6 +492,13 @@ int h3_dit_allocate_attention_slot(h3_dit *dit, h3_dit_attention_slot *slot,
                                    char *error, size_t error_size);
 void h3_dit_free_attention_slot(h3_dit_attention_slot *slot);
 int h3_dit_read_attention_layer(h3_dit_attention_job *job);
+/* comfy_direct: whether every active block's four dense linears are
+ * ComfyUI int8 weights the int8 kernels can take as stored; describing one
+ * block's (after its norms are loaded); releasing them all. */
+int h3_dit_comfy_direct_available(h3_dit *dit);
+int h3_dit_prepare_comfy_block(h3_dit *dit, unsigned layer, char *error,
+                               size_t error_size);
+void h3_dit_free_comfy_blocks(h3_dit *dit);
 void *h3_dit_read_attention_layer_thread(void *opaque);
 int h3_dit_quantize_block_mlp(h3_dit *dit, h3_dit_block *block,
                               char *error, size_t error_size);
