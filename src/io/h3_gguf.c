@@ -455,13 +455,14 @@ static int inspect_comfy_dit(const char *path, h3_gguf_info *info,
     if (!h3_st_read_header(path, &header, error, error_size)) return 0;
     info->file_bytes = header.file_size;
     info->tensors = header.tensor_count;
-    int dit = 0, hyperflow = 0, max_block = -1;
+    int dit = 0, audio = 0, hyperflow = 0, max_block = -1;
     uint8_t factored[256] = {0};
     for (size_t index = 0; index < header.tensor_count; index++) {
         const h3_st_tensor *tensor = &header.tensors[index];
         info->tensor_bytes += tensor->data_end - tensor->data_begin;
         const char *n = tensor->name;
         if (!strcmp(n, "video_patch_proj.weight")) dit = 1;
+        if (!strcmp(n, "audio_patch_proj.weight")) audio = 1;
         if (!strcmp(n, "adaln_t_table")) info->curve_adaln = 1;
         if (!strcmp(n, "endpoint_time_embedder.proj_in.weight")) hyperflow = 1;
         if (!strcmp(n, "blocks.0.adaln_proj.linear.weight") &&
@@ -498,6 +499,8 @@ static int inspect_comfy_dit(const char *path, h3_gguf_info *info,
                   "format (with or without ConvRot)");
     } else {
         ok = 1;
+        /* Every video DiT projects audio rows; a still-image one has none. */
+        info->still_image = !audio;
         info->role = H3_GGUF_DIT;
         info->dit_blocks = max_block + 1;
         /* HyperFlow H3 Flash's int8 file: block 0 is an ordinary int8

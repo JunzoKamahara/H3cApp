@@ -55,11 +55,13 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | メソッド | パス | 内容 |
 |---|---|---|
 | `POST` | `/api/generate` | ジョブを開始。JSONボディで現在のドラフトを完全に置き換えます（下記参照）。開始できれば`202`、リクエスト不正なら`400`、ジョブ実行中なら`409`。 |
-| `GET` | `/api/status` | エンジン/ジョブの状態、進捗割合、フェーズ/ステージ文言、エラーメッセージ、結果が用意できているか。複数本の生成やつなげて生成の間は、`batch`に`index`・`total`・`chained`と、全体の`elapsed_seconds`・`estimated_remaining_seconds`（今の1本の見積りに、残りの本数分の見積りをこれまでの実際の速さで補正して足したもの）が入る。最上位の`estimated_remaining_seconds`は今の1本の値。`generation_kind`はパネルがつくるもの（`video`か`image`）、`form`はフォームが持っている入力で、動画側の`prompt`・`creation_method`・`image_input_mode`・`first_frame`・`last_frame`・`references`（パス）と、`image`の下に画像側の`prompt`・`size`・`width`・`height`・`count`が入る。 |
+| `GET` | `/api/status` | エンジン/ジョブの状態、進捗割合、フェーズ/ステージ文言、エラーメッセージ、結果が用意できているか。複数本の生成やつなげて生成の間は、`batch`に`index`・`total`・`chained`と、全体の`elapsed_seconds`・`estimated_remaining_seconds`（今の1本の見積りに、残りの本数分の見積りをこれまでの実際の速さで補正して足したもの）が入る。最上位の`estimated_remaining_seconds`は今の1本の値。`generation_kind`はパネルがつくるもの（`video`か`image`）、`generating_image`は実行中の生成が画像かどうか、`form`はフォームが持っている入力で、動画側の`prompt`・`creation_method`・`image_input_mode`・`first_frame`・`last_frame`・`references`（パス）と、`image`の下に画像側の`prompt`・`size`・`width`・`height`・`count`が入る。 |
 | `POST` | `/api/cancel` | 実行中のジョブがあれば中止。 |
 | `GET` | `/api/result/video` | 現在の結果を`video/mp4`としてストリーミング。結果が無いか、次のジョブの`generate()`呼び出しで削除された後は`404`。 |
 | `GET` | `/api/result/image` | プレビューに表示しているプロジェクトの画像を`image/png`で返す。表示していなければ`404`。 |
 | `GET` | `/api/models` | 登録済みH3モデルディレクトリ一覧（id・名前・パス・アクティブかどうか）。 |
+| `GET` | `/api/image-models` | 登録済みの画像モデルのフォルダ（id・名前・パス・使用中か）。画像モデルのフォルダは`transformer/`（MiniMax H3 ImageのDiT）、`vae/`（画像VAEと`config.json`）、`text_encoder/`と`tokenizer/`（動画モデルと同じもの）を持つ。 |
+| `POST` | `/api/image-models/add` | `{"path", "name"?}` 画像モデルのフォルダを登録して使用中にする。フォルダが画像モデルでなければ（部品が足りない、transformerが動画モデル）理由付きの`400`。一覧を返す。 |
 | `GET` | `/api/refmods` | RefModの一覧（モデル管理のRefMod）。各ファイルの`id`・`name`・`path`と、ヘッダから`format_version`・`bundle`・`file_name`・`members`（`index`、`kind`はimage/video/audio、`mode`はfull/compressed、`latent_t`/`latent_h`/`latent_w`、`tokens`、`name`、`source`、`pool`、`optimize_steps`、`supported`）。ファイルを読み込み中は`null`、読めないときは`error`も。 |
 | `POST` | `/api/refmods/extract` | `{"path", "name"?, "mode"?, "resolution_cap"?, "latent_frames"?, "max_seconds"?}` 画像・動画・音声のファイルからFullのRefModをRefModフォルダに作る。`mode`は`full`だけ（`compressed`は`400`。H3cAppは圧縮のRefModを作らなくなった。読み込みはできる）、`resolution_cap`は短辺の上限ピクセル（省略時1024）、`latent_frames`は動画から使うコマ数（省略時16）、`max_seconds`は使う音声の秒数（省略時15）。`"path"`の代わりに`"paths": [...]`で2〜32枚の静止画を1つのRefModにまとめる（上流の"stack"。1枚が潜在の1コマになり順に並ぶ。`resolution_cap`の省略時は512。1枚目が画面の大きさを決め、ほかはそれを覆うよう拡大縮小して中央を切り取る）。書く前に`202`で`{"output"}`（できるファイル）を返す。ほかを作成中は`409`。生成が走っていればエンジンの待ち行列でその後に始まり、`GET /api/status`の`refmod_extracting`・`refmod_extract_phase`・`refmod_extract_progress`（その段階の0〜1）・`refmod_extract_name`で進み具合、`message`で結果が分かる。 |
 | `POST` | `/api/refmods/extract/cancel` | 作成中のRefModを止める（なければ`409`）。 |
@@ -116,7 +118,7 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `lora_name` / `lora_scale` | なし | `loras`の旧・単一LoRA形式。`loras`を指定した場合は無視される。 |
 | `count` | `1` | 1〜20。シードを変えて続けて生成する本数。2以上はプロジェクトを開いているときだけ。 |
 | `from_form` | `false` | `true`でフォームの今の状態から生成する（`/api/project/restore`の後など）。併用できるのは`count`（と`kind`）だけ。 |
-| `kind` | `"video"` | つくるもの。`"image"`は`501`を返す（画像の生成はまだできない）。省略すると動画をつくり、パネルも動画に切り替わる。 |
+| `kind` | `"video"` | つくるもの。`"image"`は使用中の画像モデルで静止画をつくり、専用の小さな本文を取る: `prompt`（必須）、`image_size`（`<幅>x<高さ>`。32の倍数で256〜2688。または`square-standard`・`landscape-large`・`portrait-standard`などのプリセット名。省略時はフォームの値）、`seed`、`count`（1〜20。1枚目が`seed`を使い、2枚目以降は乱数）。画像は開いているプロジェクト（なければ無題のプロジェクトを始める）に記録と潜在ファイル付きで保存され、`GET /api/project`に並ぶ。画像モデルが登録されていなければ理由付きの`409`。`kind`を省略すると動画をつくり、パネルも動画に切り替わる。 |
 
 範囲外の値や型の違う値（整数の項目に`true`、`"5"`、`2.5`など）は、使える
 範囲を示した`400`になります。黙って範囲内に収めたり丸めたりはしません。

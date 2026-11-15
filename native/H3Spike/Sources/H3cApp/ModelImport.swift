@@ -75,15 +75,21 @@ struct ImportPick: Equatable, Identifiable {
     let path: String
     let info: H3GGUFInfo?
     let error: String?
+    /// A still-image DiT (MiniMax H3 Image): readable, but no part of a
+    /// video model.
+    let stillImage: Bool
     var id: String { path }
 
     init(path: String) {
         self.path = path
         do {
-            info = try H3GGUFInfo.inspect(path: path)
-            error = nil
+            let inspected = try H3GGUFInfo.inspect(path: path)
+            stillImage = inspected.stillImage
+            info = stillImage ? nil : inspected
+            error = stillImage ? "a still-image DiT" : nil
         } catch {
             info = nil
+            stillImage = false
             self.error = error.localizedDescription
         }
     }
@@ -95,7 +101,10 @@ struct ImportPick: Equatable, Identifiable {
     var transformerFileName: String { isSafetensors ? "model.safetensors" : "model.gguf" }
     /// Why a file that could not be inspected is left out.
     var unreadableReason: String {
-        isSafetensors ? String(localized: "ComfyUIのint8形式のDiTではないので使いません（safetensorsで取り込めるのはこの形式だけです）")
+        if stillImage {
+            return String(localized: "静止画用のモデル（MiniMax H3 Image）なので、動画モデルには使いません。画像モードの「画像モデルのフォルダを追加…」から追加してください")
+        }
+        return isSafetensors ? String(localized: "ComfyUIのint8形式のDiTではないので使いません（safetensorsで取り込めるのはこの形式だけです）")
                       : String(localized: "GGUFとして読めないので使いません")
     }
 

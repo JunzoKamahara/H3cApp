@@ -23,7 +23,9 @@ typedef struct {
     int (*build_schedule)(int steps, float audio_shift, h3_sigma_schedule *schedule);
 } h3_model_family_desc;
 
-/* The row of a checkpoint: `two_time` is h3_hyperflow_info.two_time. */
+/* The row of a video checkpoint: `two_time` is h3_hyperflow_info.two_time. */
 const h3_model_family_desc *h3_model_family_of(int two_time);
+/* The row of a still-image checkpoint (no audio stream). */
+const h3_model_family_desc *h3_model_family_image(void);
 
 #endif

@@ -870,6 +870,10 @@ extension GenerationViewModel {
     /// which generates once the project is set - or not at all if cancelled.
     func requestGenerate() {
         guard canGenerate else { return }
+        if generationKind == .image {
+            generateImages()
+            return
+        }
         if project == nil && (batchCount > 1 || isChained) {
             projectMessage = nil
             showingBatchProject = true

@@ -368,7 +368,8 @@ func fixedCString<T>(_ tuple: T) -> String {
 
 /* A plain polling flag: the generation thread checks it from inside the C
  * callbacks, the caller (main actor) sets it when the user cancels. */
-private final class CancelFlag: @unchecked Sendable {
+/// Also the image engine's (H3ImageEngine.swift).
+final class CancelFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var value = false
     /// Handed to the engine as h3_params.cancel_requested, so the denoising
@@ -467,7 +468,8 @@ public final class H3Engine: @unchecked Sendable {
     /// ccv attention backend's single global state, GPU memory) assumes one
     /// generation at a time; UI-level "is generating" checks don't cover
     /// other entry points.
-    private static let workQueue = DispatchQueue(label: "h3.engine.work", qos: .userInitiated)
+    /// The image engine (H3ImageEngine.swift) runs on it too.
+    static let workQueue = DispatchQueue(label: "h3.engine.work", qos: .userInitiated)
 
     private let ctx: OpaquePointer
     private let modelDirectory: String

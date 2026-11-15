@@ -17,8 +17,14 @@ static int is(const char *problem, const char *expected) {
 int main(void) {
     const h3_model_family_info *h3 = h3_model_family(H3_FAMILY_H3);
     const h3_model_family_info *hf = h3_model_family(H3_FAMILY_HYPERFLOW);
-    CHECK(h3 && hf && h3_model_family_count() == 2 && !h3_model_family(99));
+    const h3_model_family_info *image = h3_model_family(H3_FAMILY_H3_IMAGE);
+    CHECK(h3 && hf && image && h3_model_family_count() == 3 && !h3_model_family(99));
     CHECK(!strcmp(h3->name, "h3") && !strcmp(hf->name, "hyperflow"));
+    /* The still-image family: its own six steps, every block, no LoRA. */
+    CHECK(!strcmp(image->name, "h3-image") && image->step_choice_count == 1 &&
+          image->step_choices[0] == 6 && image->default_steps == 6 &&
+          image->capabilities == 0);
+    CHECK(h3_model_family_image()->info.id == H3_FAMILY_H3_IMAGE);
     CHECK(h3->step_choice_count == 0 && h3->default_steps == H3_DEFAULT_STEPS);
     CHECK(hf->step_choice_count == 3 && hf->step_choices[0] == 4 &&
           hf->step_choices[1] == 6 && hf->step_choices[2] == 8 && hf->default_steps == 6);

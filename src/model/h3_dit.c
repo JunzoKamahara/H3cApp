@@ -168,7 +168,9 @@ int h3_dit_validate_layout(h3_dit *dit, const h3_text_embedding *text,
         layout->segments[0].kind != H3_SEG_TEXT ||
         layout->segments[layout->segment_count - 1].kind != H3_SEG_VIDEO ||
         layout->signature[1] < 1 || layout->signature[2] < 2 ||
-        layout->signature[3] < 2 || layout->signature[4] < 1 ||
+        /* No audio steps: a still-image layout (checked against the
+         * checkpoint once it is open, h3_dit_setup.c). */
+        layout->signature[3] < 2 || layout->signature[4] < 0 ||
         layout->signature[2] % 2 || layout->signature[3] % 2 ||
         layout->seq_len > UINT32_MAX || text->tokens > UINT32_MAX ||
         layout->img_cond_rows > UINT32_MAX ||
@@ -476,6 +478,47 @@ int h3_dit_forward(h3_dit *dit, int step,
     if (!ok && (!error || !*error)) h3_dit_fail(error, error_size, "cannot unpack DiT output");
     free(video_rows); free(audio_rows); free(video_out); free(audio_out);
     free(video_f32); free(audio_f32);
+    return ok;
+}
+
+int h3_dit_is_image_model(const h3_dit *dit) {
+    return dit && dit->image_model;
+}
+
+int h3_dit_forward_image(h3_dit *dit, int step, const float *latent,
+                         float *velocity, char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (!dit || !dit->image_model || !dit->video_output || dit->latent_t != 1 ||
+        step < 0 || step >= h3_dit_schedule_steps(dit->schedule) ||
+        !latent || !velocity) {
+        h3_dit_fail(error, error_size, "invalid image DiT forward arguments");
+        return 0;
+    }
+    size_t row_elements = (size_t)dit->video_rows * VIDEO_PATCH;
+    float *rows = malloc(row_elements * sizeof(*rows));
+    if (!rows) {
+        h3_dit_fail(error, error_size, "out of memory packing the image latent");
+        return 0;
+    }
+    int ok = h3_dit_patchify_video(latent, VIDEO_CHANNELS, 1, dit->latent_h,
+                                   dit->latent_w, rows, row_elements) &&
+             h3_gpu_tensor_write_f32_range(
+                 dit->video_input,
+                 (size_t)dit->video_condition_rows * VIDEO_PATCH, rows,
+                 row_elements);
+    if (!ok) h3_dit_fail(error, error_size, "cannot pack/write the image latent");
+    if (ok) ok = h3_dit_encode_forward(dit, step, 1, 1, 0, error, error_size);
+    if (ok && !h3_gpu_tensor_read_f32(dit->video_output, rows, row_elements)) {
+        h3_dit_fail(error, error_size, "cannot read the image DiT output");
+        ok = 0;
+    }
+    if (ok && !h3_dit_unpatchify_video(rows, VIDEO_CHANNELS, 1, dit->latent_h,
+                                       dit->latent_w, velocity,
+                                       h3_dit_video_elements(dit))) {
+        h3_dit_fail(error, error_size, "cannot unpack the image DiT output");
+        ok = 0;
+    }
+    free(rows);
     return ok;
 }
 
@@ -1213,6 +1256,10 @@ void h3_dit_free(h3_dit *dit) {
     h3_dit_free_tensor(&dit->final_norm);
     h3_dit_free_tensor(&dit->final_video_w); h3_dit_free_tensor(&dit->final_video_b);
     h3_dit_free_tensor(&dit->final_audio_w); h3_dit_free_tensor(&dit->final_audio_b);
+    for (unsigned head = 0; head < H3_DIT_MAX_STEP_HEADS; head++) {
+        h3_dit_free_tensor(&dit->step_video_w[head]);
+        h3_dit_free_tensor(&dit->step_video_b[head]);
+    }
 #define FREE(field) h3_dit_free_tensor(&dit->field)
     if (dit->activation_aliases) {
         dit->attention_heads = NULL;

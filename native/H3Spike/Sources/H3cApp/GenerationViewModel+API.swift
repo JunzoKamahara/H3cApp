@@ -228,6 +228,8 @@ extension GenerationViewModel {
             return projectResponse()
         case ("POST", "/api/project/import-video"):
             return handleProjectRequest(request)
+        case ("GET", "/api/image-models"), ("POST", "/api/image-models/add"):
+            return handleImageModelsRequest(request)
         case ("POST", "/api/project/import-image"), ("POST", "/api/project/show-image"),
              ("POST", "/api/project/use-image"), ("POST", "/api/project/delete-image"),
              ("POST", "/api/kind"):
@@ -612,6 +614,7 @@ extension GenerationViewModel {
             // the video form holds (set by hand, by a restore or by
             // POST /api/project/use-image).
             "generation_kind": generationKind.rawValue,
+            "generating_image": isGeneratingImage,
             "form": [
                 "prompt": prompt,
                 "creation_method": creationMethod.rawValue,
@@ -702,6 +705,83 @@ extension GenerationViewModel {
                 return item
             },
         ])
+    }
+
+    /// POST /api/generate {"kind": "image", "prompt", "image_size"?, "seed"?,
+    /// "count"?}: images with the active image model, into the open project
+    /// (an untitled one is started when none is open). "image_size" is
+    /// "<width>x<height>" (multiples of 32) or a preset name
+    /// ("square-standard", "landscape-large", ...); default the form's.
+    private func handleImageGenerateRequest(_ json: [String: Any]) -> HTTPResponse {
+        let known: Set<String> = ["kind", "prompt", "image_size", "seed", "count"]
+        let extra = Set(json.keys).subtracting(known)
+        guard extra.isEmpty else {
+            return .error(400, "an image request takes \(known.sorted().joined(separator: ", ")); not \(extra.sorted().joined(separator: ", "))")
+        }
+        guard !isGenerating else { return .error(409, "a generation is already running") }
+        guard let requestedPrompt = (json["prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !requestedPrompt.isEmpty else { return .error(400, "\"prompt\" is required") }
+        var size = imageSizeProfile
+        if let value = json["image_size"] {
+            guard let text = value as? String else { return .error(400, "\"image_size\" must be a string") }
+            let sides = text.split(separator: "x").compactMap { Int32($0) }
+            if let profile = ImageSizeProfile(rawValue: text) {
+                size = profile
+            } else if sides.count == 2, ImageSizeProfile.isWellFormedCanvas(width: sides[0], height: sides[1]) {
+                size = .canvas(width: sides[0], height: sides[1])
+            } else {
+                return .error(400, "\"image_size\" must be <width>x<height> (multiples of 32 from \(ImageSizeProfile.sideRange.lowerBound) to \(ImageSizeProfile.sideRange.upperBound)) or a preset name")
+            }
+        }
+        var seed: UInt64?
+        if let value = json["seed"] {
+            if let text = value as? String, let parsed = UInt64(text) {
+                seed = parsed
+            } else if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                      let parsed = UInt64(exactly: number) {
+                seed = parsed
+            } else {
+                return .error(400, "\"seed\" must be an integer from 0 to 18446744073709551615")
+            }
+        }
+        var count = 1
+        if let value = json["count"] {
+            guard let parsed = jsonInteger(value), imageCountRange.contains(parsed) else {
+                return .error(400, "\"count\" must be an integer from \(imageCountRange.lowerBound) to \(imageCountRange.upperBound)")
+            }
+            count = parsed
+        }
+        generationKind = .image
+        imagePrompt = requestedPrompt
+        imageSizeProfile = size
+        imageSeedFixed = seed != nil
+        if let seed { imageSeedText = String(seed) }
+        imageCount = count
+        guard canGenerateImage else {
+            return .error(409, imageValidationMessage ?? "a generation is already running")
+        }
+        generateImages()
+        guard isGenerating else { return .error(400, errorMessage ?? projectMessage ?? "the image could not be started") }
+        return .json(202, ["ok": true])
+    }
+
+    /// GET /api/image-models: the registered image model folders. POST
+    /// /api/image-models/add {"path", "name"?} lists one (after checking it)
+    /// and makes it the active one.
+    private func handleImageModelsRequest(_ request: HTTPRequest) -> HTTPResponse {
+        if request.method == "POST" {
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard let path = json["path"] as? String else { return .error(400, "\"path\" is required") }
+            projectMessage = nil
+            if let reason = addImageModel(at: path, name: json["name"] as? String) {
+                projectMessage = nil
+                return .error(400, reason)
+            }
+        }
+        return .json(200, ["models": library.imageModels.map { model -> [String: Any] in
+            ["id": model.id.uuidString, "name": model.name, "path": model.path,
+             "active": model.id == library.activeImageModelID]
+        }])
     }
 
     /// Still images. POST /api/kind {"kind": "video" | "image"} switches what
@@ -991,12 +1071,12 @@ extension GenerationViewModel {
             }
             count = value
         }
-        // "kind": "video" (the default). Images cannot be generated yet.
+        // "kind": "video" (the default) or "image" (its own, smaller body).
         switch json["kind"] as? String {
         case nil, "video"?:
             if json["kind"] != nil && !(json["kind"] is String) { return .error(400, "\"kind\" must be \"video\" or \"image\"") }
         case "image"?:
-            return .error(501, "image generation is not available in this version")
+            return handleImageGenerateRequest(json)
         default:
             return .error(400, "\"kind\" must be \"video\" or \"image\"")
         }

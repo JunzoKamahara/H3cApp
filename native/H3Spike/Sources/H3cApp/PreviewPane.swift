@@ -53,11 +53,15 @@ struct PreviewPane: View {
         if viewModel.isCancelling { return String(localized: "中止しています") }
         if viewModel.isGenerating {
             if let batch = viewModel.batchProgress {
+                if viewModel.isGeneratingImage {
+                    return String(localized: "画像を生成しています（\(batch.index)/\(batch.total)枚目）")
+                }
                 return batch.chained
                     ? String(localized: "つなげて生成しています（\(batch.index)/\(batch.total)本目）")
                     : String(localized: "動画を生成しています（\(batch.index)/\(batch.total)本目）")
             }
-            return String(localized: "動画を生成しています")
+            return viewModel.isGeneratingImage ? String(localized: "画像を生成しています")
+                                               : String(localized: "動画を生成しています")
         }
         if let image = shownImage {
             var parts = [image.url.lastPathComponent]

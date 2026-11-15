@@ -197,6 +197,19 @@ int h3_dit_denoise_euler_preview(
 int h3_dit_reuse_schedule(int steps, int reuse_interval, uint8_t *selected,
                           size_t selected_count);
 
+/* Whether the loaded checkpoint is a still-image one (MiniMax H3 Image):
+ * no audio stream, one output head per sampling step. Such a DiT is loaded
+ * with a layout of one latent frame and no audio steps (h3_layout_spec:
+ * latent_t 1, audio_t 0) and a sigma schedule of exactly its own steps. */
+int h3_dit_is_image_model(const h3_dit *dit);
+
+/* One raw data-ward velocity evaluation of a still-image checkpoint at
+ * `step`: latent and velocity are channel-major F32 [24, H, W]. The
+ * velocity is the final layer's own F32 (the video path rounds its output
+ * to BF16). */
+int h3_dit_forward_image(h3_dit *dit, int step, const float *latent,
+                         float *velocity, char *error, size_t error_size);
+
 int h3_dit_get_gpu_stats(const h3_dit *dit, h3_gpu_stats *stats);
 
 /* Exact row-order conversions, public internally so they can be pinned by

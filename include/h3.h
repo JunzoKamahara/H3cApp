@@ -328,7 +328,8 @@ int h3_compute_mode_count(void);
  * reads the same table to offer only what applies. */
 enum {
     H3_FAMILY_H3 = 0,          /* MiniMax H3 and its plain re-publications */
-    H3_FAMILY_HYPERFLOW = 1    /* HyperFlow H3 Flash */
+    H3_FAMILY_HYPERFLOW = 1,   /* HyperFlow H3 Flash */
+    H3_FAMILY_H3_IMAGE = 2     /* MiniMax H3 Image: still images (h3_image.h) */
 };
 
 enum {
@@ -629,6 +630,10 @@ typedef struct {
      * "merge_strategy" metadata names FL2VA and Ref2VA) - an importer can
      * place the one file as both. */
     int both_transformers;
+    /* DiT in a safetensors file: a still-image checkpoint (MiniMax H3
+     * Image - no audio stream). Not a video model: it belongs in an image
+     * model folder (h3_image.h), and a video importer leaves it out. */
+    int still_image;
 } h3_gguf_info;
 
 /* `path` is a GGUF file, or a single-file ComfyUI safetensors DiT whose

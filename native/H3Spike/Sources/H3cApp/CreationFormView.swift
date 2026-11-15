@@ -597,7 +597,11 @@ struct CreationFormView: View {
                 .pickerStyle(.inline)
                 Divider()
             }
-            Button("モデル管理…") { showingModelManager = true }
+            Button("画像モデルのフォルダを追加…") { viewModel.chooseAndAddImageModel() }
+            if let active {
+                Button("「\(active.name)」を一覧から外す") { library.removeImageModel(id: active.id) }
+                    .help("一覧から外すだけで、フォルダは削除しません")
+            }
         } label: {
             composerChip(systemImage: "cube",
                          text: active.map { shortModelName($0.name) } ?? String(localized: "画像モデルを追加"))
@@ -608,7 +612,7 @@ struct CreationFormView: View {
         .fixedSize()
         .disabled(viewModel.isGenerating)
         .help(active.map { String(localized: "画像モデル: \($0.name)") }
-              ?? String(localized: "画像をつくるモデルがまだありません。モデル管理から追加します"))
+              ?? String(localized: "画像をつくるモデルがまだありません。モデルのフォルダを選んで追加します"))
     }
 
     /// A model's name cut to fit the chip (the full one is in its help).

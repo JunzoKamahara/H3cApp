@@ -151,9 +151,10 @@ int main(int argc, char **argv) {
         failures++;
     } else {
         printf("  role %d (1 = DiT), %s, %d blocks, curve AdaLN %d, dense AdaLN %d, "
-               "comfy_int8 %d, hyperflow %d\n", (int)info.role, info.main_type,
-               info.dit_blocks, info.curve_adaln, info.dense_adaln,
-               info.comfy_int8, info.hyperflow);
+               "comfy_int8 %d, hyperflow %d, still image %d\n", (int)info.role,
+               info.main_type, info.dit_blocks, info.curve_adaln,
+               info.dense_adaln, info.comfy_int8, info.hyperflow,
+               info.still_image);
     }
 
     puts("== model family");

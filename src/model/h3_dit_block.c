@@ -717,7 +717,7 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
                 dit->video_patch_b, dit->video_projection_map, dit->sequence,
                 dit->video_total_rows, VIDEO_PATCH, HIDDEN),
                "project mapped video sources");
-        if (dit->audio_projection_map)
+        if (dit->audio_projection_map && dit->audio_total_rows)
             OP(h3_gpu_patch_linear_bf16_map(
                 dit->gpu, dit->hidden, dit->audio_input, dit->audio_patch_w,
                 dit->audio_patch_b, dit->audio_projection_map, dit->sequence,
@@ -742,7 +742,8 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
                         VIDEO_PATCH, HIDDEN), "project packed video source");
                 video_offset += segment_rows;
             } else {
-                if (!dit->audio_projection_map)
+                /* A still-image layout's audio segment is empty. */
+                if (!dit->audio_projection_map && segment_rows)
                     OP(h3_gpu_patch_linear_bf16_offset(
                         dit->gpu, dit->hidden, destination, dit->audio_input,
                         audio_offset * AUDIO_CHANNELS, dit->audio_patch_w,
@@ -759,7 +760,7 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
                 dit->video_patch_w, dit->video_patch_b,
                 dit->video_total_rows, VIDEO_PATCH, HIDDEN),
                "fused video patch projection");
-            OP(h3_gpu_patch_linear_bf16(
+            if (dit->audio_total_rows) OP(h3_gpu_patch_linear_bf16(
                 dit->gpu, dit->audio_projected, dit->audio_input,
                 dit->audio_patch_w, dit->audio_patch_b,
                 dit->audio_total_rows, AUDIO_CHANNELS, HIDDEN),
@@ -770,7 +771,7 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
                 dit->video_patch_w, dit->video_patch_b,
                 dit->video_total_rows, VIDEO_PATCH, HIDDEN),
                "video patch projection");
-            OP(h3_gpu_linear_f32(
+            if (dit->audio_total_rows) OP(h3_gpu_linear_f32(
                 dit->gpu, dit->audio_projected_f32, dit->audio_input,
                 dit->audio_patch_w, dit->audio_patch_b,
                 dit->audio_total_rows, AUDIO_CHANNELS, HIDDEN),
@@ -778,7 +779,7 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
             OP(h3_gpu_cast_f32_to_bf16(
                 dit->gpu, dit->video_projected, dit->video_projected_f32,
                 dit->video_total_rows * HIDDEN), "video BF16 cast");
-            OP(h3_gpu_cast_f32_to_bf16(
+            if (dit->audio_total_rows) OP(h3_gpu_cast_f32_to_bf16(
                 dit->gpu, dit->audio_projected, dit->audio_projected_f32,
                 dit->audio_total_rows * HIDDEN), "audio BF16 cast");
         }
@@ -799,7 +800,7 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
                    "pack video source");
                 video_offset += segment_rows;
             } else {
-                OP(h3_gpu_copy_bf16(
+                if (segment_rows) OP(h3_gpu_copy_bf16(
                     dit->gpu, dit->hidden, destination, dit->audio_projected,
                     audio_offset * HIDDEN, segment_rows * HIDDEN),
                    "pack audio source");
@@ -1062,11 +1063,16 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
     }
     dit->core_forward_count++;
     const h3_gpu_tensor *final = h3_dit_schedule_final(dit->schedule);
+    /* A still-image checkpoint: this step's own head, and no audio rows. */
+    const h3_gpu_tensor *video_w = dit->step_heads ?
+        dit->step_video_w[step] : dit->final_video_w;
+    const h3_gpu_tensor *video_b = dit->step_heads ?
+        dit->step_video_b[step] : dit->final_video_b;
     int fused_final_head = dit->bf16_final &&
         !h3_option("H3_DISABLE_FUSED_FINAL_HEAD") &&
         !h3_option("H3_DISABLE_FUSED_FINAL_SLICE");
     if (fused_final_head) {
-        OP(h3_gpu_adaln_linear_bf16(
+        if (dit->audio_rows) OP(h3_gpu_adaln_linear_bf16(
             dit->gpu, dit->audio_output_bf16, dit->final_audio_inverse,
             dit->hidden, (size_t)dit->audio_target_start * HIDDEN,
             dit->final_norm, final, dit->final_audio_maps[step],
@@ -1077,17 +1083,17 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
             dit->gpu, dit->video_output_bf16, dit->final_video_inverse,
             dit->hidden, (size_t)dit->video_target_start * HIDDEN,
             dit->final_norm, final, dit->final_video_maps[step],
-            dit->final_video_w, dit->final_video_b, dit->video_rows, HIDDEN,
+            video_w, video_b, dit->video_rows, HIDDEN,
             VIDEO_PATCH, FINAL_SLOTS, 0, 1, 1e-5f),
            "fused final video AdaLN/head");
     } else if (h3_option("H3_DISABLE_FUSED_FINAL_SLICE")) {
-        OP(h3_gpu_copy_bf16(dit->gpu, dit->final_audio_input, 0, dit->hidden,
+        if (dit->audio_rows) OP(h3_gpu_copy_bf16(dit->gpu, dit->final_audio_input, 0, dit->hidden,
             (size_t)dit->audio_target_start * HIDDEN,
             (size_t)dit->audio_rows * HIDDEN), "slice final audio");
         OP(h3_gpu_copy_bf16(dit->gpu, dit->final_video_input, 0, dit->hidden,
             (size_t)dit->video_target_start * HIDDEN,
             (size_t)dit->video_rows * HIDDEN), "slice final video");
-        OP(h3_gpu_adaln_bf16(dit->gpu, dit->final_audio_norm,
+        if (dit->audio_rows) OP(h3_gpu_adaln_bf16(dit->gpu, dit->final_audio_norm,
             dit->final_audio_input, dit->final_norm, final,
             dit->final_audio_maps[step], dit->audio_rows, HIDDEN, FINAL_SLOTS,
             0, 1, 1e-5f), "final audio AdaLN");
@@ -1096,7 +1102,7 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
             dit->final_video_maps[step], dit->video_rows, HIDDEN, FINAL_SLOTS,
             0, 1, 1e-5f), "final video AdaLN");
     } else {
-        OP(h3_gpu_adaln_bf16_offset(
+        if (dit->audio_rows) OP(h3_gpu_adaln_bf16_offset(
             dit->gpu, dit->final_audio_norm, dit->hidden,
             (size_t)dit->audio_target_start * HIDDEN, dit->final_norm, final,
             dit->final_audio_maps[step], dit->audio_rows, HIDDEN, FINAL_SLOTS,
@@ -1108,28 +1114,28 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
             0, 1, 1e-5f), "fused final video slice/AdaLN");
     }
     if (dit->bf16_final && !fused_final_head) {
-        OP(h3_gpu_linear_bf16(dit->gpu, dit->audio_output_bf16,
+        if (dit->audio_rows) OP(h3_gpu_linear_bf16(dit->gpu, dit->audio_output_bf16,
             dit->final_audio_norm, dit->final_audio_w, dit->final_audio_b,
             dit->audio_rows, HIDDEN, AUDIO_CHANNELS),
            "BF16 final audio head");
         OP(h3_gpu_linear_bf16(dit->gpu, dit->video_output_bf16,
-            dit->final_video_norm, dit->final_video_w, dit->final_video_b,
+            dit->final_video_norm, video_w, video_b,
             dit->video_rows, HIDDEN, VIDEO_PATCH),
            "BF16 final video head");
     } else if (!dit->bf16_final) {
-        OP(h3_gpu_cast_bf16_to_f32(dit->gpu, dit->final_audio_f32,
+        if (dit->audio_rows) OP(h3_gpu_cast_bf16_to_f32(dit->gpu, dit->final_audio_f32,
             dit->final_audio_norm, dit->audio_rows * HIDDEN),
            "final audio F32 cast");
         OP(h3_gpu_cast_bf16_to_f32(dit->gpu, dit->final_video_f32,
             dit->final_video_norm, dit->video_rows * HIDDEN),
            "final video F32 cast");
-        OP(h3_gpu_linear_f32(dit->gpu, dit->audio_output,
+        if (dit->audio_rows) OP(h3_gpu_linear_f32(dit->gpu, dit->audio_output,
             dit->final_audio_f32, dit->final_audio_w, dit->final_audio_b,
             dit->audio_rows, HIDDEN, AUDIO_CHANNELS), "final audio head");
         OP(h3_gpu_linear_f32(dit->gpu, dit->video_output,
-            dit->final_video_f32, dit->final_video_w, dit->final_video_b,
+            dit->final_video_f32, video_w, video_b,
             dit->video_rows, HIDDEN, VIDEO_PATCH), "final video head");
-        OP(h3_gpu_cast_f32_to_bf16(dit->gpu, dit->audio_output_bf16,
+        if (dit->audio_rows) OP(h3_gpu_cast_f32_to_bf16(dit->gpu, dit->audio_output_bf16,
             dit->audio_output, dit->audio_rows * AUDIO_CHANNELS),
            "final audio output cast");
         OP(h3_gpu_cast_f32_to_bf16(dit->gpu, dit->video_output_bf16,

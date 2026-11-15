@@ -34,6 +34,8 @@ public struct H3GGUFInfo: Sendable, Equatable {
     public var convRot = false
     /// DiT: the file says it is a merge serving as both FL2VA and Ref2VA.
     public var bothTransformers = false
+    /// A still-image DiT (MiniMax H3 Image): not a video model.
+    public var stillImage = false
 
     public static func inspect(path: String) throws -> H3GGUFInfo {
         var info = h3_gguf_info()
@@ -65,6 +67,7 @@ public struct H3GGUFInfo: Sendable, Equatable {
         result.comfyInt8 = info.comfy_int8 != 0
         result.convRot = info.comfy_int8 == 2
         result.bothTransformers = info.both_transformers != 0
+        result.stillImage = info.still_image != 0
         return result
     }
 }

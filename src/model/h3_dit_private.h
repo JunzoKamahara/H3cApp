@@ -206,6 +206,9 @@ typedef struct {
     uint32_t reserved[1];
 } h3_attention_cache_header;
 
+/* Output heads of a still-image checkpoint, one per sampling step. */
+#define H3_DIT_MAX_STEP_HEADS 16u
+
 struct h3_dit {
     h3_gpu *gpu;
     h3_weight_store *weights;
@@ -316,6 +319,14 @@ struct h3_dit {
     double attn_stream_read_seconds;
     double attn_stream_wait_seconds;
     h3_gpu_tensor *final_norm;
+    /* A still-image checkpoint (MiniMax H3 Image): no audio stream - the
+     * audio rows, weights and outputs below stay empty - and one output
+     * head per sampling step (step_heads of them, F32 [96, HIDDEN] and
+     * [96]) in place of final_video_w/b. Its final layer runs in F32. */
+    int image_model;
+    unsigned step_heads;
+    h3_gpu_tensor *step_video_w[H3_DIT_MAX_STEP_HEADS];
+    h3_gpu_tensor *step_video_b[H3_DIT_MAX_STEP_HEADS];
     h3_gpu_tensor *final_video_w;
     h3_gpu_tensor *final_video_b;
     h3_gpu_tensor *final_audio_w;

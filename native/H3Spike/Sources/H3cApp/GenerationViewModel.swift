@@ -668,6 +668,15 @@ final class GenerationViewModel: ObservableObject {
     @Published var displayedImage: ProjectImage?
     /// Image files are being brought into the project (importImages).
     @Published var isImportingImages = false
+    /// The generation that is running makes images (isGenerating is set too).
+    @Published private(set) var isGeneratingImage = false
+    /// The image engine: made when the first image is asked for, and again
+    /// when another image model is chosen. Apart from `engine` (the video one).
+    var imageEngine: H3ImageEngine?
+    var imageGenerationTask: Task<Void, Never>?
+    /// Stops the images still to come when one is cancelled.
+    var imageBatchStopped = false
+    private var imageStartedAt: Date?
 
     // MARK: Project (see Projects.swift) - nil: results are temp files.
     @Published var project: OpenProject?
@@ -1561,7 +1570,7 @@ final class GenerationViewModel: ObservableObject {
         }
     }
 
-    private static func userFacingMessage(for error: Error) -> String {
+    static func userFacingMessage(for error: Error) -> String {
         // Best-effort mapping of known engine failure text to the design
         // spec's Japanese error copy (section 8) - anything unrecognized
         // falls through to the generic message with the real detail kept
@@ -1578,7 +1587,84 @@ final class GenerationViewModel: ObservableObject {
         // Stops the rest of a batch too.
         batchState = nil
         isCancelling = true
-        engine?.cancelCurrentGeneration()
+        if isGeneratingImage {
+            imageBatchStopped = true
+            imageEngine?.cancel()
+        } else {
+            engine?.cancelCurrentGeneration()
+        }
+    }
+
+    // MARK: Image generation state (GenerationViewModel+Images.swift runs it)
+
+    /// An image generation starts: the same "is generating" state a video
+    /// uses, so everything that waits for one waits for this too.
+    func imageGenerationBegan(index: Int, total: Int) {
+        isGenerating = true
+        isGeneratingImage = true
+        isCancelling = false
+        errorMessage = nil
+        estimator = nil
+        batchProgress = total > 1 ? BatchProgress(index: index, total: total) : nil
+        batchTiming = nil
+        let started = Date()
+        imageStartedAt = started
+        elapsedSeconds = 0
+        estimatedRemainingSeconds = nil
+        estimatedFinishDate = nil
+        progressBarFraction = 0
+        stageTitle = String(localized: "準備しています")
+        stageDetail = ""
+        phase = ""
+        elapsedTimerTask?.cancel()
+        elapsedTimerTask = Task { [weak self] in
+            while let self, !Task.isCancelled {
+                self.elapsedSeconds = Date().timeIntervalSince(started)
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
+    }
+
+    /// The engine's phases as the stage shows them. The share of the whole
+    /// each phase takes is from the 1024x1024 measurements (text ~10 s,
+    /// six steps ~48 s, decoding ~3 s).
+    func imageGenerationProgress(phase: String, completed: Int, total: Int) {
+        self.phase = phase
+        let part = total > 0 ? Double(completed) / Double(total) : 0
+        switch phase {
+        case "text encoder":
+            stageTitle = String(localized: "プロンプトを読み込んでいます")
+            stageDetail = ""
+            progressBarFraction = 0.15 * part
+        case "image model":
+            stageTitle = String(localized: "画像モデルを準備しています")
+            stageDetail = ""
+            progressBarFraction = 0.15 + 0.03 * part
+        case "denoise":
+            stageTitle = String(localized: "ノイズ除去")
+            stageDetail = String(localized: "\(min(completed + 1, total)) / \(total) ステップ")
+            progressBarFraction = 0.18 + 0.76 * part
+        default:
+            stageTitle = String(localized: "画像に変換しています")
+            stageDetail = ""
+            progressBarFraction = 0.94 + 0.06 * part
+        }
+        if let imageStartedAt { elapsedSeconds = Date().timeIntervalSince(imageStartedAt) }
+        // Once the steps are under way, the pace so far says what is left.
+        if let fraction = progressBarFraction, fraction > 0.3, fraction < 1 {
+            let remaining = elapsedSeconds * (1 - fraction) / fraction
+            estimatedRemainingSeconds = remaining
+            estimatedFinishDate = Date().addingTimeInterval(remaining)
+        }
+    }
+
+    func imageGenerationEnded() {
+        isGenerating = false
+        isGeneratingImage = false
+        isCancelling = false
+        batchProgress = nil
+        imageStartedAt = nil
+        stopElapsedTimer()
     }
 
     // MARK: Timing

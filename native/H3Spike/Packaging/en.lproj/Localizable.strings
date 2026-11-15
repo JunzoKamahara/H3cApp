@@ -1270,7 +1270,6 @@
 "画像モデル" = "Image model";
 "画像モデルを追加" = "Add Image Model";
 "画像モデル: %@" = "Image model: %@";
-"画像をつくるモデルがまだありません。モデル管理から追加します" = "There is no model for making images yet. Add one in Model Management";
 "動画用（%@）" = "For video (%@)";
 "枚数" = "Count";
 "%lld 枚" = "%lld images";
@@ -1279,7 +1278,6 @@
 "画像を取り込んでいます…" = "Importing images…";
 "画像モデルがまだ追加されていません。手元の画像は「取り込む」でプロジェクトに入れられます" = "No image model has been added yet. Use Import to bring your own images into the project";
 "画像の内容を入力してください" = "Describe the image";
-"この版では、まだ画像を生成できません" = "This version cannot generate images yet";
 "動画の開始画像用" = "For a video's first frame";
 "画像を取り込めませんでした（詳細: %@）" = "Could not import the image (details: %@)";
 "動画用" = "For video";
@@ -1308,3 +1306,21 @@
 "この動画を参照動画としてパネルに追加します（このプロジェクトにコピーされます）" = "Adds this video to the panel as a reference video (it is copied into this project)";
 "この画像をプレビューに表示します" = "Shows this image in the preview";
 "動画を作る" = "Make Video";
+
+/* Image generation: GenerationViewModel.swift, GenerationViewModel+Images.swift, CreationFormView.swift, PreviewPane.swift, ModelImport.swift */
+"画像モデルのフォルダを追加…" = "Add Image Model Folder…";
+"「%@」を一覧から外す" = "Remove \"%@\" from the List";
+"一覧から外すだけで、フォルダは削除しません" = "Only removes it from the list; the folder is not deleted";
+"画像をつくるモデルがまだありません。モデルのフォルダを選んで追加します" = "There is no model for making images yet. Choose a model folder to add one";
+"画像モデルのフォルダ（transformer・vae・text_encoder・tokenizer を含むもの）を選んでください" = "Choose an image model folder (one holding transformer, vae, text_encoder and tokenizer)";
+"画像モデル「%@」のフォルダが見つかりません" = "The folder of the image model \"%@\" was not found";
+"画像モデルとして使えません（詳細: %@）" = "Cannot be used as an image model (details: %@)";
+"画像を保存できませんでした（詳細: %@）" = "Could not save the image (details: %@)";
+"準備しています" = "Preparing";
+"プロンプトを読み込んでいます" = "Reading the prompt";
+"画像モデルを準備しています" = "Preparing the image model";
+"%lld / %lld ステップ" = "Step %lld of %lld";
+"画像に変換しています" = "Decoding the image";
+"静止画用のモデル（MiniMax H3 Image）なので、動画モデルには使いません。画像モードの「画像モデルのフォルダを追加…」から追加してください" = "A still-image model (MiniMax H3 Image), so it is not used for a video model. Add it with \"Add Image Model Folder…\" in image mode";
+"画像を生成しています（%lld/%lld枚目）" = "Generating images (%lld of %lld)";
+"画像を生成しています" = "Generating an image";

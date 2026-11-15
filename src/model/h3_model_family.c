@@ -35,6 +35,19 @@ static const h3_model_family_desc families[] = {
         .steps_problem = "it samples in 4, 6 or 8 steps",
         .build_schedule = hyperflow_family_schedule,
     },
+    {
+        /* Still images (h3_image.h): the checkpoint's own six-step grid
+         * with one output head per step, all of its blocks, no audio. Its
+         * schedule comes from the checkpoint, not from a step count. */
+        .info = {
+            .id = H3_FAMILY_H3_IMAGE, .name = "h3-image", .label = "MiniMax H3 Image",
+            .step_choices = {6}, .step_choice_count = 1, .default_steps = 6,
+            /* Its AdaLN curve is in the checkpoint; no file of ours applies. */
+            .capabilities = 0,
+        },
+        .log_name = "H3 Image",
+        .steps_problem = "it samples in 6 steps",
+    },
 };
 
 int h3_model_family_count(void) {
@@ -54,6 +67,10 @@ const h3_model_family_info *h3_model_family(int id) {
 
 const h3_model_family_desc *h3_model_family_of(int two_time) {
     return family_desc(two_time ? H3_FAMILY_HYPERFLOW : H3_FAMILY_H3);
+}
+
+const h3_model_family_desc *h3_model_family_image(void) {
+    return family_desc(H3_FAMILY_H3_IMAGE);
 }
 
 const char *h3_model_family_problem(const h3_model_family_info *family,

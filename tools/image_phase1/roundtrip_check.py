@@ -154,7 +154,9 @@ check(not os.path.exists(os.path.join(legacy, "untitled-empty")), "an old untitl
 print("== images into the project")
 check(api("/api/kind", {"kind": "image"})[1].get("generation_kind") == "image", "POST /api/kind switches to images")
 check(api("/api/kind", {"kind": "audio"})[0] == 400, "an unknown kind is refused")
-check(api("/api/generate", {"kind": "image", "prompt": "x"})[0] == 501, "generating an image is refused for now")
+check(api("/api/generate", {"kind": "image", "prompt": "x"})[0] == 409, "generating an image is refused without an image model")
+check(api("/api/image-models")[1] == {"models": []}
+      and api("/api/image-models/add", {"path": work})[0] == 400, "a folder that is no image model is not registered")
 check(api("/api/project/import-image", {"path": "/nonexistent.png"})[0] == 400, "a missing file is refused")
 code, body = api("/api/project/import-image", {"paths": [sample_png, sample_jpg]})
 check(code == 202 and body.get("count") == 2, "two image files are accepted")

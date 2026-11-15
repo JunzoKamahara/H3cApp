@@ -647,7 +647,11 @@ static h3_gpu_tensor *h3_gpu_tensor_load_file(h3_gpu *opaque, const char *path,
     const char *zero_copy = h3_option("H3_ZERO_COPY_WEIGHTS");
     int transformer_weight = strstr(path, "/transformer/") != NULL;
     int m5 = h3_device_has_tensor_ops(gpu.device);
-    int map_weight = bytes &&
+    /* Only a payload that starts on a boundary of its element type: the
+     * buffer is the file's own bytes, and the kernels read whole elements.
+     * A file with odd-sized tensors in between (ComfyUI's H3 Image
+     * checkpoint) has payloads that do not; those are read instead. */
+    int map_weight = bytes && file_offset % item_size == 0 &&
         ((zero_copy && !strcmp(zero_copy, "1")) ||
          (transformer_weight &&
           ((zero_copy && !strcmp(zero_copy, "transformer")) ||

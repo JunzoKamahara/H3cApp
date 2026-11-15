@@ -254,7 +254,10 @@ static int prepare_maps(h3_dit *dit, const h3_text_embedding *text,
     uint32_t *rows = malloc((size_t)dit->sequence * sizeof(*rows));
     uint32_t *reduced = dit->token_reduction ?
         malloc((size_t)dit->reduced_sequence * sizeof(*reduced)) : NULL;
-    uint32_t *audio = malloc((size_t)dit->audio_rows * sizeof(*audio));
+    /* A still-image checkpoint has no audio rows: one unused entry keeps
+     * the audio map a tensor like any other. */
+    uint32_t audio_slots = dit->audio_rows ? dit->audio_rows : 1u;
+    uint32_t *audio = malloc((size_t)audio_slots * sizeof(*audio));
     uint32_t *video = malloc((size_t)dit->video_rows * sizeof(*video));
     if (!dit->row_maps || !dit->final_audio_maps || !dit->final_video_maps ||
         (dit->token_reduction && (!dit->reduced_row_maps || !reduced)) ||
@@ -283,14 +286,14 @@ static int prepare_maps(h3_dit *dit, const h3_text_embedding *text,
         }
         uint32_t audio_row = h3_dit_schedule_audio_row(dit->schedule, step);
         uint32_t video_row = h3_dit_schedule_video_row(dit->schedule, step);
-        for (uint32_t index = 0; index < dit->audio_rows; index++)
+        for (uint32_t index = 0; index < audio_slots; index++)
             audio[index] = audio_row;
         for (uint32_t index = 0; index < dit->video_rows; index++)
             video[index] = video_row;
         dit->row_maps[step] = h3_gpu_tensor_from_u32(
             dit->gpu, rows, dit->sequence);
         dit->final_audio_maps[step] = h3_gpu_tensor_from_u32(
-            dit->gpu, audio, dit->audio_rows);
+            dit->gpu, audio, audio_slots);
         dit->final_video_maps[step] = h3_gpu_tensor_from_u32(
             dit->gpu, video, dit->video_rows);
         if (!dit->row_maps[step] ||
@@ -478,6 +481,65 @@ static void configure_gate_ranked_blocks(h3_dit *dit) {
     }
 }
 
+/* A still-image checkpoint's output heads: final_layer.video_out stacks one
+ * [96, HIDDEN] head per sampling step. The ComfyUI re-publication keeps the
+ * first whole and the others as their difference from it (plans/
+ * IMAGE_PLAN.ja.md, appendix A.1); each step gets its whole head here. */
+static int load_step_heads(h3_dit *dit, char *error, size_t error_size) {
+    const h3_st_tensor *stacked =
+        h3_weight_find(dit->weights, "final_layer.video_out.weight", NULL);
+    int steps = h3_dit_schedule_steps(dit->schedule);
+    if (!stacked || stacked->ndim != 2 || stacked->shape[1] != HIDDEN ||
+        stacked->shape[0] % VIDEO_PATCH ||
+        stacked->shape[0] / VIDEO_PATCH > H3_DIT_MAX_STEP_HEADS) {
+        h3_dit_fail(error, error_size,
+             "the image checkpoint's output heads have an unexpected shape");
+        return 0;
+    }
+    unsigned heads = (unsigned)(stacked->shape[0] / VIDEO_PATCH);
+    if ((int)heads != steps) {
+        h3_dit_fail(error, error_size, "the image checkpoint has %u output "
+             "heads, one per step, but %d steps were asked for", heads, steps);
+        return 0;
+    }
+    size_t head_elements = (size_t)VIDEO_PATCH * HIDDEN;
+    h3_gpu_tensor *weight = h3_dit_f2(dit, "final_layer.video_out.weight",
+        (uint64_t)heads * VIDEO_PATCH, HIDDEN, error, error_size);
+    h3_gpu_tensor *bias = h3_dit_f1(dit, "final_layer.video_out.bias",
+        (uint64_t)heads * VIDEO_PATCH, error, error_size);
+    float *weights = malloc(heads * head_elements * sizeof(*weights));
+    float *biases = malloc((size_t)heads * VIDEO_PATCH * sizeof(*biases));
+    int ok = weight && bias && weights && biases &&
+        h3_gpu_tensor_read_f32(weight, weights, heads * head_elements) &&
+        h3_gpu_tensor_read_f32(bias, biases, (size_t)heads * VIDEO_PATCH);
+    h3_gpu_tensor_free(weight);
+    h3_gpu_tensor_free(bias);
+    if (!ok && (!error || !*error))
+        h3_dit_fail(error, error_size, "cannot read the image output heads");
+    for (unsigned head = 1; ok && head < heads; head++) {
+        for (size_t index = 0; index < head_elements; index++)
+            weights[head * head_elements + index] += weights[index];
+        for (size_t index = 0; index < VIDEO_PATCH; index++)
+            biases[(size_t)head * VIDEO_PATCH + index] += biases[index];
+    }
+    for (unsigned head = 0; ok && head < heads; head++) {
+        dit->step_video_w[head] = h3_gpu_tensor_from_f32(
+            dit->gpu, weights + head * head_elements, head_elements);
+        dit->step_video_b[head] = h3_gpu_tensor_from_f32(
+            dit->gpu, biases + (size_t)head * VIDEO_PATCH, VIDEO_PATCH);
+        if (!dit->step_video_w[head] || !dit->step_video_b[head]) {
+            h3_dit_fail(error, error_size,
+                 "cannot allocate the image output heads: %s",
+                 h3_gpu_error(dit->gpu));
+            ok = 0;
+        }
+    }
+    free(weights);
+    free(biases);
+    if (ok) dit->step_heads = heads;
+    return ok;
+}
+
 static int load_core(h3_dit *dit, h3_dit_progress progress, void *opaque,
                      char *error, size_t error_size) {
     for (unsigned index = 0; index < H3_DIT_BLOCKS; index++) {
@@ -585,12 +647,16 @@ static int load_core(h3_dit *dit, h3_dit_progress progress, void *opaque,
                             VIDEO_PATCH, error, error_size);
     dit->video_patch_b = h3_dit_f1(dit, "video_patch_proj.bias", HIDDEN,
                             error, error_size);
+    dit->final_norm = h3_dit_bf1(dit, "final_layer.norm.weight", HIDDEN,
+                          error, error_size);
+    if (dit->image_model)
+        /* No audio projection or head; one video head per step. */
+        return dit->video_patch_w && dit->video_patch_b && dit->final_norm &&
+               load_step_heads(dit, error, error_size);
     dit->audio_patch_w = h3_dit_f2(dit, "audio_patch_proj.weight", HIDDEN,
                             AUDIO_CHANNELS, error, error_size);
     dit->audio_patch_b = h3_dit_f1(dit, "audio_patch_proj.bias", HIDDEN,
                             error, error_size);
-    dit->final_norm = h3_dit_bf1(dit, "final_layer.norm.weight", HIDDEN,
-                          error, error_size);
     dit->final_video_w = h3_dit_f2(dit, "final_layer.video_out.weight", VIDEO_PATCH,
                             HIDDEN, error, error_size);
     dit->final_video_b = h3_dit_f1(dit, "final_layer.video_out.bias", VIDEO_PATCH,
@@ -644,9 +710,11 @@ static int load_core(h3_dit *dit, h3_dit_progress progress, void *opaque,
 
 static int allocate_activations(h3_dit *dit, char *error, size_t error_size) {
     size_t sequence = dit->sequence;
-    size_t audio = dit->audio_rows;
+    /* Without audio rows (a still-image checkpoint) the audio buffers are
+     * one unused row, so every buffer below exists as before. */
+    size_t audio = dit->audio_rows ? dit->audio_rows : 1;
     size_t video = dit->video_rows;
-    size_t audio_total = dit->audio_total_rows;
+    size_t audio_total = dit->audio_total_rows ? dit->audio_total_rows : 1;
     size_t video_total = dit->video_total_rows;
     dit->activation_aliases = !h3_option("H3_DISABLE_DIT_ACTIVATION_ALIAS");
     dit->fused_patch_projection =
@@ -1098,9 +1166,26 @@ static h3_dit *load_dit(const char *weight_directory,
     if (!h3_hyperflow_inspect(dit->weights, &dit->hyperflow_info, error,
                               error_size)) goto failed;
     dit->hyperflow = dit->hyperflow_info.two_time;
+    /* A still-image checkpoint has no audio stream at all; it runs on a
+     * layout without audio steps, and a video checkpoint on one with them. */
+    dit->image_model =
+        !h3_weight_find(dit->weights, "audio_patch_proj.weight", NULL);
+    if (dit->image_model != (dit->audio_t == 0) ||
+        (dit->image_model && (dit->audio_condition_rows || dit->hyperflow))) {
+        h3_dit_fail(error, error_size, dit->image_model
+             ? "this is a still-image checkpoint (it has no audio stream): "
+               "it cannot make a video"
+             : "this checkpoint has an audio stream: it is a video model, "
+               "not a still-image one");
+        goto failed;
+    }
+    /* Its last layer in F32, as released: the six-step sampler amplifies
+     * what BF16 rounding of the velocity would add. */
+    if (dit->image_model) dit->bf16_final = 0;
     /* What this family takes (h3_model_family.h); h3_generate has already
      * refused these with its own message. */
-    dit->family = h3_model_family_of(dit->hyperflow);
+    dit->family = dit->image_model ? h3_model_family_image()
+                                   : h3_model_family_of(dit->hyperflow);
     const unsigned can = dit->family->info.capabilities;
     if ((!(can & H3_CAN_LAYER_SKIP) && active_blocks != H3_DIT_BLOCKS) ||
         (!(can & H3_CAN_STEP_REUSE) &&
