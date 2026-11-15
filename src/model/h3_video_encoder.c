@@ -318,6 +318,12 @@ static int load_normalization(encoder_context *encoder,
     }
     snprintf(path, path_size, "%s/../config.json", weight_directory);
     FILE *file = fopen(path, "rb");
+    if (!file) {
+        /* An image model keeps the config beside the weights (vae/), a
+         * video model one level up (video_vae/, weights in source/). */
+        snprintf(path, path_size, "%s/config.json", weight_directory);
+        file = fopen(path, "rb");
+    }
     if (!file || fseek(file, 0, SEEK_END)) {
         fail(error, error_size, "cannot open video VAE config %s: %s", path,
              strerror(errno));

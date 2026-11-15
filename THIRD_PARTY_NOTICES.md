@@ -255,12 +255,14 @@ H3cApp makes still images with MiniMax H3 Image
 using the engine's own C/Metal code: the image VAE decoder
 (`src/model/h3_image_vae.c`), the DiT's still-image paths (`h3_dit_setup.c`,
 `h3_dit_block.c`, `h3_dit.c`) and the entry point (`src/core/h3_image.c`).
-The model's structure, sampler and tile rules were taken from MiniMax's
-published sources and from [Anionex/h3-image-mlx](https://github.com/Anionex/h3-image-mlx)
+The model's structure, sampler and tile rules, and how reference images are
+presented for an edit (their sizes, the `Picture n: ` labels, the noise added
+to their rows), were taken from MiniMax's published sources and from
+[Anionex/h3-image-mlx](https://github.com/Anionex/h3-image-mlx)
 (Apache-2.0; its Metal kernels are MIT, Copyright (c) 2026 David Dalcu),
 which was also run as a tool to produce the reference outputs the engine is
-checked against (`tools/image_phase0`, `tools/image_phase2`). No code from
-those projects ships in the app.
+checked against (`tools/image_phase0`, `tools/image_phase2`,
+`tools/image_phase5`). No code from those projects ships in the app.
 
 The weights are **not bundled**. The app downloads, after the user has read
 the license notice in its setup sheet:

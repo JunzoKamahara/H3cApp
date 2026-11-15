@@ -1,12 +1,17 @@
 #include "h3_image.h"
 
+#include "h3_av_reader.h"
 #include "h3_dit.h"
 #include "h3_dit_schedule.h"
 #include "h3_host.h"
 #include "h3_image_vae.h"
+#include "h3_metal.h"
+#include "h3_multimodal.h"
 #include "h3_options.h"
 #include "h3_text_encoder.h"
 #include "h3_tokenizer.h"
+#include "h3_video_encoder.h"
+#include "h3_vision_encoder.h"
 #include "h3_weights.h"
 
 #include <errno.h>
@@ -18,7 +23,14 @@
 #include <sys/stat.h>
 #include <time.h>
 
-enum { LATENT_CHANNELS = 24, MIN_SIDE = 256, MAX_SIDE = 4096 };
+enum { LATENT_CHANNELS = 24, MIN_SIDE = 256, MAX_SIDE = 4096,
+       PATCH_VALUES = 96 /* 24 channels x 2 x 2 */,
+       REFERENCE_SHORT_EDGE = 1024, REFERENCE_MAX_SHORT_EDGE = 2048 };
+
+/* h3_references.c: the latent an image was generated as, when it is of
+ * this grid. */
+int h3_frame_latent_load(const char *path, int latent_h, int latent_w,
+                         float *values, char *reason, size_t reason_size);
 
 /* The released checkpoint's own six-step grid, for one that does not
  * carry it in its metadata. */
@@ -176,10 +188,60 @@ void h3_image_result_free(h3_image_result *result) {
     memset(result, 0, sizeof(*result));
 }
 
+static int canvas_side(int value, double scale) {
+    double side = nearbyint((double)value * scale / 32.0) * 32.0;
+    return side < 32.0 ? 32 : (int)side;
+}
+
+int h3_image_reference_canvas(int width, int height, int max_short_edge,
+                              int *encode_width, int *encode_height,
+                              int *vision_width, int *vision_height) {
+    if (width < 1 || height < 1 || !encode_width || !encode_height ||
+        !vision_width || !vision_height) return 0;
+    int low = width < height ? width : height;
+    int high = width < height ? height : width;
+    if ((double)high > H3_IMAGE_REFERENCE_MAX_ASPECT * (double)low) return 0;
+    if (max_short_edge <= 0) max_short_edge = REFERENCE_MAX_SHORT_EDGE;
+    /* The picture's own short side, enlarged to 1024 and reduced to the
+     * limit, as the released pipeline sizes a reference for the VAE. */
+    double target = low < REFERENCE_SHORT_EDGE ? REFERENCE_SHORT_EDGE : low;
+    if (target > max_short_edge) target = max_short_edge;
+    double scale = target / (double)low;
+    /* Beyond the released rule: a wide picture at a long short side would
+     * be many times the rows of the image being made. */
+    double area = (double)width * scale * (double)height * scale;
+    double limit = (double)REFERENCE_MAX_SHORT_EDGE *
+                   (double)REFERENCE_MAX_SHORT_EDGE;
+    if (area > limit) scale *= sqrt(limit / area);
+    *encode_width = canvas_side(width, scale);
+    *encode_height = canvas_side(height, scale);
+    scale = (double)REFERENCE_SHORT_EDGE / (double)low;
+    *vision_width = canvas_side(width, scale);
+    *vision_height = canvas_side(height, scale);
+    return 1;
+}
+
 typedef struct {
     h3_image_progress progress;
     void *opaque;
+    /* Which reference of how many a vision or encoder callback is for. */
+    int index;
+    int count;
 } progress_state;
+
+static void vision_progress(int completed, int total, void *opaque) {
+    progress_state *state = opaque;
+    if (state->progress)
+        state->progress("vision", state->index * total + completed,
+                        state->count * total, state->opaque);
+}
+
+static void encoder_progress(int completed, int total, void *opaque) {
+    progress_state *state = opaque;
+    if (state->progress)
+        state->progress("reference", state->index * total + completed,
+                        state->count * total, state->opaque);
+}
 
 static void text_progress(int completed, int total, void *opaque) {
     progress_state *state = opaque;
@@ -220,10 +282,32 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
              "%d to %d pixels a side", MIN_SIDE, MAX_SIDE);
         return 0;
     }
+    int reference_count = params->reference_count;
+    if (reference_count < 0 || reference_count > H3_IMAGE_MAX_REFERENCES ||
+        (reference_count && !params->references)) {
+        fail(error, error_size, "an image takes at most %d reference images",
+             H3_IMAGE_MAX_REFERENCES);
+        return 0;
+    }
+    for (int index = 0; index < reference_count; index++)
+        if (!params->references[index].path ||
+            !*params->references[index].path) {
+            fail(error, error_size, "reference %d has no file", index + 1);
+            return 0;
+        }
     int latent_h = params->height / 16, latent_w = params->width / 16;
     size_t latent_count = (size_t)LATENT_CHANNELS * (size_t)latent_h *
                           (size_t)latent_w;
-    progress_state state = {params->progress, params->progress_opaque};
+    progress_state state = {params->progress, params->progress_opaque, 0,
+                            reference_count};
+    h3_vision_output vision[H3_IMAGE_MAX_REFERENCES];
+    memset(vision, 0, sizeof(vision));
+    h3_layout_ref layout_references[H3_IMAGE_MAX_REFERENCES];
+    memset(layout_references, 0, sizeof(layout_references));
+    int vision_w[H3_IMAGE_MAX_REFERENCES], vision_h[H3_IMAGE_MAX_REFERENCES];
+    float *condition_rows = NULL;
+    size_t condition_elements = 0;
+    char detail[384] = "";
 
     h3_tokenizer *tokenizer = NULL;
     uint32_t *ids = NULL;
@@ -243,22 +327,85 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
         goto done;
     }
 
-    /* Text: the prompt as it is - no chat template, no special tokens. */
     double began = now();
     tokenizer = h3_tokenizer_load(ctx->tokenizer, error, error_size);
-    if (!tokenizer ||
-        !h3_tokenizer_encode(tokenizer, params->prompt, 0, &ids, &token_count,
-                             error, error_size)) goto done;
-    if (!token_count) {
-        fail(error, error_size, "the prompt is empty");
-        goto done;
+    if (!tokenizer) goto done;
+    if (reference_count) {
+        /* Editing. The references through the vision tower first: the text
+         * sequence is `Picture n: ` and the n-th picture's tokens for each,
+         * then the prompt. */
+        for (int index = 0; index < reference_count; index++) {
+            const char *path = params->references[index].path;
+            int source_w = 0, source_h = 0, encode_w = 0, encode_h = 0;
+            if (!h3_av_visual_size(path, &source_w, &source_h, detail,
+                                   sizeof(detail))) {
+                fail(error, error_size, "reference %d: %s", index + 1, detail);
+                goto done;
+            }
+            if (!h3_image_reference_canvas(
+                    source_w, source_h, params->reference_max_short_edge,
+                    &encode_w, &encode_h, &vision_w[index], &vision_h[index])) {
+                fail(error, error_size, "reference %d is %d x %d pixels: the "
+                     "longer side may be at most %.2f times the shorter",
+                     index + 1, source_w, source_h,
+                     H3_IMAGE_REFERENCE_MAX_ASPECT);
+                goto done;
+            }
+            result->reference_width[index] = encode_w;
+            result->reference_height[index] = encode_h;
+            layout_references[index] = (h3_layout_ref){
+                .kind = H3_LAYOUT_REF_IMAGE, .latent_t = 1,
+                .latent_h = encode_h / 16, .latent_w = encode_w / 16};
+        }
+        for (int index = 0; index < reference_count; index++) {
+            float *picture = NULL;
+            if (!h3_av_read_image_f32(params->references[index].path,
+                                      vision_w[index], vision_h[index],
+                                      H3_IMAGE_FIT_STRETCH, &picture, detail,
+                                      sizeof(detail))) {
+                fail(error, error_size, "reference %d: %s", index + 1, detail);
+                goto done;
+            }
+            state.index = index;
+            void *pool = h3_autorelease_push();
+            int encoded = h3_vision_encode_bf16(
+                ctx->text_encoder, ctx->shaders, picture, 1, vision_h[index],
+                vision_w[index], vision_progress, &state, &vision[index],
+                detail, sizeof(detail));
+            h3_autorelease_pop(pool);
+            free(picture);
+            if (!encoded) {
+                fail(error, error_size, "reference %d: %s", index + 1, detail);
+                goto done;
+            }
+            if (cancelled(params, error, error_size)) goto done;
+        }
+        result->reference_seconds = now() - began;
+        began = now();
+        void *pool = h3_autorelease_push();
+        int encoded = h3_multimodal_encode_image_edit_bf16(
+            tokenizer, ctx->text_encoder, ctx->shaders, params->prompt, vision,
+            (size_t)reference_count, H3_IMAGE_MAX_PROMPT_TOKENS, &token_count,
+            text_progress, &state, &text, error, error_size);
+        h3_autorelease_pop(pool);
+        for (int index = 0; index < reference_count; index++)
+            h3_vision_output_free(&vision[index]);
+        if (!encoded) goto done;
+    } else {
+        /* Text: the prompt as it is - no chat template, no special tokens. */
+        if (!h3_tokenizer_encode(tokenizer, params->prompt, 0, &ids,
+                                 &token_count, error, error_size)) goto done;
+        if (!token_count) {
+            fail(error, error_size, "the prompt is empty");
+            goto done;
+        }
+        if (token_count > H3_IMAGE_MAX_PROMPT_TOKENS)
+            token_count = H3_IMAGE_MAX_PROMPT_TOKENS;
+        if (cancelled(params, error, error_size)) goto done;
+        if (!h3_text_encode_bf16(ctx->text_encoder, ctx->shaders, ids,
+                                 token_count, text_progress, &state, &text,
+                                 error, error_size)) goto done;
     }
-    if (token_count > H3_IMAGE_MAX_PROMPT_TOKENS)
-        token_count = H3_IMAGE_MAX_PROMPT_TOKENS;
-    if (cancelled(params, error, error_size)) goto done;
-    if (!h3_text_encode_bf16(ctx->text_encoder, ctx->shaders, ids, token_count,
-                             text_progress, &state, &text, error, error_size))
-        goto done;
     result->text_seconds = now() - began;
     if (h3_option("H3_PROFILE")) {
         double energy = 0.0;
@@ -272,23 +419,126 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
                 text.tokens, sqrt(energy / (double)(text.tokens * text.width)));
     }
     result->prompt_tokens = (int)token_count;
+    result->text_rows = (int)text.tokens;
+    result->reference_count = reference_count;
     if (cancelled(params, error, error_size)) goto done;
 
-    /* The DiT on [text | image]: one latent frame, no audio. */
+    /* The references as the DiT sees them: each one's latent, in the rows
+     * of the image being made, with the released 0.1% of seeded noise. */
+    if (reference_count) {
+        began = now();
+        for (int index = 0; index < reference_count; index++)
+            condition_elements += (size_t)layout_references[index].latent_h *
+                                  (size_t)layout_references[index].latent_w /
+                                  4 * PATCH_VALUES;
+        condition_rows = malloc(condition_elements * sizeof(*condition_rows));
+        if (!condition_rows) {
+            fail(error, error_size, "out of memory for the reference rows");
+            goto done;
+        }
+        size_t offset = 0;
+        for (int index = 0; index < reference_count; index++) {
+            const h3_image_reference *reference = &params->references[index];
+            int grid_h = layout_references[index].latent_h;
+            int grid_w = layout_references[index].latent_w;
+            size_t values = (size_t)LATENT_CHANNELS * (size_t)grid_h *
+                            (size_t)grid_w;
+            size_t elements = (size_t)grid_h * (size_t)grid_w / 4 * PATCH_VALUES;
+            float *rows = condition_rows + offset;
+            int have = 0;
+            if (reference->latent_path && *reference->latent_path) {
+                float *own = malloc(values * sizeof(*own));
+                char reason[256] = "";
+                have = own && h3_frame_latent_load(reference->latent_path,
+                                                   grid_h, grid_w, own, reason,
+                                                   sizeof(reason)) &&
+                       h3_dit_patchify_video(own, LATENT_CHANNELS, 1, grid_h,
+                                             grid_w, rows, elements);
+                free(own);
+                if (have)
+                    fprintf(stderr, "h3: reference %d from its own latent "
+                            "(%s)\n", index + 1, reference->latent_path);
+                else
+                    fprintf(stderr, "h3: reference %d: its latent is not used "
+                            "(%s); encoding the image\n", index + 1,
+                            reason[0] ? reason : "out of memory");
+            }
+            result->reference_from_latent[index] = have;
+            if (!have) {
+                float *picture = NULL;
+                if (!h3_av_read_image_f32(reference->path, grid_w * 16,
+                                          grid_h * 16, H3_IMAGE_FIT_STRETCH,
+                                          &picture, detail, sizeof(detail))) {
+                    fail(error, error_size, "reference %d: %s", index + 1,
+                         detail);
+                    goto done;
+                }
+                h3_video_latent encoded;
+                memset(&encoded, 0, sizeof(encoded));
+                state.index = index;
+                /* The image VAE's encoder is the video VAE's. */
+                void *pool = h3_autorelease_push();
+                int ok_encode = h3_video_vae_encode(
+                    ctx->vae, ctx->shaders, picture, 1, grid_h * 16, grid_w * 16,
+                    encoder_progress, &state, &encoded, detail, sizeof(detail));
+                h3_autorelease_pop(pool);
+                free(picture);
+                if (ok_encode && (encoded.time != 1 || encoded.height != grid_h ||
+                                  encoded.width != grid_w)) {
+                    snprintf(detail, sizeof(detail),
+                             "the VAE gave an unexpected latent size");
+                    ok_encode = 0;
+                }
+                if (ok_encode &&
+                    !h3_dit_patchify_video(encoded.values, LATENT_CHANNELS, 1,
+                                           grid_h, grid_w, rows, elements)) {
+                    snprintf(detail, sizeof(detail),
+                             "cannot arrange the latent in rows");
+                    ok_encode = 0;
+                }
+                h3_video_latent_free(&encoded);
+                if (!ok_encode) {
+                    fail(error, error_size, "reference %d: %s", index + 1,
+                         detail);
+                    goto done;
+                }
+            }
+            h3_rng rng;
+            h3_rng_seed(&rng, params->seed);
+            for (size_t value = 0; value < elements; value++)
+                rows[value] = 0.999f * rows[value] +
+                              0.001f * h3_rng_normal(&rng);
+            offset += elements;
+            if (cancelled(params, error, error_size)) goto done;
+        }
+        result->reference_seconds += now() - began;
+    }
+
+    /* The DiT on [text | references | image]: one latent frame, no audio. */
     began = now();
     h3_sigma_schedule sigmas = {.steps = ctx->steps};
     for (int index = 0; index <= ctx->steps; index++)
         sigmas.video[index] = sigmas.audio[index] = ctx->sigmas[index];
     h3_layout_spec spec = {
         .text_len = (int)text.tokens, .latent_t = 1, .latent_h = latent_h,
-        .latent_w = latent_w, .audio_t = 0, .frame_count = 5
+        .latent_w = latent_w, .audio_t = 0, .frame_count = 5,
+        .references = reference_count ? layout_references : NULL,
+        .reference_count = (size_t)reference_count
     };
     if (!h3_layout_build(&spec, &layout, error, error_size)) goto done;
-    dit = h3_dit_load_t2va(ctx->transformer, ctx->shaders, &text, &layout,
-        &sigmas, H3_DIT_BLOCKS, 1, 0, 1 /* SSD streaming */, 1.0f,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL,
-        dit_progress, &state, error, error_size);
+    dit = reference_count
+        ? h3_dit_load_conditioned(ctx->transformer, ctx->shaders, &text,
+            &layout, &sigmas, H3_DIT_BLOCKS, 1, 0, 1 /* SSD streaming */, 1.0f,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL,
+            condition_rows, condition_elements, NULL, 0,
+            dit_progress, &state, error, error_size)
+        : h3_dit_load_t2va(ctx->transformer, ctx->shaders, &text, &layout,
+            &sigmas, H3_DIT_BLOCKS, 1, 0, 1 /* SSD streaming */, 1.0f,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 0, NULL,
+            dit_progress, &state, error, error_size);
     if (!dit) goto done;
+    free(condition_rows);
+    condition_rows = NULL;
     if (!h3_dit_is_image_model(dit)) {
         fail(error, error_size, "the transformer is not a still-image model");
         goto done;
@@ -380,6 +630,9 @@ done:
     h3_image_pixels_free(&pixels);
     h3_layout_free(&layout);
     h3_text_embedding_free(&text);
+    for (int index = 0; index < reference_count; index++)
+        h3_vision_output_free(&vision[index]);
+    free(condition_rows);
     h3_tokenizer_ids_free(ids);
     h3_tokenizer_free(tokenizer);
     free(latent);

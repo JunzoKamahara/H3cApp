@@ -19,17 +19,119 @@ extension GenerationViewModel {
     /// The image side of the form; nil while it is untouched, so project.json
     /// gains nothing until images are used.
     func currentImageDraft() -> ImageDraft? {
-        let draft = ImageDraft(prompt: imagePrompt, model: nil, size: imageSizeProfile.rawValue,
+        var draft = ImageDraft(prompt: imagePrompt, model: nil, size: imageSizeProfile.rawValue,
                                seedFixed: imageSeedFixed, seed: imageSeedText, count: imageCount)
+        if !imageEditReferences.isEmpty {
+            let folder = project?.url
+            draft.references = imageEditReferences.map { path in
+                folder.map { ProjectFiles.stored(path, in: $0) } ?? path
+            }
+        }
         return draft == .blank && lastSavedProjectFile?.imageDraft == nil ? nil : draft
     }
 
-    func applyImageDraft(_ draft: ImageDraft) {
+    /// `projectURL`: the project the draft's relative paths are in (the
+    /// open one when nil).
+    func applyImageDraft(_ draft: ImageDraft, projectURL: URL? = nil) {
         imagePrompt = draft.prompt
         if let profile = ImageSizeProfile(rawValue: draft.size) { imageSizeProfile = profile }
         imageSeedFixed = draft.seedFixed
         imageSeedText = draft.seed
         imageCount = draft.count.clamped(to: imageCountRange)
+        let folder = projectURL ?? project?.url
+        imageEditReferences = (draft.references ?? []).map { stored in
+            folder.map { ProjectFiles.resolved(stored, in: $0) } ?? stored
+        }
+    }
+
+    // MARK: Editing: reference pictures
+
+    /// The label the prompt calls the n-th reference by (n from 1).
+    static func pictureTag(_ number: Int) -> String { "<Picture \(number)>" }
+
+    /// 参照画像を追加…: pictures to edit. Kept in the order given; copied
+    /// into the project when the form is saved, like a video's inputs.
+    func chooseImageEditReferences() {
+        let paths = chooseFiles(allowedContentTypes: imageTypes)
+        guard !paths.isEmpty else { return }
+        addImageEditReferences(paths)
+    }
+
+    /// Adds the files as references (those already there stay once). The
+    /// first reference of a form sets the size to its picture's shape.
+    func addImageEditReferences(_ paths: [String]) {
+        noteInputsChosen(paths)
+        let wasEmpty = imageEditReferences.isEmpty
+        for path in paths where !imageEditReferences.contains(path) {
+            guard imageEditReferences.count < H3ImageEngine.maxReferences else {
+                projectMessage = String(localized: "参照画像は\(H3ImageEngine.maxReferences)枚までです")
+                break
+            }
+            imageEditReferences.append(path)
+        }
+        if wasEmpty, let first = imageEditReferences.first, let size = ImageMetadata.pixelSize(atPath: first) {
+            imageSizeProfile = .matching(width: size.width, height: size.height)
+        }
+    }
+
+    func removeImageEditReference(at index: Int) {
+        guard imageEditReferences.indices.contains(index) else { return }
+        imageEditReferences.remove(at: index)
+    }
+
+    /// Moves a reference one place towards the front (-1) or the back (+1):
+    /// the prompt's numbers follow the order.
+    func moveImageEditReference(at index: Int, by offset: Int) {
+        let target = index + offset
+        guard imageEditReferences.indices.contains(index), imageEditReferences.indices.contains(target) else { return }
+        imageEditReferences.swapAt(index, target)
+    }
+
+    /// Puts the n-th reference's label at the end of the image prompt.
+    func appendPictureTag(_ number: Int) {
+        let tag = Self.pictureTag(number)
+        if imagePrompt.isEmpty || imagePrompt.hasSuffix(" ") || imagePrompt.hasSuffix("\n") {
+            imagePrompt += tag
+        } else {
+            imagePrompt += " " + tag
+        }
+    }
+
+    /// この画像を編集: the image form takes this image as its only
+    /// reference, at the image's own size. The prompt is left to the user
+    /// (what to change); an empty one gets a start that names the picture.
+    func editImage(_ image: ProjectImage) {
+        guard !isGenerating else { return }
+        generationKind = .image
+        imageEditReferences = []
+        addImageEditReferences([image.url.path])
+        if imagePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            imagePrompt = "Edit \(Self.pictureTag(1)). "
+        }
+        imageSeedFixed = false
+    }
+
+    /// 参照画像に追加（画像の編集）: one more reference for the image form.
+    func addImageAsEditReference(_ image: ProjectImage) {
+        generationKind = .image
+        addImageEditReferences([image.url.path])
+    }
+
+    /// The latent to use for a reference instead of encoding the picture:
+    /// the one kept beside an image the app generated, when the reference
+    /// is used at the image's own size and its file is still the one
+    /// generated (the record's hash - a picture retouched elsewhere is
+    /// encoded as what it is now). nil otherwise.
+    static func editLatent(forReference path: String, maxShortEdge: Int) -> String? {
+        guard let size = ImageMetadata.pixelSize(atPath: path),
+              let canvas = H3ImageEngine.referenceCanvas(width: size.width, height: size.height,
+                                                         maxShortEdge: maxShortEdge),
+              canvas.width == size.width, canvas.height == size.height,
+              let latent = ProjectFiles.frameLatent(forImage: path, canvasWidth: Int32(canvas.width),
+                                                    canvasHeight: Int32(canvas.height)),
+              let record = ProjectFiles.imageRecord(forImageAt: path),
+              let hash = try? FileHash.sha256(ofFile: path), hash == record.sha256 else { return nil }
+        return latent
     }
 
     // MARK: Validation and summary
@@ -44,7 +146,13 @@ extension GenerationViewModel {
             return String(localized: "画像モデル「\(model.name)」のフォルダが見つかりません")
         }
         if isUpscalingVideo { return String(localized: "動画を拡大しています。終わってから生成してください") }
-        if promptIsEmpty { return String(localized: "画像の内容を入力してください") }
+        if promptIsEmpty {
+            return imageEditReferences.isEmpty ? String(localized: "画像の内容を入力してください")
+                                               : String(localized: "参照画像をどう変えるかを入力してください")
+        }
+        if let missing = imageEditReferences.first(where: { !FileManager.default.fileExists(atPath: $0) }) {
+            return String(localized: "参照画像が見つかりません: \(URL(fileURLWithPath: missing).lastPathComponent)")
+        }
         if imageSeedFixed && UInt64(imageSeedText) == nil {
             return imageSeedText.isEmpty ? String(localized: "シード値を入力してください")
                                          : String(localized: "シード値は0〜18446744073709551615の整数にしてください")
@@ -101,7 +209,17 @@ extension GenerationViewModel {
         guard canGenerateImage, let model = library.activeImageModel else { return }
         if project == nil { startUntitledProject() }
         guard let project else { return }
-        saveProjectIfChanged(importingReferences: false)
+        // An edit's pictures are copied into the project first (in the
+        // background), so the record names files inside it.
+        saveProjectIfChanged(importingReferences: !imageEditReferences.isEmpty)
+        if let copying = referenceImportTask {
+            imageReferenceCopyBegan()
+            Task {
+                await copying.value
+                if !self.imageReferenceCopyEnded() { self.generateImages() }
+            }
+            return
+        }
         let engine: H3ImageEngine
         do {
             if let current = imageEngine, current.modelDirectory == model.path {
@@ -122,8 +240,16 @@ extension GenerationViewModel {
         let prompt = imagePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let projectURL = project.url
         let installed = model.path == H3ImageModel.directory
+        let shortEdge = imageReferenceShortEdgeOverride ?? preferences.imageReferenceShortEdge
+        let useLatents = imageReferenceLatentsOverride ?? preferences.useImageLatentsForEdits
+        imageReferenceShortEdgeOverride = nil
+        imageReferenceLatentsOverride = nil
+        let references = imageEditReferences.map { path in
+            H3ImageReference(path: path, latentPath: useLatents
+                ? Self.editLatent(forReference: path, maxShortEdge: shortEdge) : nil)
+        }
         let request = ImageStoreRequest(
-            projectURL: projectURL, draft: draft, modelName: model.name,
+            projectURL: projectURL, draft: draft, references: imageEditReferences, modelName: model.name,
             modelSource: installed ? H3ImageModel.weightsRepo : nil,
             modelRevision: installed ? H3ImageModel.weightsRevision : nil,
             deviceLine: engineState == .ready ? deviceLine : nil, appVersion: Self.appVersion,
@@ -140,7 +266,8 @@ extension GenerationViewModel {
                 if index > 1 { self.imageGenerationBegan(index: index, total: total) }
                 var finished: H3ImageResult?
                 do {
-                    let params = H3ImageParams(prompt: prompt, width: size.width, height: size.height, seed: seed)
+                    let params = H3ImageParams(prompt: prompt, width: size.width, height: size.height, seed: seed,
+                                               references: references, referenceMaxShortEdge: Int32(shortEdge))
                     for try await event in engine.generate(params) {
                         switch event {
                         case .progress(let phase, let completed, let total):
@@ -183,6 +310,7 @@ extension GenerationViewModel {
 
     var imageDraftSummaryText: String {
         var parts = [imageSizeProfile.label, String(localized: "\(imageCount)枚")]
+        if !imageEditReferences.isEmpty { parts.append(String(localized: "参照\(imageEditReferences.count)枚を編集")) }
         if imageSizeProfile.isVideoCanvas { parts.append(String(localized: "動画の開始画像用")) }
         if imageSeedFixed { parts.append(String(localized: "シード固定")) }
         if let model = library.activeImageModel { parts.append(model.name) }
@@ -278,7 +406,13 @@ extension GenerationViewModel {
             draft.seed = seed
         }
         generationKind = .image
-        applyImageDraft(draft)
+        // An edit's pictures are named relative to the project the image is
+        // in (images/ is its folder). The record is a file anyone could
+        // have written: its paths are taken only from inside that project.
+        let folder = image.url.deletingLastPathComponent().deletingLastPathComponent()
+        noteInputsNamedOnDisk((draft.references ?? []).map { ProjectFiles.resolved($0, in: folder) },
+                              for: folder, keeping: formInputPaths)
+        applyImageDraft(draft, projectURL: folder)
     }
 
     /// Moves the image, its record, latent and thumbnail to the Trash.
@@ -385,6 +519,8 @@ extension GenerationViewModel {
 struct ImageStoreRequest: Sendable {
     let projectURL: URL
     let draft: ImageDraft
+    /// The pictures of an edit, as the engine was given them (absolute).
+    var references: [String] = []
     let modelName: String
     /// The repository and revision of a model the app installed itself.
     let modelSource: String?
@@ -431,17 +567,32 @@ struct ImageStoreRequest: Sendable {
         let latent = ProjectImageRecord.Latent(
             file: "", width: result.latentWidth, height: result.latentHeight, channels: 24,
             spaceID: imageLatentSpaceID, normalization: imageLatentNormalization, dtype: "F32", layout: "CHW")
+        // What the edit was made from: each picture's file, hash and the
+        // project image it is (or is a copy of), and how it was used.
+        let used: [ProjectImageRecord.Reference] = references.enumerated().map { index, path in
+            let use = index < result.references.count ? result.references[index] : nil
+            return ProjectImageRecord.Reference(
+                file: ProjectFiles.stored(path, in: projectURL),
+                sha256: try? FileHash.sha256(ofFile: path),
+                sourceImage: ProjectFiles.sourceImageID(forFrame: path),
+                width: use?.width ?? 0, height: use?.height ?? 0, usedLatent: use?.fromLatent)
+        }
         return try ProjectFiles.storeImage(
             png: png, latent: (Self.latentFile(result), latent), completedAt: completedAt,
             seed: result.seed, into: projectURL
         ) { name, sha256 in
-            ProjectImageRecord(
+            var record = ProjectImageRecord(
                 assetID: UUID().uuidString, image: name, sha256: sha256, completedAt: completedAt,
                 width: result.width, height: result.height, appVersion: appVersion, draft: pinned,
                 model: .init(name: modelName, source: modelSource, revision: modelRevision),
                 seed: String(result.seed), seedWasRandom: seedWasRandom,
                 steps: result.steps, sigmas: result.sigmas.map(Double.init),
                 generationSeconds: generationSeconds, deviceLine: deviceLine)
+            if !used.isEmpty {
+                record.references = used
+                record.referenceSeconds = result.referenceSeconds
+            }
+            return record
         }
     }
 }

@@ -51,6 +51,18 @@ enum ImageMetadata {
     /// is taken as it is; anything else is converted, upright, with the
     /// metadata it carried (so what it says about its origin - made by a
     /// camera, or by an AI system - is not lost on the way in).
+    /// The picture's size as it is shown (its orientation applied), read
+    /// from the file's properties without decoding it.
+    static func pixelSize(atPath path: String) -> (width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int, width > 0, height > 0 else { return nil }
+        // Orientations 5 to 8 turn the picture a quarter.
+        let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
+        return orientation >= 5 ? (height, width) : (width, height)
+    }
+
     static func pngForImport(at url: URL) -> (png: Data, width: Int, height: Int)? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = loadImage(at: url) else { return nil }

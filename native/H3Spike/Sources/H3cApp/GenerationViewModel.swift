@@ -658,6 +658,9 @@ final class GenerationViewModel: ObservableObject {
     /// are being made, and the other way round.
     @Published var generationKind: GenerationKind = .video
     @Published var imagePrompt: String = ""
+    /// Editing: the pictures the image prompt calls <Picture 1>, ... (file
+    /// paths, in order). Empty: an image from the prompt alone.
+    @Published var imageEditReferences: [String] = []
     @Published var imageSizeProfile: ImageSizeProfile = .default
     @Published var imageSeedFixed = false
     @Published var imageSeedText: String = ""
@@ -679,6 +682,12 @@ final class GenerationViewModel: ObservableObject {
     /// One request's own answer to "use the frames' latents" (the API's
     /// "frame_latents"), over the preference; nil: the preference.
     var frameLatentsOverride: Bool?
+    /// The same for one image edit asked through the API: whether a
+    /// reference's own latent is used ("reference_latents") and the size
+    /// limit of the references ("reference_short_edge"). Taken, and
+    /// cleared, when the generation starts.
+    var imageReferenceLatentsOverride: Bool?
+    var imageReferenceShortEdgeOverride: Int?
     private var imageStartedAt: Date?
 
     // MARK: Project (see Projects.swift) - nil: results are temp files.
@@ -1611,6 +1620,23 @@ final class GenerationViewModel: ObservableObject {
 
     /// An image generation starts: the same "is generating" state a video
     /// uses, so everything that waits for one waits for this too.
+    /// An edit waits for its pictures to be copied into the project: shown
+    /// as a generation that can be stopped, as a video's wait is.
+    func imageReferenceCopyBegan() {
+        isGenerating = true
+        isCancelling = false
+        phase = String(localized: "参照ファイルをプロジェクトにコピーしています")
+    }
+
+    /// Ends that wait; true when it was stopped meanwhile.
+    func imageReferenceCopyEnded() -> Bool {
+        let cancelled = isCancelling
+        isGenerating = false
+        isCancelling = false
+        phase = ""
+        return cancelled
+    }
+
     func imageGenerationBegan(index: Int, total: Int) {
         isGenerating = true
         isGeneratingImage = true
@@ -1643,11 +1669,22 @@ final class GenerationViewModel: ObservableObject {
     func imageGenerationProgress(phase: String, completed: Int, total: Int) {
         self.phase = phase
         let part = total > 0 ? Double(completed) / Double(total) : 0
+        // An edit reads its pictures before and after the prompt; a plain
+        // image has neither phase and the prompt takes their share.
+        let editing = !imageEditReferences.isEmpty
         switch phase {
+        case "vision":
+            stageTitle = String(localized: "参照画像を読み込んでいます")
+            stageDetail = ""
+            progressBarFraction = 0.05 * part
         case "text encoder":
             stageTitle = String(localized: "プロンプトを読み込んでいます")
             stageDetail = ""
-            progressBarFraction = 0.15 * part
+            progressBarFraction = editing ? 0.05 + 0.07 * part : 0.15 * part
+        case "reference":
+            stageTitle = String(localized: "参照画像を変換しています")
+            stageDetail = ""
+            progressBarFraction = 0.12 + 0.03 * part
         case "image model":
             stageTitle = String(localized: "画像モデルを準備しています")
             stageDetail = ""

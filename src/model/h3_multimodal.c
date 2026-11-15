@@ -197,6 +197,37 @@ static int encode_presentation(const char *weight_directory,
     return ok;
 }
 
+/* A label and its image per picture, then the prompt. label has one %zu,
+ * the picture's number from 1; prompt_limit cuts the prompt's own tokens
+ * (0: no limit). */
+static int build_pictures(const h3_tokenizer *tokenizer, const char *prompt,
+                          const h3_vision_output *images, size_t image_count,
+                          const char *label, size_t prompt_limit,
+                          int count_only, h3_ids *ids,
+                          h3_text_vision_span *spans,
+                          const h3_vision_output **visions,
+                          char *error, size_t error_size) {
+    for (size_t image = 0; image < image_count; image++) {
+        const h3_vision_output *vision = &images[image];
+        char prefix[64];
+        int length = snprintf(prefix, sizeof(prefix), label, image + 1);
+        visions[image] = vision;
+        if (length < 0 || (size_t)length >= sizeof(prefix) ||
+            !tokenize_append(tokenizer, prefix, ids, error, error_size) ||
+            !append_vision(ids, &spans[image], vision, H3_IMAGE_PAD,
+                           count_only, error, error_size)) return 0;
+    }
+    size_t before = ids->count;
+    if (!tokenize_append(tokenizer, prompt, ids, error, error_size)) return 0;
+    if (ids->count == before) {
+        fail(error, error_size, "the prompt is empty");
+        return 0;
+    }
+    if (prompt_limit && ids->count - before > prompt_limit)
+        ids->count = before + prompt_limit;
+    return 1;
+}
+
 /* The FL2VA presentation: `<Picture n>: ` and its image per anchor, then
  * the prompt. */
 static int build_fl2va(const h3_tokenizer *tokenizer, const char *prompt,
@@ -215,6 +246,48 @@ static int build_fl2va(const h3_tokenizer *tokenizer, const char *prompt,
                            count_only, error, error_size)) return 0;
     }
     return tokenize_append(tokenizer, prompt, ids, error, error_size);
+}
+
+int h3_multimodal_encode_image_edit_bf16(
+                        const h3_tokenizer *tokenizer,
+                        const char *weight_directory,
+                        const char *shader_source_path,
+                        const char *prompt,
+                        const h3_vision_output *images, size_t image_count,
+                        size_t prompt_limit, size_t *prompt_tokens,
+                        h3_text_progress progress, void *progress_opaque,
+                        h3_text_embedding *output,
+                        char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (output) memset(output, 0, sizeof(*output));
+    if (prompt_tokens) *prompt_tokens = 0;
+    if (!tokenizer || !weight_directory || !shader_source_path || !prompt ||
+        !*prompt || !images || !image_count || !output) {
+        fail(error, error_size, "invalid image edit presentation arguments");
+        return 0;
+    }
+    h3_ids ids = {0};
+    h3_text_vision_span *spans = calloc(image_count, sizeof(*spans));
+    const h3_vision_output **visions = calloc(image_count, sizeof(*visions));
+    int ok = 0;
+    if (!spans || !visions) {
+        fail(error, error_size, "out of memory constructing the edit presentation");
+    } else if (build_pictures(tokenizer, prompt, images, image_count,
+                              "Picture %zu: ", prompt_limit, 0, &ids, spans,
+                              visions, error, error_size)) {
+        if (prompt_tokens) {
+            size_t last = spans[image_count - 1].start +
+                          spans[image_count - 1].tokens + 1;
+            *prompt_tokens = ids.count - last;
+        }
+        ok = encode_presentation(weight_directory, shader_source_path,
+            &ids, spans, visions, image_count, progress, progress_opaque,
+            output, error, error_size);
+    }
+    free(ids.values);
+    free(spans);
+    free(visions);
+    return ok;
 }
 
 int h3_multimodal_encode_fl2va_bf16(

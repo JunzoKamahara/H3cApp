@@ -814,7 +814,7 @@ extension GenerationViewModel {
     /// The form's input files: the ones copied into its project.
     var formInputPaths: [String] {
         [firstFramePath, lastFramePath, forcedAudioPath].compactMap { $0 } + referenceImages.map(\.path)
-            + customClips.flatMap(\.paths)
+            + customClips.flatMap(\.paths) + imageEditReferences
     }
 
     /// A file on disk (project.json, a video's record, a storyboard) named
@@ -1034,7 +1034,11 @@ extension GenerationViewModel {
         }
         closeProject(explicitly: false)
         if applyingDraft {
-            if draftOnDisk { noteInputsNamedOnDisk(file.draft.inputPaths(in: url), for: url) }
+            if draftOnDisk {
+                noteInputsNamedOnDisk(file.draft.inputPaths(in: url), for: url)
+                noteInputsNamedOnDisk((file.imageDraft?.references ?? []).map { ProjectFiles.resolved($0, in: url) },
+                                      for: url)
+            }
             let missing = applyDraft(file.draft, projectURL: url)
             if !missing.isEmpty {
                 let names = missing.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: ", ")
@@ -1046,7 +1050,7 @@ extension GenerationViewModel {
             // A project from before images opens as it was: making videos.
             generationKind = file.generationKind.flatMap(GenerationKind.init(rawValue:)) ?? .video
             // Its own image side, or a blank one: not the last project's.
-            applyImageDraft(file.imageDraft ?? .blank)
+            applyImageDraft(file.imageDraft ?? .blank, projectURL: url)
         }
         project = OpenProject(url: url, name: file.name, createdAt: file.createdAt,
                               untitled: file.isUntitled)
@@ -1370,6 +1374,13 @@ extension GenerationViewModel {
                 let new = copy(of: path)
                 if new != path { self.referenceImages[index].path = new }
             }
+            // An image edit's pictures; one added again from where it was
+            // before (the same file, so the same copy) stays once.
+            var editReferences: [String] = []
+            for path in self.imageEditReferences.map({ copy(of: $0) }) where !editReferences.contains(path) {
+                editReferences.append(path)
+            }
+            if editReferences != self.imageEditReferences { self.imageEditReferences = editReferences }
             let clips = self.customClips.map { $0.mappingPaths { copy(of: $0) } }
             if clips != self.customClips { self.customClips = clips }
             if let failure {

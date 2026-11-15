@@ -1,6 +1,7 @@
 """Phase-1 check of the still-image side (plans/IMAGE_PLAN.ja.md), driven over
 the app's local HTTP API with no model loaded: bring images into a project,
-list and show them, hand them to the video form, quit, start again.
+list and show them, hand them to the video form and to the image form (as
+the references of an edit, phase 5), quit, start again.
 
 usage: roundtrip_check.py <H3cApp binary> <empty work dir> <image.png> <rotated.jpg>
 
@@ -211,11 +212,55 @@ saved = lambda: json.load(open(os.path.join(untitled, "project.json")))
 check(wait(lambda: saved()["draft"].get("firstFrame") == "references/" + from_png["file"]),
       "project.json names the first frame relative to the project")
 
+print("== an image handed to the image form, to be edited (phase 5)")
+code, body = api("/api/project/use-image", {"image": from_png["file"], "as": "edit"})
+image_form = lambda: form()["image"]
+f = image_form()
+check(code == 200 and body["generation_kind"] == "image"
+      and [os.path.basename(path) for path in f["references"]] == [from_png["file"]],
+      "edit: the image is the image form's only reference")
+# The refused request above left its prompt in the form: one that is there
+# is kept (an empty one would start with "Edit <Picture 1>. ").
+check(f["prompt"] == "x", "the image prompt in the form is kept")
+check(f["width"] % 32 == 0 and f["height"] % 32 == 0
+      and abs(f["width"] / f["height"] - png_size(sample_png)[0] / png_size(sample_png)[1]) < 0.1,
+      "the size follows the picture's shape")
+code, body = api("/api/project/use-image", {"image": from_jpg["file"], "as": "edit_reference"})
+check(code == 200 and [os.path.basename(path) for path in image_form()["references"]]
+      == [from_png["file"], from_jpg["file"]], "edit_reference: a second reference, in order")
+check(api("/api/project/use-image", {"image": from_jpg["file"], "as": "edit_reference"})[0] == 200
+      and len(image_form()["references"]) == 2, "a picture is a reference once")
+check(wait(lambda: saved().get("imageDraft", {}).get("references")
+           == ["references/" + from_png["file"], "references/" + from_jpg["file"]]),
+      "project.json names the references relative to the project (copied into references/)")
+check(wait(lambda: all("/references/" in path for path in image_form()["references"])),
+      "and the form points at the copies")
+check(len(project()["images"]) == 2, "the copies are not listed as images")
+check(api("/api/generate", {"kind": "image", "prompt": "x", "references": ["nope.png"]})[0] == 400,
+      "an edit of an unknown picture is refused")
+check(api("/api/generate", {"kind": "image", "prompt": "x", "references": [sample_png] * 2})[0] == 400,
+      "the same picture twice is refused")
+check(api("/api/generate", {"kind": "image", "prompt": "x", "references": [sample_png] * 17})[0] == 400,
+      "more than 16 references are refused")
+check(api("/api/generate", {"kind": "image", "prompt": "x", "references": [sample_png], "reference_short_edge": 100})[0] == 400,
+      "a reference size limit out of range is refused")
+check(api("/api/generate", {"kind": "image", "prompt": "x", "references": [from_png["file"]]})[0] == 409,
+      "a well-formed edit is refused only for the missing image model")
+
 print("== killed and started again")
 api("/api/kind", {"kind": "image"})
 check(wait(lambda: saved().get("generationKind") == "image"), "project.json records that images were being made")
+# The refused requests above left their own references in the form; the
+# form as it is now has to be on disk before the app is killed.
+kept_references = [os.path.basename(path) for path in image_form()["references"]]
+check(wait(lambda: [os.path.basename(path) for path in saved().get("imageDraft", {}).get("references", [])]
+           == kept_references), "the image form's references are saved as they change")
 stop()
 start()
+check(wait(lambda: [os.path.basename(path) for path in form()["image"]["references"]] == kept_references)
+      and all(os.path.exists(path) for path in form()["image"]["references"]),
+      "the image form's references are back after a restart (%s, were %s)"
+      % ([os.path.basename(path) for path in form()["image"]["references"]], kept_references))
 check(os.path.exists(os.path.join(untitled, "images", from_png["file"])),
       "an untitled project holding only images survives the launch sweep")
 p = project()

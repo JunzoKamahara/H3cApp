@@ -139,6 +139,32 @@ struct ImageSizeProfile: Hashable, Identifiable {
         self.base = base
     }
 
+    /// The size for an edit of a picture of this size: the picture's own
+    /// when the image model takes it (a preset, if it is one), else its
+    /// shape at about a megapixel, sides rounded to the step.
+    static func matching(width: Int, height: Int) -> ImageSizeProfile {
+        guard width > 0, height > 0 else { return .default }
+        func wellFormed(_ w: Int, _ h: Int) -> ImageSizeProfile? {
+            guard w <= Int(Int32.max), h <= Int(Int32.max),
+                  isWellFormedCanvas(width: Int32(w), height: Int32(h)) else { return nil }
+            for shape in AspectShape.allCases {
+                for tier in ImageSizeTier.allCases {
+                    let preset = ImageSizeProfile.preset(shape, tier)
+                    if preset.dimensions == (Int32(w), Int32(h)) { return preset }
+                }
+            }
+            return .canvas(width: Int32(w), height: Int32(h))
+        }
+        if let own = wellFormed(width, height) { return own }
+        let scale = (1024.0 * 1024.0 / (Double(width) * Double(height))).squareRoot()
+        let step = Double(sideStep)
+        func side(_ value: Int) -> Int {
+            let rounded = Int((Double(value) * scale / step).rounded() * step)
+            return min(max(rounded, Int(sideRange.lowerBound)), Int(sideRange.upperBound))
+        }
+        return wellFormed(side(width), side(height)) ?? .default
+    }
+
     init?(rawValue: String) {
         let parts = rawValue.split(separator: "-").map(String.init)
         guard parts.count == 2 else { return nil }
@@ -167,6 +193,10 @@ struct ImageDraft: Codable, Equatable {
     var seedFixed: Bool
     var seed: String
     var count: Int
+    /// Editing: the pictures the prompt calls <Picture 1>, <Picture 2>, ...
+    /// in order - paths, relative when inside the project (as the video
+    /// draft's inputs). Absent: an image from the prompt alone.
+    var references: [String]? = nil
 
     /// The image side as a new window has it.
     static let blank = ImageDraft(prompt: "", model: nil, size: ImageSizeProfile.default.rawValue,
@@ -201,6 +231,21 @@ struct ProjectImageRecord: Codable, Equatable {
         var layout: String
     }
 
+    /// A picture the image was edited from.
+    struct Reference: Codable, Equatable {
+        /// The file, relative when inside the project (references/).
+        var file: String
+        /// SHA-256 of that file.
+        var sha256: String? = nil
+        /// The project image it is, or is a copy of (its assetID).
+        var sourceImage: String? = nil
+        /// The size its latent was encoded at.
+        var width: Int
+        var height: Int
+        /// Its own latent was used instead of encoding the picture.
+        var usedLatent: Bool? = nil
+    }
+
     var version = 1
     /// Stays with the image wherever its files go: a video made from it
     /// names it (ProjectVideoRecord.sourceImage).
@@ -227,8 +272,13 @@ struct ProjectImageRecord: Codable, Equatable {
     var latentMissingReason: String? = nil
     /// Brought in from this file rather than generated here.
     var importedFrom: String? = nil
+    /// The pictures it was edited from, in the prompt's order (absent: made
+    /// from the prompt alone), and the time they took to encode.
+    var references: [Reference]? = nil
+    var referenceSeconds: Double? = nil
 
     var prompt: String? { draft?.prompt }
+    var isEdit: Bool { !(references ?? []).isEmpty }
     var isImported: Bool { importedFrom != nil }
 }
 
@@ -471,6 +521,15 @@ extension ProjectFiles {
               latent.normalization == imageLatentNormalization, latent.dtype == "F32" else { return nil }
         let file = imageLatentURL(for: url)
         return FileManager.default.fileExists(atPath: file.path) ? file.path : nil
+    }
+
+    /// The record next to an image file, when it is that file's.
+    static func imageRecord(forImageAt path: String) -> ProjectImageRecord? {
+        let url = URL(fileURLWithPath: path)
+        guard let data = regularFileData(imageRecordURL(for: url), limit: 1 << 20),
+              let record = try? decoder.decode(ProjectImageRecord.self, from: data),
+              record.image == url.lastPathComponent else { return nil }
+        return record
     }
 
     /// The image a frame file came from: the id in the record next to it

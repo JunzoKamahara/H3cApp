@@ -4,7 +4,10 @@
 HTTP API and checks what phase 1 of `plans/IMAGE_PLAN.ja.md` asks for:
 images come into a project, are listed and shown, are handed to the video
 form, survive the app being killed, and projects from before images open
-as they were. No model is needed, and nothing is generated.
+as they were. Since phase 5 it also hands images to the image form as the
+references of an edit (set, ordered, copied into the project, refused when
+malformed, back after a restart). No model is needed, and nothing is
+generated.
 
     make libh3.a
     swift build --package-path native/H3Spike --scratch-path "${TMPDIR}H3cApp-build-scratch" --product H3cApp

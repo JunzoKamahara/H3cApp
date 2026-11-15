@@ -1,4 +1,5 @@
 import AppKit
+import H3Engine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -281,6 +282,9 @@ private struct ImageActionsView: View {
         HStack(spacing: H3Spacing.sm) {
             Button("この画像から動画を作る") { viewModel.makeVideo(from: image) }
                 .help("この画像を最初の画像にして、動画をつくる準備をします（生成は始めません）")
+            Button("この画像を編集") { viewModel.editImage(image) }
+                .disabled(viewModel.isGenerating)
+                .help("この画像を参照にして、プロンプトの指示で直した画像をつくる準備をします（生成は始めません）")
             Menu("その他") {
                 ImageHandoffButtons(viewModel: viewModel, image: image)
                 Divider()
@@ -291,7 +295,8 @@ private struct ImageActionsView: View {
     }
 }
 
-/// 最後の画像に使う / 参照画像に追加, shared by the preview and the list.
+/// 最後の画像に使う / 参照画像に追加 (for a video) / 編集の参照に追加 (for an
+/// image edit), shared by the preview and the list.
 struct ImageHandoffButtons: View {
     @ObservedObject var viewModel: GenerationViewModel
     let image: ProjectImage
@@ -308,6 +313,12 @@ struct ImageHandoffButtons: View {
             }
             onDone()
         }
+        Divider()
+        Button("画像の編集の参照に追加") {
+            viewModel.addImageAsEditReference(image)
+            onDone()
+        }
+        .disabled(viewModel.isGenerating || viewModel.imageEditReferences.count >= H3ImageEngine.maxReferences)
     }
 }
 

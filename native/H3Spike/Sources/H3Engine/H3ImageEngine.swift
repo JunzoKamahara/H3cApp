@@ -7,19 +7,52 @@ import Metal
 // are. It runs on H3Engine's serial work queue, so an image never overlaps
 // a video generation, a cache build or a RefMod extraction.
 
+/// A picture an image is edited from. The prompt calls the references
+/// <Picture 1>, <Picture 2>, ... in the order they are given.
+public struct H3ImageReference: Sendable, Equatable {
+    public var path: String
+    /// The image's own latent (the file the app keeps beside an image it
+    /// generated); used instead of encoding the picture when its grid is
+    /// the one the reference is encoded at.
+    public var latentPath: String?
+
+    public init(path: String, latentPath: String? = nil) {
+        self.path = path
+        self.latentPath = latentPath
+    }
+}
+
 public struct H3ImageParams: Sendable {
     public var prompt: String
     /// Pixels, both multiples of 32.
     public var width: Int32
     public var height: Int32
     public var seed: UInt64
+    /// Editing: up to H3ImageEngine.maxReferences pictures. Empty: text to
+    /// image.
+    public var references: [H3ImageReference]
+    /// The longest short side a reference's latent is encoded at (0: the
+    /// released pipeline's 2048).
+    public var referenceMaxShortEdge: Int32
 
-    public init(prompt: String, width: Int32, height: Int32, seed: UInt64) {
+    public init(prompt: String, width: Int32, height: Int32, seed: UInt64,
+                references: [H3ImageReference] = [], referenceMaxShortEdge: Int32 = 0) {
         self.prompt = prompt
         self.width = width
         self.height = height
         self.seed = seed
+        self.references = references
+        self.referenceMaxShortEdge = referenceMaxShortEdge
     }
+}
+
+/// How a reference was used by a generation.
+public struct H3ImageReferenceUse: Sendable, Equatable {
+    /// The size its latent was encoded at.
+    public let width: Int
+    public let height: Int
+    /// Its own latent was taken instead of encoding the picture.
+    public let fromLatent: Bool
 }
 
 public struct H3ImageResult: Sendable {
@@ -38,10 +71,15 @@ public struct H3ImageResult: Sendable {
     public let textSeconds: Double
     public let denoiseSeconds: Double
     public let decodeSeconds: Double
+    /// Editing: one entry per reference, in order; the time the vision
+    /// tower and the VAE encoder took for them.
+    public let references: [H3ImageReferenceUse]
+    public let referenceSeconds: Double
 }
 
 public enum H3ImageEvent: Sendable {
-    /// phase: "text encoder", "image model", "denoise" or "decode".
+    /// phase: "vision", "text encoder", "reference", "image model",
+    /// "denoise" or "decode".
     case progress(phase: String, completed: Int, total: Int)
     case finished(H3ImageResult)
 }
@@ -62,6 +100,20 @@ private func h3ImageProgressTrampoline(phase: UnsafePointer<CChar>?, completed: 
 }
 
 public final class H3ImageEngine: @unchecked Sendable {
+    /// As many references as an edit takes.
+    public static let maxReferences = Int(H3_IMAGE_MAX_REFERENCES)
+    /// A reference's longer side may be this many times its shorter one.
+    public static let referenceMaxAspect = H3_IMAGE_REFERENCE_MAX_ASPECT
+
+    /// The size a reference of this size is encoded at for the DiT; nil
+    /// when its sides differ by more than `referenceMaxAspect`.
+    public static func referenceCanvas(width: Int, height: Int, maxShortEdge: Int = 0) -> (width: Int, height: Int)? {
+        var encodeW: Int32 = 0, encodeH: Int32 = 0, visionW: Int32 = 0, visionH: Int32 = 0
+        guard h3_image_reference_canvas(Int32(clamping: width), Int32(clamping: height), Int32(clamping: maxShortEdge),
+                                        &encodeW, &encodeH, &visionW, &visionH) != 0 else { return nil }
+        return (Int(encodeW), Int(encodeH))
+    }
+
     private let ctx: OpaquePointer
     public let modelDirectory: String
     private var currentCancelFlag: CancelFlag?
@@ -118,16 +170,41 @@ public final class H3ImageEngine: @unchecked Sendable {
                     cParams.progress_opaque = bridgeHandle.toOpaque()
                     var result = h3_image_result()
                     var error = [CChar](repeating: 0, count: 512)
-                    NSLog("h3: image generation params - %dx%d, seed %llu", params.width, params.height, params.seed)
+                    NSLog("h3: image generation params - %dx%d, seed %llu, %d references", params.width, params.height,
+                          params.seed, params.references.count)
+                    // The reference paths as C strings that outlive the call.
+                    let paths = params.references.map { strdup($0.path) }
+                    let latents: [UnsafeMutablePointer<CChar>?] = params.references.map { reference in
+                        reference.latentPath.flatMap { strdup($0) }
+                    }
+                    defer {
+                        paths.forEach { free($0) }
+                        latents.forEach { free($0) }
+                    }
+                    var references = (0 ..< params.references.count).map { index in
+                        h3_image_reference(path: UnsafePointer(paths[index]),
+                                           latent_path: UnsafePointer(latents[index]))
+                    }
+                    cParams.reference_count = Int32(references.count)
+                    cParams.reference_max_short_edge = params.referenceMaxShortEdge
                     let ok = params.prompt.withCString { prompt -> Bool in
                         cParams.prompt = prompt
-                        return h3_image_generate(ctx, &cParams, &result, &error, error.count) != 0
+                        return references.withUnsafeMutableBufferPointer { buffer -> Bool in
+                            cParams.references = UnsafePointer(buffer.baseAddress)
+                            return h3_image_generate(ctx, &cParams, &result, &error, error.count) != 0
+                        }
                     }
                     if ok {
                         let pixels = Int(result.width) * Int(result.height) * 3
                         let latentCount = 24 * Int(result.latent_width) * Int(result.latent_height)
                         let sigmas = withUnsafeBytes(of: &result.sigmas) { raw in
                             Array(raw.bindMemory(to: Float.self).prefix(Int(result.steps) + 1))
+                        }
+                        let widths = withUnsafeBytes(of: &result.reference_width) { Array($0.bindMemory(to: Int32.self)) }
+                        let heights = withUnsafeBytes(of: &result.reference_height) { Array($0.bindMemory(to: Int32.self)) }
+                        let fromLatent = withUnsafeBytes(of: &result.reference_from_latent) { Array($0.bindMemory(to: Int32.self)) }
+                        let uses = (0 ..< Int(result.reference_count)).map {
+                            H3ImageReferenceUse(width: Int(widths[$0]), height: Int(heights[$0]), fromLatent: fromLatent[$0] != 0)
                         }
                         let image = H3ImageResult(
                             width: Int(result.width), height: Int(result.height),
@@ -137,10 +214,11 @@ public final class H3ImageEngine: @unchecked Sendable {
                             seed: result.seed, promptTokens: Int(result.prompt_tokens),
                             steps: Int(result.steps), sigmas: sigmas,
                             textSeconds: result.text_seconds, denoiseSeconds: result.denoise_seconds,
-                            decodeSeconds: result.decode_seconds)
+                            decodeSeconds: result.decode_seconds,
+                            references: uses, referenceSeconds: result.reference_seconds)
                         h3_image_result_free(&result)
-                        NSLog("h3: image generation finished - text %.1f s, denoise %.1f s, decode %.1f s",
-                              image.textSeconds, image.denoiseSeconds, image.decodeSeconds)
+                        NSLog("h3: image generation finished - references %.1f s, text %.1f s, denoise %.1f s, decode %.1f s",
+                              image.referenceSeconds, image.textSeconds, image.denoiseSeconds, image.decodeSeconds)
                         continuation.yield(.finished(image))
                     } else {
                         let failure = cancelFlag.isCancelled

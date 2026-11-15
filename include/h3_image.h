@@ -7,7 +7,9 @@
 /* Still images with MiniMax H3 Image (plans/IMAGE_PLAN.ja.md). Apart from
  * the video API (h3.h): another model, another sampler - the checkpoint's
  * own six steps, one output head per step, no audio - and one picture as
- * the result. Text to image only, for now.
+ * the result: from a prompt alone, or from a prompt and reference images
+ * (editing - the prompt says what to change, calling the references
+ * <Picture 1>, <Picture 2>, ... in the order they are given).
  *
  * A model folder holds
  *
@@ -23,12 +25,28 @@
 
 typedef struct h3_image_ctx h3_image_ctx;
 
-/* phase: "text encoder" (layers), "image model" (loading), "denoise"
- * (steps) or "decode" (tiles). */
+/* phase: "vision" (the references through the vision tower), "text
+ * encoder" (layers), "reference" (the references through the VAE encoder),
+ * "image model" (loading), "denoise" (steps) or "decode" (tiles). */
 typedef void (*h3_image_progress)(const char *phase, int completed, int total,
                                   void *opaque);
 
 #define H3_IMAGE_MAX_STEPS 16
+/* As many reference images as the released pipeline takes. */
+#define H3_IMAGE_MAX_REFERENCES 16
+/* A reference's longer side may be this many times its shorter one (the
+ * vision encoder's budget in the released pipeline). */
+#define H3_IMAGE_REFERENCE_MAX_ASPECT 12.25
+
+typedef struct {
+    /* An image file (whatever ImageIO decodes), used upright. */
+    const char *path;
+    /* Optional: the image's own latent, as the app keeps it beside an image
+     * it generated (safetensors "latent" F32 [24, h, w], normalized). Taken
+     * instead of encoding the picture when [h, w] is the grid the reference
+     * is encoded at (h3_image_reference_canvas); otherwise ignored. */
+    const char *latent_path;
+} h3_image_reference;
 /* Prompts are cut to this many tokens, as the released pipeline does. */
 #define H3_IMAGE_MAX_PROMPT_TOKENS 4096
 
@@ -47,6 +65,15 @@ typedef struct {
     /* Testing: the initial noise, channel-major F32 [24, height/16,
      * width/16], instead of the one drawn from `seed`. */
     const float *initial_noise;
+    /* Editing: reference images, in the order the prompt numbers them
+     * (reference_count 0: text to image). Each is seen twice - by the text
+     * encoder's vision tower, at a short side of 1024 pixels, and by the
+     * DiT as a latent, at the size h3_image_reference_canvas gives. */
+    const h3_image_reference *references;
+    int reference_count;
+    /* The short side a reference's latent is encoded at is the picture's
+     * own, kept within 1024 and this (0: 2048, as the released pipeline). */
+    int reference_max_short_edge;
 } h3_image_params;
 
 typedef struct {
@@ -66,7 +93,26 @@ typedef struct {
     double text_seconds;
     double denoise_seconds;
     double decode_seconds;
+    /* Editing: the size each reference's latent was encoded at, whether
+     * its own latent was taken instead, the rows of the text sequence
+     * (prompt, labels and vision tokens) and the time the references took
+     * (vision tower and VAE encoder; text_seconds is the language layers). */
+    int reference_count;
+    int reference_width[H3_IMAGE_MAX_REFERENCES];
+    int reference_height[H3_IMAGE_MAX_REFERENCES];
+    int reference_from_latent[H3_IMAGE_MAX_REFERENCES];
+    int text_rows;
+    double reference_seconds;
 } h3_image_result;
+
+/* The sizes a width x height reference is used at: encode_* for its latent
+ * (short side within 1024 and max_short_edge - 0 is 2048 - and at most
+ * 2048 x 2048 pixels in area), vision_* for the text encoder's vision tower
+ * (short side 1024). All multiples of 32. Fails (0) for a picture whose
+ * sides differ by more than H3_IMAGE_REFERENCE_MAX_ASPECT. */
+int h3_image_reference_canvas(int width, int height, int max_short_edge,
+                              int *encode_width, int *encode_height,
+                              int *vision_width, int *vision_height);
 
 /* Checks that the folder holds an image model (its DiT is a still-image
  * checkpoint) and remembers where its parts are; nothing is loaded until an

@@ -14,6 +14,13 @@
  *   after each step is compared, and the last is written out for the VAE.
  * bf16:   the block linears in BF16 instead of the engine's int8 kernels
  *   (slower; tells the kernels' rounding from the rest).
+ * An edit (phase 5; a run of tools/image_phase5/edit_stage.py) is told by
+ * "ref_rows_1" in the trace: the embedding's "tags" (0 on the vision
+ * spans), references.safetensors for the grid of each reference ("0",
+ * "1", ... [24, h, w]) and the trace's ref_rows_N - the reference rows after
+ * their augmentation - are then loaded as the DiT's condition rows, so the
+ * comparison is of the DiT alone.
+ *
  * A text encoder folder as the last argument runs the text encoder in this
  * process first, as a whole generation does; H3_CHECK_RNG=1 in the
  * environment replaces the reference's noise with the engine's own. Both
@@ -116,9 +123,59 @@ int main(int argc, char **argv) {
     h3_sigma_schedule sigmas = {.steps = STEPS};
     for (int index = 0; index <= STEPS; index++)
         sigmas.video[index] = sigmas.audio[index] = sigma_values[index];
+    /* An edit: tags, and the reference rows as the reference run had them. */
+    h3_layout_ref references[16];
+    memset(references, 0, sizeof(references));
+    size_t reference_count = 0, condition_elements = 0;
+    float *condition_rows = NULL;
+    if (h3_st_find(&trace, "ref_rows_1")) {
+        int32_t *tags = read_tensor(&embedding_file, "tags", H3_DTYPE_I32, 1, shape);
+        text.tags = malloc(text.tokens);
+        size_t vision_rows = 0;
+        for (size_t row = 0; row < text.tokens; row++) {
+            text.tags[row] = (uint8_t)tags[row];
+            vision_rows += tags[row] == 0;
+        }
+        free(tags);
+        h3_st_header latents;
+        snprintf(path, sizeof(path), "%s/references.safetensors", argv[2]);
+        if (!h3_st_read_header(path, &latents, error, sizeof(error))) {
+            fprintf(stderr, "%s\n", error); return 1;
+        }
+        char name[32];
+        for (;; reference_count++) {
+            snprintf(name, sizeof(name), "ref_rows_%zu", reference_count + 1);
+            if (reference_count == 16 || !h3_st_find(&trace, name)) break;
+            float *rows_in = read_tensor(&trace, name, H3_DTYPE_F32, 2, shape);
+            size_t elements = (size_t)shape[0] * (size_t)shape[1];
+            snprintf(name, sizeof(name), "%zu", reference_count);
+            const h3_st_tensor *grid = h3_st_find(&latents, name);
+            if (!grid || grid->ndim != 3 || shape[1] != PATCH ||
+                grid->shape[1] * grid->shape[2] / 4 != shape[0]) {
+                fprintf(stderr, "reference %zu: unexpected shapes\n",
+                        reference_count + 1);
+                return 1;
+            }
+            references[reference_count] = (h3_layout_ref){
+                .kind = H3_LAYOUT_REF_IMAGE, .latent_t = 1,
+                .latent_h = (int)grid->shape[1], .latent_w = (int)grid->shape[2]};
+            condition_rows = realloc(condition_rows,
+                (condition_elements + elements) * sizeof(*condition_rows));
+            memcpy(condition_rows + condition_elements, rows_in,
+                   elements * sizeof(*rows_in));
+            condition_elements += elements;
+            free(rows_in);
+            printf("reference %zu: latent %dx%d (%zu rows)\n", reference_count + 1,
+                   references[reference_count].latent_w,
+                   references[reference_count].latent_h, elements / PATCH);
+        }
+        printf("%zu of the text rows are vision tokens\n", vision_rows);
+    }
     h3_layout_spec spec = {.text_len = (int)text.tokens, .latent_t = 1,
                            .latent_h = height, .latent_w = width,
-                           .audio_t = 0, .frame_count = 5};
+                           .audio_t = 0, .frame_count = 5,
+                           .references = reference_count ? references : NULL,
+                           .reference_count = reference_count};
     h3_layout layout;
     if (!h3_layout_build(&spec, &layout, error, sizeof(error))) {
         fprintf(stderr, "layout: %s\n", error); return 1;
@@ -135,9 +192,14 @@ int main(int argc, char **argv) {
         h3_text_embedding_free(&warm);
     }
     double began = now();
-    h3_dit *dit = h3_dit_load_t2va(argv[1], shaders, &text, &layout, &sigmas,
-        H3_DIT_BLOCKS, 1, 0, 1, 1.0f, bf16, bf16, bf16, 0, 0, 0, 0, 0, 0, 0, 0,
-        NULL, 0, NULL, progress, NULL, error, sizeof(error));
+    h3_dit *dit = reference_count
+        ? h3_dit_load_conditioned(argv[1], shaders, &text, &layout, &sigmas,
+            H3_DIT_BLOCKS, 1, 0, 1, 1.0f, bf16, bf16, bf16, 0, 0, 0, 0, 0, 0, 0, 0,
+            NULL, 0, NULL, condition_rows, condition_elements, NULL, 0,
+            progress, NULL, error, sizeof(error))
+        : h3_dit_load_t2va(argv[1], shaders, &text, &layout, &sigmas,
+            H3_DIT_BLOCKS, 1, 0, 1, 1.0f, bf16, bf16, bf16, 0, 0, 0, 0, 0, 0, 0, 0,
+            NULL, 0, NULL, progress, NULL, error, sizeof(error));
     if (!dit) { fprintf(stderr, "load: %s\n", error); return 1; }
     printf("loaded in %.1f s (image model: %d)\n", now() - began,
            h3_dit_is_image_model(dit));

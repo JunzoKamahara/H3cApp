@@ -87,6 +87,8 @@ struct CreationFormView: View {
                     if viewModel.isChained {
                         ClipPromptsSection(viewModel: viewModel, showingEditor: $showingClipEditor)
                     }
+                } else if !viewModel.imageEditReferences.isEmpty {
+                    imageEditSection
                 }
                 promptSection
             }
@@ -275,9 +277,45 @@ struct CreationFormView: View {
                 }
                 .help("詳細設定を開く（⌘,）")
             } else {
+                Button {
+                    viewModel.chooseImageEditReferences()
+                } label: {
+                    Label("参照画像を追加…", systemImage: "photo.badge.plus")
+                }
+                .disabled(viewModel.isGenerating || viewModel.imageEditReferences.count >= H3ImageEngine.maxReferences)
+                .help("手元の画像を参照にして、プロンプトの指示で直した画像をつくります（画像の編集）。プロジェクトの画像は一覧やプレビューの「この画像を編集」から選べます")
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    // MARK: 画像の編集（参照画像）
+
+    /// The pictures an image is edited from, in the order the prompt
+    /// numbers them.
+    private var imageEditSection: some View {
+        VStack(alignment: .leading, spacing: H3Spacing.sm) {
+            Text("参照画像をもとに、プロンプトの指示で直した画像をつくります。プロンプトでは <Picture 1> のように番号で呼びます（例: Edit <Picture 1>. Replace the cup with a bird. Keep everything else.）。")
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: H3Spacing.sm) {
+                    ForEach(Array(viewModel.imageEditReferences.enumerated()), id: \.element) { index, path in
+                        EditReferenceTile(
+                            number: index + 1, path: path, count: viewModel.imageEditReferences.count,
+                            preview: { quickLookURL = $0 },
+                            insertTag: { viewModel.appendPictureTag(index + 1) },
+                            move: { viewModel.moveImageEditReference(at: index, by: $0) },
+                            remove: { viewModel.removeImageEditReference(at: index) })
+                    }
+                }
+            }
+            .disabled(viewModel.isGenerating)
+        }
+        .padding(H3Spacing.md)
+        .background(palette.surfaceMuted)
+        .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
     }
 
     // MARK: 画像入力
@@ -984,6 +1022,79 @@ struct CreationFormView: View {
 
     private var generateEnabled: Bool {
         viewModel.isGenerating ? !viewModel.isCancelling : viewModel.canGenerate
+    }
+}
+
+/// One reference of an image edit: the picture, its number in the prompt
+/// and what can be done with it. The picture is not cached anywhere (it
+/// may be a file outside any project).
+private struct EditReferenceTile: View {
+    let number: Int
+    let path: String
+    let count: Int
+    let preview: (URL) -> Void
+    let insertTag: () -> Void
+    let move: (Int) -> Void
+    let remove: () -> Void
+    @State private var image: NSImage?
+
+    private var tag: String { GenerationViewModel.pictureTag(number) }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Button {
+                preview(URL(fileURLWithPath: path))
+            } label: {
+                ZStack(alignment: .topLeading) {
+                    Color.black
+                    if let image {
+                        Image(nsImage: image).resizable().scaledToFit()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    Text(verbatim: "\(number)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.black.opacity(0.65), in: Capsule())
+                        .padding(3)
+                }
+                .frame(width: 72, height: 72)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .help("\(URL(fileURLWithPath: path).lastPathComponent)（クリックで内容を確認）")
+            Button(action: insertTag) {
+                Text(verbatim: tag).font(.caption2).lineLimit(1)
+            }
+            .buttonStyle(.link)
+            .help("プロンプトの末尾に \(tag) を入れます")
+        }
+        .contextMenu {
+            Button("\(tag) をプロンプトに入れる", action: insertTag)
+            Button("前へ") { move(-1) }.disabled(number == 1)
+            Button("後ろへ") { move(1) }.disabled(number == count)
+            Divider()
+            Button("取り除く", action: remove)
+        }
+        .overlay(alignment: .topTrailing) {
+            Button(action: remove) {
+                Image(systemName: "xmark.circle.fill")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, Color.black.opacity(0.65))
+            }
+            .buttonStyle(.plain)
+            .padding(3)
+            .help("この参照画像を取り除く")
+        }
+        .task(id: path) {
+            let url = URL(fileURLWithPath: path)
+            image = await Task.detached(priority: .utility) {
+                ImageMetadata.thumbnail(at: url, maxSide: 216).map {
+                    NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height))
+                }
+            }.value
+        }
     }
 }
 

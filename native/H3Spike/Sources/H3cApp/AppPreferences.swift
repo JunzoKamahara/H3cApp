@@ -28,6 +28,29 @@ final class AppPreferences: ObservableObject {
         UserDefaults.standard.object(forKey: "h3c-app.useImageLatents") as? Bool ?? false {
         didSet { UserDefaults.standard.set(useImageLatents, forKey: "h3c-app.useImageLatents") }
     }
+    /// An image edit takes a reference that is an image generated here, used
+    /// at its own size, by the latent it was generated as instead of
+    /// encoding the picture again (H3ImageReference.latentPath). On: in the
+    /// one pair compared (plans/IMAGE_PLAN.ja.md, appendix F) the parts the
+    /// edit leaves alone stayed closer to the reference, and the ~8 s
+    /// encode is saved; an edit of an edit does not pass through the VAE
+    /// twice. Only for a picture whose file is still the one generated (its
+    /// hash is checked). No control in the app sets it; the API's
+    /// "reference_latents" does per request.
+    @Published var useImageLatentsForEdits: Bool =
+        UserDefaults.standard.object(forKey: "h3c-app.useImageLatentsForEdits") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(useImageLatentsForEdits, forKey: "h3c-app.useImageLatentsForEdits") }
+    }
+    /// The longest short side a reference picture of an image edit is
+    /// encoded at for the image model (H3ImageParams.referenceMaxShortEdge):
+    /// 1024, or the released pipeline's 2048 - four times the reference
+    /// rows for a large picture, and several times the time. No control in
+    /// the app sets it yet; the API's "reference_short_edge" does per
+    /// request.
+    @Published var imageReferenceShortEdge: Int =
+        UserDefaults.standard.object(forKey: "h3c-app.imageReferenceShortEdge") as? Int ?? 1024 {
+        didSet { UserDefaults.standard.set(imageReferenceShortEdge, forKey: "h3c-app.imageReferenceShortEdge") }
+    }
     /// 途中の様子: show what the video is turning into while it denoises
     /// (DenoisePreview.swift). Off until turned on, since it needs the
     /// 22.7 MB decoder downloaded first.

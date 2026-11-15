@@ -626,7 +626,9 @@ extension GenerationViewModel {
                 "references": referenceImages.map(\.path),
                 "image": ["prompt": imagePrompt, "size": imageSizeProfile.rawValue,
                           "width": Int(imageSizeProfile.dimensions.width),
-                          "height": Int(imageSizeProfile.dimensions.height), "count": imageCount],
+                          "height": Int(imageSizeProfile.dimensions.height), "count": imageCount,
+                          // The pictures of an edit, in the prompt's order.
+                          "references": imageEditReferences],
             ] as [String: Any],
         ]
         if let state = refModExtraction {
@@ -685,6 +687,14 @@ extension GenerationViewModel {
                     if let seed = record.seed { item["seed"] = seed }
                     if let prompt = record.prompt { item["prompt"] = prompt }
                     if let seconds = record.generationSeconds { item["generation_seconds"] = seconds }
+                    // An edit: what it was made from, in the prompt's order.
+                    if let references = record.references, !references.isEmpty {
+                        item["references"] = references.map { reference -> [String: Any] in
+                            ["file": reference.file, "source_image": reference.sourceImage as Any? ?? NSNull(),
+                             "width": reference.width, "height": reference.height,
+                             "used_latent": reference.usedLatent ?? false]
+                        }
+                    }
                 }
                 return item
             },
@@ -710,12 +720,18 @@ extension GenerationViewModel {
     }
 
     /// POST /api/generate {"kind": "image", "prompt", "image_size"?, "seed"?,
-    /// "count"?}: images with the active image model, into the open project
-    /// (an untitled one is started when none is open). "image_size" is
-    /// "<width>x<height>" (multiples of 32) or a preset name
+    /// "count"?, "references"?, "reference_short_edge"?,
+    /// "reference_latents"?}: images with the active image model, into the
+    /// open project (an untitled one is started when none is open).
+    /// "image_size" is "<width>x<height>" (multiples of 32) or a preset name
     /// ("square-standard", "landscape-large", ...); default the form's.
+    /// "references" makes it an edit: up to 16 pictures - image files by
+    /// path, or images of the open project by the name GET /api/project
+    /// lists - which the prompt calls <Picture 1>, <Picture 2>, ... in that
+    /// order. Without it the image is made from the prompt alone.
     private func handleImageGenerateRequest(_ json: [String: Any]) -> HTTPResponse {
-        let known: Set<String> = ["kind", "prompt", "image_size", "seed", "count"]
+        let known: Set<String> = ["kind", "prompt", "image_size", "seed", "count", "references",
+                                  "reference_short_edge", "reference_latents"]
         let extra = Set(json.keys).subtracting(known)
         guard extra.isEmpty else {
             return .error(400, "an image request takes \(known.sorted().joined(separator: ", ")); not \(extra.sorted().joined(separator: ", "))")
@@ -753,9 +769,49 @@ extension GenerationViewModel {
             }
             count = parsed
         }
+        var references: [String] = []
+        if let value = json["references"] {
+            guard let list = value as? [String], list.count <= H3ImageEngine.maxReferences else {
+                return .error(400, "\"references\" must be an array of up to \(H3ImageEngine.maxReferences) image paths or project image names")
+            }
+            for item in list {
+                if let image = projectImages.first(where: { $0.url.lastPathComponent == item }) {
+                    references.append(image.url.path)
+                } else if item.hasPrefix("/"), FileManager.default.fileExists(atPath: item) {
+                    references.append(item)
+                } else {
+                    return .error(400, "reference \"\(item)\" is neither an existing file (give its full path) nor an image of the open project")
+                }
+            }
+            guard Set(references).count == references.count else {
+                return .error(400, "\"references\" names the same picture twice")
+            }
+        }
+        var shortEdge: Int?
+        if let value = json["reference_short_edge"] {
+            guard let parsed = jsonInteger(value), (512 ... 2048).contains(parsed) else {
+                return .error(400, "\"reference_short_edge\" must be an integer from 512 to 2048")
+            }
+            shortEdge = parsed
+        }
+        var referenceLatents: Bool?
+        if let value = json["reference_latents"] {
+            guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+                return .error(400, "\"reference_latents\" must be true or false")
+            }
+            referenceLatents = number.boolValue
+        }
         generationKind = .image
         imagePrompt = requestedPrompt
         imageSizeProfile = size
+        // After the size: the first reference of an empty form would set it.
+        imageEditReferences = []
+        if !references.isEmpty {
+            noteInputsChosen(references)
+            imageEditReferences = references
+        }
+        imageReferenceShortEdgeOverride = shortEdge
+        imageReferenceLatentsOverride = referenceLatents
         imageSeedFixed = seed != nil
         if let seed { imageSeedText = String(seed) }
         imageCount = count
@@ -822,7 +878,9 @@ extension GenerationViewModel {
     /// they are listed by GET /api/project once in. POST
     /// /api/project/show-image {"image"} shows one in the preview. POST
     /// /api/project/use-image {"image", "as": "first_frame" | "last_frame" |
-    /// "reference"} hands it to the video form without generating. POST
+    /// "reference"} hands it to the video form without generating; "as":
+    /// "edit" makes it the image form's only reference (an edit of it) and
+    /// "edit_reference" adds it to the image form's references. POST
     /// /api/project/delete-image {"image"} moves it to the Trash.
     private func handleImageRequest(_ request: HTTPRequest) -> HTTPResponse {
         let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
@@ -864,8 +922,14 @@ extension GenerationViewModel {
                 if !addImageAsReference(image) {
                     return .json(200, ["ok": true, "warning": "the active model has no Ref2VA: add it before generating with references (POST /api/models/add_ref2va)"])
                 }
+            case "edit"?: editImage(image)
+            case "edit_reference"?:
+                guard imageEditReferences.count < H3ImageEngine.maxReferences else {
+                    return .error(400, "an edit takes at most \(H3ImageEngine.maxReferences) references")
+                }
+                addImageAsEditReference(image)
             default:
-                return .error(400, "\"as\" must be \"first_frame\", \"last_frame\" or \"reference\"")
+                return .error(400, "\"as\" must be \"first_frame\", \"last_frame\", \"reference\", \"edit\" or \"edit_reference\"")
             }
             return .json(200, ["ok": true, "generation_kind": generationKind.rawValue])
         default:

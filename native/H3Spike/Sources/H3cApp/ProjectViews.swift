@@ -703,6 +703,11 @@ struct ProjectVideosSheet: View {
             .disabled(viewModel.isGenerating)
             .help("この画像を最初の画像にして、動画をつくる準備をします（生成は始めません）")
             Menu("その他") {
+                Button("この画像を編集") {
+                    viewModel.editImage(image)
+                    isPresented = false
+                }
+                .disabled(viewModel.isGenerating)
                 ImageHandoffButtons(viewModel: viewModel, image: image) { isPresented = false }
                 Button("設定を戻す") {
                     viewModel.restoreProjectImage(image)
@@ -735,6 +740,7 @@ struct ProjectVideosSheet: View {
             parts.append(String(localized: "取り込んだ画像: \(source)"))
         } else {
             if let model = record.model { parts.append(model.name) }
+            if let count = record.references?.count, count > 0 { parts.append(String(localized: "参照\(count)枚を編集")) }
             if let seed = record.seed { parts.append(String(localized: "シード \(seed)")) }
             if let seconds = record.generationSeconds {
                 parts.append(String(localized: "生成時間 \(formatElapsed(seconds))"))
