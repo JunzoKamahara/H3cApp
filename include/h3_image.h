@@ -119,13 +119,46 @@ int h3_image_reference_canvas(int width, int height, int max_short_edge,
                               int *encode_width, int *encode_height,
                               int *vision_width, int *vision_height);
 
-/* Checks that the folder holds an image model (its DiT is a still-image
- * checkpoint) and remembers where its parts are; nothing is loaded until an
- * image is generated. */
+/* P-H3-Image's sizes (diffusers' PH3ImageEditResizeStep): encode_* keeps
+ * the picture's size when its area is within 1 to 8 megapixels and is
+ * scaled to the nearer end otherwise; vision_* is about 1,000,000 pixels
+ * (kept when within 20%). Same aspect, sides multiples of 32, and the same
+ * aspect limit as above. */
+int h3_image_reference_canvas_ph3(int width, int height,
+                                  int *encode_width, int *encode_height,
+                                  int *vision_width, int *vision_height);
+
+/* Checks that the folder holds an image model - a still-image DiT (MiniMax
+ * H3 Image), or MiniMax H3's audio-video DiT beside a text encoder with a
+ * text connector (P-H3-Image) - and remembers where its parts are; nothing
+ * is loaded until an image is generated. */
 h3_image_ctx *h3_image_load_dir(const char *model_directory,
                                 const char *shader_source_path,
                                 char *error, size_t error_size);
 void h3_image_free(h3_image_ctx *ctx);
+
+/* Which image model a folder holds. */
+typedef enum {
+    /* MiniMax H3 Image: six steps, edits with references. */
+    H3_IMAGE_MODEL_H3 = 0,
+    /* P-H3-Image (Pruna AI): MiniMax H3's DiT with its image LoRA merged,
+     * a Qwen3-VL-4B text encoder and connector; eight steps; edits with up
+     * to H3_IMAGE_PH3_MAX_REFERENCES pictures; made for about 8
+     * megapixels. */
+    H3_IMAGE_MODEL_PH3 = 1
+} h3_image_model;
+
+typedef struct {
+    h3_image_model model;
+    const char *name;      /* "MiniMax H3 Image" or "P-H3-Image" */
+    int steps;
+    int can_edit;          /* takes reference images */
+    int max_references;
+} h3_image_info;
+
+#define H3_IMAGE_PH3_MAX_REFERENCES 8
+
+void h3_image_get_info(const h3_image_ctx *ctx, h3_image_info *info);
 
 /* What h3_image_generate(ctx, params) will take, worked out without
  * loading any weights (it reads the references' sizes and loads the

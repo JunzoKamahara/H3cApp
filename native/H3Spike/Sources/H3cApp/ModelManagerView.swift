@@ -20,7 +20,8 @@ struct ModelManagerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var section: Section = .models
-    @State private var showingImageModelSetup = false
+    /// The image model whose setup sheet is open.
+    @State private var imageModelSetup: H3ImageModel?
     @State private var imageModelMessage: String?
     @State private var renamingModelID: UUID?
     @State private var renamingLoRAID: UUID?
@@ -770,8 +771,8 @@ struct ModelManagerView: View {
                             if model.id != library.activeImageModelID {
                                 Button("使用する") { library.selectImageModel(id: model.id) }
                             }
-                            if model.path == H3ImageModel.directory {
-                                Button("管理…") { showingImageModelSetup = true }
+                            if let installed = H3ImageModel.installed(at: model.path) {
+                                Button("管理…") { imageModelSetup = installed }
                             } else {
                                 Button("一覧から外す") { library.removeImageModel(id: model.id) }
                                     .help("一覧から外すだけで、フォルダは削除しません")
@@ -788,20 +789,25 @@ struct ModelManagerView: View {
                     .padding(.horizontal, H3Spacing.md).padding(.top, H3Spacing.sm)
             }
             HStack {
-                Text("静止画をつくるモデル（MiniMax H3 Image）です。動画モデルとは別に選びます。")
+                Text("静止画をつくるモデル（MiniMax H3 Image、P-H3-Image）です。動画モデルとは別に選びます。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
                 Spacer()
                 Button("フォルダを追加…") { addImageModelFolder() }
-                Button(H3ImageModel.complete ? String(localized: "ダウンロードしたモデルを管理…")
-                                             : String(localized: "ダウンロードして追加…")) {
-                    showingImageModelSetup = true
+                Menu(String(localized: "ダウンロードして追加…")) {
+                    ForEach(H3ImageModel.all) { model in
+                        Button(model.complete ? String(localized: "\(model.displayName)を管理…")
+                                              : String(localized: "\(model.displayName)をダウンロード…")) {
+                            imageModelSetup = model
+                        }
+                    }
                 }
+                .fixedSize()
             }
             .padding(H3Spacing.md)
         }
-        .sheet(isPresented: $showingImageModelSetup) {
-            H3ImageModelSetupView(library: library) { showingImageModelSetup = false }
+        .sheet(item: $imageModelSetup) { model in
+            H3ImageModelSetupView(library: library, model: model) { imageModelSetup = nil }
         }
     }
 

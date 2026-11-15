@@ -57,7 +57,8 @@ struct CreationFormView: View {
     /// The input file shown in Quick Look (clicking its name).
     @State private var quickLookURL: URL?
     @State private var showingClipEditor = false
-    @State private var showingImageModelSetup = false
+    /// The image model whose setup sheet is open.
+    @State private var imageModelSetup: H3ImageModel?
     @State private var showingImageSeed = false
     /// 「RefModとして保存…」 for this reference (RefModExtractSheet).
     @State private var refModSources: RefModSources?
@@ -111,9 +112,9 @@ struct CreationFormView: View {
         .onChange(of: panelHeight) { _, _ in offset = clamped(offset) }
         .onChange(of: bounds) { _, _ in offset = clamped(offset) }
         .quickLookPreview($quickLookURL)
-        .sheet(isPresented: $showingImageModelSetup) {
-            H3ImageModelSetupView(library: library, busy: viewModel.isGeneratingImage) {
-                showingImageModelSetup = false
+        .sheet(item: $imageModelSetup) { model in
+            H3ImageModelSetupView(library: library, model: model, busy: viewModel.isGeneratingImage) {
+                imageModelSetup = nil
             }
         }
         .sheet(isPresented: $showingClipEditor) {
@@ -283,8 +284,11 @@ struct CreationFormView: View {
                 } label: {
                     Label("参照画像を追加…", systemImage: "photo.badge.plus")
                 }
-                .disabled(viewModel.isGenerating || viewModel.imageEditReferences.count >= H3ImageEngine.maxReferences)
-                .help("手元の画像を参照にして、プロンプトの指示で直した画像をつくります（画像の編集）。プロジェクトの画像は一覧やプレビューの「この画像を編集」から選べます")
+                .disabled(viewModel.isGenerating || viewModel.imageEditReferences.count >= viewModel.imageReferenceLimit
+                          || !viewModel.imageModelCanEdit)
+                .help(viewModel.imageModelCanEdit
+                      ? String(localized: "手元の画像を参照にして、プロンプトの指示で直した画像をつくります（画像の編集）。プロジェクトの画像は一覧やプレビューの「この画像を編集」から選べます")
+                      : String(localized: "この画像モデルは、まだ画像の編集に対応していません"))
                 Spacer(minLength: 0)
                 imageSeedButton
             }
@@ -733,7 +737,8 @@ struct CreationFormView: View {
                 .pickerStyle(.inline)
                 Divider()
             }
-            Button("画像モデルをダウンロード…") { showingImageModelSetup = true }
+            Button("画像モデルをダウンロード（MiniMax H3 Image）…") { imageModelSetup = .h3 }
+            Button("画像モデルをダウンロード（P-H3-Image）…") { imageModelSetup = .ph3 }
             Button("画像モデルのフォルダを追加…") { viewModel.chooseAndAddImageModel() }
             if let active {
                 Button("「\(active.name)」を一覧から外す") { library.removeImageModel(id: active.id) }

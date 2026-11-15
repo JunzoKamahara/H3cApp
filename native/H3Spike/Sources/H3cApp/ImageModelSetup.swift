@@ -3,96 +3,209 @@ import Combine
 import H3Engine
 import SwiftUI
 
-/// The MiniMax H3 Image model as the app installs it (plans/IMAGE_PLAN.ja.md,
-/// phase 3): the ComfyUI int8 + ConvRot DiT and the fp16 VAE from Comfy-Org's
-/// re-publication, the VAE's config.json and the license text from MiniMax's
-/// own repository - each pinned to a revision and checked by SHA-256 - and
-/// the text encoder and tokenizer of a video model already on this Mac (the
-/// image model uses the same ones; they are copied, which on one volume
-/// takes no extra space).
+/// An image model as the app installs it, each file pinned to a revision
+/// and checked by SHA-256:
+///
+/// - MiniMax H3 Image (plans/IMAGE_PLAN.ja.md, phase 3): the ComfyUI int8 +
+///   ConvRot DiT and the fp16 VAE from Comfy-Org's re-publication, the VAE's
+///   config.json and the license text from MiniMax's own repository, and the
+///   text encoder and tokenizer of a video model already on this Mac (the
+///   image model uses the same ones; they are copied, which on one volume
+///   takes no extra space).
+/// - P-H3-Image (Pruna AI; phase 8): the int8 + ConvRot DiT and the bf16
+///   text encoder (Qwen3-VL-4B with its text connector) and VAE from
+///   PrunaAI/P-H3-Image-Comfy, the VAE config and the tokenizer from the
+///   diffusers repository PrunaAI/P-H3-Image. It needs no video model.
 ///
 /// Nothing is bundled. The user downloads the weights here after reading
-/// what the MiniMax-H3-Image Community License Agreement asks - it is not
-/// the video model's license: it shuts out whole territories, and its
-/// conditions reach the pictures made with the model.
-enum H3ImageModel {
-    static let displayName = "MiniMax H3 Image"
-    static let weightsRepo = "Comfy-Org/MiniMax-H3-Image"
-    static let weightsRevision = "892de7cb61df49753bf15145a711154803a355cb"
-    static let weightsRevisionDate = "2026-11-10"
-    static let officialRepo = "MiniMaxAI/MiniMax-H3-Image"
-    /// The revision the VAE config and the tokenizer are read from.
-    static let officialRevision = "492fd8c4eca666f1085f57e30738c1e0d86b3439"
-    /// The revision of the license text (it last changed on 2026-11-11).
-    static let licenseRevision = "5f90473023975e6271b0ed1dd84c4e88e4bbc6d3"
-    static let licenseName = "MiniMax-H3-Image Community License Agreement"
-    static let licenseFile = "LICENSE"
-    static let licenseSHA256 = "0ec3bb5e6d9e885fa2aaf15e84689e50fd51f42b53fa24d3a64ed9d8c76d423b"
-    static let licenseURL = URL(string: "https://huggingface.co/\(officialRepo)/blob/\(licenseRevision)/LICENSE")!
-    static let licenseRawURL = URL(string: "https://huggingface.co/\(officialRepo)/resolve/\(licenseRevision)/LICENSE")!
-    static let officialURL = URL(string: "https://huggingface.co/\(officialRepo)")!
-    static let weightsURL = URL(string: "https://huggingface.co/\(weightsRepo)/tree/\(weightsRevision)")!
-    static let authorizationURL = URL(string: "https://platform.minimax.io/console/license")!
+/// what the license asks: MiniMax H3 Image's is not the video model's (it
+/// shuts out whole territories, and its conditions reach the pictures made
+/// with the model); P-H3-Image's is the video model's own.
+struct H3ImageModel: Identifiable, Hashable {
+    enum Kind: String { case h3, ph3 }
 
     /// A weight file: where it is in the repository, where the engine
     /// looks for it, and what it must be.
-    struct Weight {
+    struct Weight: Hashable {
         let repoPath: String
         let localPath: String
         let bytes: Int64
         let sha256: String
     }
 
-    static let weights = [
-        Weight(repoPath: "diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors",
-               localPath: "transformer/minimax_h3_image_pruned_int8_convrot.safetensors",
-               bytes: 20_979_314_802,
-               sha256: "83eb140f1ff95c068f8a6886e6d3f3d0d4ab2e07bb2fe6d2ef992a51146ee622"),
-        Weight(repoPath: "vae/minimax_h3_image_vae_fp16.safetensors",
-               localPath: "vae/minimax_h3_image_vae_fp16.safetensors",
-               bytes: 1_168_505_312,
-               sha256: "d80e9c2e5cfc9844869961ff5a58c9a9e52182df6bfb30b26018dd7f348721af"),
-    ]
-    /// Small files of the official repository, fetched whole.
-    static let vaeConfig = (repoPath: "vae/config.json", localPath: "vae/config.json",
-                            sha256: "7fcc21bec549804ff0a04d8246e7f90e679d4f8d4b0a27a252bbd18c30e3e4bb")
-    static let tokenizer = (repoPath: "tokenizer/tokenizer.json", localPath: "tokenizer/tokenizer.json",
-                            sha256: "a5d85b6dcc535e6b93115a9ef287e6132fdbf30270da6218194ba742261173c7")
+    /// A small file fetched whole and checked before it is written.
+    struct SmallFile: Hashable {
+        let url: URL
+        let localPath: String
+        let sha256: String
+    }
+
+    let kind: Kind
+    var id: String { kind.rawValue }
+    let displayName: String
+    let folderName: String
+    let weightsRepo: String
+    let weightsRevision: String
+    let weightsRevisionDate: String
+    let licenseName: String
+    let licenseURL: URL
+    let officialURL: URL
+    let authorizationURL: URL?
+    let weights: [Weight]
+    let smallFiles: [SmallFile]
+    /// It takes the text encoder of a video model already installed.
+    let sharesTextEncoder: Bool
+    let licenseAcceptedKey: String
+    let provenanceNote: String
+    let declaration: String
+
+    static func == (a: H3ImageModel, b: H3ImageModel) -> Bool { a.kind == b.kind }
+    func hash(into hasher: inout Hasher) { hasher.combine(kind) }
+
+    static let licenseFile = "LICENSE"
     static let textEncoderFolder = "text_encoder"
-    static var downloadBytes: Int64 { weights.reduce(0) { $0 + $1.bytes } }
+    static let provenanceFile = "H3IMAGE_PROVENANCE.json"
 
-    static var directory: String { h3AppSupportDirectory + "/ImageModels/MiniMax-H3-Image" }
+    // MARK: MiniMax H3 Image
 
-    static func path(_ relative: String) -> String { directory + "/" + relative }
+    private static let h3Repo = "Comfy-Org/MiniMax-H3-Image"
+    private static let h3Revision = "892de7cb61df49753bf15145a711154803a355cb"
+    private static let h3OfficialRepo = "MiniMaxAI/MiniMax-H3-Image"
+    /// The revision the VAE config and the tokenizer are read from.
+    private static let h3OfficialRevision = "492fd8c4eca666f1085f57e30738c1e0d86b3439"
+    /// The revision of the license text (it last changed on 2026-11-11).
+    private static let h3LicenseRevision = "5f90473023975e6271b0ed1dd84c4e88e4bbc6d3"
 
-    static func fileSize(_ relative: String) -> Int64? {
+    private static func h3Official(_ repoPath: String) -> URL {
+        URL(string: "https://huggingface.co/\(h3OfficialRepo)/resolve/\(h3OfficialRevision)/\(repoPath)")!
+    }
+
+    static let h3 = H3ImageModel(
+        kind: .h3, displayName: "MiniMax H3 Image", folderName: "MiniMax-H3-Image",
+        weightsRepo: h3Repo, weightsRevision: h3Revision, weightsRevisionDate: "2026-11-10",
+        licenseName: "MiniMax-H3-Image Community License Agreement",
+        licenseURL: URL(string: "https://huggingface.co/\(h3OfficialRepo)/blob/\(h3LicenseRevision)/LICENSE")!,
+        officialURL: URL(string: "https://huggingface.co/\(h3OfficialRepo)")!,
+        authorizationURL: URL(string: "https://platform.minimax.io/console/license")!,
+        weights: [
+            Weight(repoPath: "diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors",
+                   localPath: "transformer/minimax_h3_image_pruned_int8_convrot.safetensors",
+                   bytes: 20_979_314_802,
+                   sha256: "83eb140f1ff95c068f8a6886e6d3f3d0d4ab2e07bb2fe6d2ef992a51146ee622"),
+            Weight(repoPath: "vae/minimax_h3_image_vae_fp16.safetensors",
+                   localPath: "vae/minimax_h3_image_vae_fp16.safetensors",
+                   bytes: 1_168_505_312,
+                   sha256: "d80e9c2e5cfc9844869961ff5a58c9a9e52182df6bfb30b26018dd7f348721af"),
+        ],
+        smallFiles: [
+            SmallFile(url: h3Official("vae/config.json"), localPath: "vae/config.json",
+                      sha256: "7fcc21bec549804ff0a04d8246e7f90e679d4f8d4b0a27a252bbd18c30e3e4bb"),
+            SmallFile(url: h3Official("tokenizer/tokenizer.json"), localPath: "tokenizer/tokenizer.json",
+                      sha256: "a5d85b6dcc535e6b93115a9ef287e6132fdbf30270da6218194ba742261173c7"),
+            SmallFile(url: URL(string: "https://huggingface.co/\(h3OfficialRepo)/resolve/\(h3LicenseRevision)/LICENSE")!,
+                      localPath: licenseFile,
+                      sha256: "0ec3bb5e6d9e885fa2aaf15e84689e50fd51f42b53fa24d3a64ed9d8c76d423b"),
+        ],
+        sharesTextEncoder: true,
+        licenseAcceptedKey: "h3c-app.imageModelLicenseAcceptedAt",
+        provenanceNote: "The DiT (ComfyUI int8 + ConvRot) and the fp16 VAE are Comfy-Org's re-publication of MiniMax H3 Image; vae/config.json and tokenizer/tokenizer.json are from \(h3OfficialRepo) at \(h3OfficialRevision); LICENSE is that repository's at \(h3LicenseRevision).",
+        declaration: "Model card of this revision: license_name minimax-h3-image-community-license-agreement")
+
+    // MARK: P-H3-Image
+
+    private static let ph3Repo = "PrunaAI/P-H3-Image-Comfy"
+    private static let ph3Revision = "44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543"
+    /// The diffusers repository, where the VAE config and the tokenizer are.
+    private static let ph3DiffusersRepo = "PrunaAI/P-H3-Image"
+    private static let ph3DiffusersRevision = "7f98acef503cf2bcfba821a78cb1cf1a9928b2df"
+
+    private static func ph3File(_ repoPath: String) -> URL {
+        URL(string: "https://huggingface.co/\(ph3Repo)/resolve/\(ph3Revision)/\(repoPath)")!
+    }
+
+    private static func ph3Diffusers(_ repoPath: String) -> URL {
+        URL(string: "https://huggingface.co/\(ph3DiffusersRepo)/resolve/\(ph3DiffusersRevision)/\(repoPath)")!
+    }
+
+    static let ph3 = H3ImageModel(
+        kind: .ph3, displayName: "P-H3-Image", folderName: "P-H3-Image",
+        weightsRepo: ph3Repo, weightsRevision: ph3Revision, weightsRevisionDate: "2026-11-03",
+        licenseName: "MiniMax H3 Community License Agreement",
+        licenseURL: URL(string: "https://huggingface.co/\(ph3Repo)/blob/\(ph3Revision)/LICENSE")!,
+        officialURL: URL(string: "https://huggingface.co/\(ph3DiffusersRepo)")!,
+        authorizationURL: nil,
+        weights: [
+            Weight(repoPath: "diffusion_models/p-h3-image_int8_convrot.safetensors",
+                   localPath: "transformer/p-h3-image_int8_convrot.safetensors",
+                   bytes: 21_213_068_840,
+                   sha256: "b156fd4fe9d169e58cb2b07f9594ec740ff8f0e052d62b009e6dd034de5865e7"),
+            Weight(repoPath: "text_encoders/p-h3-image_text_encoder_bf16.safetensors",
+                   localPath: "text_encoder/p-h3-image_text_encoder_bf16.safetensors",
+                   bytes: 9_138_027_824,
+                   sha256: "ae0c83cb35207dcc0a81361768094a5d1e3f92d1a95b8ff75a0328dfefbbc3d8"),
+            Weight(repoPath: "vae/p-h3-image_vae_bf16.safetensors",
+                   localPath: "vae/p-h3-image_vae_bf16.safetensors",
+                   bytes: 5_559_036_680,
+                   sha256: "a1f2a7a98d0f2d1e761656fc5701dd43d7cf46d1bbdaa5d866a3e961e97487d7"),
+        ],
+        smallFiles: [
+            SmallFile(url: ph3Diffusers("vae/config.json"), localPath: "vae/config.json",
+                      sha256: "63d82611cd65279518d52b42b38eef80580cb7bac0c04b3afbba41b37d597ca7"),
+            SmallFile(url: ph3Diffusers("tokenizer/tokenizer.json"), localPath: "tokenizer/tokenizer.json",
+                      sha256: "be75606093db2094d7cd20f3c2f385c212750648bd6ea4fb2bf507a6a4c55506"),
+            SmallFile(url: ph3File("LICENSE"), localPath: licenseFile,
+                      sha256: "59b99642b95ea21630e311198ddbfffbfe05aadba0c2f5d884cbdf4efcc90f44"),
+            SmallFile(url: ph3File("LICENSE-APACHE"), localPath: "LICENSE-APACHE",
+                      sha256: "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a"),
+            SmallFile(url: ph3File("NOTICE"), localPath: "NOTICE",
+                      sha256: "f518e346f0c20d4ea2c70c0c953add326d5594df7e0bcbcb647e21dec1f8b89f"),
+        ],
+        sharesTextEncoder: false,
+        licenseAcceptedKey: "h3c-app.ph3ImageModelLicenseAcceptedAt",
+        provenanceNote: "P-H3-Image by Pruna AI: the DiT (int8 + ConvRot), the text encoder (Qwen3-VL-4B with its text connector, bf16) and the VAE (bf16) are \(ph3Repo)'s files, with its LICENSE, LICENSE-APACHE and NOTICE; vae/config.json and tokenizer/tokenizer.json are from \(ph3DiffusersRepo) at \(ph3DiffusersRevision).",
+        declaration: "Model card of this revision: license_name minimax-h3-community-license-agreement (Qwen3-VL-4B parts: Apache-2.0)")
+
+    static let all = [h3, ph3]
+
+    /// The model the app installed at this folder, if it is one.
+    static func installed(at path: String) -> H3ImageModel? {
+        all.first { $0.directory == path }
+    }
+
+    var weightsURL: URL { URL(string: "https://huggingface.co/\(weightsRepo)/tree/\(weightsRevision)")! }
+    var downloadBytes: Int64 { weights.reduce(0) { $0 + $1.bytes } }
+
+    var directory: String { h3AppSupportDirectory + "/ImageModels/" + folderName }
+
+    func path(_ relative: String) -> String { directory + "/" + relative }
+
+    func fileSize(_ relative: String) -> Int64? {
         (try? FileManager.default.attributesOfItem(atPath: path(relative))[.size]) as? Int64
     }
 
     /// The downloaded weights are here, each at its full size.
-    static var weightsPresent: Bool {
+    var weightsPresent: Bool {
         weights.allSatisfy { fileSize($0.localPath) == $0.bytes }
     }
 
-    /// Everything the engine needs: the folder is an image model.
-    static var complete: Bool {
-        weightsPresent && fileSize(vaeConfig.localPath) != nil && fileSize(tokenizer.localPath) != nil
-            && !((try? FileManager.default.contentsOfDirectory(atPath: path(textEncoderFolder))) ?? []).isEmpty
+    var hasTextEncoder: Bool {
+        !((try? FileManager.default.contentsOfDirectory(atPath: path(Self.textEncoderFolder))) ?? []).isEmpty
     }
 
-    private static let licenseAcceptedKey = "h3c-app.imageModelLicenseAcceptedAt"
+    /// Everything the engine needs: the folder is an image model.
+    var complete: Bool {
+        weightsPresent && smallFiles.allSatisfy { fileSize($0.localPath) != nil } && hasTextEncoder
+    }
 
-    static var licenseAcceptedAt: Date? {
+    var licenseAcceptedAt: Date? {
         get { UserDefaults.standard.object(forKey: licenseAcceptedKey) as? Date }
-        set { UserDefaults.standard.set(newValue, forKey: licenseAcceptedKey) }
+        nonmutating set { UserDefaults.standard.set(newValue, forKey: licenseAcceptedKey) }
     }
 
     // MARK: Provenance record (the form the upscaler models use)
 
-    static let provenanceFile = "H3IMAGE_PROVENANCE.json"
-
-    static var provenance: SwiftVRModel.Provenance? {
-        guard let data = FileManager.default.contents(atPath: path(provenanceFile)) else { return nil }
+    var provenance: SwiftVRModel.Provenance? {
+        guard let data = FileManager.default.contents(atPath: path(Self.provenanceFile)) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try? decoder.decode(SwiftVRModel.Provenance.self, from: data)
@@ -100,7 +213,7 @@ enum H3ImageModel {
 
     /// A record for these revisions with the expected hashes, the weights
     /// still at their recorded sizes.
-    static var verified: Bool {
+    var verified: Bool {
         guard let record = provenance, record.revision == weightsRevision else { return false }
         return weights.allSatisfy { weight in
             record.files[weight.localPath]?.sha256 == weight.sha256 && fileSize(weight.localPath) == weight.bytes
@@ -130,13 +243,14 @@ enum H3ImageModel {
         }
     }
 
-    /// A small file of the official repository at its pinned revision,
-    /// written only when its bytes are the recorded ones.
-    static func fetchSmallFile(from url: URL, sha256: String, to relative: String) async throws {
-        if let data = FileManager.default.contents(atPath: path(relative)), FileHash.sha256(of: data) == sha256 { return }
+    /// A small file at its pinned revision, written only when its bytes are
+    /// the recorded ones.
+    func fetchSmallFile(_ file: SmallFile) async throws {
+        let relative = file.localPath
+        if let data = FileManager.default.contents(atPath: path(relative)), FileHash.sha256(of: data) == file.sha256 { return }
         let data: Data
         do {
-            let (body, response) = try await URLSession.shared.data(from: url)
+            let (body, response) = try await URLSession.shared.data(from: file.url)
             guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
                 throw SetupError.smallFile(relative, "HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
             }
@@ -146,16 +260,12 @@ enum H3ImageModel {
         } catch {
             throw SetupError.smallFile(relative, error.localizedDescription)
         }
-        guard FileHash.sha256(of: data) == sha256 else {
+        guard FileHash.sha256(of: data) == file.sha256 else {
             throw SetupError.smallFile(relative, String(localized: "取得した内容のSHA-256が記録と一致しません"))
         }
         let destination = URL(fileURLWithPath: path(relative))
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: destination, options: .atomic)
-    }
-
-    static func officialFileURL(_ repoPath: String) -> URL {
-        URL(string: "https://huggingface.co/\(officialRepo)/resolve/\(officialRevision)/\(repoPath)")!
     }
 
     /// The video model whose text encoder the image model can share: the
@@ -168,9 +278,9 @@ enum H3ImageModel {
 
     /// Copies a video model's text encoder (a clone where the volume makes
     /// one) unless one is here already. Copies files: off the main actor.
-    static func shareTextEncoder(from source: String) throws {
-        let destination = path(textEncoderFolder)
-        if !((try? FileManager.default.contentsOfDirectory(atPath: destination)) ?? []).isEmpty { return }
+    func shareTextEncoder(from source: String) throws {
+        let destination = path(Self.textEncoderFolder)
+        if hasTextEncoder { return }
         try? FileManager.default.removeItem(atPath: destination)
         let staging = destination + ".copying"
         try? FileManager.default.removeItem(atPath: staging)
@@ -186,7 +296,7 @@ enum H3ImageModel {
 
     /// Hashes the weights against the pinned revision and writes the
     /// record. A file whose hash differs is deleted and named in the error.
-    static func verify(textEncoderSource: String?, progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
+    func verify(textEncoderSource: String?, progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
         let total = downloadBytes
         var done: Int64 = 0
         var record: [String: SwiftVRModel.ProvenanceEntry] = [:]
@@ -208,27 +318,26 @@ enum H3ImageModel {
             }
             record[weight.localPath] = .init(sha256: actual, bytes: weight.bytes)
         }
-        for small in [vaeConfig.localPath, tokenizer.localPath, licenseFile] {
+        for small in smallFiles.map(\.localPath) {
             if let data = FileManager.default.contents(atPath: path(small)) {
                 record[small] = .init(sha256: FileHash.sha256(of: data), bytes: Int64(data.count))
             }
         }
-        var note = "The DiT (ComfyUI int8 + ConvRot) and the fp16 VAE are Comfy-Org's re-publication of MiniMax H3 Image; vae/config.json and tokenizer/tokenizer.json are from \(officialRepo) at \(officialRevision); LICENSE is that repository's at \(licenseRevision)."
+        var note = provenanceNote
         if let textEncoderSource {
             note += " text_encoder/ is a copy of the video model's at \(textEncoderSource) (the same Qwen3-VL language layers)."
         }
         let provenance = SwiftVRModel.Provenance(
             repo: weightsRepo, revision: weightsRevision, revisionDate: weightsRevisionDate,
-            declaredLicense: licenseName,
-            declaration: "Model card of this revision: license_name minimax-h3-image-community-license-agreement",
-            licenseText: licenseFile, files: record, verifiedAt: Date(), note: note)
+            declaredLicense: licenseName, declaration: declaration,
+            licenseText: Self.licenseFile, files: record, verifiedAt: Date(), note: note)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(provenance).write(to: URL(fileURLWithPath: path(provenanceFile)), options: .atomic)
+        try encoder.encode(provenance).write(to: URL(fileURLWithPath: path(Self.provenanceFile)), options: .atomic)
     }
 
-    static func bytesOnDisk() -> Int64 {
+    func bytesOnDisk() -> Int64 {
         guard let enumerator = FileManager.default.enumerator(atPath: directory) else { return 0 }
         var total: Int64 = 0
         for case let item as String in enumerator {
@@ -237,16 +346,27 @@ enum H3ImageModel {
         return total
     }
 
-    static func removeAll() throws {
+    func removeAll() throws {
         try FileManager.default.removeItem(atPath: directory)
     }
 }
 
-/// Downloads and checks the image model: one for the whole app, so a
-/// download keeps going when the sheet showing it closes.
+/// Downloads and checks an image model: one per model for the whole app,
+/// so a download keeps going when the sheet showing it closes.
 @MainActor
 final class H3ImageModelSetup: ObservableObject {
-    static let shared = H3ImageModelSetup()
+    static let shared = H3ImageModelSetup(model: .h3)
+    static let ph3 = H3ImageModelSetup(model: .ph3)
+
+    static func of(_ model: H3ImageModel) -> H3ImageModelSetup {
+        model.kind == .ph3 ? ph3 : shared
+    }
+
+    let model: H3ImageModel
+
+    private init(model: H3ImageModel) {
+        self.model = model
+    }
 
     enum Phase: Equatable {
         case idle
@@ -285,7 +405,7 @@ final class H3ImageModelSetup: ObservableObject {
     /// first - where a text encoder to share is looked for.
     func start(videoModelPaths: [String]) {
         guard !isBusy else { return }
-        H3ImageModel.licenseAcceptedAt = H3ImageModel.licenseAcceptedAt ?? Date()
+        model.licenseAcceptedAt = model.licenseAcceptedAt ?? Date()
         phase = .listing
         task = Task { await run(videoModelPaths: videoModelPaths) }
     }
@@ -297,34 +417,29 @@ final class H3ImageModelSetup: ObservableObject {
     }
 
     private func run(videoModelPaths: [String]) async {
+        let model = self.model
         do {
-            // Before 22 GB come down: what the model cannot do without.
-            let hasTextEncoder = !((try? FileManager.default.contentsOfDirectory(
-                atPath: H3ImageModel.path(H3ImageModel.textEncoderFolder))) ?? []).isEmpty
-            let source = H3ImageModel.textEncoderSource(in: videoModelPaths)
-            guard hasTextEncoder || source != nil else { throw H3ImageModel.SetupError.noTextEncoder }
+            // Before the weights come down: what the model cannot do without.
+            let hasTextEncoder = model.hasTextEncoder
+            let source = model.sharesTextEncoder ? H3ImageModel.textEncoderSource(in: videoModelPaths) : nil
+            guard !model.sharesTextEncoder || hasTextEncoder || source != nil else {
+                throw H3ImageModel.SetupError.noTextEncoder
+            }
             var fetched = false
-            if !H3ImageModel.weightsPresent { fetched = try await download() }
+            if !model.weightsPresent { fetched = try await download() }
             try Task.checkCancellation()
-            try await H3ImageModel.fetchSmallFile(
-                from: H3ImageModel.officialFileURL(H3ImageModel.vaeConfig.repoPath),
-                sha256: H3ImageModel.vaeConfig.sha256, to: H3ImageModel.vaeConfig.localPath)
-            try await H3ImageModel.fetchSmallFile(
-                from: H3ImageModel.officialFileURL(H3ImageModel.tokenizer.repoPath),
-                sha256: H3ImageModel.tokenizer.sha256, to: H3ImageModel.tokenizer.localPath)
-            try await H3ImageModel.fetchSmallFile(
-                from: H3ImageModel.licenseRawURL, sha256: H3ImageModel.licenseSHA256, to: H3ImageModel.licenseFile)
+            for file in model.smallFiles { try await model.fetchSmallFile(file) }
             try Task.checkCancellation()
             if !hasTextEncoder, let source {
                 phase = .sharing
                 try await Task.detached(priority: .userInitiated) {
-                    try H3ImageModel.shareTextEncoder(from: source)
+                    try model.shareTextEncoder(from: source)
                 }.value
             }
             try Task.checkCancellation()
-            if fetched || !H3ImageModel.verified {
+            if fetched || !model.verified {
                 phase = .verifying(done: 0, total: 0)
-                try await H3ImageModel.verify(textEncoderSource: source) { done, total in
+                try await model.verify(textEncoderSource: source) { done, total in
                     Task { @MainActor in
                         if case .verifying = self.phase { self.phase = .verifying(done: done, total: total) }
                     }
@@ -332,8 +447,8 @@ final class H3ImageModelSetup: ObservableObject {
             }
             try Task.checkCancellation()
             // Listed for every window, whether or not the sheet is open.
-            if H3ImageModel.complete {
-                ModelLibrary.registerImageModel(path: H3ImageModel.directory, name: H3ImageModel.displayName)
+            if model.complete {
+                ModelLibrary.registerImageModel(path: model.directory, name: model.displayName)
             }
             phase = .done
         } catch is CancellationError {
@@ -346,12 +461,12 @@ final class H3ImageModelSetup: ObservableObject {
     /// Returns whether any file was fetched or resumed.
     private func download() async throws -> Bool {
         var entries: [HFFileEntry] = []
-        for folder in Set(H3ImageModel.weights.map { ($0.repoPath as NSString).deletingLastPathComponent }) {
+        for folder in Set(model.weights.map { ($0.repoPath as NSString).deletingLastPathComponent }) {
             entries += try await ModelDownloader.fetchEntries(
-                repo: H3ImageModel.weightsRepo, subpath: folder, revision: H3ImageModel.weightsRevision)
+                repo: model.weightsRepo, subpath: folder, revision: model.weightsRevision)
         }
         var wanted: [HFFileEntry] = []
-        for weight in H3ImageModel.weights {
+        for weight in model.weights {
             guard var entry = entries.first(where: { $0.path == weight.repoPath }),
                   entry.size == weight.bytes, entry.sha256 == nil || entry.sha256 == weight.sha256 else {
                 throw H3ImageModel.SetupError.listing(file: weight.repoPath)
@@ -360,11 +475,11 @@ final class H3ImageModelSetup: ObservableObject {
             wanted.append(entry)
         }
         try Task.checkCancellation()
-        let fetching = wanted.filter { H3ImageModel.fileSize($0.local) != $0.size }
+        let fetching = wanted.filter { model.fileSize($0.local) != $0.size }
         try SwiftVRModel.forgetProvenance(of: fetching.map(\.local),
-                                          recordPath: H3ImageModel.path(H3ImageModel.provenanceFile))
+                                          recordPath: model.path(H3ImageModel.provenanceFile))
         downloader.use(wanted)
-        downloader.startDownload(destination: H3ImageModel.directory)
+        downloader.startDownload(destination: model.directory)
         phase = .downloading
         for await state in downloader.$state.values {
             switch state {
@@ -384,23 +499,35 @@ final class H3ImageModelSetup: ObservableObject {
 /// the pinned revisions, and what is installed.
 struct H3ImageModelSetupView: View {
     @ObservedObject var library: ModelLibrary
+    let model: H3ImageModel
     /// An image is being generated: the model's files stay.
     var busy = false
     var close: () -> Void
 
-    @ObservedObject private var setup = H3ImageModelSetup.shared
-    @ObservedObject private var downloader = H3ImageModelSetup.shared.downloader
+    @ObservedObject private var setup: H3ImageModelSetup
+    @ObservedObject private var downloader: ModelDownloader
     @Environment(\.colorScheme) private var colorScheme
-    @State private var agreed = H3ImageModel.licenseAcceptedAt != nil
+    @State private var agreed: Bool
     @State private var confirmingRemoval = false
     @State private var removalError: String?
     @State private var version = 0
 
+    init(library: ModelLibrary, model: H3ImageModel = .h3, busy: Bool = false, close: @escaping () -> Void) {
+        self.library = library
+        self.model = model
+        self.busy = busy
+        self.close = close
+        let setup = H3ImageModelSetup.of(model)
+        _setup = ObservedObject(wrappedValue: setup)
+        _downloader = ObservedObject(wrappedValue: setup.downloader)
+        _agreed = State(initialValue: model.licenseAcceptedAt != nil)
+    }
+
     private var palette: H3Palette { H3Palette(colorScheme) }
-    private var installed: Bool { _ = version; _ = setup.phase; return H3ImageModel.complete }
-    private var verified: Bool { _ = version; _ = setup.phase; return H3ImageModel.verified }
+    private var installed: Bool { _ = version; _ = setup.phase; return model.complete }
+    private var verified: Bool { _ = version; _ = setup.phase; return model.verified }
     private var registered: Bool {
-        library.imageModels.contains { $0.path == H3ImageModel.directory }
+        library.imageModels.contains { $0.path == model.directory }
     }
     /// The video models a text encoder can be shared from, the active first.
     private var videoModelPaths: [String] {
@@ -413,10 +540,19 @@ struct H3ImageModelSetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: H3Spacing.md) {
-            Text("画像モデルを準備").font(.headline)
-            Text("静止画をつくるモデル「MiniMax H3 Image」の重みを、Hugging Faceの\(H3ImageModel.weightsRepo)（ComfyUI用のint8版、revision \(String(H3ImageModel.weightsRevision.prefix(8)))、\(H3ImageModel.weightsRevisionDate)）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約\(gigabytes(H3ImageModel.downloadBytes))が「\(H3ImageModel.directory)」に置かれます。テキストエンコーダは、導入済みの動画モデルのものを複製して使います（同じディスクなら容量は増えません）。")
-                .font(.caption).foregroundStyle(palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .firstTextBaseline) {
+                Text("画像モデルを準備").font(.headline)
+                Text(verbatim: model.displayName).font(.headline).foregroundStyle(palette.textSecondary)
+            }
+            Group {
+                if model.kind == .ph3 {
+                    Text("静止画をつくるモデル「P-H3-Image」（Pruna AI、MiniMax H3を基にした画像用のモデル）の重みを、Hugging Faceの\(model.weightsRepo)（ComfyUI用、DiTはint8版、テキストエンコーダとVAEはbf16版、revision \(String(model.weightsRevision.prefix(8)))、\(model.weightsRevisionDate)）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約\(gigabytes(model.downloadBytes))が「\(model.directory)」に置かれます。動画モデルは要りません。文章からの生成と、参照画像（8枚まで）を使った編集ができます。")
+                } else {
+                    Text("静止画をつくるモデル「MiniMax H3 Image」の重みを、Hugging Faceの\(model.weightsRepo)（ComfyUI用のint8版、revision \(String(model.weightsRevision.prefix(8)))、\(model.weightsRevisionDate)）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約\(gigabytes(model.downloadBytes))が「\(model.directory)」に置かれます。テキストエンコーダは、導入済みの動画モデルのものを複製して使います（同じディスクなら容量は増えません）。")
+                }
+            }
+            .font(.caption).foregroundStyle(palette.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
             licenseNotice
             Toggle(isOn: $agreed) {
                 Text("上の説明とライセンスの本文を読みました。対象外の地域では使わず、その条件に従って使います")
@@ -441,7 +577,7 @@ struct H3ImageModelSetupView: View {
             Button("削除", role: .destructive) { remove() }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("ダウンロードした画像モデル（計\(gigabytes(H3ImageModel.bytesOnDisk()))）を削除し、一覧からも外します。また使うには、もう一度ダウンロードが必要です。動画モデルは変わりません。")
+            Text("ダウンロードした画像モデル（計\(gigabytes(model.bytesOnDisk()))）を削除し、一覧からも外します。また使うには、もう一度ダウンロードが必要です。動画モデルは変わりません。")
         }
     }
 
@@ -449,29 +585,50 @@ struct H3ImageModelSetupView: View {
         HStack(alignment: .top, spacing: H3Spacing.sm) {
             Image(systemName: "doc.text.magnifyingglass").foregroundStyle(palette.accent)
             VStack(alignment: .leading, spacing: 4) {
-                Text("MiniMax H3 Imageには「\(H3ImageModel.licenseName)」が適用されます。動画モデル（MiniMax H3）とは別の契約です。おもな条件は次のとおりです。")
+                if model.kind == .ph3 {
+                    Text("P-H3-Imageには、動画モデル（MiniMax H3）と同じ「\(model.licenseName)」が適用されます。テキストエンコーダのうちQwen3-VL-4Bに由来する部分はApache License 2.0です。おもな条件は次のとおりです。")
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("・EU、英国、韓国、米国では使えません（日本は対象地域に含まれます）。")
+                        Text("・商用の製品やサービスの年間売上が2,000万米ドルを超える場合は、MiniMaxの事前の書面許諾が必要です。")
+                        Text("・このモデルを使った製品やサービスには「Powered by MiniMax H3」と表示します。")
+                        Text("・つくった画像を公開するときは、機械が生成したものであることを明示します。")
+                        Text("・ほかのAIモデルの改良には使えません。禁止されている用途（付属書A）があります。")
+                    }
                     .font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("・EU、英国、韓国、米国では、モデルも、モデルでつくった画像も使えません（日本は対象地域に含まれます）。")
-                    Text("・年間売上が100万米ドルを超える場合と、第三者にホスティングサービスとして提供する場合は、MiniMaxの事前の書面許諾が必要です。")
-                    Text("・商用の製品やサービスで使う場合は、画面などに「MiniMax-H3-Image」を表示します。")
-                    Text("・つくった画像を公開するときは、機械が生成したものであることを明示します。")
-                    Text("・ほかのAIモデルの学習や改良には使えません。禁止されている用途（付属書A）があります。")
+                } else {
+                    Text("MiniMax H3 Imageには「\(model.licenseName)」が適用されます。動画モデル（MiniMax H3）とは別の契約です。おもな条件は次のとおりです。")
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("・EU、英国、韓国、米国では、モデルも、モデルでつくった画像も使えません（日本は対象地域に含まれます）。")
+                        Text("・年間売上が100万米ドルを超える場合と、第三者にホスティングサービスとして提供する場合は、MiniMaxの事前の書面許諾が必要です。")
+                        Text("・商用の製品やサービスで使う場合は、画面などに「MiniMax-H3-Image」を表示します。")
+                        Text("・つくった画像を公開するときは、機械が生成したものであることを明示します。")
+                        Text("・ほかのAIモデルの学習や改良には使えません。禁止されている用途（付属書A）があります。")
+                    }
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.caption)
-                .fixedSize(horizontal: false, vertical: true)
                 Text("これは要約で、契約の全文ではありません。あなたの利用にどの条件が当てはまるかは、本文を読んで、利用者自身（必要なら専門家）が判断してください。アプリは本文を重みの隣に保存します。")
                     .font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: H3Spacing.md) {
-                    Link("ライセンスの本文（その版）", destination: H3ImageModel.licenseURL)
-                    Link("許諾の申請先（MiniMax）", destination: H3ImageModel.authorizationURL)
+                    Link("ライセンスの本文（その版）", destination: model.licenseURL)
+                    if let authorizationURL = model.authorizationURL {
+                        Link("許諾の申請先（MiniMax）", destination: authorizationURL)
+                    }
                 }
                 .font(.caption)
                 HStack(spacing: H3Spacing.md) {
-                    Link("元のモデル（MiniMax）", destination: H3ImageModel.officialURL)
-                    Link("配布元（Hugging Face）", destination: H3ImageModel.weightsURL)
+                    if model.kind == .ph3 {
+                        Link("元のモデル（Pruna AI）", destination: model.officialURL)
+                    } else {
+                        Link("元のモデル（MiniMax）", destination: model.officialURL)
+                    }
+                    Link("配布元（Hugging Face）", destination: model.weightsURL)
                 }
                 .font(.caption)
             }
@@ -482,10 +639,10 @@ struct H3ImageModelSetupView: View {
     }
 
     private var verificationText: String {
-        if verified, let record = H3ImageModel.provenance {
+        if verified, let record = model.provenance {
             return String(localized: "SHA-256がその版の記録と一致（\(record.verifiedAt.formatted(date: .numeric, time: .shortened))に確認）")
         }
-        if H3ImageModel.weightsPresent {
+        if model.weightsPresent {
             return String(localized: "まだ照合していません（「取得元と照合する」で確かめられます）")
         }
         return String(localized: "まだありません")
@@ -495,25 +652,32 @@ struct H3ImageModelSetupView: View {
         Grid(alignment: .leading, horizontalSpacing: H3Spacing.md, verticalSpacing: 6) {
             GridRow {
                 Text("重み").font(.caption).foregroundStyle(palette.textSecondary)
-                Text(H3ImageModel.weightsPresent ? String(localized: "ダウンロード済み") : String(localized: "まだありません")).font(.caption)
+                Text(model.weightsPresent ? String(localized: "ダウンロード済み") : String(localized: "まだありません")).font(.caption)
             }
             GridRow {
                 Text("照合").font(.caption).foregroundStyle(palette.textSecondary)
                 Text(verificationText).font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            GridRow {
-                Text("テキストエンコーダ").font(.caption).foregroundStyle(palette.textSecondary)
-                Text(textEncoderText).font(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
+            if model.sharesTextEncoder {
+                GridRow {
+                    Text("テキストエンコーダ").font(.caption).foregroundStyle(palette.textSecondary)
+                    Text(textEncoderText).font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                GridRow {
+                    Text("使用容量").font(.caption).foregroundStyle(palette.textSecondary)
+                    Text("\(gigabytes({ _ = version; return model.bytesOnDisk() }()))（複製したテキストエンコーダを含みます。同じディスクなら、実際に増えるのはダウンロードした分だけです）")
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                GridRow {
+                    Text("使用容量").font(.caption).foregroundStyle(palette.textSecondary)
+                    Text(verbatim: gigabytes({ _ = version; return model.bytesOnDisk() }())).font(.caption)
+                }
             }
-            GridRow {
-                Text("使用容量").font(.caption).foregroundStyle(palette.textSecondary)
-                Text("\(gigabytes({ _ = version; return H3ImageModel.bytesOnDisk() }()))（複製したテキストエンコーダを含みます。同じディスクなら、実際に増えるのはダウンロードした分だけです）")
-                    .font(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let accepted = H3ImageModel.licenseAcceptedAt {
+            if let accepted = model.licenseAcceptedAt {
                 GridRow {
                     Text("ライセンス").font(.caption).foregroundStyle(palette.textSecondary)
                     Text("\(accepted.formatted(date: .numeric, time: .shortened))に説明を確認").font(.caption)
@@ -524,7 +688,7 @@ struct H3ImageModelSetupView: View {
 
     private var textEncoderText: String {
         _ = version; _ = setup.phase
-        if !((try? FileManager.default.contentsOfDirectory(atPath: H3ImageModel.path(H3ImageModel.textEncoderFolder))) ?? []).isEmpty {
+        if model.hasTextEncoder {
             return String(localized: "複製済み")
         }
         if H3ImageModel.textEncoderSource(in: videoModelPaths) != nil {
@@ -567,8 +731,8 @@ struct H3ImageModelSetupView: View {
             Text("画像モデルを使えるようになりました。パネルの「動画／画像」を画像に切り替えて生成できます。")
                 .font(.caption).foregroundStyle(palette.textSecondary)
         case .idle:
-            if !H3ImageModel.weightsPresent {
-                let space = downloadSpaceCheck(needed: H3ImageModel.downloadBytes, destination: H3ImageModel.directory)
+            if !model.weightsPresent {
+                let space = downloadSpaceCheck(needed: model.downloadBytes, destination: model.directory)
                 Text(space.text).font(.caption)
                     .foregroundStyle(space.fits ? palette.textSecondary : palette.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
@@ -582,19 +746,19 @@ struct H3ImageModelSetupView: View {
     private var footer: some View {
         HStack {
             Button("Finderで表示") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: H3ImageModel.directory)])
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.directory)])
             }
-            .disabled(!FileManager.default.fileExists(atPath: H3ImageModel.directory))
+            .disabled(!FileManager.default.fileExists(atPath: model.directory))
             Button("すべて削除…") { confirmingRemoval = true }
                 .disabled(setup.isBusy || busy
-                          || !FileManager.default.fileExists(atPath: H3ImageModel.directory))
+                          || !FileManager.default.fileExists(atPath: model.directory))
             Spacer()
             Button("閉じる") { close() }
                 .keyboardShortcut(.cancelAction)
             if setup.isBusy {
                 Button("中止") { setup.cancel() }
             } else if !installed {
-                Button(H3ImageModel.weightsPresent ? String(localized: "残りを準備する") : String(localized: "ダウンロードする")) {
+                Button(model.weightsPresent ? String(localized: "残りを準備する") : String(localized: "ダウンロードする")) {
                     setup.start(videoModelPaths: videoModelPaths)
                 }
                 .buttonStyle(.borderedProminent)
@@ -614,17 +778,17 @@ struct H3ImageModelSetupView: View {
     }
 
     private func registerIfComplete() {
-        guard H3ImageModel.complete else { return }
-        ModelLibrary.registerImageModel(path: H3ImageModel.directory, name: H3ImageModel.displayName)
+        guard model.complete else { return }
+        ModelLibrary.registerImageModel(path: model.directory, name: model.displayName)
         version += 1
     }
 
     private func remove() {
         do {
-            for model in library.imageModels where model.path == H3ImageModel.directory {
-                library.removeImageModel(id: model.id)
+            for entry in library.imageModels where entry.path == model.directory {
+                library.removeImageModel(id: entry.id)
             }
-            try H3ImageModel.removeAll()
+            try model.removeAll()
             removalError = nil
         } catch {
             removalError = String(localized: "削除できませんでした（詳細: \(error.localizedDescription)）")

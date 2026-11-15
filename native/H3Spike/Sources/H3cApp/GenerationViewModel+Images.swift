@@ -63,14 +63,15 @@ extension GenerationViewModel {
         noteInputsChosen(paths)
         let wasEmpty = imageEditReferences.isEmpty
         for path in paths where !imageEditReferences.contains(path) {
-            guard imageEditReferences.count < H3ImageEngine.maxReferences else {
-                projectMessage = String(localized: "参照画像は\(H3ImageEngine.maxReferences)枚までです")
+            guard imageEditReferences.count < imageReferenceLimit else {
+                projectMessage = String(localized: "参照画像は\(imageReferenceLimit)枚までです")
                 break
             }
             imageEditReferences.append(path)
         }
         if wasEmpty, let first = imageEditReferences.first, let size = ImageMetadata.pixelSize(atPath: first) {
-            imageSizeProfile = .matching(width: size.width, height: size.height)
+            imageSizeProfile = imageModelIsPH3 ? .matchingPH3(width: size.width, height: size.height)
+                                               : .matching(width: size.width, height: size.height)
         }
     }
 
@@ -122,10 +123,10 @@ extension GenerationViewModel {
     /// is used at the image's own size and its file is still the one
     /// generated (the record's hash - a picture retouched elsewhere is
     /// encoded as what it is now). nil otherwise.
-    static func editLatent(forReference path: String, maxShortEdge: Int) -> String? {
+    static func editLatent(forReference path: String, maxShortEdge: Int, ph3: Bool = false) -> String? {
         guard let size = ImageMetadata.pixelSize(atPath: path),
               let canvas = H3ImageEngine.referenceCanvas(width: size.width, height: size.height,
-                                                         maxShortEdge: maxShortEdge),
+                                                         maxShortEdge: maxShortEdge, ph3: ph3),
               canvas.width == size.width, canvas.height == size.height,
               let latent = ProjectFiles.frameLatent(forImage: path, canvasWidth: Int32(canvas.width),
                                                     canvasHeight: Int32(canvas.height)),
@@ -149,6 +150,12 @@ extension GenerationViewModel {
         if promptIsEmpty {
             return imageEditReferences.isEmpty ? String(localized: "画像の内容を入力してください")
                                                : String(localized: "参照画像をどう変えるかを入力してください")
+        }
+        if !imageEditReferences.isEmpty && !imageModelCanEdit {
+            return String(localized: "画像モデル「\(model.name)」は、まだ画像の編集（参照画像）に対応していません。参照画像を外してください")
+        }
+        if imageEditReferences.count > imageReferenceLimit {
+            return String(localized: "参照画像は\(imageReferenceLimit)枚までです")
         }
         if let missing = imageEditReferences.first(where: { !FileManager.default.fileExists(atPath: $0) }) {
             return String(localized: "参照画像が見つかりません: \(URL(fileURLWithPath: missing).lastPathComponent)")
@@ -217,6 +224,16 @@ extension GenerationViewModel {
         imagePlan = plan
         imagePlanInputs = key
     }
+
+    /// Whether the image model in use takes reference images: P-H3-Image
+    /// does not yet.
+    var imageModelCanEdit: Bool { activeImageEngine()?.canEdit ?? true }
+
+    /// As many references as the image model in use takes.
+    var imageReferenceLimit: Int { activeImageEngine()?.referenceLimit ?? H3ImageEngine.maxReferences }
+
+    /// Whether the image model in use is P-H3-Image (its own edit sizes).
+    var imageModelIsPH3: Bool { activeImageEngine()?.isPH3 ?? false }
 
     var canGenerateImage: Bool {
         !isGenerating && !isBuildingCache && !isImportingImages && !isImportingVideo && !isMovingProjectFiles
@@ -300,19 +317,19 @@ extension GenerationViewModel {
         let fixedSeed = imageSeedFixed ? UInt64(imageSeedText) : nil
         let prompt = imagePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let projectURL = project.url
-        let installed = model.path == H3ImageModel.directory
+        let installed = H3ImageModel.installed(at: model.path)
         let shortEdge = imageReferenceShortEdgeOverride ?? preferences.imageReferenceShortEdge
         let useLatents = imageReferenceLatentsOverride ?? preferences.useImageLatentsForEdits
         imageReferenceShortEdgeOverride = nil
         imageReferenceLatentsOverride = nil
         let references = imageEditReferences.map { path in
             H3ImageReference(path: path, latentPath: useLatents
-                ? Self.editLatent(forReference: path, maxShortEdge: shortEdge) : nil)
+                ? Self.editLatent(forReference: path, maxShortEdge: shortEdge, ph3: engine.isPH3) : nil)
         }
         let request = ImageStoreRequest(
             projectURL: projectURL, draft: draft, references: imageEditReferences, modelName: model.name,
-            modelSource: installed ? H3ImageModel.weightsRepo : nil,
-            modelRevision: installed ? H3ImageModel.weightsRevision : nil,
+            systemName: engine.modelName, modelSource: installed?.weightsRepo,
+            modelRevision: installed?.weightsRevision,
             deviceLine: engineState == .ready ? deviceLine : nil, appVersion: Self.appVersion,
             recordsPrompt: GenerationMetadata.exportsSettings)
         imageBatchStopped = false
@@ -583,6 +600,9 @@ struct ImageStoreRequest: Sendable {
     /// The pictures of an edit, as the engine was given them (absolute).
     var references: [String] = []
     let modelName: String
+    /// Which image model it is (h3_image_get_info): "MiniMax H3 Image" or
+    /// "P-H3-Image", written into the PNG as the AI system used.
+    let systemName: String
     /// The repository and revision of a model the app installed itself.
     let modelSource: String?
     let modelRevision: String?
@@ -618,7 +638,7 @@ struct ImageStoreRequest: Sendable {
                                   intent: .defaultIntent),
               let png = ImageMetadata.pngData(image, disclosure: .init(
                   creatorTool: "H3cApp \(appVersion)", createdAt: completedAt,
-                  system: "MiniMax H3 Image", systemVersion: modelName,
+                  system: systemName, systemVersion: modelName,
                   prompt: recordsPrompt ? draft.prompt : nil))
         else { throw ProjectImageError.cannotEncode }
         var pinned = draft

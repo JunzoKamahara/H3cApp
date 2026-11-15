@@ -33,13 +33,15 @@ enum GenerationKind: String, CaseIterable, Identifiable, Codable {
 
 /// The two preset classes of an image (plans/IMAGE_PLAN.ja.md, appendix A.2).
 enum ImageSizeTier: String, CaseIterable, Identifiable {
-    case standard, large
+    /// About 1, 4 and 8 megapixels; 8 is where P-H3-Image is at its best.
+    case standard, large, extraLarge = "xl"
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .standard: return String(localized: "標準")
         case .large: return String(localized: "大")
+        case .extraLarge: return String(localized: "特大")
         }
     }
 }
@@ -61,7 +63,10 @@ struct ImageSizeProfile: Hashable, Identifiable {
 
     /// Sides the image model takes: multiples of 32.
     static let sideStep: Int32 = 32
-    static let sideRange: ClosedRange<Int32> = 256 ... 2688
+    static let sideRange: ClosedRange<Int32> = 256 ... 4096
+    /// The largest side an edit is made at to match its picture: larger
+    /// pictures are brought to about a megapixel.
+    static let matchingSideLimit: Int32 = 2688
 
     static func preset(_ shape: AspectShape, _ tier: ImageSizeTier) -> ImageSizeProfile {
         ImageSizeProfile(base: .preset(shape, tier))
@@ -90,8 +95,10 @@ struct ImageSizeProfile: Hashable, Identifiable {
             switch (shape, tier) {
             case (.square, .standard): return (1024, 1024)
             case (.square, .large): return (2048, 2048)
+            case (.square, .extraLarge): return (2912, 2912)
             case (_, .standard): landscape = (1344, 768)
             case (_, .large): landscape = (2688, 1536)
+            case (_, .extraLarge): landscape = (3808, 2176)
             }
             return shape == .portrait ? (landscape.1, landscape.0) : landscape
         case .canvas(let width, let height):
@@ -145,7 +152,7 @@ struct ImageSizeProfile: Hashable, Identifiable {
     static func matching(width: Int, height: Int) -> ImageSizeProfile {
         guard width > 0, height > 0 else { return .default }
         func wellFormed(_ w: Int, _ h: Int) -> ImageSizeProfile? {
-            guard w <= Int(Int32.max), h <= Int(Int32.max),
+            guard w <= Int(matchingSideLimit), h <= Int(matchingSideLimit),
                   isWellFormedCanvas(width: Int32(w), height: Int32(h)) else { return nil }
             for shape in AspectShape.allCases {
                 for tier in ImageSizeTier.allCases {
@@ -163,6 +170,30 @@ struct ImageSizeProfile: Hashable, Identifiable {
             return min(max(rounded, Int(sideRange.lowerBound)), Int(sideRange.upperBound))
         }
         return wellFormed(side(width), side(height)) ?? .default
+    }
+
+    /// P-H3-Image's canvas for an edit of a picture of this size, as its
+    /// pipeline sizes one: the picture's own shape with its area brought
+    /// into 4 to 8 megapixels (it edits best there), sides rounded to the
+    /// step; a preset when it is one.
+    static func matchingPH3(width: Int, height: Int) -> ImageSizeProfile {
+        guard width > 0, height > 0 else { return .default }
+        let area = Double(width) * Double(height)
+        let low = 4.0 * 1024 * 1024, high = 8.0 * 1024 * 1024
+        let scale = (min(max(area, low), high) / area).squareRoot()
+        let step = Double(sideStep)
+        func side(_ value: Int) -> Int32 {
+            let rounded = Int((Double(value) * scale / step).rounded() * step)
+            return Int32(min(max(rounded, Int(sideRange.lowerBound)), Int(sideRange.upperBound)))
+        }
+        let w = side(width), h = side(height)
+        for shape in AspectShape.allCases {
+            for tier in ImageSizeTier.allCases {
+                let preset = ImageSizeProfile.preset(shape, tier)
+                if preset.dimensions == (w, h) { return preset }
+            }
+        }
+        return .canvas(width: w, height: h)
     }
 
     init?(rawValue: String) {

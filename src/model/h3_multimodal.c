@@ -141,6 +141,7 @@ static int append_vision(h3_ids *ids, h3_text_vision_span *span,
     if (!ids_push(ids, H3_VISION_START)) return 0;
     span->start = ids->count;
     span->tokens = vision->tokens;
+    span->width = vision->width;
     span->embeddings = vision->merged;
     for (size_t layer = 0; layer < H3_VISION_DEEPSTACKS; layer++)
         span->deepstack[layer] = vision->deepstack[layer];
@@ -254,6 +255,7 @@ int h3_multimodal_encode_image_edit_bf16(
                         const char *shader_source_path,
                         const char *prompt,
                         const h3_vision_output *images, size_t image_count,
+                        const char *picture_label,
                         size_t prompt_limit, size_t *prompt_tokens,
                         h3_text_progress progress, void *progress_opaque,
                         h3_text_embedding *output,
@@ -273,8 +275,9 @@ int h3_multimodal_encode_image_edit_bf16(
     if (!spans || !visions) {
         fail(error, error_size, "out of memory constructing the edit presentation");
     } else if (build_pictures(tokenizer, prompt, images, image_count,
-                              "Picture %zu: ", prompt_limit, 0, &ids, spans,
-                              visions, error, error_size)) {
+                              picture_label ? picture_label : "Picture %zu: ",
+                              prompt_limit, 0, &ids, spans, visions, error,
+                              error_size)) {
         if (prompt_tokens) {
             size_t last = spans[image_count - 1].start +
                           spans[image_count - 1].tokens + 1;
@@ -293,6 +296,7 @@ int h3_multimodal_encode_image_edit_bf16(
 int h3_multimodal_image_edit_token_count(
                         const h3_tokenizer *tokenizer, const char *prompt,
                         const h3_vision_output *images, size_t image_count,
+                        const char *picture_label,
                         size_t prompt_limit, size_t *tokens,
                         char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
@@ -305,7 +309,8 @@ int h3_multimodal_image_edit_token_count(
     h3_text_vision_span *spans = calloc(image_count, sizeof(*spans));
     const h3_vision_output **visions = calloc(image_count, sizeof(*visions));
     int ok = spans && visions &&
-        build_pictures(tokenizer, prompt, images, image_count, "Picture %zu: ",
+        build_pictures(tokenizer, prompt, images, image_count,
+                       picture_label ? picture_label : "Picture %zu: ",
                        prompt_limit, 1, &ids, spans, visions, error, error_size);
     if (!spans || !visions)
         fail(error, error_size, "out of memory counting the edit's tokens");

@@ -167,7 +167,8 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
                 presentations[index].vision = &visions[vision_count];
                 presentations[index].vision_count = 1;
                 visions[vision_count++] = (h3_vision_output){
-                    height / 16, width / 16, block_tokens, NULL, {NULL}, {0}};
+                    height / 16, width / 16, block_tokens, NULL, {NULL}, {0},
+                    H3_VISION_OUTPUT_WIDTH};
                 vision_tokens += block_tokens;
             } else {
                 if (!h3_av_video_frame_count(reference->path, &frames,
@@ -197,7 +198,7 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
                         ((double)first + (double)second) / 4.0;
                     visions[vision_count++] = (h3_vision_output){
                         height / 16, width / 16, block_tokens, NULL, {NULL},
-                        {0}};
+                        {0}, H3_VISION_OUTPUT_WIDTH};
                     vision_tokens += block_tokens;
                 }
                 const char *audio_path =
@@ -264,7 +265,7 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
                             (size_t)(render_height / 32);
             visions[vision_count++] = (h3_vision_output){
                 render_height / 16, render_width / 16, tokens, NULL, {NULL},
-                {0}};
+                {0}, H3_VISION_OUTPUT_WIDTH};
             vision_tokens += tokens;
             visuals[visual_count++] =
                 (h3_plan_visual){render_width, render_height, 1};

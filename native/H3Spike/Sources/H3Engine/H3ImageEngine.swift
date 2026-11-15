@@ -107,16 +107,32 @@ public final class H3ImageEngine: @unchecked Sendable {
 
     /// The size a reference of this size is encoded at for the DiT; nil
     /// when its sides differ by more than `referenceMaxAspect`.
-    public static func referenceCanvas(width: Int, height: Int, maxShortEdge: Int = 0) -> (width: Int, height: Int)? {
+    /// `ph3`: P-H3-Image's rule (the picture's own size within 1 to 8
+    /// megapixels; maxShortEdge is not used).
+    public static func referenceCanvas(width: Int, height: Int, maxShortEdge: Int = 0,
+                                       ph3: Bool = false) -> (width: Int, height: Int)? {
         var encodeW: Int32 = 0, encodeH: Int32 = 0, visionW: Int32 = 0, visionH: Int32 = 0
-        guard h3_image_reference_canvas(Int32(clamping: width), Int32(clamping: height), Int32(clamping: maxShortEdge),
-                                        &encodeW, &encodeH, &visionW, &visionH) != 0 else { return nil }
+        let ok = ph3
+            ? h3_image_reference_canvas_ph3(Int32(clamping: width), Int32(clamping: height),
+                                            &encodeW, &encodeH, &visionW, &visionH)
+            : h3_image_reference_canvas(Int32(clamping: width), Int32(clamping: height), Int32(clamping: maxShortEdge),
+                                        &encodeW, &encodeH, &visionW, &visionH)
+        guard ok != 0 else { return nil }
         return (Int(encodeW), Int(encodeH))
     }
 
     private let ctx: OpaquePointer
     public let modelDirectory: String
     private var currentCancelFlag: CancelFlag?
+    /// Which image model the folder holds (h3_image_get_info).
+    public let modelName: String
+    /// Whether it is P-H3-Image (Pruna AI), not MiniMax H3 Image.
+    public let isPH3: Bool
+    public let steps: Int
+    /// Whether it takes reference images (edits).
+    public let canEdit: Bool
+    /// As many references as this model's edits take (16, P-H3-Image 8).
+    public let referenceLimit: Int
 
     /// Checks the folder (transformer/, vae/, text_encoder/, tokenizer/ and
     /// that the transformer is a still-image checkpoint); loads nothing yet.
@@ -127,6 +143,13 @@ public final class H3ImageEngine: @unchecked Sendable {
         }
         self.ctx = ctx
         self.modelDirectory = modelDirectory
+        var info = h3_image_info()
+        h3_image_get_info(ctx, &info)
+        modelName = info.name.map { String(cString: $0) } ?? "MiniMax H3 Image"
+        isPH3 = info.model == H3_IMAGE_MODEL_PH3
+        steps = Int(info.steps)
+        canEdit = info.can_edit != 0
+        referenceLimit = info.max_references > 0 ? Int(info.max_references) : Self.maxReferences
     }
 
     deinit {

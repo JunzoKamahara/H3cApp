@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* H3's Qwen3-VL-32B; P-H3-Image's 4B gives 2560 (h3_vision_output.width). */
 #define H3_VISION_OUTPUT_WIDTH 5120u
 #define H3_VISION_DEEPSTACKS 3u
 
@@ -16,6 +17,8 @@ typedef struct {
     uint16_t *merged;
     uint16_t *deepstack[H3_VISION_DEEPSTACKS];
     h3_gpu_stats gpu_stats;
+    /* Values per row: 5120 (H3's Qwen3-VL-32B) or 2560 (P-H3-Image's 4B). */
+    size_t width;
 } h3_vision_output;
 
 typedef void (*h3_vision_progress)(int completed_layers, int total_layers,

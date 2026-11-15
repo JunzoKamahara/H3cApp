@@ -31,16 +31,20 @@ int h3_multimodal_fl2va_token_count(const h3_tokenizer *tokenizer,
                                     size_t image_count, size_t *tokens,
                                     char *error, size_t error_size);
 
-/* The presentation H3 Image edits with: `Picture n: ` (no angle brackets,
- * unlike the video models' label) and its image per reference, in order,
- * then the prompt, whose own tokens are cut to prompt_limit (0: no limit)
- * and counted into *prompt_tokens. Positions and tags as for FL2VA. */
+/* The presentation an image model edits with: a label and its image per
+ * reference, in order, then the prompt, whose own tokens are cut to
+ * prompt_limit (0: no limit) and counted into *prompt_tokens. Positions and
+ * tags as for FL2VA. picture_label has one %zu, the picture's number from 1:
+ * NULL is H3 Image's `Picture n: ` (no angle brackets, unlike the video
+ * models' label); P-H3-Image uses the video models' `<Picture n>: `. */
+#define H3_PICTURE_LABEL_VIDEO "<Picture %zu>: "
 int h3_multimodal_encode_image_edit_bf16(
                         const h3_tokenizer *tokenizer,
                         const char *weight_directory,
                         const char *shader_source_path,
                         const char *prompt,
                         const h3_vision_output *images, size_t image_count,
+                        const char *picture_label,
                         size_t prompt_limit, size_t *prompt_tokens,
                         h3_text_progress progress, void *progress_opaque,
                         h3_text_embedding *output,
@@ -52,6 +56,7 @@ int h3_multimodal_encode_image_edit_bf16(
 int h3_multimodal_image_edit_token_count(
                         const h3_tokenizer *tokenizer, const char *prompt,
                         const h3_vision_output *images, size_t image_count,
+                        const char *picture_label,
                         size_t prompt_limit, size_t *tokens,
                         char *error, size_t error_size);
 

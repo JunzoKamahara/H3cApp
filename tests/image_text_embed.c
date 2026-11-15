@@ -14,13 +14,16 @@
  * With reference images (phase 5, editing) the sequence is the edit
  * presentation - `Picture n: ` and the n-th picture's vision tokens for
  * each, then the prompt - and "tags" has 0 on the vision spans; "ids" is
- * left out. */
+ * left out. A P-H3-Image text encoder (one with a text connector) gets
+ * P-H3-Image's presentation instead: its reference sizes, `<Picture n>: `
+ * and "Edit <Picture 1>. " in front of the prompt. */
 #include "h3_av_reader.h"
 #include "h3_image.h"
 #include "h3_multimodal.h"
 #include "h3_text_encoder.h"
 #include "h3_tokenizer.h"
 #include "h3_vision_encoder.h"
+#include "h3_weights.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,6 +61,16 @@ static int edit(const char *tokenizer_path, const char *text_path,
     h3_vision_output vision[H3_IMAGE_MAX_REFERENCES];
     memset(vision, 0, sizeof(vision));
     h3_tokenizer *tokenizer = h3_tokenizer_load(tokenizer_path, error, sizeof(error));
+    h3_weight_store *store = h3_weight_store_open(text_path, error, sizeof(error));
+    int ph3 = store && h3_weight_find(store, "text_connector.proj.weight", NULL);
+    h3_weight_store_free(store);
+    char *edit_prompt = NULL;
+    if (ph3 && strncmp(prompt + strspn(prompt, " \t\r\n"), "Edit <Picture 1>.", 17)) {
+        size_t size = strlen(prompt) + 32;
+        edit_prompt = malloc(size);
+        if (edit_prompt) snprintf(edit_prompt, size, "Edit <Picture 1>. %s", prompt);
+        prompt = edit_prompt ? edit_prompt : prompt;
+    }
     if (!tokenizer || count > H3_IMAGE_MAX_REFERENCES) {
         fprintf(stderr, "tokenizer: %s\n", error[0] ? error : "too many references");
         return 1;
@@ -66,8 +79,10 @@ static int edit(const char *tokenizer_path, const char *text_path,
         int width, height, encode_w, encode_h, vision_w, vision_h;
         float *pixels = NULL;
         if (!h3_av_visual_size(references[index], &width, &height, error, sizeof(error)) ||
-            !h3_image_reference_canvas(width, height, 0, &encode_w, &encode_h,
-                                       &vision_w, &vision_h) ||
+            !(ph3 ? h3_image_reference_canvas_ph3(width, height, &encode_w,
+                                                   &encode_h, &vision_w, &vision_h)
+                  : h3_image_reference_canvas(width, height, 0, &encode_w,
+                                              &encode_h, &vision_w, &vision_h)) ||
             !h3_av_read_image_f32(references[index], vision_w, vision_h,
                                   H3_IMAGE_FIT_STRETCH, &pixels, error, sizeof(error)) ||
             !h3_vision_encode_bf16(text_path, shaders, pixels, 1, vision_h, vision_w,
@@ -80,14 +95,15 @@ static int edit(const char *tokenizer_path, const char *text_path,
         /* The vision tower's own output, to tell its error from the
          * language layers': <out>.vision<n>.safetensors. */
         char vision_path[2048], vision_header[512];
-        size_t vision_bytes = vision[index].tokens * TEXT_DIM * sizeof(uint16_t);
+        int vision_dim = (int)(vision[index].width ? vision[index].width : TEXT_DIM);
+        size_t vision_bytes = vision[index].tokens * (size_t)vision_dim * sizeof(uint16_t);
         snprintf(vision_path, sizeof(vision_path), "%s.vision%d.safetensors",
                  out, index + 1);
         int vision_length = snprintf(vision_header, sizeof(vision_header),
             "{\"merged\":{\"dtype\":\"BF16\",\"shape\":[%zu,%d],\"data_offsets\":[0,%zu]},"
             "\"deepstack0\":{\"dtype\":\"BF16\",\"shape\":[%zu,%d],\"data_offsets\":[%zu,%zu]}}",
-            vision[index].tokens, TEXT_DIM, vision_bytes,
-            vision[index].tokens, TEXT_DIM, vision_bytes, 2 * vision_bytes);
+            vision[index].tokens, vision_dim, vision_bytes,
+            vision[index].tokens, vision_dim, vision_bytes, 2 * vision_bytes);
         if (!write_file(vision_path, vision_header, vision_length,
                         vision[index].merged, vision_bytes,
                         vision[index].deepstack[0], vision_bytes)) {
@@ -101,7 +117,8 @@ static int edit(const char *tokenizer_path, const char *text_path,
     h3_text_embedding text = {0};
     size_t prompt_tokens = 0;
     if (!h3_multimodal_encode_image_edit_bf16(tokenizer, text_path, shaders, prompt,
-            vision, (size_t)count, MAX_TOKENS, &prompt_tokens, progress, NULL,
+            vision, (size_t)count, ph3 ? H3_PICTURE_LABEL_VIDEO : NULL,
+            MAX_TOKENS, &prompt_tokens, progress, NULL,
             &text, error, sizeof(error))) {
         fprintf(stderr, "text encoder: %s\n", error);
         return 1;

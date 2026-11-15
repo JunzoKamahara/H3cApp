@@ -84,8 +84,11 @@ struct AboutCommand: Commands {
         add("MiniMax H3 Community License", link: AppLinks.modelLicense)
         add(String(localized: "。モデルはアプリに含まれず、別にダウンロードします。利用できる地域が限られ（EU・英国・韓国・米国は対象外）、利用規定があります。生成した動画を公開するときは、AIで生成したことをはっきり示してください。") + "\n")
         add(String(localized: "画像生成モデル MiniMax H3 Image："))
-        add("MiniMax-H3-Image Community License", link: H3ImageModel.licenseURL)
+        add("MiniMax-H3-Image Community License", link: H3ImageModel.h3.licenseURL)
         add(String(localized: "。動画モデルとは別の契約です。モデルはアプリに含まれず、別にダウンロードします。利用できる地域が限られ（EU・英国・韓国・米国は対象外）、利用規定があります。商用の製品やサービスで使うときは「MiniMax-H3-Image」を表示し、生成した画像を公開するときは、AIで生成したことをはっきり示してください。") + "\n")
+        add(String(localized: "画像生成モデル P-H3-Image（Pruna AI）："))
+        add("MiniMax H3 Community License", link: H3ImageModel.ph3.licenseURL)
+        add(String(localized: "（動画モデルと同じ契約）。モデルはアプリに含まれず、別にダウンロードします。このモデルを使った製品やサービスには「Powered by MiniMax H3」と表示します。") + "\n")
         add(String(localized: "文章・画像の部分（Qwen3-VL）：Apache License 2.0。") + "\n")
         add(String(localized: "途中の様子のプレビュー用デコーダ（"))
         add("taeh3", link: AppLinks.taehv)
@@ -117,7 +120,7 @@ struct HelpCommands: Commands {
             Divider()
             Button("ライセンスと利用条件の要点") { NSWorkspace.shared.open(AppLinks.site("faq.html#license")) }
             Button("MiniMax H3のライセンス") { NSWorkspace.shared.open(AppLinks.modelLicense) }
-            Button("MiniMax H3 Image（画像モデル）のライセンス") { NSWorkspace.shared.open(H3ImageModel.licenseURL) }
+            Button("MiniMax H3 Image（画像モデル）のライセンス") { NSWorkspace.shared.open(H3ImageModel.h3.licenseURL) }
             Button("H3cAppのライセンス") {
                 AppLinks.openResource("LICENSE", fallback: AppLinks.repository.appendingPathComponent("blob/main/LICENSE"))
             }

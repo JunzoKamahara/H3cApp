@@ -10,11 +10,14 @@ import UniformTypeIdentifiers
 // exiftool and Adobe's tools read:
 //   - Iptc4xmpExt:DigitalSourceType trainedAlgorithmicMedia, AISystemUsed,
 //     AISystemVersionUsed, and with the prompt AIPromptInformation;
-//   - dc:description "AI-generated with MiniMax H3 Image";
+//   - dc:description "AI-generated with <the image model>" ("MiniMax H3
+//     Image", "P-H3-Image");
 //   - xmp:CreatorTool, xmp:CreateDate.
 // An image brought in from a file is not tagged: the app did not make it.
 enum ImageMetadata {
     static let label = "AI-generated with MiniMax H3 Image"
+
+    static func label(for system: String) -> String { "AI-generated with \(system)" }
     static let iptcExtNamespace = "http://iptc.org/std/Iptc4xmpExt/2008-02-29/"
     static let trainedAlgorithmicMedia = "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
 
@@ -22,7 +25,8 @@ enum ImageMetadata {
     struct Disclosure {
         var creatorTool: String
         var createdAt: Date
-        /// The model family ("MiniMax H3 Image") and the weights' variant.
+        /// The model ("MiniMax H3 Image", "P-H3-Image") and the weights'
+        /// variant.
         var system: String
         var systemVersion: String?
         /// Left out when the prompt is not to be recorded.
@@ -128,7 +132,8 @@ enum ImageMetadata {
                                                      value as CFString) else { return }
             CGImageMetadataSetTagWithPath(metadata, nil, "\(prefix):\(name)" as CFString, tag)
         }
-        set(kCGImageMetadataNamespaceDublinCore, kCGImageMetadataPrefixDublinCore, "description", label)
+        set(kCGImageMetadataNamespaceDublinCore, kCGImageMetadataPrefixDublinCore, "description",
+            label(for: disclosure.system))
         set(kCGImageMetadataNamespaceXMPBasic, kCGImageMetadataPrefixXMPBasic, "CreatorTool", disclosure.creatorTool)
         set(kCGImageMetadataNamespaceXMPBasic, kCGImageMetadataPrefixXMPBasic, "CreateDate",
             ISO8601DateFormatter().string(from: disclosure.createdAt))

@@ -40,7 +40,24 @@ static const float default_sigmas[] = {
     0.5327739119529724f, 0.23200887441635132f, 0.0f
 };
 
+/* P-H3-Image's eight-step grid (its pipeline's sample_sigmas), used as it
+ * is for the image and the two audio latents alike. */
+static const float ph3_sigmas[] = {
+    1.0f, 0.984753f, 0.967905f, 0.951688f, 0.925372f, 0.881923f, 0.810083f,
+    0.528718f, 0.0f
+};
+
+enum { PH3_AUDIO_LATENTS = 2, AUDIO_CHANNELS = 32, AUDIO_STEREO = 2 };
+/* diffusers' P-H3-Image edit sizes (modular_model_index.json). */
+#define PH3_REFERENCE_MIN_PIXELS (1024.0 * 1024.0)
+#define PH3_REFERENCE_MAX_PIXELS (8.0 * 1024.0 * 1024.0)
+#define PH3_VISION_PIXELS 1000000.0
+
 struct h3_image_ctx {
+    /* P-H3-Image: MiniMax H3's audio-video DiT (FL2VA with Pruna's LoRA
+     * merged), run on one latent frame and two audio latents, with a
+     * Qwen3-VL-4B text encoder and its text connector. */
+    int ph3;
     char *transformer;
     char *vae;
     char *text_encoder;
@@ -102,6 +119,17 @@ static int parse_sigmas(const char *config, float *sigmas) {
     return count;
 }
 
+/* Whether the text encoder carries P-H3-Image's text connector. */
+static int has_text_connector(const char *directory) {
+    char ignored[256];
+    h3_weight_store *store = h3_weight_store_open(directory, ignored,
+                                                  sizeof(ignored));
+    int found = store &&
+        h3_weight_find(store, "text_connector.proj.weight", NULL) != NULL;
+    h3_weight_store_free(store);
+    return found;
+}
+
 /* That the DiT is a still-image checkpoint, and its sampling grid. */
 static int inspect_transformer(h3_image_ctx *ctx, char *error,
                                size_t error_size) {
@@ -116,8 +144,16 @@ static int inspect_transformer(h3_image_ctx *ctx, char *error,
         fail(error, error_size, "%s does not hold an H3 transformer",
              ctx->transformer);
     } else if (h3_weight_find(weights, "audio_patch_proj.weight", NULL)) {
-        fail(error, error_size, "the transformer in %s is a video model (it "
-             "has an audio stream), not a still-image one", ctx->transformer);
+        if (has_text_connector(ctx->text_encoder)) {
+            ctx->ph3 = 1;
+            ctx->steps = (int)(sizeof(ph3_sigmas) / sizeof(*ph3_sigmas)) - 1;
+            memcpy(ctx->sigmas, ph3_sigmas, sizeof(ph3_sigmas));
+            ok = 1;
+        } else {
+            fail(error, error_size, "the transformer in %s is a video model (it "
+                 "has an audio stream), not a still-image one",
+                 ctx->transformer);
+        }
     } else {
         int count = parse_sigmas(header ? h3_st_metadata(header, "config") : NULL,
                                  ctx->sigmas);
@@ -140,6 +176,18 @@ void h3_image_free(h3_image_ctx *ctx) {
     free(ctx->tokenizer);
     free(ctx->shaders);
     free(ctx);
+}
+
+void h3_image_get_info(const h3_image_ctx *ctx, h3_image_info *info) {
+    if (!info) return;
+    memset(info, 0, sizeof(*info));
+    if (!ctx) return;
+    info->model = ctx->ph3 ? H3_IMAGE_MODEL_PH3 : H3_IMAGE_MODEL_H3;
+    info->name = ctx->ph3 ? "P-H3-Image" : "MiniMax H3 Image";
+    info->steps = ctx->steps;
+    info->can_edit = 1;
+    info->max_references = ctx->ph3 ? H3_IMAGE_PH3_MAX_REFERENCES :
+                                      H3_IMAGE_MAX_REFERENCES;
 }
 
 h3_image_ctx *h3_image_load_dir(const char *model_directory,
@@ -222,6 +270,63 @@ int h3_image_reference_canvas(int width, int height, int max_short_edge,
     return 1;
 }
 
+int h3_image_reference_canvas_ph3(int width, int height,
+                                  int *encode_width, int *encode_height,
+                                  int *vision_width, int *vision_height) {
+    if (width < 1 || height < 1 || !encode_width || !encode_height ||
+        !vision_width || !vision_height) return 0;
+    int low = width < height ? width : height;
+    int high = width < height ? height : width;
+    if ((double)high > H3_IMAGE_REFERENCE_MAX_ASPECT * (double)low) return 0;
+    /* For the VAE: its own size, its area brought into 1 to 8 MP. */
+    double area = (double)width * (double)height;
+    double kept = area < PH3_REFERENCE_MIN_PIXELS ? PH3_REFERENCE_MIN_PIXELS :
+                  area > PH3_REFERENCE_MAX_PIXELS ? PH3_REFERENCE_MAX_PIXELS : area;
+    double scale = sqrt(kept / area);
+    *encode_width = canvas_side(width, scale);
+    *encode_height = canvas_side(height, scale);
+    /* For the vision tower: about a megapixel, a picture already near it
+     * (sides on the grid, within 20%) as it is. */
+    if (width % 32 == 0 && height % 32 == 0 &&
+        area >= 0.8 * PH3_VISION_PIXELS && area <= 1.2 * PH3_VISION_PIXELS) {
+        *vision_width = width;
+        *vision_height = height;
+    } else {
+        double ratio = (double)width / (double)height;
+        *vision_width = canvas_side(1, sqrt(PH3_VISION_PIXELS * ratio));
+        *vision_height = canvas_side(1, sqrt(PH3_VISION_PIXELS / ratio));
+    }
+    return 1;
+}
+
+/* The sizes the model in ctx uses a reference at. */
+static int reference_canvas(const h3_image_ctx *ctx, int width, int height,
+                            int max_short_edge, int *encode_width,
+                            int *encode_height, int *vision_width,
+                            int *vision_height) {
+    return ctx->ph3
+        ? h3_image_reference_canvas_ph3(width, height, encode_width,
+                                        encode_height, vision_width,
+                                        vision_height)
+        : h3_image_reference_canvas(width, height, max_short_edge,
+                                    encode_width, encode_height,
+                                    vision_width, vision_height);
+}
+
+/* P-H3-Image's edit prompt: "Edit <Picture 1>. " in front, unless it
+ * already starts that way or is an edit brief (diffusers'
+ * PH3ImageEditTextEncoderStep). The caller frees it. */
+static char *ph3_edit_prompt(const char *prompt) {
+    const char *start = prompt + strspn(prompt, " \t\r\n\f\v");
+    if (!strncmp(start, "Edit <Picture 1>.", 17) ||
+        !strncmp(start, "subject_definitions:", 20)) return strdup(prompt);
+    static const char prefix[] = "Edit <Picture 1>. ";
+    size_t size = sizeof(prefix) + strlen(prompt);
+    char *text = malloc(size);
+    if (text) snprintf(text, size, "%s%s", prefix, prompt);
+    return text;
+}
+
 typedef struct {
     h3_image_progress progress;
     void *opaque;
@@ -269,8 +374,11 @@ static int cancelled(const h3_image_params *params, char *error,
 }
 
 /* What is wrong with the request itself, before anything is read. */
-static int check_request(const h3_image_params *params, char *error,
+static int check_request(const h3_image_ctx *ctx,
+                         const h3_image_params *params, char *error,
                          size_t error_size) {
+    int max_references = ctx->ph3 ? H3_IMAGE_PH3_MAX_REFERENCES :
+                                     H3_IMAGE_MAX_REFERENCES;
     if (params->width < MIN_SIDE || params->height < MIN_SIDE ||
         params->width > MAX_SIDE || params->height > MAX_SIDE ||
         params->width % 32 || params->height % 32) {
@@ -279,10 +387,10 @@ static int check_request(const h3_image_params *params, char *error,
         return 0;
     }
     if (params->reference_count < 0 ||
-        params->reference_count > H3_IMAGE_MAX_REFERENCES ||
+        params->reference_count > max_references ||
         (params->reference_count && !params->references)) {
         fail(error, error_size, "an image takes at most %d reference images",
-             H3_IMAGE_MAX_REFERENCES);
+             max_references);
         return 0;
     }
     for (int index = 0; index < params->reference_count; index++)
@@ -304,7 +412,7 @@ int h3_image_plan(const h3_image_ctx *ctx, const h3_image_params *params,
         fail(message, size, "invalid image plan arguments");
         return 0;
     }
-    if (!check_request(params, message, size)) return 0;
+    if (!check_request(ctx, params, message, size)) return 0;
     int count = params->reference_count;
     char detail[384] = "";
     h3_device_info device;
@@ -324,7 +432,7 @@ int h3_image_plan(const h3_image_ctx *ctx, const h3_image_params *params,
             fail(message, size, "reference %d: %s", index + 1, detail);
             return 0;
         }
-        if (!h3_image_reference_canvas(source_w, source_h,
+        if (!reference_canvas(ctx, source_w, source_h,
                                        params->reference_max_short_edge,
                                        &encode_w, &encode_h, &vision_w,
                                        &vision_h)) {
@@ -348,9 +456,15 @@ int h3_image_plan(const h3_image_ctx *ctx, const h3_image_params *params,
     size_t text_tokens = 0;
     int counted = 0;
     if (tokenizer && count) {
-        counted = h3_multimodal_image_edit_token_count(
-            tokenizer, params->prompt, vision, (size_t)count,
-            H3_IMAGE_MAX_PROMPT_TOKENS, &text_tokens, detail, sizeof(detail));
+        char *prompt = ctx->ph3 ? ph3_edit_prompt(params->prompt) : NULL;
+        counted = (!ctx->ph3 || prompt) &&
+            h3_multimodal_image_edit_token_count(
+                tokenizer, prompt ? prompt : params->prompt, vision,
+                (size_t)count, ctx->ph3 ? H3_PICTURE_LABEL_VIDEO : NULL,
+                H3_IMAGE_MAX_PROMPT_TOKENS, &text_tokens, detail,
+                sizeof(detail));
+        if (ctx->ph3 && !prompt) snprintf(detail, sizeof(detail), "out of memory");
+        free(prompt);
     } else if (tokenizer) {
         uint32_t *ids = NULL;
         counted = h3_tokenizer_encode(tokenizer, params->prompt, 0, &ids,
@@ -387,7 +501,8 @@ int h3_image_plan(const h3_image_ctx *ctx, const h3_image_params *params,
         .memory_bytes = device.physical_memory, .ssd_streaming = 1,
         .full_sdpa = full_sdpa, .text_prefetch_depth = depth,
         .text_tokens = text_tokens, .vision_tokens = vision_tokens,
-        .dit_tokens = text_tokens + reference_rows + generated,
+        .dit_tokens = text_tokens + reference_rows + generated +
+                      (ctx->ph3 ? PH3_AUDIO_LATENTS * AUDIO_STEREO : 0),
         .dit_generated_tokens = generated,
         .dit_reference_tokens = reference_rows,
         .visuals = visuals, .visual_count = (size_t)count
@@ -404,7 +519,7 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
         fail(error, error_size, "invalid image generation arguments");
         return 0;
     }
-    if (!check_request(params, error, error_size)) return 0;
+    if (!check_request(ctx, params, error, error_size)) return 0;
     int reference_count = params->reference_count;
     {
         /* Refused before anything is loaded when it cannot fit; a request
@@ -450,6 +565,9 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
     h3_dit *dit = NULL;
     float *latent = malloc(latent_count * sizeof(*latent));
     float *velocity = malloc(latent_count * sizeof(*velocity));
+    /* P-H3-Image's two audio latents, denoised alongside and dropped. */
+    enum { AUDIO_VALUES = AUDIO_CHANNELS * AUDIO_STEREO * PH3_AUDIO_LATENTS };
+    float audio[AUDIO_VALUES], audio_velocity[AUDIO_VALUES];
     h3_image_pixels pixels;
     memset(&pixels, 0, sizeof(pixels));
     int ok = 0;
@@ -473,8 +591,8 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
                 fail(error, error_size, "reference %d: %s", index + 1, detail);
                 goto done;
             }
-            if (!h3_image_reference_canvas(
-                    source_w, source_h, params->reference_max_short_edge,
+            if (!reference_canvas(
+                    ctx, source_w, source_h, params->reference_max_short_edge,
                     &encode_w, &encode_h, &vision_w[index], &vision_h[index])) {
                 fail(error, error_size, "reference %d is %d x %d pixels: the "
                      "longer side may be at most %.2f times the shorter",
@@ -514,10 +632,19 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
         result->reference_seconds = now() - began;
         began = now();
         void *pool = h3_autorelease_push();
-        int encoded = h3_multimodal_encode_image_edit_bf16(
-            tokenizer, ctx->text_encoder, ctx->shaders, params->prompt, vision,
-            (size_t)reference_count, H3_IMAGE_MAX_PROMPT_TOKENS, &token_count,
-            text_progress, &state, &text, error, error_size);
+        /* P-H3-Image: `<Picture n>: ` labels and "Edit <Picture 1>. " in
+         * front of the instruction. */
+        char *prompt = ctx->ph3 ? ph3_edit_prompt(params->prompt) : NULL;
+        int encoded = (!ctx->ph3 || prompt) &&
+            h3_multimodal_encode_image_edit_bf16(
+                tokenizer, ctx->text_encoder, ctx->shaders,
+                prompt ? prompt : params->prompt, vision,
+                (size_t)reference_count,
+                ctx->ph3 ? H3_PICTURE_LABEL_VIDEO : NULL,
+                H3_IMAGE_MAX_PROMPT_TOKENS, &token_count, text_progress,
+                &state, &text, error, error_size);
+        if (ctx->ph3 && !prompt) fail(error, error_size, "out of memory");
+        free(prompt);
         h3_autorelease_pop(pool);
         for (int index = 0; index < reference_count; index++)
             h3_vision_output_free(&vision[index]);
@@ -645,14 +772,16 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
         result->reference_seconds += now() - began;
     }
 
-    /* The DiT on [text | references | image]: one latent frame, no audio. */
+    /* The DiT on [text | references | image]: one latent frame, no audio;
+     * P-H3-Image's on [text | audio | image], two audio latents. */
     began = now();
     h3_sigma_schedule sigmas = {.steps = ctx->steps};
     for (int index = 0; index <= ctx->steps; index++)
         sigmas.video[index] = sigmas.audio[index] = ctx->sigmas[index];
     h3_layout_spec spec = {
         .text_len = (int)text.tokens, .latent_t = 1, .latent_h = latent_h,
-        .latent_w = latent_w, .audio_t = 0, .frame_count = 5,
+        .latent_w = latent_w, .audio_t = ctx->ph3 ? PH3_AUDIO_LATENTS : 0,
+        .frame_count = 5,
         .references = reference_count ? layout_references : NULL,
         .reference_count = (size_t)reference_count
     };
@@ -670,7 +799,7 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
     if (!dit) goto done;
     free(condition_rows);
     condition_rows = NULL;
-    if (!h3_dit_is_image_model(dit)) {
+    if (h3_dit_is_image_model(dit) == ctx->ph3) {
         fail(error, error_size, "the transformer is not a still-image model");
         goto done;
     }
@@ -681,6 +810,12 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
         h3_rng rng;
         h3_rng_seed(&rng, params->seed);
         h3_rng_fill_normal(&rng, latent, latent_count);
+    }
+    if (ctx->ph3) {
+        /* The audio noise from the seed's own stream after the image's. */
+        h3_rng rng;
+        h3_rng_seed(&rng, params->seed ^ UINT64_C(0x9e3779b97f4a7c15));
+        h3_rng_fill_normal(&rng, audio, AUDIO_VALUES);
     }
     if (h3_option("H3_PROFILE")) {
         double energy = 0.0;
@@ -693,8 +828,10 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
         params->progress("denoise", 0, ctx->steps, params->progress_opaque);
     for (int step = 0; step < ctx->steps; step++) {
         if (cancelled(params, error, error_size)) goto done;
-        if (!h3_dit_forward_image(dit, step, latent, velocity, error,
-                                  error_size)) goto done;
+        if (ctx->ph3 ? !h3_dit_forward(dit, step, latent, audio, velocity,
+                                       audio_velocity, error, error_size)
+                     : !h3_dit_forward_image(dit, step, latent, velocity,
+                                             error, error_size)) goto done;
         /* The velocity points at the data: x += (sigma - sigma_next) * v. */
         float dt = ctx->sigmas[step] - ctx->sigmas[step + 1];
         if (h3_option("H3_PROFILE")) {
@@ -708,6 +845,9 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
                     "%zu not finite\n", step + 1,
                     sqrt(sum / (double)latent_count), bad, latent_count);
         }
+        if (ctx->ph3)
+            for (int index = 0; index < AUDIO_VALUES; index++)
+                audio[index] += dt * audio_velocity[index];
         double energy = 0.0;
         for (size_t index = 0; index < latent_count; index++) {
             latent[index] += dt * velocity[index];

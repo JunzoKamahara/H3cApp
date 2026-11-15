@@ -41,16 +41,29 @@ still images instead of videos. The video side and the image side each keep
 their own prompt and settings.
 
 - **The image model.** Still images use a model of their own (MiniMax H3
-  Image), apart from the video model. "Download Image Model…" in the
-  panel's model menu fetches about 22 GB. The text encoder is taken from an
+  Image), apart from the video model. "Download Image Model (MiniMax H3
+  Image)…" in the panel's model menu fetches about 22 GB. The text encoder is taken from an
   installed video model, so install a video model first. This model comes
   under a license of its own (the MiniMax-H3-Image Community License
   Agreement), different from the video model's: the model and the images made
   with it may not be used in the EU, the UK, the Republic of Korea or the
   USA. Read what the sheet says before downloading.
+- **A second image model (P-H3-Image).** Pruna AI's image model built on
+  MiniMax H3 can be used too. "Download Image Model (P-H3-Image)…" in the
+  model menu fetches about 36 GB; no video model is needed. It is strong at
+  photographic texture and at its best at 8 megapixels (the "Extra Large"
+  size). On a 24 GB M5 a 1024×1024 image takes about 35 seconds, 2048×2048
+  about 1 minute 50 seconds, and 2912×2912 about 4 minutes. It is under the
+  video model's license (the MiniMax H3 Community License Agreement), and
+  products and services built with it show "Powered by MiniMax H3". Prompts
+  work best when the first sentence says what the image is (a photograph, a
+  print, ...) and the scene is described concretely. It edits pictures too,
+  with up to 8 references (next section). Which image model is used is chosen in
+  the model menu.
 - **Making an image.** Write a prompt and choose the shape (square, landscape,
   portrait), the size (Standard is 1024×1024 or 1344×768, Large twice that,
-  "For video" the size of a video) and how many (1 to 20). On a 24 GB M5 a
+  Extra Large about 8 megapixels such as 2912×2912 or 3808×2176, "For video"
+  the size of a video) and how many (1 to 20). On a 24 GB M5 a
   1024×1024 image takes about 35 seconds and a 2048×2048 one about a minute
   and 40 seconds.
 - **Seed.** "Seed" at the top of the panel sets whether every image draws a
@@ -98,6 +111,14 @@ downloaded.
   again.
 - **Record.** The record of an edited image names what it was made from. The
   reference files are copied into the project's `references` folder.
+- **Editing with P-H3-Image.** Up to 8 references. `Edit <Picture 1>.` is put
+  in front of the instruction for you, so describe the finished change and
+  what must stay (faces, poses, background, light); without that list it
+  tends to redraw the whole image. The first reference sets the size to its
+  shape at 4 to 8 megapixels, where this model edits best. References are
+  read at their own size within 1 to 8 megapixels. On a 24 GB M5, an edit of
+  a 1024×1024 picture takes about 5 minutes at 2048×2048 and about 2 minutes
+  20 seconds at 1024×1024.
 
 ## Joined generation: how to use it
 

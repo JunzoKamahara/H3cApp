@@ -288,7 +288,7 @@ private struct ImageActionsView: View {
             Button("この画像から動画を作る") { viewModel.makeVideo(from: image) }
                 .help("この画像を最初の画像にして、動画をつくる準備をします（生成は始めません）")
             Button("この画像を編集") { viewModel.editImage(image) }
-                .disabled(viewModel.isGenerating)
+                .disabled(viewModel.isGenerating || !viewModel.imageModelCanEdit)
                 .help("この画像を参照にして、プロンプトの指示で直した画像をつくる準備をします（生成は始めません）")
             Menu("その他") {
                 ImageHandoffButtons(viewModel: viewModel, image: image)
@@ -323,7 +323,7 @@ struct ImageHandoffButtons: View {
             viewModel.addImageAsEditReference(image)
             onDone()
         }
-        .disabled(viewModel.isGenerating || viewModel.imageEditReferences.count >= H3ImageEngine.maxReferences)
+        .disabled(viewModel.isGenerating || viewModel.imageEditReferences.count >= viewModel.imageReferenceLimit)
     }
 }
 

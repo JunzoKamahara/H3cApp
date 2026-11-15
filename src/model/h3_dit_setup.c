@@ -1183,8 +1183,11 @@ static h3_dit *load_dit(const char *weight_directory,
         goto failed;
     }
     /* Its last layer in F32, as released: the six-step sampler amplifies
-     * what BF16 rounding of the velocity would add. */
-    if (dit->image_model) dit->bf16_final = 0;
+     * what BF16 rounding of the velocity would add. A video checkpoint
+     * asked for one latent frame (P-H3-Image, which keeps the audio
+     * stream) is a still image the same way. */
+    int still = dit->image_model || dit->latent_t == 1;
+    if (still) dit->bf16_final = 0;
     /* What this family takes (h3_model_family.h); h3_generate has already
      * refused these with its own message. */
     dit->family = dit->image_model ? h3_model_family_image()
@@ -1241,7 +1244,7 @@ static h3_dit *load_dit(const char *weight_directory,
      * took as long as the block itself at 1024 x 1024).
      * H3_IMAGE_INT8_DIRECT=0 keeps the restoring stream. */
     const char *int8_direct = h3_option("H3_IMAGE_INT8_DIRECT");
-    if (dit->ssd_streaming && dit->image_model && !lora_count &&
+    if (dit->ssd_streaming && still && !lora_count &&
         (!int8_direct || strcmp(int8_direct, "0")) &&
         dit->fused_mlp && !use_slower_bf16_mlp && !use_slower_bf16_qkv &&
         !use_slower_bf16_attention_output && dit->sequence >= 128 &&

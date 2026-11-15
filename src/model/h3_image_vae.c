@@ -1,5 +1,6 @@
 #include "h3_image_vae.h"
 
+#include "h3_options.h"
 #include "h3_weights.h"
 
 #include <errno.h>
@@ -15,8 +16,9 @@ enum {
     HEAD_DIM = 64,
     REGISTERS = 4,
     SUFFIX = 5,              /* the registers and one zero token */
+    /* Per axis: H3 Image rotates (h, w), half of each head; P-H3-Image
+     * (t, h, w), three quarters, at one fixed time. */
     ROPE_FREQUENCIES = 8,
-    ROPE_HALF = 2 * ROPE_FREQUENCIES,   /* (h, w): half of each head rotates */
     PATCH = 16,
     OUTPUT_PATCH = 3 * PATCH * PATCH,
     TILE_LATENT = 16,        /* 256 pixels */
@@ -25,9 +27,15 @@ enum {
     MAX_HIDDEN = 4096
 };
 
+/* P-H3-Image's decoder sits at the time the video decoder gives the first
+ * of seven latent frames. */
+static const double FRAME_POSITION = 2.0 * (0.5 / 7.0) - 1.0;
+
 typedef struct {
     h3_gpu_tensor *norm1, *qkv_w, *qkv_b, *out_w, *out_b, *scale1;
     h3_gpu_tensor *norm2, *w1, *w1_b, *w2, *w2_b, *scale2;
+    /* int8 copies of the four linears and their row scales. */
+    h3_gpu_tensor *qkv_q, *qkv_s, *out_q, *out_s, *w1_q, *w1_s, *w2_q, *w2_s;
 } vae_block;
 
 typedef struct {
@@ -36,6 +44,11 @@ typedef struct {
     /* From the weights. */
     uint32_t dim, heads, ffn;
     int layers;
+    /* 2: H3 Image's (h, w); 3: P-H3-Image's (t, h, w) with t fixed. */
+    int rope_axes;
+    uint32_t rope_half;
+    int int8_linears;
+    h3_gpu_tensor *lin_in, *lin_out, *lin_quantized, *lin_scales;
     vae_block blocks[MAX_LAYERS];
     h3_gpu_tensor *post_w, *post_b, *embed_w, *embed_b, *registers;
     h3_gpu_tensor *norm_out_w, *norm_out_b, *proj_w, *proj_b;
@@ -66,7 +79,9 @@ static void cleanup(vae_context *vae) {
         h3_gpu_tensor **all[] = {
             &block->norm1, &block->qkv_w, &block->qkv_b, &block->out_w,
             &block->out_b, &block->scale1, &block->norm2, &block->w1,
-            &block->w1_b, &block->w2, &block->w2_b, &block->scale2
+            &block->w1_b, &block->w2, &block->w2_b, &block->scale2,
+            &block->qkv_q, &block->qkv_s, &block->out_q, &block->out_s,
+            &block->w1_q, &block->w1_s, &block->w2_q, &block->w2_s
         };
         for (size_t each = 0; each < sizeof(all) / sizeof(*all); each++)
             free_tensor(all[each]);
@@ -78,7 +93,8 @@ static void cleanup(vae_context *vae) {
         &vae->hidden, &vae->norm, &vae->qkv, &vae->query, &vae->key,
         &vae->value, &vae->attended, &vae->branch, &vae->ff1,
         &vae->activated, &vae->projected, &vae->rope_cos, &vae->rope_sin,
-        &vae->zero
+        &vae->zero, &vae->lin_in, &vae->lin_out, &vae->lin_quantized,
+        &vae->lin_scales
     };
     for (size_t each = 0; each < sizeof(all) / sizeof(*all); each++)
         free_tensor(all[each]);
@@ -150,6 +166,43 @@ static int read_shape(vae_context *vae, char *error, size_t error_size) {
         return 0;
     }
     vae->layers = layers;
+    /* ComfyUI tells the two decoders apart the same way: P-H3-Image's
+     * post-quant convolution is 3D. */
+    const h3_st_tensor *post =
+        h3_weight_find(vae->weights, "post_quant_conv.weight", NULL);
+    if (!post || (post->ndim != 4 && post->ndim != 5)) {
+        fail(error, error_size, "the image VAE has no post-quant convolution");
+        return 0;
+    }
+    vae->rope_axes = post->ndim == 5 ? 3 : 2;
+    vae->rope_half = (uint32_t)vae->rope_axes * ROPE_FREQUENCIES;
+    return 1;
+}
+
+/* Replaces an F32 [rows, columns] weight with per-row int8 and F32 scales,
+ * as the video VAE does (staged through BF16 for the M5 quantizer). */
+static int quantize_linear(vae_context *vae, h3_gpu_tensor **weight,
+                           h3_gpu_tensor **quantized, h3_gpu_tensor **scales,
+                           uint32_t rows, uint32_t columns, char *error,
+                           size_t error_size) {
+    size_t count = (size_t)rows * columns;
+    h3_gpu_tensor *staged = h3_gpu_tensor_new_bf16(vae->gpu, count);
+    *quantized = h3_gpu_tensor_new_i8(vae->gpu, count);
+    *scales = h3_gpu_tensor_new_f32(vae->gpu, rows);
+    int ok = staged && *quantized && *scales &&
+             h3_gpu_begin(vae->gpu) &&
+             h3_gpu_cast_f32_to_bf16(vae->gpu, staged, *weight,
+                                     (uint32_t)count) &&
+             h3_gpu_quantize_weight_int8(vae->gpu, *quantized, *scales,
+                                         staged, rows, columns) &&
+             h3_gpu_submit(vae->gpu);
+    h3_gpu_tensor_free(staged);
+    if (!ok) {
+        fail(error, error_size, "cannot quantize image VAE weight: %s",
+             h3_gpu_error(vae->gpu));
+        return 0;
+    }
+    free_tensor(weight);
     return 1;
 }
 
@@ -183,14 +236,24 @@ static int load_block(vae_context *vae, int index, char *error,
     F1(scale2, "scale2", hidden);
 #undef F1
 #undef F2
+    if (vae->int8_linears &&
+        (!quantize_linear(vae, &block->qkv_w, &block->qkv_q, &block->qkv_s,
+                          hidden * 3, hidden, error, error_size) ||
+         !quantize_linear(vae, &block->out_w, &block->out_q, &block->out_s,
+                          hidden, hidden, error, error_size) ||
+         !quantize_linear(vae, &block->w1, &block->w1_q, &block->w1_s,
+                          ffn * 2, hidden, error, error_size) ||
+         !quantize_linear(vae, &block->w2, &block->w2_q, &block->w2_s,
+                          hidden, ffn, error, error_size))) return 0;
     return 1;
 }
 
 static int load_weights(vae_context *vae, char *error, size_t error_size) {
     uint32_t hidden = vae->dim;
-    uint64_t post_shape[] = {LATENT_CHANNELS, LATENT_CHANNELS, 1, 1};
+    uint64_t post_shape[] = {LATENT_CHANNELS, LATENT_CHANNELS, 1, 1, 1};
     uint64_t register_shape[] = {1, REGISTERS, hidden};
-    if (!(vae->post_w = load(vae, "post_quant_conv.weight", 4, post_shape,
+    if (!(vae->post_w = load(vae, "post_quant_conv.weight",
+                             vae->rope_axes == 3 ? 5 : 4, post_shape,
                              error, error_size)) ||
         !(vae->post_b = f1(vae, "post_quant_conv.bias", LATENT_CHANNELS,
                            error, error_size)) ||
@@ -301,7 +364,8 @@ static int prepare_tile_buffers(vae_context *vae, char *error,
     size_t hidden = vae->dim, ffn = vae->ffn;
     /* Positions are the tile's own (-1..1 across it), the same for every
      * tile; the suffix tokens sit at the origin and do not rotate. */
-    size_t count = sequence * ROPE_HALF;
+    size_t rope_half = vae->rope_half;
+    size_t count = sequence * rope_half;
     float *cosines = malloc(count * sizeof(*cosines));
     float *sines = malloc(count * sizeof(*sines));
     float *zeros = calloc(hidden, sizeof(*zeros));
@@ -311,17 +375,20 @@ static int prepare_tile_buffers(vae_context *vae, char *error,
         return 0;
     }
     for (size_t row = 0; row < sequence; row++) {
-        float axes[2] = {0.0f, 0.0f};
+        /* (t, h, w) or (h, w); P-H3-Image's t is fixed. */
+        float axes[3] = {0.0f, 0.0f, 0.0f};
+        int first = vae->rope_axes - 2;
         if (row < patches) {
             size_t y = row / (size_t)vae->tile_w, x = row % (size_t)vae->tile_w;
-            axes[0] = ((float)y + 0.5f) * 2.0f / (float)vae->tile_h - 1.0f;
-            axes[1] = ((float)x + 0.5f) * 2.0f / (float)vae->tile_w - 1.0f;
+            if (first) axes[0] = (float)FRAME_POSITION;
+            axes[first] = ((float)y + 0.5f) * 2.0f / (float)vae->tile_h - 1.0f;
+            axes[first + 1] = ((float)x + 0.5f) * 2.0f / (float)vae->tile_w - 1.0f;
         }
-        for (int axis = 0; axis < 2; axis++)
+        for (int axis = 0; axis < vae->rope_axes; axis++)
             for (int frequency = 0; frequency < ROPE_FREQUENCIES; frequency++) {
                 double angle = 2.0 * 3.14159265358979323846 * (double)axes[axis] *
                     pow(100.0, -(double)frequency / (double)ROPE_FREQUENCIES);
-                size_t offset = row * ROPE_HALF +
+                size_t offset = row * rope_half +
                                 (size_t)(axis * ROPE_FREQUENCIES + frequency);
                 cosines[offset] = (float)cos(angle);
                 sines[offset] = (float)sin(angle);
@@ -352,7 +419,41 @@ static int prepare_tile_buffers(vae_context *vae, char *error,
                  h3_gpu_error(vae->gpu));
             return 0;
         }
+    if (vae->int8_linears) {
+        /* The widest linear: FFN input, FFN * 2 output; the int8 kernels
+         * read whole 128-row tiles. */
+        size_t padded = (sequence + 127u) & ~(size_t)127u;
+        vae->lin_in = h3_gpu_tensor_new_bf16(vae->gpu, sequence * ffn);
+        vae->lin_out = h3_gpu_tensor_new_bf16(vae->gpu, sequence * ffn * 2);
+        vae->lin_quantized = h3_gpu_tensor_new_i8(vae->gpu, padded * ffn);
+        vae->lin_scales = h3_gpu_tensor_new_f32(vae->gpu, padded);
+        if (!vae->lin_in || !vae->lin_out || !vae->lin_quantized ||
+            !vae->lin_scales) {
+            fail(error, error_size, "cannot allocate image VAE int8 scratch: %s",
+                 h3_gpu_error(vae->gpu));
+            return 0;
+        }
+    }
     return 1;
+}
+
+static int block_linear(vae_context *vae, h3_gpu_tensor *output,
+                        const h3_gpu_tensor *input,
+                        const h3_gpu_tensor *weight,
+                        const h3_gpu_tensor *quantized,
+                        const h3_gpu_tensor *scales,
+                        const h3_gpu_tensor *bias, uint32_t rows,
+                        uint32_t input_dim, uint32_t output_dim) {
+    if (!quantized)
+        return h3_gpu_linear_f32(vae->gpu, output, input, weight, bias, rows,
+                                 input_dim, output_dim);
+    return h3_gpu_cast_f32_to_bf16(vae->gpu, vae->lin_in, input,
+                                   rows * input_dim) &&
+           h3_gpu_linear_int8_bf16(vae->gpu, vae->lin_out, vae->lin_quantized,
+                                   vae->lin_scales, vae->lin_in, quantized,
+                                   scales, rows, input_dim, output_dim, 0) &&
+           h3_gpu_cast_bf16_to_f32_bias(vae->gpu, output, vae->lin_out, bias,
+                                        rows, output_dim);
 }
 
 /* Decodes the tile whose de-normalized latent rows are in vae->latent into
@@ -386,26 +487,30 @@ static int run_tile(vae_context *vae, char *error, size_t error_size) {
         const vae_block *block = &vae->blocks[index];
         OP(h3_gpu_rms_norm_f32(gpu, vae->norm, vae->hidden, block->norm1,
             rows, hidden, 1e-5f), "image VAE attention norm");
-        OP(h3_gpu_linear_f32(gpu, vae->qkv, vae->norm, block->qkv_w,
-            block->qkv_b, rows, hidden, hidden * 3), "image VAE QKV");
+        OP(block_linear(vae, vae->qkv, vae->norm, block->qkv_w, block->qkv_q,
+            block->qkv_s, block->qkv_b, rows, hidden, hidden * 3),
+           "image VAE QKV");
         OP(h3_gpu_video_qkv_rope_f32(gpu, vae->query, vae->key, vae->value,
             vae->qkv, vae->rope_cos, vae->rope_sin, rows, heads, HEAD_DIM,
-            ROPE_HALF, 1e-5f), "image VAE QK norm/RoPE");
+            vae->rope_half, 1e-5f), "image VAE QK norm/RoPE");
         OP(h3_gpu_sdpa_f32(gpu, vae->attended, vae->query, vae->key,
             vae->value, rows, heads, HEAD_DIM,
             1.0f / sqrtf((float)HEAD_DIM)), "image VAE attention");
-        OP(h3_gpu_linear_f32(gpu, vae->branch, vae->attended, block->out_w,
-            block->out_b, rows, hidden, hidden), "image VAE attention output");
+        OP(block_linear(vae, vae->branch, vae->attended, block->out_w,
+            block->out_q, block->out_s, block->out_b, rows, hidden, hidden),
+           "image VAE attention output");
         OP(h3_gpu_scale_add_f32(gpu, vae->hidden, vae->hidden, vae->branch,
             block->scale1, rows, hidden), "image VAE attention residual");
         OP(h3_gpu_rms_norm_f32(gpu, vae->norm, vae->hidden, block->norm2,
             rows, hidden, 1e-5f), "image VAE MLP norm");
-        OP(h3_gpu_linear_f32(gpu, vae->ff1, vae->norm, block->w1, block->w1_b,
-            rows, hidden, ffn * 2), "image VAE MLP input");
+        OP(block_linear(vae, vae->ff1, vae->norm, block->w1, block->w1_q,
+            block->w1_s, block->w1_b, rows, hidden, ffn * 2),
+           "image VAE MLP input");
         OP(h3_gpu_swiglu_f32(gpu, vae->activated, vae->ff1, rows, ffn),
            "image VAE SwiGLU");
-        OP(h3_gpu_linear_f32(gpu, vae->branch, vae->activated, block->w2,
-            block->w2_b, rows, ffn, hidden), "image VAE MLP output");
+        OP(block_linear(vae, vae->branch, vae->activated, block->w2,
+            block->w2_q, block->w2_s, block->w2_b, rows, ffn, hidden),
+           "image VAE MLP output");
         OP(h3_gpu_scale_add_f32(gpu, vae->hidden, vae->hidden, vae->branch,
             block->scale2, rows, hidden), "image VAE MLP residual");
     }
@@ -500,6 +605,18 @@ int h3_image_vae_decode(const char *weight_directory,
     vae.gpu = h3_gpu_create(shader_source_path, error, error_size);
     if (!vae.gpu) goto done;
     h3_gpu_profile_set_label(vae.gpu, "image VAE decoder");
+    {
+        /* P-H3-Image's decoder (2.4B values) in int8 on the M5 kernels, as
+         * the video VAE; H3_VAE_INT8=0 keeps F32. H3 Image's stays F32. */
+        const char *value = h3_option("H3_VAE_INT8");
+        vae.int8_linears = vae.rope_axes == 3 &&
+            (!value || !*value || strcmp(value, "0")) &&
+            h3_gpu_has_int8_mlp(vae.gpu) && vae.sequence >= 128;
+        if (h3_option("H3_PROFILE"))
+            fprintf(stderr, "h3: image VAE: %d layers, %u wide, %d-axis RoPE, "
+                    "%s linears\n", vae.layers, vae.dim, vae.rope_axes,
+                    vae.int8_linears ? "int8" : "F32");
+    }
     if (!load_weights(&vae, error, error_size) ||
         !prepare_tile_buffers(&vae, error, error_size)) goto done;
 

@@ -10,21 +10,27 @@
 #include <string.h>
 
 enum {
-    VISION_HIDDEN = 1152,
-    VISION_INTERMEDIATE = 4304,
-    VISION_LAYERS = 27,
     VISION_HEADS = 16,
-    VISION_HEAD_DIM = 72,
-    VISION_ROPE_HALF = 36,
     PATCH = 16,
     TEMPORAL_PATCH = 2,
     MERGE = 2,
     PATCH_DIM = 3 * TEMPORAL_PATCH * PATCH * PATCH,
-    MERGE_DIM = VISION_HIDDEN * MERGE * MERGE,
     POSITION_SIDE = 48,
-    POSITION_COUNT = POSITION_SIDE * POSITION_SIDE,
-    OUTPUT_WIDTH = H3_VISION_OUTPUT_WIDTH
+    POSITION_COUNT = POSITION_SIDE * POSITION_SIDE
 };
+
+/* The tower's sizes, from its weights: H3's Qwen3-VL-32B (27 blocks, 1152
+ * wide, output 5120) or P-H3-Image's Qwen3-VL-4B (24 blocks, 1024 wide,
+ * output 2560). Both have 16 heads; the deepstack blocks come from the
+ * released configs. */
+typedef struct {
+    uint32_t hidden, intermediate, layers, head_dim, rope_half;
+    uint32_t merge_dim, output_width;
+    int deepstack[H3_VISION_DEEPSTACKS];
+} vision_shape;
+
+static int read_vision_shape(const h3_weight_store *store, vision_shape *S,
+                             char *error, size_t error_size);
 
 typedef struct {
     h3_gpu_tensor *norm1_w;
@@ -161,7 +167,8 @@ static int prepare_patch_rows(const float *pixels, int frames,
     return output == (size_t)grid_h * (size_t)grid_w * PATCH_DIM;
 }
 
-static int prepare_position_rows(const uint16_t *table, int grid_h,
+static int prepare_position_rows(const vision_shape *S,
+                                 const uint16_t *table, int grid_h,
                                  int grid_w, uint16_t *rows) {
     size_t output_row = 0;
     for (int block_h = 0; block_h < grid_h / MERGE; block_h++) {
@@ -192,17 +199,17 @@ static int prepare_position_rows(const uint16_t *table, int grid_h,
                         h1 * POSITION_SIDE + w0,
                         h1 * POSITION_SIDE + w1
                     };
-                    for (int channel = 0; channel < VISION_HIDDEN; channel++) {
+                    for (int channel = 0; channel < (int)S->hidden; channel++) {
                         float sum = 0.0f;
                         for (int corner = 0; corner < 4; corner++) {
                             float coefficient = bf16_to_f32(
                                 f32_to_bf16(coefficients[corner]));
                             float term = bf16_to_f32(
-                                table[(size_t)indices[corner] * VISION_HIDDEN +
+                                table[(size_t)indices[corner] * S->hidden +
                                       (size_t)channel]) * coefficient;
                             sum += bf16_to_f32(f32_to_bf16(term));
                         }
-                        rows[output_row * VISION_HIDDEN + (size_t)channel] =
+                        rows[output_row * S->hidden + (size_t)channel] =
                             f32_to_bf16(sum);
                     }
                     output_row++;
@@ -213,7 +220,7 @@ static int prepare_position_rows(const uint16_t *table, int grid_h,
     return output_row == (size_t)grid_h * (size_t)grid_w;
 }
 
-static void prepare_rope(int grid_h, int grid_w,
+static void prepare_rope(const vision_shape *S, int grid_h, int grid_w,
                          uint16_t *cosines, uint16_t *sines) {
     size_t row = 0;
     for (int block_h = 0; block_h < grid_h / MERGE; block_h++)
@@ -223,14 +230,14 @@ static void prepare_rope(int grid_h, int grid_w,
                     float positions[] = {(float)(block_h * MERGE + inner_h),
                                          (float)(block_w * MERGE + inner_w)};
                     for (int axis = 0; axis < 2; axis++) {
-                        for (int index = 0; index < VISION_ROPE_HALF / 2;
+                        for (int index = 0; index < (int)S->rope_half / 2;
                              index++) {
                             float inverse = powf(10000.0f,
                                 -(float)(index * 2) /
-                                (float)VISION_ROPE_HALF);
+                                (float)S->rope_half);
                             float angle = positions[axis] * inverse;
-                            size_t offset = row * VISION_ROPE_HALF +
-                                (size_t)axis * (VISION_ROPE_HALF / 2) +
+                            size_t offset = row * S->rope_half +
+                                (size_t)axis * (S->rope_half / 2) +
                                 (size_t)index;
                             cosines[offset] = f32_to_bf16(cosf(angle));
                             sines[offset] = f32_to_bf16(sinf(angle));
@@ -248,7 +255,8 @@ static void free_block_weights(vision_block_weights *weights) {
 #undef FREE
 }
 
-static int load_block_weights(const h3_weight_store *store, h3_gpu *gpu,
+static int load_block_weights(const vision_shape *S,
+                              const h3_weight_store *store, h3_gpu *gpu,
                               int layer, vision_block_weights *weights,
                               char *error, size_t error_size) {
     memset(weights, 0, sizeof(*weights));
@@ -264,18 +272,18 @@ static int load_block_weights(const h3_weight_store *store, h3_gpu *gpu,
     weights->field = bf2(store, gpu, name, rows, columns, error, error_size);  \
     if (!weights->field) goto failed;                                          \
 } while (0)
-    LOAD1(norm1_w, "norm1.weight", VISION_HIDDEN);
-    LOAD1(norm1_b, "norm1.bias", VISION_HIDDEN);
-    LOAD2(qkv_w, "attn.qkv.weight", VISION_HIDDEN * 3, VISION_HIDDEN);
-    LOAD1(qkv_b, "attn.qkv.bias", VISION_HIDDEN * 3);
-    LOAD2(out_w, "attn.proj.weight", VISION_HIDDEN, VISION_HIDDEN);
-    LOAD1(out_b, "attn.proj.bias", VISION_HIDDEN);
-    LOAD1(norm2_w, "norm2.weight", VISION_HIDDEN);
-    LOAD1(norm2_b, "norm2.bias", VISION_HIDDEN);
-    LOAD2(fc1_w, "mlp.linear_fc1.weight", VISION_INTERMEDIATE, VISION_HIDDEN);
-    LOAD1(fc1_b, "mlp.linear_fc1.bias", VISION_INTERMEDIATE);
-    LOAD2(fc2_w, "mlp.linear_fc2.weight", VISION_HIDDEN, VISION_INTERMEDIATE);
-    LOAD1(fc2_b, "mlp.linear_fc2.bias", VISION_HIDDEN);
+    LOAD1(norm1_w, "norm1.weight", S->hidden);
+    LOAD1(norm1_b, "norm1.bias", S->hidden);
+    LOAD2(qkv_w, "attn.qkv.weight", S->hidden * 3, S->hidden);
+    LOAD1(qkv_b, "attn.qkv.bias", S->hidden * 3);
+    LOAD2(out_w, "attn.proj.weight", S->hidden, S->hidden);
+    LOAD1(out_b, "attn.proj.bias", S->hidden);
+    LOAD1(norm2_w, "norm2.weight", S->hidden);
+    LOAD1(norm2_b, "norm2.bias", S->hidden);
+    LOAD2(fc1_w, "mlp.linear_fc1.weight", S->intermediate, S->hidden);
+    LOAD1(fc1_b, "mlp.linear_fc1.bias", S->intermediate);
+    LOAD2(fc2_w, "mlp.linear_fc2.weight", S->hidden, S->intermediate);
+    LOAD1(fc2_b, "mlp.linear_fc2.bias", S->hidden);
 #undef LOAD1
 #undef LOAD2
     return 1;
@@ -286,7 +294,8 @@ failed:
     return 0;
 }
 
-static int run_block(h3_gpu *gpu, const vision_block_weights *weights,
+static int run_block(const vision_shape *S, h3_gpu *gpu,
+                     const vision_block_weights *weights,
                      uint32_t rows, h3_gpu_tensor *hidden,
                      h3_gpu_tensor *norm, h3_gpu_tensor *qkv,
                      h3_gpu_tensor *query, h3_gpu_tensor *key,
@@ -304,57 +313,58 @@ static int run_block(h3_gpu *gpu, const vision_block_weights *weights,
 } while (0)
     OP(h3_gpu_begin(gpu), "begin Qwen vision block");
     OP(h3_gpu_layer_norm_bf16(gpu, norm, hidden, weights->norm1_w,
-        weights->norm1_b, rows, VISION_HIDDEN, 1e-6f),
+        weights->norm1_b, rows, S->hidden, 1e-6f),
        "Qwen vision attention norm");
-    SYNC("stage attention norm", norm, (size_t)rows * VISION_HIDDEN);
+    SYNC("stage attention norm", norm, (size_t)rows * S->hidden);
     OP(h3_gpu_linear_bf16(gpu, qkv, norm, weights->qkv_w, weights->qkv_b,
-        rows, VISION_HIDDEN, VISION_HIDDEN * 3), "Qwen vision QKV");
-    SYNC("stage qkv", qkv, (size_t)rows * VISION_HIDDEN * 3);
+        rows, S->hidden, S->hidden * 3), "Qwen vision QKV");
+    SYNC("stage qkv", qkv, (size_t)rows * S->hidden * 3);
     OP(h3_gpu_vision_qkv_rope_bf16(gpu, query, key, value, qkv,
-        rope_cos, rope_sin, rows, VISION_HEADS, VISION_HEAD_DIM,
-        VISION_ROPE_HALF), "Qwen vision RoPE");
-    SYNC("stage query", query, (size_t)rows * VISION_HIDDEN);
-    SYNC("stage key", key, (size_t)rows * VISION_HIDDEN);
-    SYNC("stage value", value, (size_t)rows * VISION_HIDDEN);
+        rope_cos, rope_sin, rows, VISION_HEADS, S->head_dim,
+        S->rope_half), "Qwen vision RoPE");
+    SYNC("stage query", query, (size_t)rows * S->hidden);
+    SYNC("stage key", key, (size_t)rows * S->hidden);
+    SYNC("stage value", value, (size_t)rows * S->hidden);
     OP(h3_gpu_sdpa_bf16(gpu, heads, query, key, value, rows,
-        VISION_HEADS, VISION_HEAD_DIM,
-        1.0f / sqrtf((float)VISION_HEAD_DIM)), "Qwen vision attention");
-    SYNC("stage attention", heads, (size_t)rows * VISION_HIDDEN);
+        VISION_HEADS, S->head_dim,
+        1.0f / sqrtf((float)S->head_dim)), "Qwen vision attention");
+    SYNC("stage attention", heads, (size_t)rows * S->hidden);
     OP(h3_gpu_linear_bf16(gpu, branch, heads, weights->out_w, weights->out_b,
-        rows, VISION_HIDDEN, VISION_HIDDEN), "Qwen vision attention output");
-    SYNC("stage attention output", branch, (size_t)rows * VISION_HIDDEN);
+        rows, S->hidden, S->hidden), "Qwen vision attention output");
+    SYNC("stage attention output", branch, (size_t)rows * S->hidden);
     OP(h3_gpu_add_bf16(gpu, hidden, hidden, branch,
-        rows * VISION_HIDDEN), "Qwen vision attention residual");
-    SYNC("stage attention residual", hidden, (size_t)rows * VISION_HIDDEN);
+        rows * S->hidden), "Qwen vision attention residual");
+    SYNC("stage attention residual", hidden, (size_t)rows * S->hidden);
     OP(h3_gpu_layer_norm_bf16(gpu, norm, hidden, weights->norm2_w,
-        weights->norm2_b, rows, VISION_HIDDEN, 1e-6f),
+        weights->norm2_b, rows, S->hidden, 1e-6f),
        "Qwen vision MLP norm");
-    SYNC("stage mlp norm", norm, (size_t)rows * VISION_HIDDEN);
+    SYNC("stage mlp norm", norm, (size_t)rows * S->hidden);
     OP(h3_gpu_linear_bf16(gpu, fc1, norm, weights->fc1_w, weights->fc1_b,
-        rows, VISION_HIDDEN, VISION_INTERMEDIATE), "Qwen vision MLP input");
-    SYNC("stage mlp input", fc1, (size_t)rows * VISION_INTERMEDIATE);
+        rows, S->hidden, S->intermediate), "Qwen vision MLP input");
+    SYNC("stage mlp input", fc1, (size_t)rows * S->intermediate);
     OP(h3_gpu_gelu_bf16(gpu, activated, fc1,
-        rows * VISION_INTERMEDIATE, 1), "Qwen vision GELU");
-    SYNC("stage gelu", activated, (size_t)rows * VISION_INTERMEDIATE);
+        rows * S->intermediate, 1), "Qwen vision GELU");
+    SYNC("stage gelu", activated, (size_t)rows * S->intermediate);
     OP(h3_gpu_linear_bf16(gpu, branch, activated, weights->fc2_w,
-        weights->fc2_b, rows, VISION_INTERMEDIATE, VISION_HIDDEN),
+        weights->fc2_b, rows, S->intermediate, S->hidden),
        "Qwen vision MLP output");
-    SYNC("stage mlp output", branch, (size_t)rows * VISION_HIDDEN);
+    SYNC("stage mlp output", branch, (size_t)rows * S->hidden);
     OP(h3_gpu_add_bf16(gpu, hidden, hidden, branch,
-        rows * VISION_HIDDEN), "Qwen vision MLP residual");
+        rows * S->hidden), "Qwen vision MLP residual");
     OP(h3_gpu_submit(gpu), "submit Qwen vision block");
 #undef SYNC
 #undef OP
     return 1;
 }
 
-static h3_gpu_tensor *run_merger(const h3_weight_store *weights, h3_gpu *gpu,
+static h3_gpu_tensor *run_merger(const vision_shape *S,
+                                 const h3_weight_store *weights, h3_gpu *gpu,
                                  const h3_gpu_tensor *hidden,
                                  uint32_t patch_rows, int deepstack,
                                  int merger_index,
                                  char *error, size_t error_size) {
     uint32_t rows = patch_rows / (MERGE * MERGE);
-    uint32_t norm_width = deepstack ? MERGE_DIM : VISION_HIDDEN;
+    uint32_t norm_width = deepstack ? S->merge_dim : S->hidden;
     uint32_t norm_rows = deepstack ? rows : patch_rows;
     char prefix[128], name[192];
     if (deepstack)
@@ -368,22 +378,22 @@ static h3_gpu_tensor *run_merger(const h3_weight_store *weights, h3_gpu *gpu,
     h3_gpu_tensor *norm_b = bf1(weights, gpu, NAME("norm.bias"), norm_width,
                                  error, error_size);
     h3_gpu_tensor *fc1_w = bf2(weights, gpu, NAME("linear_fc1.weight"),
-                                MERGE_DIM, MERGE_DIM, error, error_size);
+                                S->merge_dim, S->merge_dim, error, error_size);
     h3_gpu_tensor *fc1_b = bf1(weights, gpu, NAME("linear_fc1.bias"),
-                                MERGE_DIM, error, error_size);
+                                S->merge_dim, error, error_size);
     h3_gpu_tensor *fc2_w = bf2(weights, gpu, NAME("linear_fc2.weight"),
-                                OUTPUT_WIDTH, MERGE_DIM, error, error_size);
+                                S->output_width, S->merge_dim, error, error_size);
     h3_gpu_tensor *fc2_b = bf1(weights, gpu, NAME("linear_fc2.bias"),
-                                OUTPUT_WIDTH, error, error_size);
+                                S->output_width, error, error_size);
 #undef NAME
     h3_gpu_tensor *norm = h3_gpu_tensor_new_bf16(
-        gpu, (size_t)patch_rows * VISION_HIDDEN);
+        gpu, (size_t)patch_rows * S->hidden);
     h3_gpu_tensor *fc1 = h3_gpu_tensor_new_bf16(
-        gpu, (size_t)rows * MERGE_DIM);
+        gpu, (size_t)rows * S->merge_dim);
     h3_gpu_tensor *activated = h3_gpu_tensor_new_bf16(
-        gpu, (size_t)rows * MERGE_DIM);
+        gpu, (size_t)rows * S->merge_dim);
     h3_gpu_tensor *output = h3_gpu_tensor_new_bf16(
-        gpu, (size_t)rows * OUTPUT_WIDTH);
+        gpu, (size_t)rows * S->output_width);
     if (!norm_w || !norm_b || !fc1_w || !fc1_b || !fc2_w || !fc2_b ||
         !norm || !fc1 || !activated || !output) {
         if (!error || !*error)
@@ -398,14 +408,14 @@ static h3_gpu_tensor *run_merger(const h3_weight_store *weights, h3_gpu *gpu,
             gpu, norm, hidden, norm_w, norm_b, norm_rows, norm_width, 1e-6f),
             "Qwen vision merger norm", error, error_size) ||
         !gpu_op(gpu, h3_gpu_linear_bf16(
-            gpu, fc1, norm, fc1_w, fc1_b, rows, MERGE_DIM, MERGE_DIM),
+            gpu, fc1, norm, fc1_w, fc1_b, rows, S->merge_dim, S->merge_dim),
             "Qwen vision merger input", error, error_size) ||
         !gpu_op(gpu, h3_gpu_gelu_bf16(
-            gpu, activated, fc1, rows * MERGE_DIM, 0),
+            gpu, activated, fc1, rows * S->merge_dim, 0),
             "Qwen vision merger GELU", error, error_size) ||
         !gpu_op(gpu, h3_gpu_linear_bf16(
-            gpu, output, activated, fc2_w, fc2_b, rows, MERGE_DIM,
-            OUTPUT_WIDTH), "Qwen vision merger output", error, error_size) ||
+            gpu, output, activated, fc2_w, fc2_b, rows, S->merge_dim,
+            S->output_width), "Qwen vision merger output", error, error_size) ||
         !gpu_op(gpu, h3_gpu_submit(gpu), "submit Qwen vision merger",
                 error, error_size)) {
         free_tensor(&output);
@@ -459,32 +469,39 @@ int h3_vision_encode_bf16(const char *weight_directory,
         return 0;
     }
     h3_gpu_profile_set_label(gpu, "Qwen vision encoder");
+    vision_shape shape;
+    const vision_shape *S = &shape;
+    if (!read_vision_shape(weights, &shape, error, error_size)) {
+        h3_gpu_free(gpu);
+        h3_weight_store_free(weights);
+        return 0;
+    }
 
     size_t patch_elements = (size_t)rows * PATCH_DIM;
-    size_t hidden_elements = (size_t)rows * VISION_HIDDEN;
+    size_t hidden_elements = (size_t)rows * S->hidden;
     uint16_t *patch_data = malloc(patch_elements * sizeof(*patch_data));
     uint16_t *position_table = malloc(
-        (size_t)POSITION_COUNT * VISION_HIDDEN * sizeof(*position_table));
+        (size_t)POSITION_COUNT * S->hidden * sizeof(*position_table));
     uint16_t *position_data = malloc(hidden_elements * sizeof(*position_data));
     uint16_t *rope_cos_data = malloc(
-        (size_t)rows * VISION_ROPE_HALF * sizeof(*rope_cos_data));
+        (size_t)rows * S->rope_half * sizeof(*rope_cos_data));
     uint16_t *rope_sin_data = malloc(
-        (size_t)rows * VISION_ROPE_HALF * sizeof(*rope_sin_data));
+        (size_t)rows * S->rope_half * sizeof(*rope_sin_data));
     h3_gpu_tensor *position_weight = bf2(weights, gpu,
-        "model.visual.pos_embed.weight", POSITION_COUNT, VISION_HIDDEN,
+        "model.visual.pos_embed.weight", POSITION_COUNT, S->hidden,
         error, error_size);
     if (!patch_data || !position_table || !position_data || !rope_cos_data ||
         !rope_sin_data || !position_weight ||
         !h3_gpu_tensor_read_bf16(position_weight, position_table,
-                                 (size_t)POSITION_COUNT * VISION_HIDDEN) ||
+                                 (size_t)POSITION_COUNT * S->hidden) ||
         !prepare_patch_rows(pixels, frames, height, width, patch_data) ||
-        !prepare_position_rows(position_table, (int)grid_h, (int)grid_w,
+        !prepare_position_rows(S, position_table, (int)grid_h, (int)grid_w,
                                position_data)) {
         if (!error || !*error)
             fail(error, error_size, "cannot prepare Qwen vision patch inputs");
         goto failed;
     }
-    prepare_rope((int)grid_h, (int)grid_w, rope_cos_data, rope_sin_data);
+    prepare_rope(S, (int)grid_h, (int)grid_w, rope_cos_data, rope_sin_data);
     free(position_table); position_table = NULL;
     free_tensor(&position_weight);
 
@@ -493,19 +510,19 @@ int h3_vision_encode_bf16(const char *weight_directory,
     h3_gpu_tensor *position = h3_gpu_tensor_from_bf16(
         gpu, position_data, hidden_elements);
     h3_gpu_tensor *rope_cos = h3_gpu_tensor_from_bf16(
-        gpu, rope_cos_data, (size_t)rows * VISION_ROPE_HALF);
+        gpu, rope_cos_data, (size_t)rows * S->rope_half);
     h3_gpu_tensor *rope_sin = h3_gpu_tensor_from_bf16(
-        gpu, rope_sin_data, (size_t)rows * VISION_ROPE_HALF);
+        gpu, rope_sin_data, (size_t)rows * S->rope_half);
     free(patch_data); patch_data = NULL;
     free(position_data); position_data = NULL;
     free(rope_cos_data); rope_cos_data = NULL;
     free(rope_sin_data); rope_sin_data = NULL;
-    uint64_t patch_shape[] = {VISION_HIDDEN, 3, TEMPORAL_PATCH, PATCH, PATCH};
+    uint64_t patch_shape[] = {S->hidden, 3, TEMPORAL_PATCH, PATCH, PATCH};
     h3_gpu_tensor *patch_w = bf5(weights, gpu,
         "model.visual.patch_embed.proj.weight", patch_shape,
         error, error_size);
     h3_gpu_tensor *patch_b = bf1(weights, gpu,
-        "model.visual.patch_embed.proj.bias", VISION_HIDDEN,
+        "model.visual.patch_embed.proj.bias", S->hidden,
         error, error_size);
     h3_gpu_tensor *hidden = h3_gpu_tensor_new_bf16(gpu, hidden_elements);
     if (!patches || !position || !rope_cos || !rope_sin || !patch_w ||
@@ -514,9 +531,9 @@ int h3_vision_encode_bf16(const char *weight_directory,
                 error, error_size) ||
         !gpu_op(gpu, h3_gpu_linear_bf16(
             gpu, hidden, patches, patch_w, patch_b, rows, PATCH_DIM,
-            VISION_HIDDEN), "Qwen vision patch embed", error, error_size) ||
+            S->hidden), "Qwen vision patch embed", error, error_size) ||
         !gpu_op(gpu, h3_gpu_add_bf16(
-            gpu, hidden, hidden, position, rows * VISION_HIDDEN),
+            gpu, hidden, hidden, position, rows * S->hidden),
             "Qwen vision position add", error, error_size) ||
         !gpu_op(gpu, h3_gpu_submit(gpu), "submit Qwen vision patch embed",
                 error, error_size)) {
@@ -542,9 +559,9 @@ int h3_vision_encode_bf16(const char *weight_directory,
     h3_gpu_tensor *heads = h3_gpu_tensor_new_bf16(gpu, hidden_elements);
     h3_gpu_tensor *branch = h3_gpu_tensor_new_bf16(gpu, hidden_elements);
     h3_gpu_tensor *fc1 = h3_gpu_tensor_new_bf16(
-        gpu, (size_t)rows * VISION_INTERMEDIATE);
+        gpu, (size_t)rows * S->intermediate);
     h3_gpu_tensor *activated = h3_gpu_tensor_new_bf16(
-        gpu, (size_t)rows * VISION_INTERMEDIATE);
+        gpu, (size_t)rows * S->intermediate);
     h3_gpu_tensor *deepstack[H3_VISION_DEEPSTACKS] = {NULL, NULL, NULL};
     h3_gpu_tensor *merged = NULL;
     int ok = norm && qkv && query && key && value && heads && branch && fc1 &&
@@ -555,11 +572,11 @@ int h3_vision_encode_bf16(const char *weight_directory,
         goto tower_cleanup;
     }
 
-    for (int layer = 0; layer < VISION_LAYERS && ok; layer++) {
+    for (int layer = 0; layer < (int)S->layers && ok; layer++) {
         vision_block_weights block;
-        ok = load_block_weights(weights, gpu, layer, &block,
+        ok = load_block_weights(S, weights, gpu, layer, &block,
                                 error, error_size);
-        if (ok) ok = run_block(gpu, &block, rows, hidden, norm, qkv,
+        if (ok) ok = run_block(S, gpu, &block, rows, hidden, norm, qkv,
             query, key, value, heads, branch, fc1, activated,
             rope_cos, rope_sin, error, error_size);
         free_block_weights(&block);
@@ -569,27 +586,29 @@ int h3_vision_encode_bf16(const char *weight_directory,
             snprintf(label, sizeof(label), "block %d", layer);
             debug_tensor(label, hidden, hidden_elements);
         }
-        if (progress) progress(layer + 1, VISION_LAYERS, progress_opaque);
-        if (layer == 8 || layer == 16 || layer == 24) {
-            int index = layer == 8 ? 0 : layer == 16 ? 1 : 2;
-            deepstack[index] = run_merger(weights, gpu, hidden, rows, 1,
+        if (progress) progress(layer + 1, (int)S->layers, progress_opaque);
+        int index = -1;
+        for (unsigned each = 0; each < H3_VISION_DEEPSTACKS; each++)
+            if (S->deepstack[each] == layer) index = (int)each;
+        if (index >= 0) {
+            deepstack[index] = run_merger(S, weights, gpu, hidden, rows, 1,
                                            index, error, error_size);
             ok = deepstack[index] != NULL;
             if (ok) {
                 char label[64];
                 snprintf(label, sizeof(label), "deepstack %d", index);
                 debug_tensor(label, deepstack[index],
-                             (size_t)merged_rows * OUTPUT_WIDTH);
+                             (size_t)merged_rows * S->output_width);
             }
         }
     }
     merged = ok ? run_merger(
-        weights, gpu, hidden, rows, 0, 0, error, error_size) : NULL;
+        S, weights, gpu, hidden, rows, 0, 0, error, error_size) : NULL;
     if (!merged) ok = 0;
     if (merged) debug_tensor("final merger", merged,
-                             (size_t)merged_rows * OUTPUT_WIDTH);
+                             (size_t)merged_rows * S->output_width);
     if (ok) {
-        size_t output_elements = (size_t)merged_rows * OUTPUT_WIDTH;
+        size_t output_elements = (size_t)merged_rows * S->output_width;
         output->merged = malloc(output_elements * sizeof(*output->merged));
         for (unsigned index = 0; index < H3_VISION_DEEPSTACKS; index++)
             output->deepstack[index] = malloc(
@@ -608,6 +627,7 @@ int h3_vision_encode_bf16(const char *weight_directory,
             output->grid_h = (int)grid_h;
             output->grid_w = (int)grid_w;
             output->tokens = merged_rows;
+            output->width = S->output_width;
         }
     }
 tower_cleanup:
@@ -631,4 +651,51 @@ failed:
     h3_gpu_free(gpu);
     h3_weight_store_free(weights);
     return 0;
+}
+
+static int read_vision_shape(const h3_weight_store *store, vision_shape *S,
+                             char *error, size_t error_size) {
+    memset(S, 0, sizeof(*S));
+    /* The bias: a GGUF projector splits the 5D weight in two. */
+    const h3_st_tensor *patch = h3_weight_find(
+        store, "model.visual.patch_embed.proj.bias", NULL);
+    const h3_st_tensor *fc1 = h3_weight_find(
+        store, "model.visual.blocks.0.mlp.linear_fc1.weight", NULL);
+    const h3_st_tensor *out = h3_weight_find(
+        store, "model.visual.merger.linear_fc2.weight", NULL);
+    if (!patch || !fc1 || !out || patch->ndim != 1 || fc1->ndim != 2 ||
+        out->ndim != 2) {
+        fail(error, error_size, "the text encoder has no Qwen vision tower");
+        return 0;
+    }
+    uint64_t hidden = patch->shape[0];
+    if (hidden % VISION_HEADS || hidden / VISION_HEADS % 2 || hidden > 4096 ||
+        fc1->shape[1] != hidden || out->shape[1] != hidden * MERGE * MERGE) {
+        fail(error, error_size, "the Qwen vision tower has an unsupported shape");
+        return 0;
+    }
+    unsigned layers = 0;
+    for (; layers < 64; layers++) {
+        char name[96];
+        snprintf(name, sizeof(name), "model.visual.blocks.%u.norm1.weight", layers);
+        if (!h3_weight_find(store, name, NULL)) break;
+    }
+    /* deepstack_visual_indexes of the released configs. */
+    static const int deepstack_32b[] = {8, 16, 24}, deepstack_4b[] = {5, 11, 17};
+    const int *deepstack = layers == 27 ? deepstack_32b :
+                           layers == 24 ? deepstack_4b : NULL;
+    if (!deepstack) {
+        fail(error, error_size, "a Qwen vision tower of %u blocks is not one "
+             "of the released ones (27 or 24)", layers);
+        return 0;
+    }
+    S->hidden = (uint32_t)hidden;
+    S->intermediate = (uint32_t)fc1->shape[0];
+    S->layers = layers;
+    S->head_dim = (uint32_t)hidden / VISION_HEADS;
+    S->rope_half = S->head_dim / 2;
+    S->merge_dim = (uint32_t)hidden * MERGE * MERGE;
+    S->output_width = (uint32_t)out->shape[0];
+    memcpy(S->deepstack, deepstack, sizeof(S->deepstack));
+    return 1;
 }

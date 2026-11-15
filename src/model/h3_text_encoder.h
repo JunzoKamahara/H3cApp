@@ -26,6 +26,9 @@ typedef struct {
     size_t tokens;
     const uint16_t *embeddings;
     const uint16_t *deepstack[3];
+    /* Values per embedding row; 0 is H3's 5120. Must be the language
+     * model's width. */
+    size_t width;
 } h3_text_vision_span;
 
 /* Run the released first 50 Qwen3-VL language layers. The caller owns the

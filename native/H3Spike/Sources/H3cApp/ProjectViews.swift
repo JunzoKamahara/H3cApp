@@ -707,7 +707,7 @@ struct ProjectVideosSheet: View {
                     viewModel.editImage(image)
                     isPresented = false
                 }
-                .disabled(viewModel.isGenerating)
+                .disabled(viewModel.isGenerating || !viewModel.imageModelCanEdit)
                 ImageHandoffButtons(viewModel: viewModel, image: image) { isPresented = false }
                 Button("設定を戻す") {
                     viewModel.restoreProjectImage(image)

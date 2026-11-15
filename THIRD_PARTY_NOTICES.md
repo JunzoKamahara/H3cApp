@@ -309,6 +309,64 @@ download, marks every generated image as AI-generated in its metadata
 conditions apply to a use is the user's judgement; the app records facts
 and labels nothing "commercial".
 
+## P-H3-Image (a still-image model by Pruna AI; no weights bundled)
+
+H3cApp can also make still images with P-H3-Image by Pruna AI
+([PrunaAI/P-H3-Image](https://huggingface.co/PrunaAI/P-H3-Image)), which is
+MiniMax H3's audio-video DiT with Pruna AI's image LoRA merged in, run on one
+latent frame and two audio latents, a fine-tuned Qwen3-VL-4B text encoder
+with a text connector, and a single-frame version of MiniMax H3's video VAE
+decoder. The engine runs it with its own C/Metal code: the text encoder's
+shape and the connector in `src/model/h3_text_encoder.c`, the decoder's
+three-axis RoPE at a fixed time in `src/model/h3_image_vae.c`, and the
+sampling and edits in `src/core/h3_image.c` (its vision tower through
+`src/model/h3_vision_encoder.c`). What the connector reads (hidden states
+13, 19, 25, 31 and the final normed one, concatenated, standardized,
+projected and destandardized, the first row replaced by a sink embedding),
+the decoder's time coordinate, the eight-step sigma grid, the packed
+layout, and how an edit is presented and sized (`<Picture n>: ` labels,
+"Edit <Picture 1>. " in front of the instruction, references within 1 to 8
+megapixels, the vision tower at about a megapixel) were taken from diffusers' P-H3-Image pipeline
+([huggingface/diffusers](https://github.com/huggingface/diffusers) at
+`43e30028`, `src/diffusers/models/condition_embedders/condition_embedder_p_h3_image.py`,
+`src/diffusers/models/autoencoders/autoencoder_kl_p_h3_image.py`,
+`src/diffusers/modular_pipelines/p_h3_image/`; Apache-2.0, Copyright 2026
+Pruna AI and The HuggingFace Team) and from ComfyUI (GPL-3.0; read, not
+copied). The PyTorch scripts in `tools/image_phase8` that the engine is
+checked against were written from those sources; they are tools, not part
+of the app. No code from those projects ships in the app.
+
+The weights are **not bundled**. The app downloads, after the user has read
+the license notice in its setup sheet:
+
+- from [PrunaAI/P-H3-Image-Comfy](https://huggingface.co/PrunaAI/P-H3-Image-Comfy)
+  at revision `44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543` (2026-11-03): the
+  int8 + ConvRot DiT (SHA-256
+  `b156fd4fe9d169e58cb2b07f9594ec740ff8f0e052d62b009e6dd034de5865e7`), the
+  bf16 text encoder (SHA-256
+  `ae0c83cb35207dcc0a81361768094a5d1e3f92d1a95b8ff75a0328dfefbbc3d8`), the
+  bf16 VAE (SHA-256
+  `a1f2a7a98d0f2d1e761656fc5701dd43d7cf46d1bbdaa5d866a3e961e97487d7`), and
+  that repository's `LICENSE`, `LICENSE-APACHE` and `NOTICE`, saved beside
+  the weights;
+- from PrunaAI/P-H3-Image at revision
+  `7f98acef503cf2bcfba821a78cb1cf1a9928b2df`: `vae/config.json` and
+  `tokenizer/tokenizer.json`.
+
+Its `LICENSE` is the MiniMax H3 Community License Agreement, byte for byte
+the video model's (see above): the Excluded Territories (the European
+Union, the United Kingdom, the Republic of Korea and the United States of
+America), a prior written authorization above 20 million USD of yearly
+revenue, "Powered by MiniMax H3" on products and services built with it,
+the use restrictions of its Section V and Exhibit A, and disclosure of
+machine-generated content. The parts of the text encoder that come from
+Qwen3-VL-4B (Qwen team) are under the Apache License 2.0, as its `NOTICE`
+says ("p-h3-image for ComfyUI, Copyright 2026 Pruna AI ... The files in this
+repository were modified by Pruna AI"). The app marks every image it makes
+as AI-generated in its metadata (`AISystemUsed` "P-H3-Image") and records
+the model in each image's record. P-H3-Image's prompt upsampler (Qwen3.5-9B)
+is not used or downloaded.
+
 ## RefMod file format (ComfyUI-MiniMaxH3Mod)
 
 The RefMod files the app reads and writes (`h3_refmod.c`) follow the format

@@ -736,7 +736,8 @@ extension GenerationViewModel {
     /// open project (an untitled one is started when none is open).
     /// "image_size" is "<width>x<height>" (multiples of 32) or a preset name
     /// ("square-standard", "landscape-large", ...); default the form's.
-    /// "references" makes it an edit: up to 16 pictures - image files by
+    /// "references" makes it an edit: up to the model's limit (16, P-H3-Image
+    /// 8) of pictures - image files by
     /// path, or images of the open project by the name GET /api/project
     /// lists - which the prompt calls <Picture 1>, <Picture 2>, ... in that
     /// order. Without it the image is made from the prompt alone.
@@ -782,8 +783,8 @@ extension GenerationViewModel {
         }
         var references: [String] = []
         if let value = json["references"] {
-            guard let list = value as? [String], list.count <= H3ImageEngine.maxReferences else {
-                return .error(400, "\"references\" must be an array of up to \(H3ImageEngine.maxReferences) image paths or project image names")
+            guard let list = value as? [String], list.count <= imageReferenceLimit else {
+                return .error(400, "\"references\" must be an array of up to \(imageReferenceLimit) image paths or project image names")
             }
             for item in list {
                 if let image = projectImages.first(where: { $0.url.lastPathComponent == item }) {
@@ -838,47 +839,59 @@ extension GenerationViewModel {
     /// /api/image-models/add {"path", "name"?} lists one (after checking it)
     /// and makes it the active one.
     private func handleImageModelsRequest(_ request: HTTPRequest) -> HTTPResponse {
-        let setup = H3ImageModelSetup.shared
+        // Which model a setup call is about: {"model": "ph3"} for P-H3-Image,
+        // MiniMax H3 Image otherwise.
+        let body = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+        let chosen = (body["model"] as? String) == H3ImageModel.ph3.id ? H3ImageModel.ph3 : H3ImageModel.h3
+        let setup = H3ImageModelSetup.of(chosen)
         if request.path == "/api/image-models/setup/cancel" {
             guard setup.isBusy else { return .error(409, "the image model is not being set up") }
             setup.cancel()
         } else if request.path == "/api/image-models/setup" {
             // The same chain as the sheet's button: {"confirm_license": true}
             // says the caller has read what the license asks.
-            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
-            guard (json["confirm_license"] as? NSNumber)?.boolValue == true else {
-                return .error(400, "\"confirm_license\": true is required: the \(H3ImageModel.licenseName) applies (\(H3ImageModel.licenseURL.absoluteString)); it excludes the EU, the UK, the Republic of Korea and the USA, also for the images made")
+            guard (body["confirm_license"] as? NSNumber)?.boolValue == true else {
+                return .error(400, chosen.kind == .ph3
+                    ? "\"confirm_license\": true is required: the \(chosen.licenseName) applies (\(chosen.licenseURL.absoluteString)); it excludes the EU, the UK, the Republic of Korea and the USA, and products using it show \"Powered by MiniMax H3\""
+                    : "\"confirm_license\": true is required: the \(chosen.licenseName) applies (\(chosen.licenseURL.absoluteString)); it excludes the EU, the UK, the Republic of Korea and the USA, also for the images made")
             }
             guard !setup.isBusy else { return .error(409, "the image model is already being set up") }
             setup.start(videoModelPaths: ([library.activeModel].compactMap { $0 } + library.models).map(\.path))
         } else if request.method == "POST" {
-            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
-            guard let path = json["path"] as? String else { return .error(400, "\"path\" is required") }
+            guard let path = body["path"] as? String else { return .error(400, "\"path\" is required") }
             projectMessage = nil
-            if let reason = addImageModel(at: path, name: json["name"] as? String) {
+            if let reason = addImageModel(at: path, name: body["name"] as? String) {
                 projectMessage = nil
                 return .error(400, reason)
             }
+        }
+        func describe(_ model: H3ImageModel) -> [String: Any] {
+            let setup = H3ImageModelSetup.of(model)
+            return [
+                "model": model.id,
+                "name": model.displayName,
+                "phase": setup.phase.apiText,
+                "directory": model.directory,
+                "installed": model.complete,
+                "verified": model.verified,
+                "repo": model.weightsRepo,
+                "revision": model.weightsRevision,
+                "license": model.licenseName,
+                "license_url": model.licenseURL.absoluteString,
+                "download_bytes": model.downloadBytes,
+                "downloaded_bytes": setup.downloader.downloadedBytes,
+                "total_bytes": setup.downloader.totalBytes,
+            ]
         }
         return .json(200, [
             "models": library.imageModels.map { model -> [String: Any] in
                 ["id": model.id.uuidString, "name": model.name, "path": model.path,
                  "active": model.id == library.activeImageModelID]
             },
-            // The model the app downloads itself (POST /api/image-models/setup).
-            "setup": [
-                "phase": setup.phase.apiText,
-                "directory": H3ImageModel.directory,
-                "installed": H3ImageModel.complete,
-                "verified": H3ImageModel.verified,
-                "repo": H3ImageModel.weightsRepo,
-                "revision": H3ImageModel.weightsRevision,
-                "license": H3ImageModel.licenseName,
-                "license_url": H3ImageModel.licenseURL.absoluteString,
-                "download_bytes": H3ImageModel.downloadBytes,
-                "downloaded_bytes": setup.downloader.downloadedBytes,
-                "total_bytes": setup.downloader.totalBytes,
-            ] as [String: Any],
+            // The models the app downloads itself (POST /api/image-models/setup,
+            // {"model": "ph3"} for P-H3-Image); "setup" is MiniMax H3 Image's.
+            "setup": describe(.h3),
+            "setups": H3ImageModel.all.map(describe),
         ])
     }
 
@@ -933,10 +946,12 @@ extension GenerationViewModel {
                 if !addImageAsReference(image) {
                     return .json(200, ["ok": true, "warning": "the active model has no Ref2VA: add it before generating with references (POST /api/models/add_ref2va)"])
                 }
+            case let kind? where (kind == "edit" || kind == "edit_reference") && !imageModelCanEdit:
+                return .error(409, "the image model in use (\(activeImageEngine()?.modelName ?? "")) cannot edit pictures yet")
             case "edit"?: editImage(image)
             case "edit_reference"?:
-                guard imageEditReferences.count < H3ImageEngine.maxReferences else {
-                    return .error(400, "an edit takes at most \(H3ImageEngine.maxReferences) references")
+                guard imageEditReferences.count < imageReferenceLimit else {
+                    return .error(400, "an edit takes at most \(imageReferenceLimit) references")
                 }
                 addImageAsEditReference(image)
             default:
