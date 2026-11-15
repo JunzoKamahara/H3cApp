@@ -1131,6 +1131,16 @@ extension GenerationViewModel {
         guard !isGenerating else { return .error(409, "a generation is already running") }
         // This request makes a video, whatever the window's composer shows.
         generationKind = .video
+        // "frame_latents": false encodes the first/last frame images even
+        // when they are generated images of the clip's size; true uses
+        // their latents; absent follows the app's setting.
+        frameLatentsOverride = nil
+        if let value = json["frame_latents"] {
+            guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+                return .error(400, "\"frame_latents\" must be true or false")
+            }
+            frameLatentsOverride = number.boolValue
+        }
         // "from_form": true generates from the form as it is (e.g. a
         // project's saved form) instead of replacing it from this body.
         if let value = json["from_form"] {
@@ -1138,7 +1148,7 @@ extension GenerationViewModel {
                 return .error(400, "\"from_form\" must be true or false")
             }
             if number.boolValue {
-                let extra = Set(json.keys).subtracting(["from_form", "count", "kind"])
+                let extra = Set(json.keys).subtracting(["from_form", "count", "kind", "frame_latents"])
                 guard extra.isEmpty else {
                     return .error(400, "\"from_form\" can't be combined with \(extra.sorted().joined(separator: ", "))")
                 }

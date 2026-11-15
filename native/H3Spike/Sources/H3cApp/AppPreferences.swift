@@ -16,6 +16,18 @@ final class AppPreferences: ObservableObject {
         UserDefaults.standard.object(forKey: "h3c-app.useAdaLNCurve") as? Bool ?? true {
         didSet { UserDefaults.standard.set(useAdaLNCurve, forKey: "h3c-app.useAdaLNCurve") }
     }
+    /// A first or last frame that is a generated image of the clip's own
+    /// size conditions the clip by the latent it was generated as, instead
+    /// of being encoded by the VAE again (H3GenerationParams.
+    /// firstFrameLatent). Off unless turned on: measured on 768x768 clips
+    /// (plans/IMAGE_PLAN.ja.md, appendix E), it saves the ~6 s encode - less
+    /// than one run differs from the next - and the first frame comes out
+    /// no closer to the image than when the image is encoded. No control
+    /// in the app sets it; the API's "frame_latents" does per request.
+    @Published var useImageLatents: Bool =
+        UserDefaults.standard.object(forKey: "h3c-app.useImageLatents") as? Bool ?? false {
+        didSet { UserDefaults.standard.set(useImageLatents, forKey: "h3c-app.useImageLatents") }
+    }
     /// 途中の様子: show what the video is turning into while it denoises
     /// (DenoisePreview.swift). Off until turned on, since it needs the
     /// 22.7 MB decoder downloaded first.

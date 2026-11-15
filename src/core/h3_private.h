@@ -164,6 +164,12 @@ int h3_pooled_video_encode(const char *vae_path, const float *pixels,
                                   h3_video_encoder_progress progress,
                                   void *opaque, h3_video_latent *latent,
                                   char *error, size_t error_size);
+/* A frame's own latent in place of encoding its image (h3_params.
+ * first_frame_latent): reads "latent" F32 [24, latent_h, latent_w] of the
+ * H3 VAE's normalized latent space into values. Returns 0 with the reason
+ * when the file is not that - the caller then encodes the image. */
+int h3_frame_latent_load(const char *path, int latent_h, int latent_w,
+                         float *values, char *reason, size_t reason_size);
 int h3_pooled_audio_encode(const char *audio_vae_path,
                                   const float *pcm, int samples,
                                   h3_audio_vae_progress progress, void *opaque,

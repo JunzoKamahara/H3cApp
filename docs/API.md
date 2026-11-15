@@ -109,6 +109,7 @@ language should read the file and set the header in its own code.
 | `fast_attention` | `false` | `true` for [fast mode](TECHNICAL.md#fast-mode-experimental); `400` where it isn't available. |
 | `seed` | random | 0–18446744073709551615, as a number or a decimal string (a string keeps a large seed exact for clients whose JSON numbers are doubles). |
 | `first_frame_path` / `last_frame_path` | none | FL2VA anchors; cannot combine with `reference_paths`. |
+| `frame_latents` | `false` | `true` conditions the clip by the latent a first/last frame image was generated as, instead of encoding the image again - only for an image generated here (or its copy in the project's `references`) whose size is exactly the clip's generated canvas; any other frame is encoded as usual. It skips the VAE encode (about 6 s at 768x768) and does not make the first frame closer to the image; experimental. |
 | `seconds` / `chained` / `chain_clip_seconds` | `5` / `false` / `7` | 1-15 s are made in one generation; 16-90 s (or 15 with `"chained": true`) by joined generation, from clips of 5 or 7 s, into one joined video. A joined length needs an open project and `count` 1. |
 | `clip_prompts` | none | Joined generation only: an array of strings, one per clip in order, each added after `prompt` for that clip (an empty string or a missing entry uses `prompt` alone). |
 | `clip_references` | none | Joined generation with reference images only: an array of true/false, one per clip in order, whether that clip uses the reference images (missing entries do). |

@@ -263,6 +263,9 @@ $(BIN)/h3_plan_tests: $(OBJ)/test_plan.o $(LIB_OBJ)
 $(BIN)/h3_model_family_tests: $(OBJ)/test_model_family.o $(CORE_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+$(BIN)/h3_frame_latent_tests: $(OBJ)/test_frame_latent.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 $(BIN)/h3_refmod_tests: $(OBJ)/test_refmod.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
@@ -310,6 +313,9 @@ $(BIN)/h3_image_dit_check: $(OBJ)/image_dit_check.o $(LIB_OBJ)
 $(BIN)/h3_image_cli: $(OBJ)/h3_image_cli.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+$(BIN)/h3_image_latent_reencode: $(OBJ)/image_latent_reencode.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 $(BIN)/h3_semantic_dit_test: $(OBJ)/test_semantic_dit.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
@@ -348,7 +354,7 @@ $(BIN)/h3_semantic_vae_test: $(OBJ)/test_semantic_vae.o $(LIB_OBJ)
 test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_extract_tests h3_vsr_tests h3_vsr_cache_tests h3_vsr_reae_tests h3_vsr_wan_tests h3_vsr_session_tests h3_vsr_tapconv_tests h3_real_vsr_test h3_gguf_header_tests h3_quant_tests h3_metal_tests h3_bf16_tests h3_tokenizer_tests h3_text_tests \
 	h3_audio_gpu_tests h3_determinism_tests h3_real_audio_vae_test \
 	h3_real_audio_encoder_test h3_real_video_encoder_test \
-	h3_video_encoder_chunks_test h3_plan_tests h3_model_family_tests h3_refmod_tests h3_real_refmod_test \
+	h3_video_encoder_chunks_test h3_plan_tests h3_model_family_tests h3_frame_latent_tests h3_refmod_tests h3_real_refmod_test \
 	h3_real_qwen_vision_test h3_real_multimodal_text_test \
 	h3_real_ref_video_text_test h3_hyperflow_tests h3_hyperflow_real_tests
 
@@ -420,6 +426,7 @@ test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_
 	$(BIN)/h3_plan_tests
 	$(BIN)/h3_model_family_tests
 	python3 tools/check_options.py
+	$(BIN)/h3_frame_latent_tests
 	$(BIN)/h3_refmod_tests
 	@if test -f MiniMax-H3/Ref2VA/video_vae/source/model.safetensors; then \
 		$(BIN)/h3_real_refmod_test; \
@@ -492,9 +499,9 @@ PROGRAMS := h3_options h3_model_family_tests build_attention_cache build_vsr_cac
 	h3_lora_extract_tests h3_seedvr2_cli h3_tokenizer_tests h3_text_tests \
 	h3_audio_gpu_tests h3_quant_tests h3_gguf_header_tests h3_determinism_tests \
 	h3_repro_check h3_real_audio_vae_test h3_real_audio_encoder_test h3_real_video_encoder_test \
-	h3_video_encoder_chunks_test h3_plan_tests h3_refmod_tests h3_real_refmod_test \
+	h3_video_encoder_chunks_test h3_plan_tests h3_frame_latent_tests h3_refmod_tests h3_real_refmod_test \
 	h3_real_qwen_vision_test h3_real_multimodal_text_test h3_real_ref_video_text_test h3_real_prompt_test \
-	h3_real_dit_block_test h3_real_dit_schedule_test h3_real_dit_test h3_image_dit_probe h3_image_text_embed h3_image_vae_check h3_image_dit_check h3_image_cli h3_semantic_dit_test \
+	h3_real_dit_block_test h3_real_dit_schedule_test h3_real_dit_test h3_image_dit_probe h3_image_text_embed h3_image_vae_check h3_image_dit_check h3_image_cli h3_image_latent_reencode h3_semantic_dit_test \
 	h3_dit_bench h3_dit_bench_864 h3_real_video_vae_test h3_real_vsr_test \
 	h3_vsr_bench h3_int8_bench h3_vsr_run h3_semantic_vae_test
 .PHONY: $(PROGRAMS)

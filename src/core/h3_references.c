@@ -236,6 +236,50 @@ int h3_pooled_video_encode(const char *vae_path, const float *pixels,
     return ok;
 }
 
+int h3_frame_latent_load(const char *path, int latent_h, int latent_w,
+                         float *values, char *reason, size_t reason_size) {
+    h3_st_header header;
+    char detail[256] = "";
+    if (!h3_st_read_header(path, &header, detail, sizeof(detail))) {
+        snprintf(reason, reason_size, "%s", detail);
+        return 0;
+    }
+    int ok = 0;
+    const h3_st_tensor *tensor = h3_st_find(&header, "latent");
+    const char *space = h3_st_metadata(&header, "latent_space");
+    const char *normalization = h3_st_metadata(&header, "normalization");
+    size_t count = (size_t)24 * (size_t)latent_h * (size_t)latent_w;
+    if (!tensor || tensor->dtype != H3_DTYPE_F32 || tensor->ndim != 3 ||
+        tensor->shape[0] != 24) {
+        snprintf(reason, reason_size, "it holds no F32 latent of 24 channels");
+    } else if (!space || strcmp(space, "minimax-h3-vae-24ch-16x") ||
+               !normalization || strcmp(normalization, "latents_mean_std")) {
+        /* Another VAE's latents, or ones stored another way, would look
+         * like valid numbers. */
+        snprintf(reason, reason_size, "it does not say it is a normalized "
+                 "latent of the H3 VAE");
+    } else if (tensor->shape[1] != (uint64_t)latent_h ||
+               tensor->shape[2] != (uint64_t)latent_w) {
+        snprintf(reason, reason_size, "it is %llux%llu, the clip's canvas "
+                 "%dx%d", (unsigned long long)tensor->shape[2],
+                 (unsigned long long)tensor->shape[1], latent_w, latent_h);
+    } else if (!h3_st_read_data(&header, tensor, values,
+                                count * sizeof(*values), detail,
+                                sizeof(detail))) {
+        snprintf(reason, reason_size, "%s", detail);
+    } else {
+        ok = 1;
+        for (size_t index = 0; index < count; index++)
+            if (!isfinite(values[index])) {
+                snprintf(reason, reason_size, "it holds non-finite values");
+                ok = 0;
+                break;
+            }
+    }
+    h3_st_free_header(&header);
+    return ok;
+}
+
 int h3_pooled_audio_encode(const char *audio_vae_path,
                                   const float *pcm, int samples,
                                   h3_audio_vae_progress progress, void *opaque,

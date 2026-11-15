@@ -145,6 +145,16 @@ typedef struct {
     float video_quality;
     const char *first_frame;
     const char *last_frame;
+    /* The latent a first/last frame image was generated as (a safetensors
+     * file with "latent" F32 [24, height/16, width/16], normalized, as
+     * h3_image_generate leaves it and the app keeps it next to the PNG).
+     * When its size is the clip's latent canvas it conditions the clip as
+     * it is, in place of encoding the image with the VAE; otherwise - a
+     * different size, an unreadable or foreign file - the image is encoded
+     * as usual. The image itself is still needed (the vision encoder reads
+     * its pixels). NULL: none. */
+    const char *first_frame_latent;
+    const char *last_frame_latent;
     const h3_reference *references;
     size_t reference_count;
     h3_reference_image_size reference_image_size;

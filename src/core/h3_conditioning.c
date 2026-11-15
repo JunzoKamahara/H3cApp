@@ -385,7 +385,11 @@ char *h3_conditioning_key(const char *prompt, const h3_params *params,
                        render_width, render_height, params->frames,
                        params->reference_image_size) ||
         !h3_key_file(&key, "first", params->first_frame) ||
-        !h3_key_file(&key, "last", params->last_frame)) goto failed;
+        !h3_key_file(&key, "last", params->last_frame) ||
+        /* A frame conditioned by its own latent is another conditioning
+         * than the same image encoded. */
+        !h3_key_file(&key, "first-latent", params->first_frame_latent) ||
+        !h3_key_file(&key, "last-latent", params->last_frame_latent)) goto failed;
     if (params->continue_latent_path &&
         (!h3_key_append(&key, "|continue=%d:%d:%d", params->continue_frames,
                         params->continue_audio_frames,

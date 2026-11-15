@@ -201,6 +201,12 @@ public struct H3GenerationParams: Sendable {
     public var tokenReduction = false
     public var firstFrame: String?
     public var lastFrame: String?
+    /// The latent the first/last frame image was generated as (a
+    /// .latent.safetensors next to a project image): conditions the clip
+    /// as it is when its size is the clip's canvas (h3_params.
+    /// first_frame_latent); the engine encodes the image otherwise.
+    public var firstFrameLatent: String?
+    public var lastFrameLatent: String?
     public var references: [H3ReferenceInput] = []
     // libh3.a reads this from the environment rather than h3_params (see
     // H3_ATTENTION_CACHE in h3_dit.c), so H3Engine sets it just before each
@@ -734,7 +740,11 @@ public final class H3Engine: @unchecked Sendable {
                                     withOptionalCString(params.saveLatentPath) { saveLatentC in
                                     withOptionalCString(params.continueLatentPath) { continueLatentC in
                                     withOptionalCString(params.initialLatentPath) { initialLatentC in
+                                    withOptionalCString(params.firstFrameLatent) { firstLatentC in
+                                    withOptionalCString(params.lastFrameLatent) { lastLatentC in
                                     params.videoSigmas.withUnsafeBufferPointer { sigmas in
+                                        cParams.first_frame_latent = firstLatentC
+                                        cParams.last_frame_latent = lastLatentC
                                         cParams.initial_latent_path = initialLatentC
                                         cParams.video_sigmas = sigmas.isEmpty ? nil : sigmas.baseAddress
                                         cParams.video_sigma_count = Int32(sigmas.count)
@@ -749,6 +759,8 @@ public final class H3Engine: @unchecked Sendable {
                                         cParams.loras = loraBuffer.baseAddress
                                         cParams.lora_count = loraBuffer.count
                                         return h3_generate(ctx, promptC, &cParams)
+                                    }
+                                    }
                                     }
                                     }
                                     }

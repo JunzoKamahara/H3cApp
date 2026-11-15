@@ -454,6 +454,25 @@ extension ProjectFiles {
         return try? handle.readToEnd()
     }
 
+    /// The latent to condition a clip of this canvas with, for a frame
+    /// image that is a generated image (or a copy of one in references/)
+    /// of exactly that size: the .latent.safetensors next to it, when its
+    /// record describes a latent of this latent space and grid. nil
+    /// otherwise - the image is then encoded.
+    static func frameLatent(forImage path: String, canvasWidth: Int32, canvasHeight: Int32) -> String? {
+        let url = URL(fileURLWithPath: path)
+        guard url.pathExtension.lowercased() == "png",
+              let data = regularFileData(imageRecordURL(for: url), limit: 1 << 20),
+              let record = try? decoder.decode(ProjectImageRecord.self, from: data),
+              record.image == url.lastPathComponent, let latent = record.latent,
+              record.width == Int(canvasWidth), record.height == Int(canvasHeight),
+              latent.width * 16 == record.width, latent.height * 16 == record.height,
+              latent.channels == 24, latent.spaceID == imageLatentSpaceID,
+              latent.normalization == imageLatentNormalization, latent.dtype == "F32" else { return nil }
+        let file = imageLatentURL(for: url)
+        return FileManager.default.fileExists(atPath: file.path) ? file.path : nil
+    }
+
     /// The image a frame file came from: the id in the record next to it
     /// (an image of a project, or a copy of one in references/).
     static func sourceImageID(forFrame path: String) -> String? {

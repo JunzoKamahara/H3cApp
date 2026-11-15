@@ -676,6 +676,9 @@ final class GenerationViewModel: ObservableObject {
     var imageGenerationTask: Task<Void, Never>?
     /// Stops the images still to come when one is cancelled.
     var imageBatchStopped = false
+    /// One request's own answer to "use the frames' latents" (the API's
+    /// "frame_latents"), over the preference; nil: the preference.
+    var frameLatentsOverride: Bool?
     private var imageStartedAt: Date?
 
     // MARK: Project (see Projects.swift) - nil: results are temp files.
@@ -1259,6 +1262,15 @@ final class GenerationViewModel: ObservableObject {
         params.denoiseReuse = Int32(effectiveDenoiseReuse)
         params.firstFrame = effectiveFirstFrame
         params.lastFrame = effectiveLastFrame
+        if frameLatentsOverride ?? preferences.useImageLatents {
+            let canvas = sizeProfile.canvas
+            params.firstFrameLatent = effectiveFirstFrame.flatMap {
+                ProjectFiles.frameLatent(forImage: $0, canvasWidth: canvas.width, canvasHeight: canvas.height)
+            }
+            params.lastFrameLatent = effectiveLastFrame.flatMap {
+                ProjectFiles.frameLatent(forImage: $0, canvasWidth: canvas.width, canvasHeight: canvas.height)
+            }
+        }
         params.references = effectiveReferences
         let computeMode = effectiveComputeMode
         params.ssdStreaming = computeMode == .ssdStreaming

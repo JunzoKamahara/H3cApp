@@ -485,6 +485,9 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         (size_t)(params->last_frame != NULL);
     size_t visual_count = 0;
     float **condition_pixels = NULL;
+    /* Per visual condition: the frame's own latent file, if it has one
+     * (h3_params.first_frame_latent); not owned. */
+    const char **condition_latent_paths = NULL;
     int *condition_widths = NULL;
     int *condition_heights = NULL;
     int *condition_frames = NULL;
@@ -638,6 +641,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     } else {
     if (visual_capacity) {
         condition_pixels = calloc(visual_capacity, sizeof(*condition_pixels));
+        condition_latent_paths = calloc(visual_capacity,
+                                        sizeof(*condition_latent_paths));
         condition_widths = calloc(visual_capacity, sizeof(*condition_widths));
         condition_heights = calloc(visual_capacity, sizeof(*condition_heights));
         condition_frames = calloc(visual_capacity, sizeof(*condition_frames));
@@ -656,7 +661,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             presentation_timestamps = calloc(
                 params->reference_count, sizeof(*presentation_timestamps));
         }
-        if (!condition_pixels || !condition_widths || !condition_heights ||
+        if (!condition_pixels || !condition_latent_paths ||
+            !condition_widths || !condition_heights ||
             !condition_frames || !visual_reference_indices ||
             !reference_visual_indices ||
             (ref2va && (!layout_references || !presentations ||
@@ -941,6 +947,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             condition_widths[visual_count] = render_width;
             condition_heights[visual_count] = render_height;
             condition_frames[visual_count] = 1;
+            condition_latent_paths[visual_count] = params->first_frame_latent;
             visual_count++;
         }
         if (params->last_frame) {
@@ -955,6 +962,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             condition_widths[visual_count] = render_width;
             condition_heights[visual_count] = render_height;
             condition_frames[visual_count] = 1;
+            condition_latent_paths[visual_count] = params->last_frame_latent;
             visual_count++;
         }
         vision_output_count = visual_count;
@@ -1063,6 +1071,33 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             size_t row_elements = (size_t)image_latent_t *
                                   (size_t)image_latent_h *
                                   (size_t)image_latent_w / 4 * 96;
+            /* The frame's own latent, when it has one of this canvas:
+             * the image was generated as it, and encoding the decoded
+             * picture again would only approximate it. */
+            if (condition_latent_paths[image] && image_latent_t == 1) {
+                size_t frame_values = (size_t)24 * (size_t)image_latent_h *
+                                      (size_t)image_latent_w;
+                float *own = malloc(frame_values * sizeof(*own));
+                char reason[256] = "";
+                int used = own && h3_frame_latent_load(
+                    condition_latent_paths[image], image_latent_h,
+                    image_latent_w, own, reason, sizeof(reason)) &&
+                    h3_dit_patchify_video(own, 24, 1, image_latent_h,
+                                          image_latent_w,
+                                          condition_video_rows + condition_offset,
+                                          row_elements);
+                free(own);
+                if (used) {
+                    fprintf(stderr, "h3: visual condition %zu from its own "
+                            "latent (%s)\n", image + 1,
+                            condition_latent_paths[image]);
+                    condition_offset += row_elements;
+                    continue;
+                }
+                fprintf(stderr, "h3: visual condition %zu: its latent is not "
+                        "used (%s); encoding the image\n", image + 1,
+                        reason[0] ? reason : "out of memory");
+            }
             h3_video_latent latent;
             memset(&latent, 0, sizeof(latent));
             if (!h3_pooled_video_encode(
@@ -1746,6 +1781,7 @@ cleanup:
     for (size_t index = 0; index < params->reference_count; index++)
         if (presentation_timestamps) free(presentation_timestamps[index]);
     free(condition_pixels);
+    free(condition_latent_paths);
     free(condition_widths);
     free(condition_heights);
     free(condition_frames);

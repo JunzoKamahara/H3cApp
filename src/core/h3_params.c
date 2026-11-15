@@ -223,6 +223,12 @@ int h3_valid_params(h3_ctx *ctx, const h3_params *params) {
         h3_set_error(ctx, "unknown reference image sizing policy");
         return 0;
     }
+    if ((params->first_frame_latent && !params->first_frame) ||
+        (params->last_frame_latent && !params->last_frame)) {
+        h3_set_error(ctx, "a frame's latent goes with its image: set "
+                          "first_frame / last_frame too");
+        return 0;
+    }
     if (params->reference_count && (params->first_frame || params->last_frame)) {
         h3_set_error(ctx, "full references cannot be combined with frame anchors");
         return 0;
