@@ -30,8 +30,17 @@ The engine side:
 it loads the baseline's embedding, tags and augmented reference rows, so the
 comparison is of the DiT alone.
 
+`h3_image_cli … plan` prints what a request would take (`h3_image_plan`:
+tokens, memory per stage, verdict) and generates nothing.
+
 The runs of 2026-11-15 are in `~/H3cApp-models/image-phase5/` (outside
 `~/Documents`, which is mirrored to a cloud drive on the development
 machine): `refs/` (the two reference pictures, the 1024x1024 baselines of
 phase 0), `edit1/` (one reference) and `edit2/` (two), each with `upstream/`
-(the baseline) and `h3c/` (the engine's outputs and comparison logs).
+(the baseline) and `h3c/` (the engine's outputs and comparison logs). `big/`
+is a 2048x2048 reference encoded at 2048 and at 1024, `mem/` the peak memory
+at the app's text-encoder setting, and `more/` the edits of phase 6: a
+960x544 reference, three references with the engine (three seeds) and with
+the reference implementation (`three-upstream/`), and the reference
+implementation's DiT driven by the engine's text embedding
+(`three-h3cembed/`).

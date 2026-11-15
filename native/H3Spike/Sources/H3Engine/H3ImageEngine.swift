@@ -133,6 +133,52 @@ public final class H3ImageEngine: @unchecked Sendable {
         h3_image_free(ctx)
     }
 
+    /// The reference paths of `params` as the C structs a call takes; they
+    /// are valid only inside `body`.
+    private static func withReferences<T>(_ params: H3ImageParams,
+                                          _ body: (UnsafePointer<h3_image_reference>?, Int32) -> T) -> T {
+        let paths = params.references.map { strdup($0.path) }
+        let latents: [UnsafeMutablePointer<CChar>?] = params.references.map { reference in
+            reference.latentPath.flatMap { strdup($0) }
+        }
+        defer {
+            paths.forEach { free($0) }
+            latents.forEach { free($0) }
+        }
+        var references = (0 ..< params.references.count).map { index in
+            h3_image_reference(path: UnsafePointer(paths[index]), latent_path: UnsafePointer(latents[index]))
+        }
+        return references.withUnsafeMutableBufferPointer { buffer in
+            body(UnsafePointer(buffer.baseAddress), Int32(buffer.count))
+        }
+    }
+
+    /// What generating `params` will take (h3_image_plan): the tokens of the
+    /// text encoder and the DiT, and each stage's memory on this Mac. Reads
+    /// the references' sizes and loads the tokenizer (a fraction of a
+    /// second); call it off the main thread. nil when the request cannot be
+    /// planned (a reference that cannot be read, say) - the generation then
+    /// reports that itself. Safe while a generation runs.
+    public func plan(_ params: H3ImageParams) -> H3GenerationPlan? {
+        var cParams = h3_image_params()
+        cParams.width = params.width
+        cParams.height = params.height
+        cParams.reference_max_short_edge = params.referenceMaxShortEdge
+        // As generate() will set the environment (below).
+        cParams.plan_text_prefetch_depth = getenv("H3_QWEN_PREFETCH_DEPTH") == nil ? 1 : 0
+        var plan = h3_plan()
+        let ctx = self.ctx
+        let planned: Int32 = (params.prompt.isEmpty ? " " : params.prompt).withCString { prompt in
+            cParams.prompt = prompt
+            return Self.withReferences(params) { references, count in
+                cParams.references = references
+                cParams.reference_count = count
+                return h3_image_plan(ctx, &cParams, &plan)
+            }
+        }
+        return planned != 0 ? H3GenerationPlan(plan) : nil
+    }
+
     /// One image. The stream ends after everything the generation loaded
     /// has been released, as the video engine's does.
     public func generate(_ params: H3ImageParams) -> AsyncThrowingStream<H3ImageEvent, Error> {
@@ -155,6 +201,11 @@ public final class H3ImageEngine: @unchecked Sendable {
                 for name in ["H3_ATTENTION_CACHE", "H3_ATTENTION_CACHE_DIR", "H3_INT8_STREAM_MLP", "H3_ADALN_CURVE"] {
                     unsetenv(name)
                 }
+                // As for a video: the text encoder reads one layer ahead
+                // (the default of three on an M5 holds 3.7 GiB more).
+                if getenv("H3_QWEN_PREFETCH_DEPTH") == nil {
+                    setenv("H3_QWEN_PREFETCH_DEPTH", "1", 1)
+                }
                 if cancelFlag.isCancelled {
                     continuation.finish(throwing: H3EngineError.cancelled)
                     return
@@ -172,25 +223,12 @@ public final class H3ImageEngine: @unchecked Sendable {
                     var error = [CChar](repeating: 0, count: 512)
                     NSLog("h3: image generation params - %dx%d, seed %llu, %d references", params.width, params.height,
                           params.seed, params.references.count)
-                    // The reference paths as C strings that outlive the call.
-                    let paths = params.references.map { strdup($0.path) }
-                    let latents: [UnsafeMutablePointer<CChar>?] = params.references.map { reference in
-                        reference.latentPath.flatMap { strdup($0) }
-                    }
-                    defer {
-                        paths.forEach { free($0) }
-                        latents.forEach { free($0) }
-                    }
-                    var references = (0 ..< params.references.count).map { index in
-                        h3_image_reference(path: UnsafePointer(paths[index]),
-                                           latent_path: UnsafePointer(latents[index]))
-                    }
-                    cParams.reference_count = Int32(references.count)
                     cParams.reference_max_short_edge = params.referenceMaxShortEdge
                     let ok = params.prompt.withCString { prompt -> Bool in
                         cParams.prompt = prompt
-                        return references.withUnsafeMutableBufferPointer { buffer -> Bool in
-                            cParams.references = UnsafePointer(buffer.baseAddress)
+                        return Self.withReferences(params) { references, count -> Bool in
+                            cParams.references = references
+                            cParams.reference_count = count
                             return h3_image_generate(ctx, &cParams, &result, &error, error.count) != 0
                         }
                     }

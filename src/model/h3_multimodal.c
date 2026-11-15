@@ -290,6 +290,32 @@ int h3_multimodal_encode_image_edit_bf16(
     return ok;
 }
 
+int h3_multimodal_image_edit_token_count(
+                        const h3_tokenizer *tokenizer, const char *prompt,
+                        const h3_vision_output *images, size_t image_count,
+                        size_t prompt_limit, size_t *tokens,
+                        char *error, size_t error_size) {
+    if (error && error_size) error[0] = '\0';
+    if (tokens) *tokens = 0;
+    if (!tokenizer || !prompt || !*prompt || !images || !image_count || !tokens) {
+        fail(error, error_size, "invalid image edit token count arguments");
+        return 0;
+    }
+    h3_ids ids = {0};
+    h3_text_vision_span *spans = calloc(image_count, sizeof(*spans));
+    const h3_vision_output **visions = calloc(image_count, sizeof(*visions));
+    int ok = spans && visions &&
+        build_pictures(tokenizer, prompt, images, image_count, "Picture %zu: ",
+                       prompt_limit, 1, &ids, spans, visions, error, error_size);
+    if (!spans || !visions)
+        fail(error, error_size, "out of memory counting the edit's tokens");
+    if (ok) *tokens = ids.count;
+    free(ids.values);
+    free(spans);
+    free(visions);
+    return ok;
+}
+
 int h3_multimodal_encode_fl2va_bf16(
                         const h3_tokenizer *tokenizer,
                         const char *weight_directory,

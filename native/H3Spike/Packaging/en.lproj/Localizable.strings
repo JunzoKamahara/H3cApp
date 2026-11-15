@@ -1388,3 +1388,11 @@
 "この画像を編集" = "Edit This Image";
 "この画像を参照にして、プロンプトの指示で直した画像をつくる準備をします（生成は始めません）" = "Sets up an edit of this image: a new image made from it as the prompt says (nothing is generated yet)";
 "画像の編集の参照に追加" = "Add as a Reference of the Image Edit";
+"複数枚をつくるときは、1枚目だけがこのシードを使います。" = "When several images are made, only the first uses this seed.";
+"表示中の画像のシードを使う（%@）" = "Use the Seed of the Image Shown (%@)";
+"参照で増えるトークン: %lld（参照が多く大きいほど、時間がかかります）" = "Tokens the references add: %lld (the more and the larger the references, the longer it takes)";
+"参照画像が多すぎて生成できません。参照の数を減らしてください" = "Too many reference images to generate. Use fewer references";
+"このMacのメモリでは生成できない大きさです。参照の数を減らすか、サイズを下げてください" = "Too large for this Mac's memory. Use fewer references or a smaller size";
+"画像のランダムさを決める値（シード）です。固定すると、同じ設定で同じ画像ができます" = "The value that decides the image's randomness (the seed). Fixed, the same settings make the same image";
+"シード（未入力）" = "Seed (not entered)";
+"シード: 毎回変える" = "Seed: New Every Time";

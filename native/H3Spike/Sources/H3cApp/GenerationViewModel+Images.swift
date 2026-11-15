@@ -153,11 +153,69 @@ extension GenerationViewModel {
         if let missing = imageEditReferences.first(where: { !FileManager.default.fileExists(atPath: $0) }) {
             return String(localized: "参照画像が見つかりません: \(URL(fileURLWithPath: missing).lastPathComponent)")
         }
+        if let plan = currentImagePlan, plan.verdict == .tooLarge {
+            return plan.textTokens > plan.textTokenLimit
+                ? String(localized: "参照画像が多すぎて生成できません。参照の数を減らしてください")
+                : String(localized: "このMacのメモリでは生成できない大きさです。参照の数を減らすか、サイズを下げてください")
+        }
         if imageSeedFixed && UInt64(imageSeedText) == nil {
             return imageSeedText.isEmpty ? String(localized: "シード値を入力してください")
                                          : String(localized: "シード値は0〜18446744073709551615の整数にしてください")
         }
         return nil
+    }
+
+    // MARK: What an edit will take
+
+    /// The image engine of the active image model, made when first needed
+    /// (it only looks at the folder); nil when the folder is not a model.
+    func activeImageEngine() -> H3ImageEngine? {
+        guard let model = library.activeImageModel else { return nil }
+        if let current = imageEngine, current.modelDirectory == model.path { return current }
+        guard let engine = try? H3ImageEngine(modelDirectory: model.path) else { return nil }
+        imageEngine = engine
+        return engine
+    }
+
+    /// The request the form would generate, without its seed.
+    private func imagePlanParams() -> H3ImageParams {
+        let size = imageSizeProfile.dimensions
+        return H3ImageParams(prompt: imagePrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                             width: size.width, height: size.height, seed: 0,
+                             references: imageEditReferences.map { H3ImageReference(path: $0) },
+                             referenceMaxShortEdge: Int32(preferences.imageReferenceShortEdge))
+    }
+
+    /// Everything the plan depends on, as CreationFormView's .task(id:);
+    /// nil when there is nothing to plan: an image from the prompt alone
+    /// (its memory does not depend on the request enough to matter), or no
+    /// image model.
+    var imagePlanKey: String? {
+        guard generationKind == .image, !imageEditReferences.isEmpty,
+              let model = library.activeImageModel else { return nil }
+        let params = imagePlanParams()
+        return ([model.path, params.prompt, "\(params.width)x\(params.height)", "\(params.referenceMaxShortEdge)"]
+                + imageEditReferences).joined(separator: "\n")
+    }
+
+    /// The plan while it still describes the form, else nil.
+    var currentImagePlan: H3GenerationPlan? {
+        guard let key = imagePlanKey, key == imagePlanInputs else { return nil }
+        return imagePlan
+    }
+
+    /// Plans the image form's edit off the main thread; waits a moment
+    /// first, so typing a prompt does not plan every key.
+    func refreshImagePlan() async {
+        guard let key = imagePlanKey, key != imagePlanInputs else { return }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        if Task.isCancelled { return }
+        guard let engine = activeImageEngine() else { return }
+        let params = imagePlanParams()
+        let plan = await Task.detached(priority: .userInitiated) { engine.plan(params) }.value
+        if Task.isCancelled || imagePlanKey != key { return }
+        imagePlan = plan
+        imagePlanInputs = key
     }
 
     var canGenerateImage: Bool {
@@ -209,6 +267,9 @@ extension GenerationViewModel {
         guard canGenerateImage, let model = library.activeImageModel else { return }
         if project == nil { startUntitledProject() }
         guard let project else { return }
+        // The plan describes the form as it was planned: a change since
+        // (the copies below rename the references) is planned by the
+        // engine itself, which refuses what cannot fit.
         // An edit's pictures are copied into the project first (in the
         // background), so the record names files inside it.
         saveProjectIfChanged(importingReferences: !imageEditReferences.isEmpty)

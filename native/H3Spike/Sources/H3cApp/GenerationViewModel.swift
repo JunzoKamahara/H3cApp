@@ -688,6 +688,10 @@ final class GenerationViewModel: ObservableObject {
     /// cleared, when the generation starts.
     var imageReferenceLatentsOverride: Bool?
     var imageReferenceShortEdgeOverride: Int?
+    /// What the image form's edit will take (H3ImageEngine.plan), and the
+    /// form it was worked out for (imagePlanKey).
+    @Published var imagePlan: H3GenerationPlan?
+    var imagePlanInputs: String?
     private var imageStartedAt: Date?
 
     // MARK: Project (see Projects.swift) - nil: results are temp files.

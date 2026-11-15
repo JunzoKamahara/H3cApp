@@ -58,6 +58,7 @@ struct CreationFormView: View {
     @State private var quickLookURL: URL?
     @State private var showingClipEditor = false
     @State private var showingImageModelSetup = false
+    @State private var showingImageSeed = false
     /// 「RefModとして保存…」 for this reference (RefModExtractSheet).
     @State private var refModSources: RefModSources?
     @State private var promptSuggestion = randomPromptSuggestion()
@@ -285,7 +286,66 @@ struct CreationFormView: View {
                 .disabled(viewModel.isGenerating || viewModel.imageEditReferences.count >= H3ImageEngine.maxReferences)
                 .help("手元の画像を参照にして、プロンプトの指示で直した画像をつくります（画像の編集）。プロジェクトの画像は一覧やプレビューの「この画像を編集」から選べます")
                 Spacer(minLength: 0)
+                imageSeedButton
             }
+        }
+    }
+
+    // MARK: 画像のシード
+
+    /// The image side's seed: drawn anew for every image, or given. With
+    /// several images only the first uses a given seed.
+    private var imageSeedButton: some View {
+        Button {
+            showingImageSeed = true
+        } label: {
+            Label(viewModel.imageSeedFixed
+                    ? (UInt64(viewModel.imageSeedText) != nil ? String(localized: "シード \(viewModel.imageSeedText)")
+                                                            : String(localized: "シード（未入力）"))
+                    : String(localized: "シード: 毎回変える"),
+                  systemImage: "dice")
+                .lineLimit(1)
+        }
+        .disabled(viewModel.isGenerating)
+        .help("画像のランダムさを決める値（シード）です。固定すると、同じ設定で同じ画像ができます")
+        .popover(isPresented: $showingImageSeed, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: H3Spacing.sm) {
+                Text("ランダムさ").font(.caption).foregroundStyle(palette.textSecondary)
+                Picker("ランダムさ", selection: Binding(
+                    get: { !viewModel.imageSeedFixed },
+                    set: { useRandom in viewModel.imageSeedFixed = !useRandom }
+                )) {
+                    Text("毎回変える").tag(true)
+                    Text("固定する").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 240)
+                if viewModel.imageSeedFixed {
+                    TextField("シード値", text: $viewModel.imageSeedText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 240)
+                    if UInt64(viewModel.imageSeedText) == nil {
+                        Text(viewModel.imageSeedText.isEmpty
+                             ? String(localized: "シード値を入力してください")
+                             : String(localized: "シード値は0〜18446744073709551615の整数にしてください"))
+                            .font(.caption).foregroundStyle(palette.errorColor)
+                    }
+                    if viewModel.imageCount > 1 {
+                        Text("複数枚をつくるときは、1枚目だけがこのシードを使います。")
+                            .font(.caption).foregroundStyle(palette.textSecondary)
+                    }
+                }
+                if let seed = viewModel.displayedImage?.record?.seed {
+                    Button("表示中の画像のシードを使う（\(seed)）") {
+                        viewModel.imageSeedFixed = true
+                        viewModel.imageSeedText = seed
+                    }
+                    .font(.caption)
+                }
+            }
+            .padding(H3Spacing.md)
+            .frame(width: 272, alignment: .leading)
         }
     }
 
@@ -312,10 +372,42 @@ struct CreationFormView: View {
                 }
             }
             .disabled(viewModel.isGenerating)
+            if let plan = viewModel.currentImagePlan {
+                imagePlanView(plan)
+            }
         }
+        .task(id: viewModel.imagePlanKey) { await viewModel.refreshImagePlan() }
         .padding(H3Spacing.md)
         .background(palette.surfaceMuted)
         .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
+    }
+
+    /// What the edit's references add (h3_image_plan), and whether it fits.
+    private func imagePlanView(_ plan: H3GenerationPlan) -> some View {
+        let gib = 1024.0 * 1024.0 * 1024.0
+        let peak = String(format: "%.1f", Double(plan.peakBytes) / gib)
+        let memory = String(format: "%.0f", Double(plan.memoryBytes) / gib)
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("参照で増えるトークン: \(plan.ditReferenceTokens + plan.visionTokens)（参照が多く大きいほど、時間がかかります）")
+            Text("必要なメモリの目安: 約\(peak) GB（このMacは\(memory) GB）")
+            switch plan.verdict {
+            case .ok:
+                EmptyView()
+            case .tight:
+                Text(plan.textTokens > plan.textFastLimit
+                     ? String(localized: "テキストエンコーダーのトークン数が速い処理の上限（\(plan.textFastLimit)）を超えるので、遅い方法で処理します")
+                     : String(localized: "メモリに余裕がありません。スワップが起きて、かなり遅くなる見込みです"))
+                    .foregroundStyle(palette.errorColor)
+            case .tooLarge:
+                Text(plan.textTokens > plan.textTokenLimit
+                     ? String(localized: "参照画像が多すぎて生成できません。参照の数を減らしてください")
+                     : String(localized: "このMacのメモリでは生成できない大きさです。参照の数を減らすか、サイズを下げてください"))
+                    .foregroundStyle(palette.errorColor)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(palette.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: 画像入力

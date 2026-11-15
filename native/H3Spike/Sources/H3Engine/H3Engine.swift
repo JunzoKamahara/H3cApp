@@ -89,6 +89,36 @@ public struct H3GenerationPlan: Sendable, Equatable {
     public let message: String
 }
 
+extension H3GenerationPlan {
+    /// From the engine's own plan (h3_plan_generation, h3_image_plan).
+    init(_ plan: h3_plan) {
+        let verdict: Verdict
+        switch Int(plan.verdict) {
+        case Int(H3_PLAN_TOO_LARGE.rawValue): verdict = .tooLarge
+        case Int(H3_PLAN_TIGHT.rawValue): verdict = .tight
+        default: verdict = .ok
+        }
+        self.init(
+            verdict: verdict,
+            textTokens: Int(plan.text_tokens),
+            visionTokens: Int(plan.vision_tokens),
+            textFastLimit: Int(plan.text_fast_limit),
+            textTokenLimit: Int(plan.text_token_limit),
+            ditTokens: Int(plan.dit_tokens),
+            ditGeneratedTokens: Int(plan.dit_generated_tokens),
+            ditReferenceTokens: Int(plan.dit_reference_tokens),
+            ditCostRatio: plan.dit_cost_ratio,
+            referenceVideoFrames: Int(plan.reference_video_frames),
+            referenceVideoWidth: Int(plan.reference_video_width),
+            referenceVideoHeight: Int(plan.reference_video_height),
+            referencePixelFrames: plan.reference_pixel_frames,
+            peakBytes: plan.peak_bytes,
+            memoryBytes: plan.memory_bytes,
+            peakStage: fixedCString(plan.peak_stage),
+            message: fixedCString(plan.message))
+    }
+}
+
 public struct H3GenerationResult: Sendable {
     public let frames: Int
     public let fps: Int
@@ -578,30 +608,7 @@ public final class H3Engine: @unchecked Sendable {
             }
         }
         guard planned != 0 else { return nil }
-        let verdict: H3GenerationPlan.Verdict
-        switch Int(plan.verdict) {
-        case Int(H3_PLAN_TOO_LARGE.rawValue): verdict = .tooLarge
-        case Int(H3_PLAN_TIGHT.rawValue): verdict = .tight
-        default: verdict = .ok
-        }
-        return H3GenerationPlan(
-            verdict: verdict,
-            textTokens: Int(plan.text_tokens),
-            visionTokens: Int(plan.vision_tokens),
-            textFastLimit: Int(plan.text_fast_limit),
-            textTokenLimit: Int(plan.text_token_limit),
-            ditTokens: Int(plan.dit_tokens),
-            ditGeneratedTokens: Int(plan.dit_generated_tokens),
-            ditReferenceTokens: Int(plan.dit_reference_tokens),
-            ditCostRatio: plan.dit_cost_ratio,
-            referenceVideoFrames: Int(plan.reference_video_frames),
-            referenceVideoWidth: Int(plan.reference_video_width),
-            referenceVideoHeight: Int(plan.reference_video_height),
-            referencePixelFrames: plan.reference_pixel_frames,
-            peakBytes: plan.peak_bytes,
-            memoryBytes: plan.memory_bytes,
-            peakStage: fixedCString(plan.peak_stage),
-            message: fixedCString(plan.message))
+        return H3GenerationPlan(plan)
     }
 
     public func generate(prompt: String, outputPath: String,

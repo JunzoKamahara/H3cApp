@@ -3,14 +3,16 @@
  * the app.
  *
  *   h3_image_cli <model dir> <prompt> <out.ppm> [WxH] [seed] [shaders.metal]
- *                [reference image | latent=<file> | short=<pixels>]...
+ *                [reference image | latent=<file> | short=<pixels> | plan]...
  *
  * <model dir> holds transformer/, vae/, text_encoder/ and tokenizer/ (see
  * h3_image.h). Reference images are numbered in the order given; the prompt
  * calls them <Picture 1>, <Picture 2>, ... latent=<file> gives the reference
  * before it its own latent (as the app saves one beside a generated image);
  * short=<pixels> is the longest short side a reference is encoded at
- * (default 2048). Writes an 8-bit PPM and, next to it, <out>.latent.f32:
+ * (default 2048); plan prints what the generation would take
+ * (h3_image_plan) and generates nothing. Writes an 8-bit PPM and, next to
+ * it, <out>.latent.f32:
  * the normalized latent [24, H/16, W/16] as raw little-endian F32. */
 #include "h3_image.h"
 
@@ -46,9 +48,11 @@ int main(int argc, char **argv) {
     }
     h3_image_reference references[H3_IMAGE_MAX_REFERENCES];
     memset(references, 0, sizeof(references));
-    int reference_count = 0, short_edge = 0;
+    int reference_count = 0, short_edge = 0, plan_only = 0;
     for (int index = 7; index < argc; index++) {
-        if (!strncmp(argv[index], "short=", 6)) {
+        if (!strcmp(argv[index], "plan")) {
+            plan_only = 1;
+        } else if (!strncmp(argv[index], "short=", 6)) {
             short_edge = atoi(argv[index] + 6);
         } else if (!strncmp(argv[index], "latent=", 7)) {
             if (!reference_count) {
@@ -68,6 +72,27 @@ int main(int argc, char **argv) {
                               .references = references,
                               .reference_count = reference_count,
                               .reference_max_short_edge = short_edge};
+    if (plan_only) {
+        h3_plan plan;
+        int planned = h3_image_plan(ctx, &params, &plan);
+        const double gib = 1024.0 * 1024.0 * 1024.0;
+        if (planned)
+            printf("verdict %d: text %zu tokens (%zu vision), DiT %zu tokens "
+                   "(%zu reference, %zu generated, cost x%.2f)\n"
+                   "GiB: encoder %.2f, vision %.2f, text %.2f, DiT %.2f; peak "
+                   "%.2f in the %s; this Mac %.0f\n%s\n", plan.verdict,
+                   plan.text_tokens, plan.vision_tokens, plan.dit_tokens,
+                   plan.dit_reference_tokens, plan.dit_generated_tokens,
+                   plan.dit_cost_ratio, (double)plan.video_encoder_bytes / gib,
+                   (double)plan.vision_encoder_bytes / gib,
+                   (double)plan.text_encoder_bytes / gib,
+                   (double)plan.dit_bytes / gib, (double)plan.peak_bytes / gib,
+                   plan.peak_stage, (double)plan.memory_bytes / gib, plan.message);
+        else
+            fprintf(stderr, "%s\n", plan.message);
+        h3_image_free(ctx);
+        return planned ? 0 : 1;
+    }
     h3_image_result result;
     if (!h3_image_generate(ctx, &params, &result, error, sizeof(error))) {
         fprintf(stderr, "%s\n", error);

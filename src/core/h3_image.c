@@ -8,6 +8,7 @@
 #include "h3_metal.h"
 #include "h3_multimodal.h"
 #include "h3_options.h"
+#include "h3_plan.h"
 #include "h3_text_encoder.h"
 #include "h3_tokenizer.h"
 #include "h3_video_encoder.h"
@@ -267,6 +268,134 @@ static int cancelled(const h3_image_params *params, char *error,
     return 1;
 }
 
+/* What is wrong with the request itself, before anything is read. */
+static int check_request(const h3_image_params *params, char *error,
+                         size_t error_size) {
+    if (params->width < MIN_SIDE || params->height < MIN_SIDE ||
+        params->width > MAX_SIDE || params->height > MAX_SIDE ||
+        params->width % 32 || params->height % 32) {
+        fail(error, error_size, "the image size must be multiples of 32 from "
+             "%d to %d pixels a side", MIN_SIDE, MAX_SIDE);
+        return 0;
+    }
+    if (params->reference_count < 0 ||
+        params->reference_count > H3_IMAGE_MAX_REFERENCES ||
+        (params->reference_count && !params->references)) {
+        fail(error, error_size, "an image takes at most %d reference images",
+             H3_IMAGE_MAX_REFERENCES);
+        return 0;
+    }
+    for (int index = 0; index < params->reference_count; index++)
+        if (!params->references[index].path ||
+            !*params->references[index].path) {
+            fail(error, error_size, "reference %d has no file", index + 1);
+            return 0;
+        }
+    return 1;
+}
+
+int h3_image_plan(const h3_image_ctx *ctx, const h3_image_params *params,
+                  h3_plan *plan) {
+    if (!plan) return 0;
+    memset(plan, 0, sizeof(*plan));
+    char *message = plan->message;
+    size_t size = sizeof(plan->message);
+    if (!ctx || !params || !params->prompt) {
+        fail(message, size, "invalid image plan arguments");
+        return 0;
+    }
+    if (!check_request(params, message, size)) return 0;
+    int count = params->reference_count;
+    char detail[384] = "";
+    h3_device_info device;
+    if (!h3_metal_probe(&device, detail, sizeof(detail))) {
+        fail(message, size, "%s", detail);
+        return 0;
+    }
+    h3_vision_output vision[H3_IMAGE_MAX_REFERENCES];
+    h3_plan_visual visuals[H3_IMAGE_MAX_REFERENCES];
+    memset(vision, 0, sizeof(vision));
+    size_t vision_tokens = 0, reference_rows = 0;
+    for (int index = 0; index < count; index++) {
+        int source_w = 0, source_h = 0, encode_w = 0, encode_h = 0;
+        int vision_w = 0, vision_h = 0;
+        if (!h3_av_visual_size(params->references[index].path, &source_w,
+                               &source_h, detail, sizeof(detail))) {
+            fail(message, size, "reference %d: %s", index + 1, detail);
+            return 0;
+        }
+        if (!h3_image_reference_canvas(source_w, source_h,
+                                       params->reference_max_short_edge,
+                                       &encode_w, &encode_h, &vision_w,
+                                       &vision_h)) {
+            fail(message, size, "reference %d is %d x %d pixels: the longer "
+                 "side may be at most %.2f times the shorter", index + 1,
+                 source_w, source_h, H3_IMAGE_REFERENCE_MAX_ASPECT);
+            return 0;
+        }
+        /* As the vision tower gives them: 16-pixel patches merged 2 x 2. */
+        vision[index].grid_h = vision_h / 16;
+        vision[index].grid_w = vision_w / 16;
+        vision[index].tokens = (size_t)(vision_h / 32) * (size_t)(vision_w / 32);
+        vision_tokens += vision[index].tokens;
+        reference_rows += (size_t)(encode_h / 32) * (size_t)(encode_w / 32);
+        /* A reference taken by its own latent is not encoded; counting it
+         * keeps the estimate on the safe side. */
+        visuals[index] = (h3_plan_visual){encode_w, encode_h, 1};
+    }
+    h3_tokenizer *tokenizer = h3_tokenizer_load(ctx->tokenizer, detail,
+                                                sizeof(detail));
+    size_t text_tokens = 0;
+    int counted = 0;
+    if (tokenizer && count) {
+        counted = h3_multimodal_image_edit_token_count(
+            tokenizer, params->prompt, vision, (size_t)count,
+            H3_IMAGE_MAX_PROMPT_TOKENS, &text_tokens, detail, sizeof(detail));
+    } else if (tokenizer) {
+        uint32_t *ids = NULL;
+        counted = h3_tokenizer_encode(tokenizer, params->prompt, 0, &ids,
+                                      &text_tokens, detail, sizeof(detail));
+        h3_tokenizer_ids_free(ids);
+        if (counted && !text_tokens) {
+            snprintf(detail, sizeof(detail), "the prompt is empty");
+            counted = 0;
+        }
+        if (text_tokens > H3_IMAGE_MAX_PROMPT_TOKENS)
+            text_tokens = H3_IMAGE_MAX_PROMPT_TOKENS;
+    }
+    h3_tokenizer_free(tokenizer);
+    if (!counted) {
+        fail(message, size, "%s", detail);
+        return 0;
+    }
+    size_t generated = (size_t)(params->height / 32) * (size_t)(params->width / 32);
+    /* As h3_gpu.m decides: dense attention in one call on an Apple10 GPU
+     * with macOS 26 or later, unless H3_SDPA_MODE says. */
+    const char *mode = h3_option("H3_SDPA_MODE");
+    int full_sdpa = 0;
+    if (mode && *mode) full_sdpa = !strcmp(mode, "full");
+    else if (device.apple_gpu_family >= 10) {
+        if (__builtin_available(macOS 26.0, *)) full_sdpa = 1;
+    }
+    const char *prefetch = h3_option("H3_QWEN_PREFETCH_DEPTH");
+    int depth = params->plan_text_prefetch_depth > 0 ?
+        params->plan_text_prefetch_depth :
+        prefetch && *prefetch ? atoi(prefetch) :
+        device.apple_gpu_family >= 10 ? 3 : 2;
+    if (depth < 1) depth = 1;
+    h3_plan_input input = {
+        .memory_bytes = device.physical_memory, .ssd_streaming = 1,
+        .full_sdpa = full_sdpa, .text_prefetch_depth = depth,
+        .text_tokens = text_tokens, .vision_tokens = vision_tokens,
+        .dit_tokens = text_tokens + reference_rows + generated,
+        .dit_generated_tokens = generated,
+        .dit_reference_tokens = reference_rows,
+        .visuals = visuals, .visual_count = (size_t)count
+    };
+    h3_plan_compute(&input, plan);
+    return 1;
+}
+
 int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
                       h3_image_result *result, char *error, size_t error_size) {
     if (result) memset(result, 0, sizeof(*result));
@@ -275,26 +404,28 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
         fail(error, error_size, "invalid image generation arguments");
         return 0;
     }
-    if (params->width < MIN_SIDE || params->height < MIN_SIDE ||
-        params->width > MAX_SIDE || params->height > MAX_SIDE ||
-        params->width % 32 || params->height % 32) {
-        fail(error, error_size, "the image size must be multiples of 32 from "
-             "%d to %d pixels a side", MIN_SIDE, MAX_SIDE);
-        return 0;
-    }
+    if (!check_request(params, error, error_size)) return 0;
     int reference_count = params->reference_count;
-    if (reference_count < 0 || reference_count > H3_IMAGE_MAX_REFERENCES ||
-        (reference_count && !params->references)) {
-        fail(error, error_size, "an image takes at most %d reference images",
-             H3_IMAGE_MAX_REFERENCES);
-        return 0;
-    }
-    for (int index = 0; index < reference_count; index++)
-        if (!params->references[index].path ||
-            !*params->references[index].path) {
-            fail(error, error_size, "reference %d has no file", index + 1);
-            return 0;
+    {
+        /* Refused before anything is loaded when it cannot fit; a request
+         * the plan cannot read is left for the generation to report. */
+        const char *preflight = h3_option("H3_PREFLIGHT");
+        h3_plan plan;
+        if ((!preflight || strcmp(preflight, "0")) &&
+            h3_image_plan(ctx, params, &plan)) {
+            fprintf(stderr, "h3: image plan: text encoder %zu tokens (%zu "
+                    "from pictures), DiT %zu tokens (%zu from references, "
+                    "cost x%.2f), peak about %.1f GiB in the %s\n",
+                    plan.text_tokens, plan.vision_tokens, plan.dit_tokens,
+                    plan.dit_reference_tokens, plan.dit_cost_ratio,
+                    (double)plan.peak_bytes / (1024.0 * 1024.0 * 1024.0),
+                    plan.peak_stage);
+            if (plan.verdict == H3_PLAN_TOO_LARGE) {
+                fail(error, error_size, "%s", plan.message);
+                return 0;
+            }
         }
+    }
     int latent_h = params->height / 16, latent_w = params->width / 16;
     size_t latent_count = (size_t)LATENT_CHANNELS * (size_t)latent_h *
                           (size_t)latent_w;

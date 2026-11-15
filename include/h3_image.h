@@ -1,6 +1,8 @@
 #ifndef H3_IMAGE_H
 #define H3_IMAGE_H
 
+#include "h3.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -74,6 +76,9 @@ typedef struct {
     /* The short side a reference's latent is encoded at is the picture's
      * own, kept within 1024 and this (0: 2048, as the released pipeline). */
     int reference_max_short_edge;
+    /* h3_image_plan only: how many text-encoder layers the generation will
+     * read ahead (0: what H3_QWEN_PREFETCH_DEPTH or the default gives now). */
+    int plan_text_prefetch_depth;
 } h3_image_params;
 
 typedef struct {
@@ -121,6 +126,21 @@ h3_image_ctx *h3_image_load_dir(const char *model_directory,
                                 const char *shader_source_path,
                                 char *error, size_t error_size);
 void h3_image_free(h3_image_ctx *ctx);
+
+/* What h3_image_generate(ctx, params) will take, worked out without
+ * loading any weights (it reads the references' sizes and loads the
+ * tokenizer): the text encoder's and the DiT's tokens as the generation
+ * will count them, and each stage's memory on this Mac, by the video
+ * engine's own model (h3_plan, h3.h; the reference fields are the edit's
+ * pictures). Returns 1 with *plan filled for every verdict, or 0 when the
+ * request is invalid or a reference cannot be read (the reason in
+ * plan->message).
+ *
+ * h3_image_generate runs this first and fails with plan->message when the
+ * verdict is H3_PLAN_TOO_LARGE; H3_PREFLIGHT=0 in the environment skips
+ * that check. */
+int h3_image_plan(const h3_image_ctx *ctx, const h3_image_params *params,
+                  h3_plan *plan);
 
 /* Generates one image. Everything it loads is released again before it
  * returns. On success the caller frees the result with h3_image_result_free. */

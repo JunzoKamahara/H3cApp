@@ -46,6 +46,15 @@ int h3_multimodal_encode_image_edit_bf16(
                         h3_text_embedding *output,
                         char *error, size_t error_size);
 
+/* The length of the sequence h3_multimodal_encode_image_edit_bf16 would
+ * encode, without running anything: `images` need only their tokens and
+ * grid set. */
+int h3_multimodal_image_edit_token_count(
+                        const h3_tokenizer *tokenizer, const char *prompt,
+                        const h3_vision_output *images, size_t image_count,
+                        size_t prompt_limit, size_t *tokens,
+                        char *error, size_t error_size);
+
 typedef enum {
     H3_PRESENTATION_IMAGE = 1,
     H3_PRESENTATION_VIDEO = 2,

@@ -627,8 +627,19 @@ extension GenerationViewModel {
                 "image": ["prompt": imagePrompt, "size": imageSizeProfile.rawValue,
                           "width": Int(imageSizeProfile.dimensions.width),
                           "height": Int(imageSizeProfile.dimensions.height), "count": imageCount,
-                          // The pictures of an edit, in the prompt's order.
-                          "references": imageEditReferences],
+                          // The pictures of an edit, in the prompt's order,
+                          // and what the edit will take once the form has
+                          // worked it out (null until then, and without
+                          // references).
+                          "references": imageEditReferences,
+                          "plan": currentImagePlan.map { plan -> Any in
+                              ["verdict": plan.verdict == .ok ? "ok" : plan.verdict == .tight ? "tight" : "too_large",
+                               "text_tokens": plan.textTokens, "vision_tokens": plan.visionTokens,
+                               "text_token_limit": plan.textTokenLimit,
+                               "dit_tokens": plan.ditTokens, "dit_reference_tokens": plan.ditReferenceTokens,
+                               "peak_bytes": plan.peakBytes, "memory_bytes": plan.memoryBytes,
+                               "peak_stage": plan.peakStage] as [String: Any]
+                          } ?? NSNull()],
             ] as [String: Any],
         ]
         if let state = refModExtraction {
