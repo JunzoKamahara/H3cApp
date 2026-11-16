@@ -12,6 +12,9 @@ docs/
   guide.html              #images #projects #speed #size #prompts #lora #advanced
   image.html              still images (v0.10.0): #examples #models #setup #make
                           #edit #video #time #license
+  image-compare.html      side-by-side comparisons (not in the top nav; linked from
+                          image.html #models): #models #upscale #choose #how;
+                          panels driven by assets/js/image-compare.js
   settings.html           詳細設定 explained, in dialog order: #overview #size #steps
                           #compute #speed #reuse #layers #seed #lora #presets
                           (not in the top nav; linked from the guide TOC and #speed)

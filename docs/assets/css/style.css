@@ -1009,6 +1009,33 @@ summary {
   }
 }
 
+/* Square pictures (the image comparison page), and the thumbnail that
+   shows where an enlargement's detail was cut from. */
+.compare-panes-square img {
+  aspect-ratio: 1 / 1;
+  object-fit: contain;
+}
+
+.compare-where {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: var(--prose);
+  margin: 0 0 1.4em;
+}
+
+.compare-where img {
+  flex: none;
+  width: 96px;
+  height: 96px;
+  border-radius: 6px;
+  background: var(--stage);
+}
+
+.compare-where .compare-note {
+  margin: 0;
+}
+
 /* Landscape (7:4) examples, e.g. the HyperFlow page's clips with sound. */
 .examples-wide .example .media {
   aspect-ratio: 7 / 4;

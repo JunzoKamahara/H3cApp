@@ -109,6 +109,18 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/image.html"/>
   </url>
   <url>
+    <loc>https://junzokamahara.github.io/H3cApp/image-compare.html</loc>
+    <lastmod>2026-11-16</lastmod>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/image-compare.html"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/image-compare.html"/>
+  </url>
+  <url>
+    <loc>https://junzokamahara.github.io/H3cApp/en/image-compare.html</loc>
+    <lastmod>2026-11-16</lastmod>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/image-compare.html"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/image-compare.html"/>
+  </url>
+  <url>
     <loc>https://junzokamahara.github.io/H3cApp/updates.html</loc>
     <lastmod>2026-11-14</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/updates.html"/>

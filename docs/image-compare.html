@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="ja" data-alt-href="en/image-compare.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="assets/js/lang.js"></script>
+  <title>静止画を見比べる — H3cApp</title>
+  <meta name="description" content="H3cAppの静止画を同じプロンプトとシードで見比べるページ。2つの画像モデル（P-H3-ImageとMiniMax H3 Image）の違いと、高解像度化の10の方法（画像モデルで描き直す、Real-ESRGAN、SwiftVR、SeedVR2など）の仕上がりと時間。">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/image-compare.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/image-compare.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/image-compare.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/image-compare.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="静止画を見比べる — H3cApp">
+  <meta property="og:description" content="画像モデルの違いと、高解像度化の方法の違いを、同じ画像で並べて見比べる。">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/image-compare.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へ移動</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="サイト内">
+        <ul>
+          <li><a href="./#examples">生成例</a></li>
+          <li><a href="./#requirements">動作条件</a></li>
+          <li><a href="getting-started.html">はじめ方</a></li>
+          <li><a href="guide.html">使い方</a></li>
+          <li><a href="image.html" aria-current="page">静止画</a></li>
+          <li><a href="gguf.html">GGUF</a></li>
+          <li><a href="faq.html">困ったとき</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="en/image-compare.html?lang=en" hreflang="en" lang="en">English</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>静止画を見比べる</h1>
+      <p class="lead">同じプロンプトとシードでつくった画像を、左右に並べて見比べられます。前半は<a href="#models">画像モデルの違い</a>、後半は<a href="#upscale">高解像度化の方法の違い</a>です。使い方は<a href="image.html">静止画をつくる・編集する</a>にあります。</p>
+      <p class="small"><strong>このページの画像は、すべてAIで生成したものです</strong>（H3cAppの画像生成の処理で、P-H3-ImageとMiniMax H3 Imageを使用。Powered by MiniMax H3）。表示用にJPEGにしています。</p>
+      <nav class="toc" aria-label="このページの内容">
+        <p>このページの内容</p>
+        <ol>
+          <li><a href="#models">画像モデルを見比べる</a></li>
+          <li><a href="#upscale">高解像度化を見比べる</a></li>
+          <li><a href="#choose">高解像度化の方法の選び方</a></li>
+          <li><a href="#how">この比較のつくり方</a></li>
+        </ol>
+      </nav>
+    </div>
+
+
+    <section class="section compare-section" id="models" aria-labelledby="models-title">
+      <h2 id="models-title">画像モデルを見比べる</h2>
+      <p>同じプロンプトとシードで、3つの形の画像モデルに1024×1024の画像をつくらせました。題材と左右のモデルを選んでください。</p>
+      <noscript><p>この比較にはJavaScriptが必要です。</p></noscript>
+      <div data-image-compare data-base="assets/image-compare/models/" hidden>
+        <div class="compare-choices">
+          <label>題材
+            <select data-role="subject">
+              <option value="portrait" data-note="人物写真：P-H3-Imageは、雑誌の写真のように肌と光が整います。MiniMax H3 Imageは、毛穴やそばかす、しわが強く出た、スマートフォンで撮ったような仕上がりです。LoRAの形は、同じシードでも顔の向きや表情が変わりますが、質感はP-H3-Imageに近くなります。">人物写真（そばかすのある女性）</option>
+              <option value="sign" data-note="文字：3つとも「FRESH BREAD」「OPEN 7AM」を正しく書けています。MiniMax H3 Imageは看板を正面から大きく写し、P-H3-ImageとLoRAの形は、ほぼ同じ構図になります。">文字のある写真（パン屋の黒板）</option>
+              <option value="anime" data-note="イラスト：P-H3-Imageは、背景の看板や人影、路面の映り込みまで描き込みます。MiniMax H3 Imageは塗りが平らで、看板の文字は読めない形になります。">アニメ調のイラスト（雨の夜の少女）</option>
+              <option value="cat" data-note="質感：P-H3-Imageは、縞模様と毛糸の編み目がくっきりします。MiniMax H3 Imageは毛並みがやわらかく、全体にやや甘くなります。">質感（毛糸の上で眠る猫）</option>
+            </select>
+          </label>
+          <label>左のモデル
+            <select data-role="left">
+              <option value="ph3" selected data-portrait="35秒" data-sign="36秒" data-anime="34秒" data-cat="35秒">P-H3-Image</option>
+              <option value="minimax" data-portrait="32秒" data-sign="32秒" data-anime="32秒" data-cat="32秒">MiniMax H3 Image</option>
+              <option value="ph3lora" data-portrait="1分14秒" data-sign="1分6秒" data-anime="1分16秒" data-cat="1分12秒">P-H3-Image（動画モデルとLoRA）</option>
+            </select>
+          </label>
+          <label>右のモデル
+            <select data-role="right">
+              <option value="ph3" data-portrait="35秒" data-sign="36秒" data-anime="34秒" data-cat="35秒">P-H3-Image</option>
+              <option value="minimax" selected data-portrait="32秒" data-sign="32秒" data-anime="32秒" data-cat="32秒">MiniMax H3 Image</option>
+              <option value="ph3lora" data-portrait="1分14秒" data-sign="1分6秒" data-anime="1分16秒" data-cat="1分12秒">P-H3-Image（動画モデルとLoRA）</option>
+            </select>
+          </label>
+        </div>
+        <div class="compare-panes compare-panes-square">
+          <figure data-pane="left"><img src="assets/image-compare/models/portrait/ph3.jpg" width="1024" height="1024" alt=""><figcaption></figcaption></figure>
+          <figure data-pane="right"><img src="assets/image-compare/models/portrait/minimax.jpg" width="1024" height="1024" alt=""><figcaption></figcaption></figure>
+        </div>
+        <p class="compare-note" data-role="note" aria-live="polite"></p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">モデル</th><th scope="col">ステップ数</th><th scope="col">1024×1024の時間</th><th scope="col">向いているもの</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">P-H3-Image</th><td class="num">8</td><td class="num">約35秒</td><td>整った写真、細かい描き込み、特大（約8メガピクセル）</td></tr>
+            <tr><th scope="row">MiniMax H3 Image</th><td class="num">6</td><td class="num">約32秒</td><td>飾らない写真らしさ、多くの参照を使う編集</td></tr>
+            <tr><th scope="row">P-H3-Image（動画モデルとLoRA）</th><td class="num">8</td><td class="num">約1分10秒</td><td>ダウンロードを約10GBに抑えたいとき（仕上がりはP-H3-Imageに近く、時間は約2倍）</td></tr>
+          </tbody>
+          <caption>時間はM5・メモリ24GBで、モデルの読み込みから画像の書き出しまでを1枚ずつ測ったものです。</caption>
+        </table>
+      </div>
+      <p class="small muted">P-H3-Imageの2つの形は、同じシードでも少し違う画像になります。重みの持ち方が違う（専用の重みか、動画モデルの重みにLoRAを当てるか）ためで、どちらかが正しいというものではありません。</p>
+    </section>
+
+    <section class="section compare-section" id="upscale" aria-labelledby="upscale-title">
+      <h2 id="upscale-title">高解像度化を見比べる</h2>
+      <p>上のP-H3-Imageの4枚（1024×1024）を、方法ごとに2倍（2048×2048）にしました。比べているのは、元の画像の320×320にあたる部分を、縮小せずに切り出した640×640です。比べている画像の下にある小さな画像の赤い枠が、切り出した場所です。</p>
+      <div class="note"><p><strong>高解像度化は、v0.10.0の次の版で加わる機能です。</strong>プレビューの「<span class="ui">高解像度化…</span>」か、「<span class="ui">プロジェクトの動画と画像…</span>」の「<span class="ui">その他</span>」から使います。大きくした画像は、元の画像を残したまま新しい画像としてプロジェクトに加わります。</p></div>
+      <noscript><p>この比較にはJavaScriptが必要です。</p></noscript>
+      <div data-image-compare data-base="assets/image-compare/upscale/" hidden>
+        <div class="compare-choices">
+          <label>題材
+            <select data-role="subject">
+              <option value="portrait" data-where="人物写真の全体。左目のまわりに赤い枠。" data-note="人物写真：標準とMetalFXは、元の画像をなめらかに引き伸ばしただけで、まつ毛や肌は少しぼやけます。Real-ESRGAN 汎用は肌がなめらかになってそばかすが薄れ、Real-ESRGAN アニメでは肌がつるつるになります。SwiftVRも肌をなめらかにします。描き直しは、まつ毛を1本ずつ、肌のきめとそばかすを描き足します。控えめと標準は顔立ちがそのままで、強めではそばかすが濃く大きくなり、瞳の色が少し変わります。">人物写真（目のまわり）</option>
+              <option value="sign" data-where="パン屋の黒板の全体。BREADとOPENの文字に赤い枠。" data-note="文字：Real-ESRGANは、汎用もアニメも、チョークの粒が網目のような模様になります。SwiftVRは文字が少しにじみます。描き直しは、チョークでこすった筆跡を描き足し、文字がいちばん読みやすくなります。強めでは、Oの書き出しなど文字の形が少し変わります。">文字のある写真（黒板の文字）</option>
+              <option value="anime" data-where="雨の夜の少女のイラストの全体。顔に赤い枠。" data-note="イラスト：Real-ESRGAN アニメは、元の絵のまま線と色の境目をいちばんくっきりさせます。SwiftVRは顔がぼやけます。描き直しは線も塗りもくっきりしますが、瞳が大きく明るくなり、耳が髪に隠れるなど、顔立ちが変わります。強めでは、フードの内側の色も変わります。元の絵を変えたくないイラストには、Real-ESRGAN アニメが向いています。">アニメ調のイラスト（顔）</option>
+              <option value="cat" data-where="毛糸の上で眠る猫の全体。顔に赤い枠。" data-note="質感：Real-ESRGANは、毛並みが筆で塗ったように固まります。SwiftVRは全体がなめらかになります。描き直しは、毛を1本ずつ描き足し、毛並みがいちばん写真らしくなります。そのかわり、額の縞模様の形は元の画像と変わります。">質感（猫の顔）</option>
+            </select>
+          </label>
+          <label>左の方法
+            <select data-role="left">
+              <option value="source">元の画像（補間せずに2倍）</option>
+              <option value="standard" selected>標準</option>
+              <option value="metalfx">MetalFX</option>
+              <option value="esrgan-general">Real-ESRGAN 汎用</option>
+              <option value="esrgan-anime">Real-ESRGAN アニメ</option>
+              <option value="swiftvr">SwiftVR</option>
+              <option value="swiftvr-4x">SwiftVR 4倍で生成してから縮小</option>
+              <option value="redraw-gentle">画像モデルで描き直す・控えめ</option>
+              <option value="redraw-standard">画像モデルで描き直す・標準</option>
+              <option value="redraw-strong">画像モデルで描き直す・強め</option>
+            </select>
+          </label>
+          <label>右の方法
+            <select data-role="right">
+              <option value="source">元の画像（補間せずに2倍）</option>
+              <option value="standard">標準</option>
+              <option value="metalfx">MetalFX</option>
+              <option value="esrgan-general">Real-ESRGAN 汎用</option>
+              <option value="esrgan-anime">Real-ESRGAN アニメ</option>
+              <option value="swiftvr">SwiftVR</option>
+              <option value="swiftvr-4x">SwiftVR 4倍で生成してから縮小</option>
+              <option value="redraw-gentle">画像モデルで描き直す・控えめ</option>
+              <option value="redraw-standard" selected>画像モデルで描き直す・標準</option>
+              <option value="redraw-strong">画像モデルで描き直す・強め</option>
+            </select>
+          </label>
+        </div>
+        <div class="compare-panes compare-panes-square">
+          <figure data-pane="left"><img src="assets/image-compare/upscale/portrait/standard.jpg" width="640" height="640" alt=""><figcaption></figcaption></figure>
+          <figure data-pane="right"><img src="assets/image-compare/upscale/portrait/redraw-standard.jpg" width="640" height="640" alt=""><figcaption></figcaption></figure>
+        </div>
+        <div class="compare-where">
+          <img data-role="where" src="assets/image-compare/upscale/portrait/where.jpg" width="192" height="192" alt="">
+          <p class="compare-note" data-role="note" aria-live="polite"></p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">方法</th><th scope="col">1024×1024から2倍の時間</th><th scope="col">大きさの上限</th><th scope="col">仕上がり</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">標準</th><td class="num">約1秒</td><td>一辺4096ピクセル</td><td>見た目はそのまま、少しぼやける</td></tr>
+            <tr><th scope="row">MetalFX</th><td class="num">約1秒</td><td>一辺4096ピクセル</td><td>標準とほぼ同じ</td></tr>
+            <tr><th scope="row">Real-ESRGAN 汎用</th><td class="num">約2秒</td><td>一辺4096ピクセル</td><td>くっきりするが、肌や毛がなめらかになり、細かな模様が崩れる</td></tr>
+            <tr><th scope="row">Real-ESRGAN アニメ</th><td class="num">約2秒</td><td>一辺4096ピクセル</td><td>イラストの線と塗りがくっきり。写真は塗り絵のようになる</td></tr>
+            <tr><th scope="row">SwiftVR</th><td class="num">約20秒</td><td>一辺4096ピクセル</td><td>なめらか。静止画では細部が増えにくい</td></tr>
+            <tr><th scope="row">SwiftVR 4倍で生成してから縮小</th><td class="num">約43秒</td><td>一辺4096ピクセル</td><td>元の画像に忠実で、標準に近い</td></tr>
+            <tr><th scope="row">画像モデルで描き直す</th><td class="num">約1分20〜30秒</td><td>約8メガピクセル（2912×2912など）</td><td>細部をいちばん描き足す。強いほど元の画像から離れる</td></tr>
+          </tbody>
+          <caption>時間はM5・メモリ24GBでの実測です（描き直しはモデルの読み込みを含み、強めがやや長くなります）。SeedVR2は、このMacでは1024×1024の画像を1.5倍（1536×1536、17秒）までしか大きくできないため、この比較には入れていません。</caption>
+        </table>
+      </div>
+      <p>描き直しは、大きくするほど効果がはっきり出ます。P-H3-Imageは約8メガピクセルで最も良くなるモデルなので、1024×1024から2912×2912に描き直すと、肌のしわやしみまで描き込まれます（M5・24GBで約2分40秒）。</p>
+    </section>
+
+    <section class="section section-narrow" id="choose" aria-labelledby="choose-title">
+      <h2 id="choose-title">高解像度化の方法の選び方</h2>
+      <p>やりたいことから選びます。上の行ほど早く終わります。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">やりたいこと</th><th scope="col">選ぶ方法</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">見た目を変えずに、すぐ大きくしたい</th><td>標準</td></tr>
+            <tr><th scope="row">イラストやアニメの線と色を、絵を変えずにくっきりさせたい</th><td>Real-ESRGAN アニメ</td></tr>
+            <tr><th scope="row">写真を、元の画像に忠実なまま少しくっきりさせたい</th><td>SwiftVR 4倍で生成してから縮小</td></tr>
+            <tr><th scope="row">写真の細部（肌、髪、毛並み、文字の筆跡）を描き足したい</th><td>画像モデルで描き直す・標準</td></tr>
+            <tr><th scope="row">細部は欲しいが、顔立ちや模様はできるだけ変えたくない</th><td>画像モデルで描き直す・控えめ</td></tr>
+            <tr><th scope="row">細部を描き足しながら、できるだけ大きくしたい</th><td>画像モデルで描き直す（約8メガピクセルまで）</td></tr>
+          </tbody>
+          <caption>やりたいことと方法の対応。</caption>
+        </table>
+      </div>
+      <ul>
+        <li><strong>描き直しは「生成」です。</strong>元の画像のプロンプトとシードを使い、画像モデルが細部を新しく描きます。顔や文字、模様が少し変わることがあるので、仕上がりを確かめてから使ってください。取り込んだ画像には元のプロンプトがないので、パネルの画像のプロンプトに内容を書いてから描き直します。</li>
+        <li><strong>Real-ESRGANは写真の文字や毛並みに注意。</strong>くっきりしますが、チョークの粒や毛並みのような細かい模様は、元にない形に固まりがちです。</li>
+        <li><strong>迷ったら2つ試す。</strong>どの方法も元の画像を残したまま新しい画像をつくるので、標準と描き直しの両方をつくって見比べられます。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="how" aria-labelledby="how-title">
+      <h2 id="how-title">この比較のつくり方</h2>
+      <ul>
+        <li><strong>画像</strong>：4つの題材を、P-H3-Image（専用の重み）、MiniMax H3 Image、P-H3-Image（動画モデルのDiTとLoRA）で、1024×1024・同じシード（題材ごとに11〜14）でつくりました。プロンプトは下のとおりです。</li>
+        <li><strong>高解像度化</strong>：P-H3-Imageの4枚を、どの方法でも2倍（2048×2048）にしました。描き直しはP-H3-Image（専用の重み）で、元の画像と同じプロンプトとシードを使っています。比べている部分は、元の画像の320×320にあたる640×640を、縮小せずに切り出したものです。</li>
+        <li><strong>環境</strong>：M5・メモリ24GBのMac。開発中に、v0.10.0の次の版と同じ処理で、画像と描き直しはコマンドラインから、ほかの拡大はアプリのAPIから実行しました。どれも1回ずつで、選び直しはしていません。</li>
+        <li>同じプロンプトとシードでも、Macの機種や設定によって結果は変わることがあります。ページ用にJPEGにしているので、細かな粒状感は実際のPNGより少し減っています。</li>
+      </ul>
+      <details>
+        <summary>プロンプト</summary>
+        <ul class="small">
+          <li>人物写真（シード11）：<code>Close-up portrait photograph of a woman in her thirties with freckles, face and shoulders filling the frame, natural skin texture with visible pores, fine lines near the eyes, a few stray hairs, no makeup, soft window light from the left, 85mm lens, sharp focus, natural colors, no retouching.</code></li>
+          <li>文字のある写真（シード12）：<code>A photograph of a chalkboard sign standing outside a small bakery in the morning, hand-lettered in white chalk with the words "FRESH BREAD" and below it "OPEN 7AM", a wicker basket of baguettes beside it on the cobblestones.</code></li>
+          <li>アニメ調のイラスト（シード13）：<code>An anime-style illustration of a girl with short black hair in a yellow raincoat holding a red umbrella on a rainy city street at night, neon signs reflected in the puddles, clean line art, vivid colors.</code></li>
+          <li>質感（シード14）：<code>A photograph of a tabby cat curled up asleep on a chunky cream knitted blanket, soft afternoon window light, every strand of fur and every loop of wool sharply visible.</code></li>
+        </ul>
+      </details>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">不具合の報告（Issues）</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.ja.md">README</a></li>
+        <li><a href="faq.html#license">ライセンス</a></li>
+        <li><a href="en/image-compare.html?lang=en" hreflang="en" lang="en">English</a></li>
+      </ul>
+      <p>H3cApp：大阪成蹊大学データサイエンス学部 鎌原淳三／Junzo Kamahara</p>
+      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画の生成にはMiniMaxの動画生成モデル<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>を使っています。モデルにはMiniMax H3独自のライセンス（MiniMax H3 Community License）が適用されます。</p>
+    </div>
+  </footer>
+  <script src="assets/js/image-compare.js" defer></script>
+</body>
+</html>
