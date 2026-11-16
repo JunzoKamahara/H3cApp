@@ -126,7 +126,7 @@ struct ImageSizeProfile: Hashable, Identifiable {
 
     var resolutionLabel: String { "\(dimensions.width)×\(dimensions.height)" }
 
-    /// "標準", "大", "動画用", or the size itself.
+    /// "標準", "大", "動画用", or the size itself (a カスタム size).
     var tierLabel: String {
         if let tier { return tier.label }
         return isVideoCanvas ? String(localized: "動画用") : resolutionLabel
@@ -194,6 +194,37 @@ struct ImageSizeProfile: Hashable, Identifiable {
             }
         }
         return .canvas(width: w, height: h)
+    }
+
+    /// A typed-in side (カスタム…) as the image model takes it: the nearest
+    /// multiple of the step, within the range.
+    static func roundedSide(_ value: Int) -> Int32 {
+        let step = Int(sideStep)
+        let rounded = Int((Double(value) / Double(step)).rounded()) * step
+        return Int32(min(max(rounded, Int(sideRange.lowerBound)), Int(sideRange.upperBound)))
+    }
+
+    /// カスタム…'s size: the preset when it is one, else that canvas.
+    static func custom(width: Int32, height: Int32) -> ImageSizeProfile {
+        for shape in AspectShape.allCases {
+            for tier in ImageSizeTier.allCases where preset(shape, tier).dimensions == (width, height) {
+                return preset(shape, tier)
+            }
+        }
+        return .canvas(width: width, height: height)
+    }
+
+    /// About how many times 標準's (1024x1024) time an image of this size
+    /// takes, without references: a fit to the times measured on an M5
+    /// with P-H3-Image (about 35 s at 1, 110 s at 4 and 240 s at 8
+    /// megapixels; MiniMax H3 Image grows alike). A ratio, since the
+    /// seconds themselves depend on the Mac.
+    static func relativeTime(width: Int32, height: Int32) -> Double {
+        func seconds(_ megapixels: Double) -> Double {
+            14.3 + 19.6 * megapixels + 1.07 * megapixels * megapixels
+        }
+        let megapixels = Double(width) * Double(height) / (1024 * 1024)
+        return seconds(megapixels) / seconds(1)
     }
 
     init?(rawValue: String) {

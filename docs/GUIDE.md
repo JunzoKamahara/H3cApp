@@ -66,7 +66,10 @@ their own prompt and settings.
 - **Making an image.** Write a prompt and choose the shape (square, landscape,
   portrait), the size (Standard is 1024×1024 or 1344×768, Large twice that,
   Extra Large about 8 megapixels such as 2912×2912 or 3808×2176, "For video"
-  the size of a video) and how many (1 to 20). On a 24 GB M5 a
+  the size of a video) and how many (1 to 20). "Custom…" in the size menu
+  takes a width and height of your own (multiples of 32 from 256 to 4096
+  pixels; other numbers are brought to the nearest such size), and shows the
+  time against Standard. On a 24 GB M5 a
   1024×1024 image takes about 35 seconds and a 2048×2048 one about a minute
   and 40 seconds.
 - **Seed.** "Seed" at the top of the panel sets whether every image draws a

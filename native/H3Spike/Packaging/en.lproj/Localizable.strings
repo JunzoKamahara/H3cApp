@@ -1376,6 +1376,16 @@
 "この参照画像を取り除く" = "Remove this reference image";
 "画像の編集" = "Image edit";
 "参照をすべて取り除く" = "Remove all references";
+"画像の大きさ" = "Image Size";
+"ピクセル" = "pixels";
+"幅と高さを入れ替えます" = "Swaps the width and height";
+"縦横を入れ替える" = "Swap";
+"つくる大きさ: %@×%@（%@メガピクセル）" = "Size to make: %1$@×%2$@ (%3$@ megapixels)";
+"幅と高さは32の倍数で、256〜4096ピクセルです。近い大きさに直して使います。" = "Width and height are multiples of 32 from 256 to 4096 pixels; the nearest such size is used.";
+"時間の目安: 標準（1024×1024）の約%@倍（参照画像なしのとき）" = "Time: about %@ times Standard (1024×1024), without reference images";
+"約8メガピクセルを超えると、時間とメモリが大きく増え、このMacのメモリでは生成できないことがあります。" = "Beyond about 8 megapixels, time and memory grow fast, and this Mac's memory may not be enough.";
+"P-H3-Imageは約8メガピクセル（特大）で最も良くなります。" = "P-H3-Image does best at about 8 megapixels (Extra Large).";
+"この大きさにする" = "Use This Size";
 "参照画像をすべて外して、プロンプトだけで画像をつくる形に戻します" = "Removes every reference picture, back to making a picture from the prompt alone";
 "参照画像をどう変えるかを入力してください" = "Describe how to change the reference images";
 "参照画像が見つかりません: %@" = "Reference image not found: %@";

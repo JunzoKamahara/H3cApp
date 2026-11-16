@@ -60,6 +60,7 @@ struct CreationFormView: View {
     /// The image model whose setup sheet is open.
     @State private var imageModelSetup: H3ImageModel?
     @State private var showingImageSeed = false
+    @State private var showingCustomImageSize = false
     /// 「RefModとして保存…」 for this reference (RefModExtractSheet).
     @State private var refModSources: RefModSources?
     @State private var promptSuggestion = randomPromptSuggestion()
@@ -116,6 +117,9 @@ struct CreationFormView: View {
             H3ImageModelSetupView(library: library, model: model, busy: viewModel.isGeneratingImage) {
                 imageModelSetup = nil
             }
+        }
+        .sheet(isPresented: $showingCustomImageSize) {
+            CustomImageSizeSheet(viewModel: viewModel) { showingCustomImageSize = false }
         }
         .sheet(isPresented: $showingClipEditor) {
             CustomClipsSheet(viewModel: viewModel, library: library, isPresented: $showingClipEditor)
@@ -787,9 +791,15 @@ struct CreationFormView: View {
             Picker("画面の形", selection: Binding(
                 get: { viewModel.imageSizeProfile.shape },
                 set: { shape in
-                    // Keep 標準/大, or the video canvas, when the shape changes.
+                    // Keep 標準/大, or the video canvas, when the shape changes;
+                    // a カスタム size turns between landscape and portrait.
                     let current = viewModel.imageSizeProfile
-                    viewModel.imageSizeProfile = current.tier.map { .preset(shape, $0) } ?? .videoCanvas(shape)
+                    let size = current.dimensions
+                    if current.tier == nil, !current.isVideoCanvas, current.shape != .square, shape != .square {
+                        viewModel.imageSizeProfile = .custom(width: size.height, height: size.width)
+                    } else {
+                        viewModel.imageSizeProfile = current.tier.map { .preset(shape, $0) } ?? .videoCanvas(shape)
+                    }
                 }
             )) {
                 ForEach(AspectShape.allCases) { shape in
@@ -821,10 +831,12 @@ struct CreationFormView: View {
                 let video = ImageSizeProfile.videoCanvas(current.shape)
                 Text("動画用（\(video.resolutionLabel)）").tag(video)
                 if current.tier == nil && !current.isVideoCanvas {
-                    Text(current.resolutionLabel).tag(current)
+                    Text("カスタム（\(current.resolutionLabel)）").tag(current)
                 }
             }
             .pickerStyle(.inline)
+            Divider()
+            Button("カスタム…") { showingCustomImageSize = true }
         } label: {
             composerChip(systemImage: "arrow.up.left.and.arrow.down.right", text: viewModel.imageSizeProfile.tierLabel)
         }
