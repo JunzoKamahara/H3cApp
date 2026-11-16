@@ -46,7 +46,6 @@ struct PreviewPane: View {
                       let result = viewModel.lastResult {
                 ResultActionsView(viewModel: viewModel, result: result)
                     .fixedSize()
-                    .tutorialAnchor(.videoActions, viewModel.tutorial)
             }
         }
     }
@@ -373,6 +372,7 @@ private struct ResultActionsView: View {
                 Button("動画を書き出す…") { exportVideo() }
                     .keyboardShortcut("s", modifiers: .command)
                     .disabled(isExporting)
+                    .tutorialAnchor(.exportVideo, viewModel.tutorial)
 
                 Button("使用した設定…") { showingSettings = true }
                     .popover(isPresented: $showingSettings) {
@@ -384,6 +384,7 @@ private struct ResultActionsView: View {
                 if let url = viewModel.resultURL {
                     Button("参照に使う") { viewModel.useVideoAsReference(url) }
                         .help("この動画を参照動画としてパネルに追加します")
+                        .tutorialAnchor(.useAsReference, viewModel.tutorial)
                     if !viewModel.isTemporaryResult(url) {
                         Button("Finderで表示") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                     }

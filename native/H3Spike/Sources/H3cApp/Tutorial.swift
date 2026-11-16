@@ -20,7 +20,7 @@ import SwiftUI
 enum TutorialAnchor: String {
     case kind, prompt, generate, preview, projectMenu
     case imageModel, imageSize, editReferences, imageActions, upscaleButton
-    case imageInput, continuation, lipSync, videoActions
+    case imageInput, continuation, lipSync, exportVideo, useAsReference
     case projectList, advancedSettings, modelManager
 }
 
@@ -116,10 +116,10 @@ enum Tutorials {
 
     static var videoResult: Tutorial {
         Tutorial(id: "first-video-result", title: String(localized: "できた動画を使う"), steps: [
-            TutorialStep(anchor: .videoActions, title: String(localized: "書き出す・設定を見る"),
+            TutorialStep(anchor: .exportVideo, title: String(localized: "書き出す・設定を見る"),
                          body: String(localized: "「動画を書き出す…」（⌘S）で、好きな場所に保存します。「使用した設定…」では、この動画のプロンプトやシードなどを確かめられます。"),
                          arrowEdge: .bottom),
-            TutorialStep(anchor: .videoActions, title: String(localized: "次の動画につなげる"),
+            TutorialStep(anchor: .useAsReference, title: String(localized: "次の動画につなげる"),
                          body: String(localized: "「参照に使う」で、この動画を次の動画の参照にできます。パネルの「続きを生成」を押すと、この動画の続きをつくれます。"),
                          arrowEdge: .bottom),
         ])
