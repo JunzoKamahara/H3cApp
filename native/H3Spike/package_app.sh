@@ -49,6 +49,7 @@ cp "$repo_root/LICENSE" "$app_bundle/Contents/Resources/LICENSE"
 cp "$repo_root/THIRD_PARTY_NOTICES.md" "$app_bundle/Contents/Resources/THIRD_PARTY_NOTICES.md"
 # Real-ESRGAN weights for 2倍に拡大 (tools/convert_realesrgan.py; BSD-3-Clause).
 cp -R "$script_dir/Packaging/Upscalers" "$app_bundle/Contents/Resources/"
+cp -R "$script_dir/Packaging/Previews" "$app_bundle/Contents/Resources/"
 if [ -n "${CCV_DIR:-}" ]; then
     cp "$CCV_DIR/COPYING" "$app_bundle/Contents/Resources/ccv-COPYING.txt"
 fi

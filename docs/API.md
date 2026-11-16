@@ -6,7 +6,13 @@ This is a developer reference for scripting H3cApp locally. The app must be runn
 
 ## API
 
-While `H3cApp.app` is running it serves a plain JSON API on
+**The API is off until you turn it on** (from v0.10.0): in
+**H3cApp > General Settings…** (⌥⌘,), API tab, turn on **Use the API**. It
+starts listening at once, and the setting is kept for the next launch.
+Turning it off closes the server and removes the token file; while it is
+off no port is open and nothing is answered.
+
+While `H3cApp.app` is running with the API on, it serves a plain JSON API on
 `http://127.0.0.1:8420` — implemented over raw POSIX sockets (see
 [HTTPServer.swift](../native/H3Spike/Sources/H3cApp/HTTPServer.swift)), not
 Network.framework or any third-party server, and with no separate process

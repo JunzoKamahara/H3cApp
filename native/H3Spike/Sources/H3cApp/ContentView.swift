@@ -76,6 +76,25 @@ struct ContentView: View {
                 }
             }
         }
+        .overlay(alignment: .top) { TutorialCard(controller: viewModel.tutorial) }
+        .onReceive(viewModel.tutorial.$expandComposerRequest.dropFirst()) { _ in
+            withAnimation(.easeInOut(duration: 0.15)) { composerCollapsed = false }
+        }
+        .task {
+            let model = viewModel
+            model.tutorial.showImageSide = { [weak model] in
+                guard let model, !model.isGenerating else { return }
+                model.generationKind = .image
+            }
+            // After the window has settled, and not over the model download
+            // that a first launch opens.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            while showingDownloadWizard || showingModelManager {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            viewModel.tutorial.startPendingIfAny(
+                isNewUser: viewModel.library.models.isEmpty && ProjectStore.shared.recents.isEmpty)
+        }
         .frame(minWidth: 760, minHeight: 600)
         // Once a generation starts (button, Return, ⌘Return or the HTTP
         // API), get the composer out of the way of the preview.
@@ -112,6 +131,7 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 ProjectMenu(viewModel: viewModel)
+                    .tutorialAnchor(.projectMenu, viewModel.tutorial)
             }
             ToolbarItem(placement: .automatic) {
                 Button {

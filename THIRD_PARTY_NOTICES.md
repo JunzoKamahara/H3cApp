@@ -370,6 +370,15 @@ as AI-generated in its metadata (`AISystemUsed` "P-H3-Image") and records
 the model in each image's record. P-H3-Image's prompt upsampler (Qwen3.5-9B)
 is not used or downloaded.
 
+The in-progress preview of a still image (`ImageDenoisePreview.swift`) uses
+two small linear maps shipped in the app (`Packaging/Previews`, one per image
+model): from a latent pixel's 3x3 neighbourhood to the RGB patch the VAE
+would decode it to. They were fitted by least squares
+(`tools/image_preview/fit_preview.py`) on pictures the engine generated with
+each model and the latents it saved beside them; no code or coefficients
+were taken from elsewhere (Draw Things and ComfyUI show previews in a
+similar way, but their code is GPL-3.0 and was not used).
+
 ## RefMod file format (ComfyUI-MiniMaxH3Mod)
 
 The RefMod files the app reads and writes (`h3_refmod.c`) follow the format

@@ -106,7 +106,13 @@ struct DenoisePreviewSettingRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Toggle("生成中に途中の様子を表示する", isOn: Binding(
+            Toggle("画像の生成中に途中の様子を表示する", isOn: $preferences.showImageDenoisePreview)
+            Text("画像をつくっている途中で、ステップごとにできあがりつつある様子を表示します。アプリに入っている小さな変換を使うので、ダウンロードは要らず、生成時間もほとんど変わりません。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 6)
+            Toggle("動画の生成中に途中の様子を表示する", isOn: Binding(
                 get: { preferences.showDenoisePreview },
                 set: { preferences.setShowDenoisePreview($0) }))
             Text("ノイズを取り除いている途中で、できあがりつつある動画の1コマを数回表示します。思っていた動画と違えば、早めに止められます。生成時間はほとんど変わりません。小さなデコーダ（madebyollin/taehv の taeh3、MITライセンス、22.7MB）を使い、初めてオンにしたときにダウンロードします。")

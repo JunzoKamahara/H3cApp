@@ -32,12 +32,16 @@ struct PreviewPane: View {
         // The result actions sit up here: the bottom of the stage is where
         // the floating composer lives.
         HStack(alignment: .top) {
+            // Tutorial bubbles about the stage hang from its title, below
+            // it, rather than over the picture.
             Text("プレビュー").font(.system(size: 14, weight: .semibold)).foregroundStyle(palette.textPrimary)
+                .tutorialAnchor(.preview, viewModel.tutorial)
             Text(statusLabel).font(.caption).foregroundStyle(palette.textSecondary)
             Spacer()
             if let image = shownImage {
                 ImageActionsView(viewModel: viewModel, image: image)
                     .fixedSize()
+                    .tutorialAnchor(.imageActions, viewModel.tutorial)
             } else if viewModel.resultURL != nil, !viewModel.isGeneratingImage,
                       let result = viewModel.lastResult {
                 ResultActionsView(viewModel: viewModel, result: result)
@@ -94,7 +98,8 @@ struct PreviewPane: View {
         if viewModel.isGeneratingImage {
             generatingView
         } else if let image = shownImage {
-            ImagePreviewView(url: image.url)
+            ImagePreviewView(url: image.url,
+                             zoomsHere: { [weak viewModel] in !(viewModel?.isPointerOverComposer ?? false) })
                 .id(image.url)
         } else if let url = viewModel.resultURL {
             ResultPlayerView(url: url, aspectRatio: viewModel.resultAspectRatio,
@@ -164,7 +169,7 @@ struct PreviewPane: View {
         VStack(spacing: H3Spacing.md) {
             if let image = viewModel.denoisePreviewImage {
                 denoisePreview(image, maxHeight: denoisePreviewHeight(stage: height))
-            } else if viewModel.denoisePreviewActive {
+            } else if viewModel.isGeneratingImage ? preferences.showImageDenoisePreview : viewModel.denoisePreviewActive {
                 Text("途中の様子は、ノイズ除去が少し進むと表示されます")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
@@ -216,7 +221,9 @@ struct PreviewPane: View {
                 .aspectRatio(contentMode: .fit)
                 .frame(maxWidth: 640, maxHeight: maxHeight)
                 .clipShape(RoundedRectangle(cornerRadius: H3Radius.control))
-            Text("途中の様子（ステップ \(viewModel.denoisePreviewStep)/\(viewModel.denoisePreviewSteps)）。できあがる動画とは細部が変わります。")
+            Text(viewModel.isGeneratingImage
+                 ? String(localized: "途中の様子（ステップ \(viewModel.denoisePreviewStep)/\(viewModel.denoisePreviewSteps)）。できあがる画像とは細部が変わります。")
+                 : String(localized: "途中の様子（ステップ \(viewModel.denoisePreviewStep)/\(viewModel.denoisePreviewSteps)）。できあがる動画とは細部が変わります。"))
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
         }
@@ -250,30 +257,50 @@ struct PreviewPane: View {
     }
 }
 
-/// A project image on the stage, fitted to it.
+/// A project image on the stage: fitted to it, at most 1:1, zoomed and moved
+/// like the video (ZoomPanStage); the percentage in its corner resets it.
 private struct ImagePreviewView: View {
     let url: URL
+    var zoomsHere: () -> Bool = { true }
     @State private var image: NSImage?
+    @State private var pixelSize: CGSize = .zero
+    @State private var zoom: CGFloat = 1
+    @State private var pan: CGSize = .zero
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topTrailing) {
             H3Palette(colorScheme).stage
             if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
+                ZoomPanStage(nativeSize: pixelSize, zoom: $zoom, pan: $pan, zoomsHere: zoomsHere) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(zoom > 2 ? .medium : .high)
+                }
+                Button("\(Int((zoom * 100).rounded()))%") {
+                    withAnimation(.easeInOut(duration: 0.15)) { zoom = 1; pan = .zero }
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .monospacedDigit()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.regularMaterial, in: Capsule())
+                .padding(10)
+                .help("ピンチ・マウスホイールで拡大縮小、ドラッグで移動、ダブルクリックかここを押すと元の大きさ")
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: H3Radius.stage))
         .task(id: url) {
             let url = url
-            image = await Task.detached(priority: .userInitiated) {
+            let loaded = await Task.detached(priority: .userInitiated) {
                 ImageMetadata.loadImage(at: url).map {
-                    NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height))
+                    (NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)),
+                     CGSize(width: $0.width, height: $0.height))
                 }
             }.value
+            image = loaded?.0
+            pixelSize = loaded?.1 ?? .zero
         }
     }
 }

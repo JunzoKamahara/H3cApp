@@ -289,6 +289,7 @@ struct CreationFormView: View {
                 .help(viewModel.imageModelCanEdit
                       ? String(localized: "手元の画像を参照にして、プロンプトの指示で直した画像をつくります（画像の編集）。プロジェクトの画像は一覧やプレビューの「この画像を編集」から選べます")
                       : String(localized: "この画像モデルは、まだ画像の編集に対応していません"))
+                .tutorialAnchor(.editReferences, viewModel.tutorial)
                 Spacer(minLength: 0)
                 imageSeedButton
             }
@@ -639,6 +640,7 @@ struct CreationFormView: View {
                                    onSubmit: { viewModel.requestGenerate() },
                                    onComposingChange: { promptComposing = $0 })
                     .frame(height: 84)
+                    .tutorialAnchor(.prompt, viewModel.tutorial)
                     .onChange(of: shownPrompt.isEmpty) { wasEmpty, isEmpty in
                         if isEmpty && !wasEmpty {
                             promptSuggestion = randomPromptSuggestion(for: viewModel.generationKind, excluding: promptSuggestion)
@@ -719,6 +721,7 @@ struct CreationFormView: View {
         .fixedSize()
         .disabled(viewModel.isGenerating)
         .help("動画をつくるか、画像をつくるかを切り替えます。それぞれのプロンプトと設定は別々に保たれます")
+        .tutorialAnchor(.kind, viewModel.tutorial)
     }
 
     /// The image model in use. Without one, the way to add it.
@@ -756,6 +759,7 @@ struct CreationFormView: View {
         .disabled(viewModel.isGenerating)
         .help(active.map { String(localized: "画像モデル: \($0.name)") }
               ?? String(localized: "画像をつくるモデルがまだありません。ダウンロードするか、モデルのフォルダを選んで追加します"))
+        .tutorialAnchor(.imageModel, viewModel.tutorial)
     }
 
     /// A model's name cut to fit the chip (the full one is in its help).
@@ -816,6 +820,7 @@ struct CreationFormView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("大きさ（\(viewModel.imageSizeProfile.label)）")
+        .tutorialAnchor(.imageSize, viewModel.tutorial)
     }
 
     private var imageCountMenu: some View {
@@ -1116,6 +1121,7 @@ struct CreationFormView: View {
               : String(localized: "動画をつくる（Enter / ⌘Return）"))
         .accessibilityLabel(viewModel.isGenerating ? String(localized: "中止")
                             : viewModel.generationKind == .image ? String(localized: "画像をつくる") : String(localized: "動画をつくる"))
+        .tutorialAnchor(.generate, viewModel.tutorial)
     }
 
     private var generateEnabled: Bool {

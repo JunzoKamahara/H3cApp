@@ -118,6 +118,8 @@ final class GenerationViewModel: ObservableObject {
     @Published private(set) var deviceLine: String = String(localized: "モデルを準備しています…")
     @Published private(set) var modelDirectory: String = ""
     let library = ModelLibrary()
+    /// This window's チュートリアル (Tutorial.swift).
+    let tutorial = TutorialController()
 
     // MARK: Draft - editable settings, never overwritten by a running job or
     // a past result (design spec invariant #1).
@@ -180,6 +182,17 @@ final class GenerationViewModel: ObservableObject {
     @Published private(set) var denoisePreviewStep: Int = 0
     @Published private(set) var denoisePreviewSteps: Int = 0
     private let denoisePreviewRenderer = DenoisePreviewRenderer()
+    private let imageDenoisePreviewRenderer = ImageDenoisePreviewRenderer()
+
+    /// A still image's 途中の様子 (ImageDenoisePreview.swift).
+    func showImageLatentPreview(_ preview: H3LatentPreview, isPH3: Bool) {
+        imageDenoisePreviewRenderer.render(preview, isPH3: isPH3) { [weak self] image in
+            guard let self, self.isGeneratingImage, let image else { return }
+            self.denoisePreviewImage = image
+            self.denoisePreviewStep = preview.step
+            self.denoisePreviewSteps = preview.steps
+        }
+    }
     /// On, and the decoder is there.
     var denoisePreviewActive: Bool { preferences.showDenoisePreview && DenoisePreviewWeights.isPresent }
     /// Reuse actually sent to the engine: the 高速/最速 presets rely on core
@@ -1646,6 +1659,7 @@ final class GenerationViewModel: ObservableObject {
         isGeneratingImage = true
         isCancelling = false
         errorMessage = nil
+        denoisePreviewImage = nil
         estimator = nil
         batchProgress = total > 1 ? BatchProgress(index: index, total: total) : nil
         batchTiming = nil
@@ -1725,6 +1739,7 @@ final class GenerationViewModel: ObservableObject {
         isGenerating = false
         isGeneratingImage = false
         isCancelling = false
+        denoisePreviewImage = nil
         batchProgress = nil
         imageStartedAt = nil
         stopElapsedTimer()

@@ -105,11 +105,21 @@ struct AboutCommand: Commands {
 /// The ヘルプ menu: the project site's guides, the API, releases and
 /// reports, and the licenses.
 struct HelpCommands: Commands {
+    @FocusedObject private var viewModel: GenerationViewModel?
+
     var body: some Commands {
         CommandGroup(replacing: .help) {
+            Menu("チュートリアル") {
+                ForEach(Tutorials.all) { tutorial in
+                    Button(tutorial.title) { viewModel?.tutorial.show(tutorial) }
+                }
+            }
+            .disabled(viewModel == nil)
+            Divider()
             Button("H3cAppの使い方") { NSWorkspace.shared.open(AppLinks.site("guide.html")) }
                 .keyboardShortcut("?", modifiers: .command)
             Button("はじめ方") { NSWorkspace.shared.open(AppLinks.site("getting-started.html")) }
+            Button("静止画の使い方") { NSWorkspace.shared.open(AppLinks.site("image.html")) }
             Button("詳細設定の説明") { NSWorkspace.shared.open(AppLinks.site("settings.html")) }
             Button("量子化モデル（GGUF）の使い方") { NSWorkspace.shared.open(AppLinks.site("gguf.html")) }
             Button("よくある質問") { NSWorkspace.shared.open(AppLinks.site("faq.html")) }

@@ -590,6 +590,8 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
     h3_dit *dit = NULL;
     float *latent = malloc(latent_count * sizeof(*latent));
     float *velocity = malloc(latent_count * sizeof(*velocity));
+    /* The finished-image estimate a preview is given (latent_preview). */
+    float *estimate = NULL;
     /* P-H3-Image's two audio latents, denoised alongside and dropped. */
     enum { AUDIO_VALUES = AUDIO_CHANNELS * AUDIO_STEREO * PH3_AUDIO_LATENTS };
     float audio[AUDIO_VALUES], audio_velocity[AUDIO_VALUES];
@@ -862,6 +864,16 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
                                              error, error_size)) goto done;
         /* The velocity points at the data: x += (sigma - sigma_next) * v. */
         float dt = ctx->sigmas[step] - ctx->sigmas[step + 1];
+        if (params->latent_preview && step + 1 < ctx->steps) {
+            if (!estimate) estimate = malloc(latent_count * sizeof(*estimate));
+            if (estimate) {
+                float sigma = ctx->sigmas[step];
+                for (size_t index = 0; index < latent_count; index++)
+                    estimate[index] = latent[index] + sigma * velocity[index];
+                params->latent_preview(estimate, latent_w, latent_h, step + 1,
+                                       ctx->steps, params->progress_opaque);
+            }
+        }
         if (h3_option("H3_PROFILE")) {
             size_t bad = 0;
             double sum = 0.0;
@@ -936,5 +948,6 @@ done:
     h3_tokenizer_free(tokenizer);
     free(latent);
     free(velocity);
+    free(estimate);
     return ok;
 }

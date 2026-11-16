@@ -2,7 +2,9 @@ import Darwin
 import Foundation
 import SystemConfiguration
 
-/// The app's one API server, started at launch and kept until quit. It
+/// The app's one API server, off unless turned on in 全体設定 > API (the
+/// choice is remembered; it starts at launch when on, and is kept until
+/// quit or turned off). It
 /// always talks to the primary model (AppModels), which outlives its window,
 /// so the API keeps working with every window closed while the app runs.
 ///
@@ -21,15 +23,19 @@ final class APIHost: ObservableObject {
     @Published private(set) var isListening = false
     @Published private(set) var allowsExternalAccess =
         UserDefaults.standard.bool(forKey: APIHost.externalAccessKey)
+    /// Whether the server runs at all. Off until turned on.
+    @Published private(set) var isEnabled =
+        UserDefaults.standard.bool(forKey: APIHost.enabledKey)
 
     private static let externalAccessKey = "H3cApp.apiAllowsExternalAccess"
+    private static let enabledKey = "H3cApp.apiEnabled"
     private var server: HTTPServer?
     /// What the server's router checks requests against; replacing the
     /// token swaps it here without a restart.
     private let currentToken = APITokenBox()
 
     func start() {
-        guard server == nil else { return }
+        guard isEnabled, server == nil else { return }
         startError = nil
         // A token another device may hold is reused while external access
         // is on; anything else gets a fresh one.
@@ -75,6 +81,25 @@ final class APIHost: ObservableObject {
         isListening = false
     }
 
+    /// Turns the server on (listening at once) or off (closed at once, and
+    /// the token file removed - a script finds no token and no server).
+    func setEnabled(_ enabled: Bool) {
+        guard enabled != isEnabled else { return }
+        UserDefaults.standard.set(enabled, forKey: Self.enabledKey)
+        isEnabled = enabled
+        startError = nil
+        if enabled {
+            start()
+        } else {
+            token?.remove(from: h3APITokenPath)
+            server?.stop()
+            server = nil
+            isListening = false
+            token = nil
+        }
+        AppModels.shared.refreshAPIStatus()
+    }
+
     /// Lets other devices in, or shuts them out again, by listening anew.
     /// Turning it off also replaces the token, so one handed to another
     /// device stops working.
@@ -114,6 +139,7 @@ final class APIHost: ObservableObject {
 
     /// What 「APIサーバー」 says in `model`'s window.
     func status(for model: GenerationViewModel) -> String {
+        guard isEnabled else { return String(localized: "オフ（全体設定の「API」でオンにできます）") }
         if let startError { return String(localized: "起動できませんでした（\(startError)）") }
         guard isListening else { return String(localized: "起動しています…") }
         var address = "http://127.0.0.1:\(h3APIPort)"

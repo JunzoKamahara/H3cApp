@@ -58,6 +58,12 @@ final class AppPreferences: ObservableObject {
         UserDefaults.standard.bool(forKey: "h3c-app.showDenoisePreview") {
         didSet { UserDefaults.standard.set(showDenoisePreview, forKey: "h3c-app.showDenoisePreview") }
     }
+    /// 途中の様子 for still images (ImageDenoisePreview.swift): a linear map
+    /// shipped in the app, so nothing to download and on by default.
+    @Published var showImageDenoisePreview: Bool =
+        UserDefaults.standard.object(forKey: "h3c-app.showImageDenoisePreview") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showImageDenoisePreview, forKey: "h3c-app.showImageDenoisePreview") }
+    }
     /// One download for the whole app, whichever window asked for it.
     let denoisePreviewDownloader = DenoisePreviewDownloader()
 

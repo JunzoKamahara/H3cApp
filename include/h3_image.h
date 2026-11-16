@@ -79,6 +79,15 @@ typedef struct {
     /* h3_image_plan only: how many text-encoder layers the generation will
      * read ahead (0: what H3_QWEN_PREFETCH_DEPTH or the default gives now). */
     int plan_text_prefetch_depth;
+    /* Optional: called after every denoising step but the last with the
+     * model's estimate of the finished image (x0 = x_t + sigma * v):
+     * channel-major F32 [24, latent_height, latent_width] in the DiT's
+     * normalized latent space, valid only during the call; `step` is
+     * 1-based. For a caller-side preview; no VAE runs. Gets
+     * progress_opaque. */
+    void (*latent_preview)(const float *latent, int latent_width,
+                           int latent_height, int step, int steps,
+                           void *opaque);
 } h3_image_params;
 
 typedef struct {

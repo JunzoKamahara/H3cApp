@@ -94,6 +94,27 @@ private struct APISettingsTab: View {
 
     var body: some View {
         Form {
+            Section {
+                Toggle("APIを使う", isOn: Binding(get: { api.isEnabled }, set: { api.setEnabled($0) }))
+                    .toggleStyle(.switch)
+                Text("オンにすると、このMacのスクリプトなどからHTTPでH3cAppを操作できます（生成、プロジェクト、モデルの管理など）。使わないときはオフのままにしてください。設定は次の起動にも引き継がれます。")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if api.isEnabled {
+                apiSections
+            }
+        }
+        .formStyle(.grouped)
+        .confirmationDialog("トークンを作り直しますか？", isPresented: $confirmingNewToken) {
+            Button("作り直す", role: .destructive) { api.regenerateToken() }
+        } message: {
+            Text("今のトークンはすぐに使えなくなります。スクリプトやほかの機器には新しいトークンを設定し直してください。")
+        }
+    }
+
+    @ViewBuilder
+    private var apiSections: some View {
             Section("API") {
                 LabeledContent("状態") {
                     if let error = api.startError {
@@ -176,13 +197,6 @@ private struct APISettingsTab: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-        }
-        .formStyle(.grouped)
-        .confirmationDialog("トークンを作り直しますか？", isPresented: $confirmingNewToken) {
-            Button("作り直す", role: .destructive) { api.regenerateToken() }
-        } message: {
-            Text("今のトークンはすぐに使えなくなります。スクリプトやほかの機器には新しいトークンを設定し直してください。")
-        }
     }
 
     /// A curl command for this Mac that reads the token from its file and

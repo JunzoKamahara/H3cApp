@@ -345,11 +345,14 @@ extension GenerationViewModel {
                 var finished: H3ImageResult?
                 do {
                     let params = H3ImageParams(prompt: prompt, width: size.width, height: size.height, seed: seed,
-                                               references: references, referenceMaxShortEdge: Int32(shortEdge))
+                                               references: references, referenceMaxShortEdge: Int32(shortEdge),
+                                               latentPreview: self.preferences.showImageDenoisePreview)
                     for try await event in engine.generate(params) {
                         switch event {
                         case .progress(let phase, let completed, let total):
                             self.imageGenerationProgress(phase: phase, completed: completed, total: total)
+                        case .latentPreview(let preview):
+                            self.showImageLatentPreview(preview, isPH3: engine.isPH3)
                         case .finished(let result):
                             finished = result
                         }

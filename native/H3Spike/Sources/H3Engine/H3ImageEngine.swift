@@ -34,15 +34,20 @@ public struct H3ImageParams: Sendable {
     /// The longest short side a reference's latent is encoded at (0: the
     /// released pipeline's 2048).
     public var referenceMaxShortEdge: Int32
+    /// Hand over the model's estimate of the finished latent after every
+    /// step but the last (H3ImageEvent.latentPreview).
+    public var latentPreview: Bool
 
     public init(prompt: String, width: Int32, height: Int32, seed: UInt64,
-                references: [H3ImageReference] = [], referenceMaxShortEdge: Int32 = 0) {
+                references: [H3ImageReference] = [], referenceMaxShortEdge: Int32 = 0,
+                latentPreview: Bool = false) {
         self.prompt = prompt
         self.width = width
         self.height = height
         self.seed = seed
         self.references = references
         self.referenceMaxShortEdge = referenceMaxShortEdge
+        self.latentPreview = latentPreview
     }
 }
 
@@ -81,6 +86,9 @@ public enum H3ImageEvent: Sendable {
     /// phase: "vision", "text encoder", "reference", "image model",
     /// "denoise" or "decode".
     case progress(phase: String, completed: Int, total: Int)
+    /// The estimate of the finished image while it denoises: [24, height,
+    /// width] normalized, time 1.
+    case latentPreview(H3LatentPreview)
     case finished(H3ImageResult)
 }
 
@@ -97,6 +105,16 @@ private func h3ImageProgressTrampoline(phase: UnsafePointer<CChar>?, completed: 
     let bridge = Unmanaged<ImageBridge>.fromOpaque(opaque).takeUnretainedValue()
     bridge.continuation.yield(.progress(phase: String(cString: phase),
                                         completed: Int(completed), total: Int(total)))
+}
+
+private func h3ImageLatentPreviewTrampoline(latent: UnsafePointer<Float>?, width: Int32, height: Int32,
+                                            step: Int32, steps: Int32, opaque: UnsafeMutableRawPointer?) {
+    guard let opaque, let latent else { return }
+    let bridge = Unmanaged<ImageBridge>.fromOpaque(opaque).takeUnretainedValue()
+    let count = 24 * Int(width) * Int(height)
+    bridge.continuation.yield(.latentPreview(H3LatentPreview(
+        step: Int(step), steps: Int(steps), time: 1, height: Int(height), width: Int(width),
+        latent: Array(UnsafeBufferPointer(start: latent, count: count)))))
 }
 
 public final class H3ImageEngine: @unchecked Sendable {
@@ -242,6 +260,7 @@ public final class H3ImageEngine: @unchecked Sendable {
                     cParams.cancel_requested = UnsafePointer(cancelFlag.engineFlag)
                     cParams.progress = h3ImageProgressTrampoline
                     cParams.progress_opaque = bridgeHandle.toOpaque()
+                    if params.latentPreview { cParams.latent_preview = h3ImageLatentPreviewTrampoline }
                     var result = h3_image_result()
                     var error = [CChar](repeating: 0, count: 512)
                     NSLog("h3: image generation params - %dx%d, seed %llu, %d references", params.width, params.height,
