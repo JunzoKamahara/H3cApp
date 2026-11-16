@@ -1450,6 +1450,13 @@
 "画像も動画と同じように、ピンチやマウスホイールで拡大縮小、ドラッグで移動できます。ダブルクリックで元の大きさです。動画はスペースキーで再生・停止できます（プロンプトの入力中を除きます）。" = "Pictures now zoom like videos: pinch or use the mouse wheel, drag to move, double-click for the original size. Space plays or pauses a video (except while you type a prompt).";
 "新機能：画像の途中の様子" = "New: image progress previews";
 "画像の生成中は、ここにできあがりつつある様子がステップごとに出ます。思っていた画像と違えば、早めに止められます。全体設定の「生成」でオフにできます。" = "While an image is being made, what it is turning into appears here after each step, so you can stop early if it isn't what you wanted. Turn it off under Generation in General Settings.";
+"画像の高解像度化" = "Enlarging Images";
+"新機能：画像の高解像度化" = "New: enlarging images";
+"できた画像の「高解像度化…」で、画像を大きくして新しい画像としてプロジェクトに加えます。元の画像はそのまま残ります。プロジェクトの画像の一覧では「その他」メニューにあります。" = "Enlarge… on a finished picture makes a larger copy and adds it to the project as a new picture; the original stays as it is. In the project's list of pictures it is in the More menu.";
+"描き直すか、そのまま拡大するか" = "Redraw or just enlarge";
+"「画像モデルで描き直す」は細かいところを描き足しますが、顔や模様が少し変わることがあります（強さは控えめ・標準・強め）。元の絵のまま大きくしたいときは、Real-ESRGANやSwiftVRなど、動画の拡大と同じ方法を選びます。" = "Redraw with the image model adds fine detail, but faces and patterns may change a little (strength: Gentle, Standard or Strong). To keep the picture as it is, choose one of the video enlargers, such as Real-ESRGAN or SwiftVR.";
+"新機能のチュートリアルを表示する" = "Show tutorials of new features";
+"オンにすると、新しい機能が加わった版を初めて起動したときに、その使い方を吹き出しで案内します。オフにしても、ヘルプメニューの「チュートリアル」からいつでも見られます。" = "When on, the first launch of a version with new features shows how to use them in speech bubbles. When off, you can still see them any time from Tutorials in the Help menu.";
 "APIについてのお知らせ" = "About the API";
 "APIは初めはオフになりました" = "The API now starts off";
 "このバージョンから、HTTPのAPIは使うときだけオンにする形になりました。スクリプトなどから使うときは、全体設定（アプリのメニューの「全体設定…」、⌥⌘,）の「API」タブで「APIを使う」をオンにしてください。オンにした設定は次の起動にも引き継がれます。" = "From this version the HTTP API is on only when you turn it on. To use it from scripts, turn on \"Use the API\" in the API tab of General Settings (the app menu's \"General Settings…\", ⌥⌘,). Once on, it stays on at the next launch.";

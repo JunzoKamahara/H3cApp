@@ -35,7 +35,7 @@ struct Tutorial: Identifiable {
 
 enum Tutorials {
     /// The ヘルプ menu's list, in order.
-    static var all: [Tutorial] { [basics, images, previews] }
+    static var all: [Tutorial] { [basics, images, upscale, previews] }
 
     static var basics: Tutorial {
         Tutorial(id: "basics", title: String(localized: "基本の使い方"), steps: [
@@ -84,6 +84,17 @@ enum Tutorials {
         ])
     }
 
+    static var upscale: Tutorial {
+        Tutorial(id: "image-upscale", title: String(localized: "画像の高解像度化"), steps: [
+            TutorialStep(anchor: .imageActions, title: String(localized: "新機能：画像の高解像度化"),
+                         body: String(localized: "できた画像の「高解像度化…」で、画像を大きくして新しい画像としてプロジェクトに加えます。元の画像はそのまま残ります。プロジェクトの画像の一覧では「その他」メニューにあります。"),
+                         arrowEdge: .bottom),
+            TutorialStep(anchor: .imageActions, title: String(localized: "描き直すか、そのまま拡大するか"),
+                         body: String(localized: "「画像モデルで描き直す」は細かいところを描き足しますが、顔や模様が少し変わることがあります（強さは控えめ・標準・強め）。元の絵のまま大きくしたいときは、Real-ESRGANやSwiftVRなど、動画の拡大と同じ方法を選びます。"),
+                         arrowEdge: .bottom),
+        ])
+    }
+
     /// For people who used an earlier version: the API now starts off.
     static var apiOff: Tutorial {
         Tutorial(id: "api-off-0.10", title: String(localized: "APIについてのお知らせ"), steps: [
@@ -109,6 +120,13 @@ final class TutorialController: ObservableObject {
     var showImageSide: () -> Void = {}
 
     private static let seenKey = "h3c-app.tutorialsSeen"
+    /// 全体設定 > チュートリアル: whether tours of new features start by
+    /// themselves at launch (on by default). The basics for a new user and
+    /// the API notice are not new-feature tours.
+    nonisolated static let showsNewFeatureToursKey = "h3c-app.showNewFeatureTutorials"
+    nonisolated static var showsNewFeatureTours: Bool {
+        UserDefaults.standard.object(forKey: showsNewFeatureToursKey) as? Bool ?? true
+    }
     /// Only the first window starts tours by itself.
     private static var autoStarted = false
 
@@ -151,7 +169,13 @@ final class TutorialController: ObservableObject {
             seen.insert(Tutorials.basics.id)
         }
         // Someone updating hears first that their scripts need the API on.
-        var pending = [Tutorials.basics, Tutorials.images, Tutorials.previews]
+        var pending = [Tutorials.basics]
+        // 全体設定 > チュートリアル can keep the new-feature tours from
+        // starting by themselves; they stay unseen, so turning it back on
+        // shows them at the next launch.
+        if Self.showsNewFeatureTours {
+            pending += [Tutorials.images, Tutorials.upscale, Tutorials.previews]
+        }
         // (Not if they have turned it on already.)
         if isNewUser || APIHost.shared.isEnabled {
             seen.insert(Tutorials.apiOff.id)

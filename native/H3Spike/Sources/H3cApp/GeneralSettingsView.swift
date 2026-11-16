@@ -6,12 +6,13 @@ let generalSettingsWindowID = "general-settings"
 /// 全体設定: settings for the whole app rather than one window (詳細設定 is
 /// per window), one tab each - 生成 for what every generation does, 保存画質
 /// for how videos are saved, API for its addresses and token and whether
-/// other devices may use it.
+/// other devices may use it, チュートリアル for whether tours of new
+/// features start by themselves.
 struct GeneralSettingsView: View {
     @AppStorage("H3cApp.generalSettingsTab") private var tab = Tab.generation
 
     enum Tab: String {
-        case generation, video, api
+        case generation, video, api, tutorials
     }
 
     var body: some View {
@@ -25,6 +26,9 @@ struct GeneralSettingsView: View {
             APISettingsTab()
                 .tabItem { Label("API", systemImage: "network") }
                 .tag(Tab.api)
+            TutorialSettingsTab()
+                .tabItem { Label("チュートリアル", systemImage: "lightbulb") }
+                .tag(Tab.tutorials)
         }
         .frame(width: 560)
         .fixedSize(horizontal: false, vertical: true)
@@ -75,6 +79,25 @@ private struct VideoSettingsTab: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("書き出すときのコーデック（H.264で書き出す）と書き出しの画質は、書き出しの画面で選びます。")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// チュートリアル: whether tours of new features start by themselves
+/// (TutorialController.startPendingIfAny).
+private struct TutorialSettingsTab: View {
+    @AppStorage(TutorialController.showsNewFeatureToursKey) private var showsNewFeatureTours = true
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("新機能のチュートリアルを表示する", isOn: $showsNewFeatureTours)
+                    .toggleStyle(.switch)
+                Text("オンにすると、新しい機能が加わった版を初めて起動したときに、その使い方を吹き出しで案内します。オフにしても、ヘルプメニューの「チュートリアル」からいつでも見られます。")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
