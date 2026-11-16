@@ -114,7 +114,7 @@
     <section class="section compare-section" id="upscale" aria-labelledby="upscale-title">
       <h2 id="upscale-title">高解像度化を見比べる</h2>
       <p>上のP-H3-Imageの4枚（1024×1024）を、方法ごとに2倍（2048×2048）にしました。比べているのは、元の画像の320×320にあたる部分を、縮小せずに切り出した640×640です。比べている画像の下にある小さな画像の赤い枠が、切り出した場所です。</p>
-      <div class="note"><p><strong>高解像度化は、v0.10.0の次の版で加わる機能です。</strong>プレビューの「<span class="ui">高解像度化…</span>」か、「<span class="ui">プロジェクトの動画と画像…</span>」の「<span class="ui">その他</span>」から使います。大きくした画像は、元の画像を残したまま新しい画像としてプロジェクトに加わります。</p></div>
+      <div class="note"><p><strong>高解像度化は、v0.10.0からの機能です。</strong>プレビューの「<span class="ui">高解像度化…</span>」か、「<span class="ui">プロジェクトの動画と画像…</span>」の「<span class="ui">その他</span>」から使います。大きくした画像は、元の画像を残したまま新しい画像としてプロジェクトに加わります。</p></div>
       <noscript><p>この比較にはJavaScriptが必要です。</p></noscript>
       <div data-image-compare data-base="assets/image-compare/upscale/" hidden>
         <div class="compare-choices">
@@ -211,7 +211,7 @@
       <ul>
         <li><strong>画像</strong>：4つの題材を、P-H3-Image（専用の重み）、MiniMax H3 Image、P-H3-Image（動画モデルのDiTとLoRA）で、1024×1024・同じシード（題材ごとに11〜14）でつくりました。プロンプトは下のとおりです。</li>
         <li><strong>高解像度化</strong>：P-H3-Imageの4枚を、どの方法でも2倍（2048×2048）にしました。描き直しはP-H3-Image（専用の重み）で、元の画像と同じプロンプトとシードを使っています。比べている部分は、元の画像の320×320にあたる640×640を、縮小せずに切り出したものです。</li>
-        <li><strong>環境</strong>：M5・メモリ24GBのMac。開発中に、v0.10.0の次の版と同じ処理で、画像と描き直しはコマンドラインから、ほかの拡大はアプリのAPIから実行しました。どれも1回ずつで、選び直しはしていません。</li>
+        <li><strong>環境</strong>：M5・メモリ24GBのMac。開発中に、v0.10.0と同じ処理で、画像と描き直しはコマンドラインから、ほかの拡大はアプリのAPIから実行しました。どれも1回ずつで、選び直しはしていません。</li>
         <li>同じプロンプトとシードでも、Macの機種や設定によって結果は変わることがあります。ページ用にJPEGにしているので、細かな粒状感は実際のPNGより少し減っています。</li>
       </ul>
       <details>

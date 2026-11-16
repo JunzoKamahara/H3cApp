@@ -114,7 +114,7 @@
     <section class="section compare-section" id="upscale" aria-labelledby="upscale-title">
       <h2 id="upscale-title">Comparing the ways to enlarge</h2>
       <p>The four P-H3-Image pictures above (1024×1024), each enlarged 2x (2048×2048) by every method. What you compare is a 640×640 detail, not shrunk, of the part that is 320×320 in the original. The red frame in the small picture under them shows where it is.</p>
-      <div class="note"><p><strong>Enlarging images arrives in the version after v0.10.0.</strong> It is under <span class="ui">高解像度化…</span> (Enlarge…) in the preview, or <span class="ui">その他</span> (More) in <span class="ui">プロジェクトの動画と画像…</span> (Project videos and images…). The enlarged picture joins the project as a new image, and the original stays.</p></div>
+      <div class="note"><p><strong>Enlarging images is new in v0.10.0.</strong> It is under <span class="ui">高解像度化…</span> (Enlarge…) in the preview, or <span class="ui">その他</span> (More) in <span class="ui">プロジェクトの動画と画像…</span> (Project videos and images…). The enlarged picture joins the project as a new image, and the original stays.</p></div>
       <noscript><p>This comparison needs JavaScript.</p></noscript>
       <div data-image-compare data-base="../assets/image-compare/upscale/" hidden>
         <div class="compare-choices">
@@ -211,7 +211,7 @@
       <ul>
         <li><strong>Pictures</strong>: the four subjects, made at 1024×1024 with P-H3-Image (its own weights), MiniMax H3 Image and P-H3-Image (the video model's DiT with a LoRA), with the same seed for each subject (11 to 14). The prompts are below.</li>
         <li><strong>Enlarging</strong>: the four P-H3-Image pictures, each doubled (2048×2048) by every method. The redraws use P-H3-Image (its own weights) with the original's prompt and seed. The details compared are 640×640, not shrunk, of what is 320×320 in the original.</li>
-        <li><strong>Setup</strong>: a Mac with an M5 and 24 GB of memory. Made during development with the same processing as the version after v0.10.0: the pictures and the redraws from the command line, the other enlargements through the app's API. Each was made once, with no picking.</li>
+        <li><strong>Setup</strong>: a Mac with an M5 and 24 GB of memory. Made during development with the same processing as v0.10.0: the pictures and the redraws from the command line, the other enlargements through the app's API. Each was made once, with no picking.</li>
         <li>The same prompt and seed can give different results on other Macs or settings. The page shows JPEGs, so the finest grain is a little less than in the actual PNGs.</li>
       </ul>
       <details>
