@@ -388,6 +388,7 @@ struct ProjectVideosSheet: View {
         VStack(alignment: .leading, spacing: H3Spacing.md) {
             HStack {
                 Text(viewModel.project?.name ?? "").font(.headline)
+                    .tutorialAnchor(.projectList, viewModel.tutorial)
                 Text("動画 \(viewModel.projectVideos.count)本 ・ 画像 \(viewModel.projectImages.count)枚")
                     .foregroundStyle(.secondary)
                 Spacer()

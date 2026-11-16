@@ -440,6 +440,7 @@ struct CreationFormView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
+            .tutorialAnchor(.imageInput, viewModel.tutorial)
             switch viewModel.imageInputMode {
             case .firstLastFrame:
                 Text("この画像から動き始めます。").font(.caption).foregroundStyle(palette.textSecondary)
@@ -572,6 +573,7 @@ struct CreationFormView: View {
                 }
                 HStack {
                     Image(systemName: "arrow.turn.down.right").foregroundStyle(palette.textSecondary)
+                        .tutorialAnchor(.continuation, viewModel.tutorial)
                     Text("続き").font(.caption)
                     FileLink(path: continuation.videoURL.path) { quickLookURL = $0 }
                     Spacer()
@@ -608,6 +610,7 @@ struct CreationFormView: View {
                         .frame(width: 64)
                         .help("音声の何秒目から使うか")
                     Text("秒から").font(.caption)
+                        .tutorialAnchor(.lipSync, viewModel.tutorial)
                     Button("変更…") { viewModel.pickForcedAudio() }
                     Button("取り除く") { viewModel.forcedAudioPath = nil }
                 }

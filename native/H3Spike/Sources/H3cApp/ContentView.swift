@@ -92,9 +92,22 @@ struct ContentView: View {
         }
         .task {
             let model = viewModel
-            model.tutorial.showImageSide = { [weak model] in
+            let modelManager = $showingModelManager
+            model.tutorial.reveal = { [weak model] what in
                 guard let model, !model.isGenerating else { return }
-                model.generationKind = .image
+                switch what {
+                case .imageSide:
+                    model.generationKind = .image
+                case .videoFromImage:
+                    model.generationKind = .video
+                    model.creationMethod = .image
+                case .projectList:
+                    if model.project != nil { model.showingProjectVideos = true }
+                case .advancedSettings:
+                    model.showingAdvancedSettings = true
+                case .modelManager:
+                    modelManager.wrappedValue = true
+                }
             }
             // After the window has settled, and not over the model download
             // that a first launch opens.
@@ -187,7 +200,8 @@ struct ContentView: View {
             Text(viewModel.projectMessage ?? "")
         }
         .sheet(isPresented: $showingModelManager) {
-            ModelManagerView(library: viewModel.library, isGenerating: viewModel.isGenerating) { id in
+            ModelManagerView(library: viewModel.library, tutorial: viewModel.tutorial,
+                             isGenerating: viewModel.isGenerating) { id in
                 viewModel.switchModel(to: id)
             }
         }

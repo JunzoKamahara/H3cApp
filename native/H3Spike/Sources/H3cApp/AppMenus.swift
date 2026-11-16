@@ -110,8 +110,11 @@ struct HelpCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .help) {
             Menu("チュートリアル") {
-                ForEach(Tutorials.all) { tutorial in
-                    Button(tutorial.title) { viewModel?.tutorial.show(tutorial) }
+                ForEach(Array(Tutorials.menuGroups.enumerated()), id: \.offset) { number, group in
+                    if number > 0 { Divider() }
+                    ForEach(group) { tutorial in
+                        Button(tutorial.title) { viewModel?.tutorial.show(tutorial) }
+                    }
                 }
             }
             .disabled(viewModel == nil)

@@ -46,6 +46,7 @@ struct PreviewPane: View {
                       let result = viewModel.lastResult {
                 ResultActionsView(viewModel: viewModel, result: result)
                     .fixedSize()
+                    .tutorialAnchor(.videoActions, viewModel.tutorial)
             }
         }
     }

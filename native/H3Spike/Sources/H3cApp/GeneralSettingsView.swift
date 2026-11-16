@@ -87,17 +87,29 @@ private struct VideoSettingsTab: View {
     }
 }
 
-/// チュートリアル: whether tours of new features start by themselves
-/// (TutorialController.startPendingIfAny).
+/// チュートリアル: whether the tours for features used for the first time
+/// and the tours of new features start by themselves (TutorialController).
 private struct TutorialSettingsTab: View {
+    @AppStorage(TutorialController.showsFirstUseToursKey) private var showsFirstUseTours = true
     @AppStorage(TutorialController.showsNewFeatureToursKey) private var showsNewFeatureTours = true
 
     var body: some View {
         Form {
             Section {
+                Toggle("初めて使う機能のチュートリアルを表示する", isOn: $showsFirstUseTours)
+                    .toggleStyle(.switch)
+                Text("オンにすると、画像から動画をつくる、続きをつくる、プロジェクトの一覧、詳細設定、モデル管理などを初めて使うときに、その使い方を吹き出しで案内します。")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
                 Toggle("新機能のチュートリアルを表示する", isOn: $showsNewFeatureTours)
                     .toggleStyle(.switch)
-                Text("オンにすると、新しい機能が加わった版を初めて起動したときに、その使い方を吹き出しで案内します。オフにしても、ヘルプメニューの「チュートリアル」からいつでも見られます。")
+                Text("オンにすると、新しい機能が加わった版を初めて起動したときに、その使い方を吹き出しで案内します。")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } footer: {
+                Text("どちらをオフにしても、ヘルプメニューの「チュートリアル」からいつでも見られます。")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

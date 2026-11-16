@@ -9,6 +9,8 @@ import SwiftUI
 /// reuse it by name later" in the same shape.
 struct ModelManagerView: View {
     @ObservedObject var library: ModelLibrary
+    /// The window's tours (a first-use tour points at the title).
+    let tutorial: TutorialController
     /// Called after the active model changes (a direct selection, or the
     /// previously-active model being removed) so GenerationViewModel can
     /// reload the engine. Not called for LoRA changes - the stack only takes
@@ -77,6 +79,7 @@ struct ModelManagerView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("モデル管理").font(.system(size: 18, weight: .semibold))
+                    .tutorialAnchor(.modelManager, tutorial)
                 Spacer()
                 Button("閉じる") { dismiss() }
             }
