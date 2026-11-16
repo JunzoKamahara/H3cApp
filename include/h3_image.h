@@ -88,6 +88,15 @@ typedef struct {
     void (*latent_preview)(const float *latent, int latent_width,
                            int latent_height, int step, int steps,
                            void *opaque);
+    /* Image to image - redrawing an enlarged picture with the model: start
+     * from this picture, read at width x height (stretched), instead of
+     * pure noise. It is encoded by the VAE and mixed with the seed's noise
+     * at init_strength, the noise level (sigma, 0.05-1) the denoising
+     * starts at; the steps then run over the model's own grid below it.
+     * Lower keeps the picture closer, higher redraws more. NULL: text to
+     * image, or an edit. Not with references. */
+    const char *init_image_path;
+    float init_strength;
 } h3_image_params;
 
 typedef struct {
@@ -102,6 +111,7 @@ typedef struct {
     int latent_height;
     uint64_t seed;
     int prompt_tokens;
+    /* The steps run and their sigmas (fewer for an image to image). */
     int steps;
     float sigmas[H3_IMAGE_MAX_STEPS + 1];
     double text_seconds;

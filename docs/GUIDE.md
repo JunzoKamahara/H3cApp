@@ -91,6 +91,29 @@ their own prompt and settings.
   up a video that starts from it; under "More" it can also be the last frame
   or a reference image.
 
+### Enlarging an image
+
+"Enlarge…" on a finished picture (imported ones too; above the preview, or
+under "More" in "Project Videos and Images…") makes a larger copy as a new
+image. The original stays as it is; the new image's record names it, the
+method and the factor.
+
+- **Redraw with the image model (recommended).** The image model in use
+  draws the enlarged picture again. It starts from the picture mixed with
+  noise and runs only the last few steps, so the composition and faces stay
+  while detail suited to the new size is added. Strength is Gentle, Standard
+  or Strong: the stronger, the more detail is added, and the more easily
+  patterns not in the original appear. It uses the picture's own prompt (for
+  an imported picture, the panel's image prompt). Sizes go up to about 8
+  megapixels, where P-H3-Image does best. On a 24 GB M5, redrawing a
+  1024×1024 picture at 2912×2912 takes about 2 minutes 40 seconds
+  (P-H3-Image). The progress preview shows while it runs.
+- **Other methods.** The video enlargers work too: Standard (resampling),
+  MetalFX, Real-ESRGAN General and Anime (AI super-resolution; about a second
+  for 2x of 1024×1024), and SwiftVR and SeedVR2 when their models are
+  installed. Sides go up to 4096 pixels. These copies have no latent file
+  (the original keeps its own).
+
 ### Editing an image
 
 Give reference images and say in the prompt what to change, and the app makes

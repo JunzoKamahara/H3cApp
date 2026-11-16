@@ -307,6 +307,13 @@ struct ProjectImageRecord: Codable, Equatable {
     /// from the prompt alone), and the time they took to encode.
     var references: [Reference]? = nil
     var referenceSeconds: Double? = nil
+    /// An enlarged copy (高解像度化): the project image it was made from, the
+    /// method (ImageUpscaleMethod.id: "redraw" or a VideoUpscaler), the
+    /// factor asked for and, for a redraw, the noise level it started at.
+    var upscaledFrom: String? = nil
+    var upscaler: String? = nil
+    var upscaleFactor: Double? = nil
+    var upscaleStrength: Double? = nil
 
     var prompt: String? { draft?.prompt }
     var isEdit: Bool { !(references ?? []).isEmpty }

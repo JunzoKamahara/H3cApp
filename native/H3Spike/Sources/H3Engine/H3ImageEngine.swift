@@ -37,10 +37,16 @@ public struct H3ImageParams: Sendable {
     /// Hand over the model's estimate of the finished latent after every
     /// step but the last (H3ImageEvent.latentPreview).
     public var latentPreview: Bool
+    /// Redraw this picture (image to image, read at width x height) from
+    /// the noise level `initStrength` instead of making one from noise.
+    public var initImagePath: String?
+    public var initStrength: Float
 
     public init(prompt: String, width: Int32, height: Int32, seed: UInt64,
                 references: [H3ImageReference] = [], referenceMaxShortEdge: Int32 = 0,
-                latentPreview: Bool = false) {
+                latentPreview: Bool = false, initImagePath: String? = nil, initStrength: Float = 0.7) {
+        self.initImagePath = initImagePath
+        self.initStrength = initStrength
         self.prompt = prompt
         self.width = width
         self.height = height
@@ -266,6 +272,10 @@ public final class H3ImageEngine: @unchecked Sendable {
                     NSLog("h3: image generation params - %dx%d, seed %llu, %d references", params.width, params.height,
                           params.seed, params.references.count)
                     cParams.reference_max_short_edge = params.referenceMaxShortEdge
+                    cParams.init_strength = params.initStrength
+                    let initPath = params.initImagePath.flatMap { strdup($0) }
+                    defer { free(initPath) }
+                    cParams.init_image_path = UnsafePointer(initPath)
                     let ok = params.prompt.withCString { prompt -> Bool in
                         cParams.prompt = prompt
                         return Self.withReferences(params) { references, count -> Bool in

@@ -709,6 +709,14 @@ struct ProjectVideosSheet: View {
                 }
                 .disabled(viewModel.isGenerating || !viewModel.imageModelCanEdit)
                 ImageHandoffButtons(viewModel: viewModel, image: image) { isPresented = false }
+                Button("高解像度化…") {
+                    isPresented = false
+                    // After this list's sheet has gone: one sheet at a time.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        viewModel.pendingImageUpscale = image
+                    }
+                }
+                .disabled(viewModel.isGenerating || viewModel.isUpscalingVideo || foreign)
                 Button("設定を戻す") {
                     viewModel.restoreProjectImage(image)
                     isPresented = false

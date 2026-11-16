@@ -68,7 +68,7 @@ enum Tutorials {
                          body: String(localized: "直したい画像を参照に入れ、変えたいことと残したいことをプロンプトに書いて生成します。例：Edit <Picture 1>. Replace the cup with a small bird. Keep everything else."),
                          showsImageSide: true),
             TutorialStep(anchor: .imageActions, title: String(localized: "できた画像を使う"),
-                         body: String(localized: "できた画像の「この画像を編集」で続けて直したり、「この画像から動画を作る」でその画像から動き出す動画を準備したりできます。"),
+                         body: String(localized: "できた画像の「この画像を編集」で続けて直したり、「高解像度化…」で大きくしたり、「この画像から動画を作る」でその画像から動き出す動画を準備したりできます。"),
                          arrowEdge: .bottom),
         ])
     }

@@ -352,6 +352,12 @@ final class GenerationViewModel: ObservableObject {
     var importingVideoName = ""
     /// 2倍に拡大した動画をつくる is enlarging a project video (VideoUpscale).
     @Published var isUpscalingVideo = false
+    /// The enlargement running is of a project image (高解像度化), not a
+    /// video: the banner says so. isUpscalingVideo is set as well, so
+    /// everything that waits for an enlargement waits for this one too.
+    @Published var upscalingIsImage = false
+    /// 高解像度化…: the image whose sheet is open.
+    @Published var pendingImageUpscale: ProjectImage?
     var upscalingVideoName = ""
     var upscalingFactor = UpscaleFactor.two
     /// The share of frames enlarged so far (the banner), and its 中止.
@@ -1059,7 +1065,8 @@ final class GenerationViewModel: ObservableObject {
             return String(localized: "動画を取り込んでいます。終わると、その続きをつくれます")
         }
         if isUpscalingVideo {
-            return String(localized: "動画を拡大しています。終わってから生成してください")
+            return upscalingIsImage ? String(localized: "画像を拡大しています。終わってから生成してください")
+                                    : String(localized: "動画を拡大しています。終わってから生成してください")
         }
         if promptIsEmpty {
             return String(localized: "動画の内容を入力してください")

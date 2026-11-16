@@ -418,6 +418,12 @@ static int check_request(const h3_image_ctx *ctx,
              max_references);
         return 0;
     }
+    if (params->init_image_path && *params->init_image_path &&
+        params->reference_count) {
+        fail(error, error_size, "a picture to redraw cannot be combined with "
+             "reference images");
+        return 0;
+    }
     for (int index = 0; index < params->reference_count; index++)
         if (!params->references[index].path ||
             !*params->references[index].path) {
@@ -592,6 +598,10 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
     float *velocity = malloc(latent_count * sizeof(*velocity));
     /* The finished-image estimate a preview is given (latent_preview). */
     float *estimate = NULL;
+    /* Image to image: the picture's latent and the level it starts at. */
+    float *init = NULL;
+    float init_sigma = params->init_strength < 0.05f ? 0.05f
+                     : params->init_strength > 1.0f ? 1.0f : params->init_strength;
     /* P-H3-Image's two audio latents, denoised alongside and dropped. */
     enum { AUDIO_VALUES = AUDIO_CHANNELS * AUDIO_STEREO * PH3_AUDIO_LATENTS };
     float audio[AUDIO_VALUES], audio_velocity[AUDIO_VALUES];
@@ -799,15 +809,66 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
         result->reference_seconds += now() - began;
     }
 
+    /* Image to image: the picture encoded at the canvas, before the DiT
+     * takes the GPU. */
+    if (params->init_image_path && *params->init_image_path) {
+        began = now();
+        float *picture = NULL;
+        if (!h3_av_read_image_f32(params->init_image_path, latent_w * 16,
+                                  latent_h * 16, H3_IMAGE_FIT_STRETCH, &picture,
+                                  detail, sizeof(detail))) {
+            fail(error, error_size, "the picture to redraw: %s", detail);
+            goto done;
+        }
+        h3_video_latent encoded;
+        memset(&encoded, 0, sizeof(encoded));
+        void *pool = h3_autorelease_push();
+        int ok_encode = h3_video_vae_encode(
+            ctx->vae, ctx->shaders, picture, 1, latent_h * 16, latent_w * 16,
+            encoder_progress, &state, &encoded, detail, sizeof(detail));
+        h3_autorelease_pop(pool);
+        free(picture);
+        if (ok_encode && (encoded.time != 1 || encoded.height != latent_h ||
+                          encoded.width != latent_w)) {
+            snprintf(detail, sizeof(detail), "the VAE gave an unexpected latent size");
+            ok_encode = 0;
+        }
+        if (ok_encode) {
+            init = malloc(latent_count * sizeof(*init));
+            if (init) memcpy(init, encoded.values, latent_count * sizeof(*init));
+            else snprintf(detail, sizeof(detail), "out of memory");
+            ok_encode = init != NULL;
+        }
+        h3_video_latent_free(&encoded);
+        if (!ok_encode) {
+            fail(error, error_size, "the picture to redraw: %s", detail);
+            goto done;
+        }
+        result->reference_seconds += now() - began;
+        if (cancelled(params, error, error_size)) goto done;
+    }
+
     /* The DiT on [text | references | image]: one latent frame, no audio;
      * P-H3-Image's on [text | audio | image], two audio latents. */
     began = now();
     h3_lora adapter = {.path = ctx->lora, .strength = 1.0f};
     const h3_lora *loras = ctx->lora ? &adapter : NULL;
     size_t lora_count = ctx->lora ? 1 : 0;
-    h3_sigma_schedule sigmas = {.steps = ctx->steps};
-    for (int index = 0; index <= ctx->steps; index++)
-        sigmas.video[index] = sigmas.audio[index] = ctx->sigmas[index];
+    /* The steps to run: the model's grid, or for an image to image its
+     * start level and the grid below it. */
+    int steps = ctx->steps;
+    float grid[H3_IMAGE_MAX_STEPS + 1];
+    memcpy(grid, ctx->sigmas, sizeof(grid));
+    if (init) {
+        steps = 0;
+        grid[steps++] = init_sigma;
+        for (int index = 1; index <= ctx->steps; index++)
+            if (ctx->sigmas[index] < init_sigma - 1e-3f) grid[steps++] = ctx->sigmas[index];
+        steps--;   /* the last entry, 0, ends the schedule */
+    }
+    h3_sigma_schedule sigmas = {.steps = steps};
+    for (int index = 0; index <= steps; index++)
+        sigmas.video[index] = sigmas.audio[index] = grid[index];
     h3_layout_spec spec = {
         .text_len = (int)text.tokens, .latent_t = 1, .latent_h = latent_h,
         .latent_w = latent_w, .audio_t = ctx->ph3 ? PH3_AUDIO_LATENTS : 0,
@@ -841,6 +902,13 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
         h3_rng_seed(&rng, params->seed);
         h3_rng_fill_normal(&rng, latent, latent_count);
     }
+    if (init) {
+        /* x_sigma = (1 - sigma) x_0 + sigma * noise, as the flow runs. */
+        for (size_t index = 0; index < latent_count; index++)
+            latent[index] = (1.0f - init_sigma) * init[index] + init_sigma * latent[index];
+        free(init);
+        init = NULL;
+    }
     if (ctx->ph3) {
         /* The audio noise from the seed's own stream after the image's. */
         h3_rng rng;
@@ -855,23 +923,23 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
                 sqrt(energy / (double)latent_count));
     }
     if (params->progress)
-        params->progress("denoise", 0, ctx->steps, params->progress_opaque);
-    for (int step = 0; step < ctx->steps; step++) {
+        params->progress("denoise", 0, steps, params->progress_opaque);
+    for (int step = 0; step < steps; step++) {
         if (cancelled(params, error, error_size)) goto done;
         if (ctx->ph3 ? !h3_dit_forward(dit, step, latent, audio, velocity,
                                        audio_velocity, error, error_size)
                      : !h3_dit_forward_image(dit, step, latent, velocity,
                                              error, error_size)) goto done;
         /* The velocity points at the data: x += (sigma - sigma_next) * v. */
-        float dt = ctx->sigmas[step] - ctx->sigmas[step + 1];
-        if (params->latent_preview && step + 1 < ctx->steps) {
+        float dt = grid[step] - grid[step + 1];
+        if (params->latent_preview && step + 1 < steps) {
             if (!estimate) estimate = malloc(latent_count * sizeof(*estimate));
             if (estimate) {
-                float sigma = ctx->sigmas[step];
+                float sigma = grid[step];
                 for (size_t index = 0; index < latent_count; index++)
                     estimate[index] = latent[index] + sigma * velocity[index];
                 params->latent_preview(estimate, latent_w, latent_h, step + 1,
-                                       ctx->steps, params->progress_opaque);
+                                       steps, params->progress_opaque);
             }
         }
         if (h3_option("H3_PROFILE")) {
@@ -902,7 +970,7 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
             fprintf(stderr, "h3: image latent after step %d: rms %.4f\n",
                     step + 1, sqrt(energy / (double)latent_count));
         if (params->progress)
-            params->progress("denoise", step + 1, ctx->steps,
+            params->progress("denoise", step + 1, steps,
                              params->progress_opaque);
     }
     /* The VAE gets the GPU to itself. */
@@ -931,8 +999,8 @@ int h3_image_generate(h3_image_ctx *ctx, const h3_image_params *params,
     result->latent_width = latent_w;
     result->latent_height = latent_h;
     result->seed = params->seed;
-    result->steps = ctx->steps;
-    memcpy(result->sigmas, ctx->sigmas, sizeof(ctx->sigmas));
+    result->steps = steps;
+    memcpy(result->sigmas, grid, sizeof(grid));
     ok = 1;
 
 done:
@@ -949,5 +1017,6 @@ done:
     free(latent);
     free(velocity);
     free(estimate);
+    free(init);
     return ok;
 }

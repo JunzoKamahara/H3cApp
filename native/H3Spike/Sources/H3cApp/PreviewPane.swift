@@ -317,6 +317,9 @@ private struct ImageActionsView: View {
             Button("この画像を編集") { viewModel.editImage(image) }
                 .disabled(viewModel.isGenerating || !viewModel.imageModelCanEdit)
                 .help("この画像を参照にして、プロンプトの指示で直した画像をつくる準備をします（生成は始めません）")
+            Button("高解像度化…") { viewModel.pendingImageUpscale = image }
+                .disabled(viewModel.isGenerating || viewModel.isUpscalingVideo)
+                .help("この画像を大きくして、新しい画像をつくります（画像モデルで描き直す、AI超解像など）")
             Menu("その他") {
                 ImageHandoffButtons(viewModel: viewModel, image: image)
                 Divider()

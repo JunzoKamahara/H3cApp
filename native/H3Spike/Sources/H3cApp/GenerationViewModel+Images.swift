@@ -146,7 +146,10 @@ extension GenerationViewModel {
         if !FileManager.default.fileExists(atPath: model.path) {
             return String(localized: "画像モデル「\(model.name)」のフォルダが見つかりません")
         }
-        if isUpscalingVideo { return String(localized: "動画を拡大しています。終わってから生成してください") }
+        if isUpscalingVideo {
+            return upscalingIsImage ? String(localized: "画像を拡大しています。終わってから生成してください")
+                                    : String(localized: "動画を拡大しています。終わってから生成してください")
+        }
         if promptIsEmpty {
             return imageEditReferences.isEmpty ? String(localized: "画像の内容を入力してください")
                                                : String(localized: "参照画像をどう変えるかを入力してください")
@@ -614,6 +617,15 @@ struct ImageStoreRequest: Sendable {
     /// Whether the PNG's own metadata carries the prompt (the record
     /// always does), as for a video (GenerationMetadata.exportsSettings).
     let recordsPrompt: Bool
+    /// A redraw (高解像度化): what it was made from, recorded.
+    var upscale: UpscaleNote? = nil
+
+    struct UpscaleNote: Sendable {
+        let from: String
+        let method: String
+        let factor: Double
+        let strength: Double?
+    }
 
     /// The latent as a safetensors file: "latent" F32 [24, height, width].
     static func latentFile(_ result: H3ImageResult) -> Data {
@@ -675,6 +687,12 @@ struct ImageStoreRequest: Sendable {
             if !used.isEmpty {
                 record.references = used
                 record.referenceSeconds = result.referenceSeconds
+            }
+            if let upscale {
+                record.upscaledFrom = upscale.from
+                record.upscaler = upscale.method
+                record.upscaleFactor = upscale.factor
+                record.upscaleStrength = upscale.strength
             }
             return record
         }

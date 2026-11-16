@@ -53,6 +53,10 @@ struct ContentView: View {
                 Color.clear.sheet(item: $viewModel.pendingUpscale) { pending in
                     UpscaleSheet(viewModel: viewModel, pending: pending) { viewModel.pendingUpscale = nil }
                 }
+                // 高解像度化… of a project image.
+                Color.clear.sheet(item: $viewModel.pendingImageUpscale) { image in
+                    ImageUpscaleSheet(viewModel: viewModel, image: image) { viewModel.pendingImageUpscale = nil }
+                }
             }
             .overlay(alignment: .top) {
                 // 動画ファイルの続きを作る: converting takes a little while.
@@ -61,6 +65,12 @@ struct ContentView: View {
                         ProgressView().controlSize(.small)
                         if viewModel.isImportingVideo {
                             Text("動画を取り込んでいます（\(viewModel.importingVideoName)）…").font(.callout)
+                        } else if viewModel.upscalingIsImage {
+                            Text("画像を\(viewModel.upscalingFactor.label)に拡大しています（\(viewModel.upscalingVideoName)、\(Int((viewModel.upscaleProgress * 100).rounded()))%）…")
+                                .font(.callout)
+                                .monospacedDigit()
+                            Button("中止") { viewModel.cancelUpscale() }
+                                .controlSize(.small)
                         } else {
                             Text("動画を\(viewModel.upscalingFactor.label)に拡大しています（\(viewModel.upscalingVideoName)、\(Int((viewModel.upscaleProgress * 100).rounded()))%）…")
                                 .font(.callout)

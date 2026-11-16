@@ -233,6 +233,7 @@ extension GenerationViewModel {
             return handleImageModelsRequest(request)
         case ("POST", "/api/project/import-image"), ("POST", "/api/project/show-image"),
              ("POST", "/api/project/use-image"), ("POST", "/api/project/delete-image"),
+             ("POST", "/api/project/upscale-image"),
              ("POST", "/api/kind"):
             return handleImageRequest(request)
         case ("POST", "/api/project/new"), ("POST", "/api/project/open"), ("POST", "/api/project/close"),
@@ -935,6 +936,29 @@ extension GenerationViewModel {
         guard let name = json["image"] as? String,
               let image = projectImages.first(where: { $0.url.lastPathComponent == name }) else {
             return .error(400, "\"image\" must name a file listed under \"images\" by GET /api/project")
+        }
+        if request.path == "/api/project/upscale-image" {
+            // 高解像度化: "method" "redraw" (default) or an enlarger's name;
+            // "factor" (default 2); "strength" for a redraw ("gentle",
+            // "standard", "strong"). The redraw runs as an image generation,
+            // the others as an enlargement (upscaling_video, upscale_progress).
+            let methodName = json["method"] as? String ?? ImageUpscaleMethod.redraw.id
+            guard let method = ImageUpscaleMethod(id: methodName) else {
+                return .error(400, "\"method\" must be \"redraw\" or one of " +
+                    ImageUpscaleMethod.frameUpscalers.map(\.rawValue).joined(separator: ", "))
+            }
+            guard let factor = UpscaleFactor(rawValue: (json["factor"] as? Double) ?? 2) else {
+                return .error(400, "\"factor\" must be from 1 to 8")
+            }
+            let strengthName = json["strength"] as? String ?? RedrawStrength.standard.rawValue
+            guard let strength = RedrawStrength(rawValue: strengthName) else {
+                return .error(400, "\"strength\" must be \"gentle\", \"standard\" or \"strong\"")
+            }
+            if let reason = imageUpscaleBlockedReason(method) { return .error(409, reason) }
+            guard upscaleImage(image, method: method, factor: factor, strength: strength) else {
+                return .error(400, projectMessage ?? "the image cannot be enlarged this way")
+            }
+            return .json(202, ["ok": true, "method": method.id])
         }
         switch request.path {
         case "/api/project/show-image":

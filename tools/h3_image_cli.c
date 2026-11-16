@@ -3,7 +3,8 @@
  * the app.
  *
  *   h3_image_cli <model dir> <prompt> <out.ppm> [WxH] [seed] [shaders.metal]
- *                [reference image | latent=<file> | short=<pixels> | plan]...
+ *                [reference image | latent=<file> | short=<pixels> | plan |
+ *                 init=<image> | strength=<0.05-1>]...
  *
  * <model dir> holds transformer/, vae/, text_encoder/ and tokenizer/ (see
  * h3_image.h). Reference images are numbered in the order given; the prompt
@@ -11,7 +12,9 @@
  * before it its own latent (as the app saves one beside a generated image);
  * short=<pixels> is the longest short side a reference is encoded at
  * (default 2048); plan prints what the generation would take
- * (h3_image_plan) and generates nothing. Writes an 8-bit PPM and, next to
+ * (h3_image_plan) and generates nothing. init=<image> redraws that picture
+ * (image to image, read at WxH) from the noise level strength= (default
+ * 0.6). Writes an 8-bit PPM and, next to
  * it, <out>.latent.f32:
  * the normalized latent [24, H/16, W/16] as raw little-endian F32. */
 #include "h3_image.h"
@@ -49,6 +52,8 @@ int main(int argc, char **argv) {
     h3_image_reference references[H3_IMAGE_MAX_REFERENCES];
     memset(references, 0, sizeof(references));
     int reference_count = 0, short_edge = 0, plan_only = 0;
+    const char *init_path = NULL;
+    float init_strength = 0.6f;
     for (int index = 7; index < argc; index++) {
         if (!strcmp(argv[index], "plan")) {
             plan_only = 1;
@@ -60,6 +65,10 @@ int main(int argc, char **argv) {
                 return 2;
             }
             references[reference_count - 1].latent_path = argv[index] + 7;
+        } else if (!strncmp(argv[index], "init=", 5)) {
+            init_path = argv[index] + 5;
+        } else if (!strncmp(argv[index], "strength=", 9)) {
+            init_strength = (float)atof(argv[index] + 9);
         } else if (reference_count == H3_IMAGE_MAX_REFERENCES) {
             fprintf(stderr, "at most %d references\n", H3_IMAGE_MAX_REFERENCES);
             return 2;
@@ -71,7 +80,9 @@ int main(int argc, char **argv) {
                               .seed = seed, .progress = progress,
                               .references = references,
                               .reference_count = reference_count,
-                              .reference_max_short_edge = short_edge};
+                              .reference_max_short_edge = short_edge,
+                              .init_image_path = init_path,
+                              .init_strength = init_strength};
     if (plan_only) {
         h3_plan plan;
         int planned = h3_image_plan(ctx, &params, &plan);

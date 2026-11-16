@@ -98,6 +98,7 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `POST` | `/api/project/show-image` | `{"image"}` その画像（`GET /api/project`の`images`にあるファイル名）をプレビューに表示する。 |
 | `POST` | `/api/project/use-image` | `{"image", "as"}` その画像を動画のフォームに渡す。生成は始めない。`"as": "first_frame"`で最初の画像にする（動画のプロンプトが空なら画像のプロンプトを入れる）、`"last_frame"`で最後の画像にする、`"reference"`で参照画像に追加する（使用中のモデルにRef2VAがなければ応答に`warning`が付く）。パネルは動画に切り替わり、画像はほかの入力と同じくプロジェクトの`references`へ、記録と一緒にコピーされる。画像の編集に使う場合は、`"edit"`でその画像を画像フォームのただ1枚の参照にし（大きさは画像に合わせる。画像のプロンプトが空なら`Edit <Picture 1>. `を入れる）、`"edit_reference"`で画像フォームの参照に追加する。パネルは画像に切り替わる。 |
 | `POST` | `/api/project/delete-image` | `{"image"}` 画像と記録、潜在ファイルをゴミ箱に移動する。 |
+| `POST` | `/api/project/upscale-image` | `{"image", "method"?, "factor"?, "strength"?}` 高解像度化: その画像を大きくした新しい画像をプロジェクトにつくる。`method`は`redraw`（省略時。使用中の画像モデルで描き直す。画像の生成として進み、`GET /api/status`の`generating_image`と途中の様子で分かる）か、`standard`・`metalFX`・`realESRGANGeneral`・`realESRGANAnime`・`swiftVR`・`swiftVRFourX`・`seedVR2`（拡大として進み、`GET /api/project`の`upscaling_video`・`upscale_progress`で分かる。`POST /api/upscale/cancel`で止まる）。`factor`は1〜8（省略時2。描き直しは約8メガピクセルまで、ほかは一辺4096ピクセルまで）、`strength`は描き直しの`gentle`・`standard`（省略時）・`strong`。始めると`202`、始められないときは理由付きの`400`か`409`。新しい画像の記録には`upscaledFrom`・`upscaler`・`upscaleFactor`（描き直しは`upscaleStrength`も）が入る。 |
 | `POST` | `/api/project/move-image` | `{"image", "project"}` その画像を、記録と潜在ファイルごとプロジェクトのフォルダ`project`へ移す（同じ名前があれば`-2`、`-3`…が付く）。移動を待って`{"ok", "project", "image"}`を返す。失敗は理由付きの`400`、ファイルの書き込み中は`409`。 |
 
 `POST /api/generate`のボディフィールド（`prompt`以外はすべて省略可）:
