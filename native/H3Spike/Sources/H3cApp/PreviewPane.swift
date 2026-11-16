@@ -320,6 +320,7 @@ private struct ImageActionsView: View {
             Button("高解像度化…") { viewModel.pendingImageUpscale = image }
                 .disabled(viewModel.isGenerating || viewModel.isUpscalingVideo)
                 .help("この画像を大きくして、新しい画像をつくります（画像モデルで描き直す、AI超解像など）")
+                .tutorialAnchor(.upscaleButton, viewModel.tutorial)
             Menu("その他") {
                 ImageHandoffButtons(viewModel: viewModel, image: image)
                 Divider()

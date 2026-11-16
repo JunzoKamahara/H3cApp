@@ -75,6 +75,11 @@ extension GenerationViewModel {
         }
     }
 
+    /// 参照をすべて取り除く: back to making a picture from the prompt alone.
+    func removeAllImageEditReferences() {
+        imageEditReferences = []
+    }
+
     func removeImageEditReference(at index: Int) {
         guard imageEditReferences.indices.contains(index) else { return }
         imageEditReferences.remove(at: index)

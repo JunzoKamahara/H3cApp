@@ -14,7 +14,7 @@ import SwiftUI
 
 enum TutorialAnchor: String {
     case kind, prompt, generate, preview, projectMenu
-    case imageModel, imageSize, editReferences, imageActions
+    case imageModel, imageSize, editReferences, imageActions, upscaleButton
 }
 
 struct TutorialStep {
@@ -86,10 +86,10 @@ enum Tutorials {
 
     static var upscale: Tutorial {
         Tutorial(id: "image-upscale", title: String(localized: "画像の高解像度化"), steps: [
-            TutorialStep(anchor: .imageActions, title: String(localized: "新機能：画像の高解像度化"),
+            TutorialStep(anchor: .upscaleButton, title: String(localized: "新機能：画像の高解像度化"),
                          body: String(localized: "できた画像の「高解像度化…」で、画像を大きくして新しい画像としてプロジェクトに加えます。元の画像はそのまま残ります。プロジェクトの画像の一覧では「その他」メニューにあります。"),
                          arrowEdge: .bottom),
-            TutorialStep(anchor: .imageActions, title: String(localized: "描き直すか、そのまま拡大するか"),
+            TutorialStep(anchor: .upscaleButton, title: String(localized: "描き直すか、そのまま拡大するか"),
                          body: String(localized: "「画像モデルで描き直す」は細かいところを描き足しますが、顔や模様が少し変わることがあります（強さは控えめ・標準・強め）。元の絵のまま大きくしたいときは、Real-ESRGANやSwiftVRなど、動画の拡大と同じ方法を選びます。"),
                          arrowEdge: .bottom),
         ])
@@ -234,7 +234,7 @@ final class TutorialController: ObservableObject {
         closed = []
         guard let step else { return }
         if step.showsImageSide { showImageSide() }
-        if step.anchor != .projectMenu && step.anchor != .preview && step.anchor != .imageActions {
+        if ![.projectMenu, .preview, .imageActions, .upscaleButton].contains(step.anchor) {
             expandComposerRequest += 1
         }
     }

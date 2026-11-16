@@ -1374,6 +1374,9 @@
 "前へ" = "Move Earlier";
 "後ろへ" = "Move Later";
 "この参照画像を取り除く" = "Remove this reference image";
+"画像の編集" = "Image edit";
+"参照をすべて取り除く" = "Remove all references";
+"参照画像をすべて外して、プロンプトだけで画像をつくる形に戻します" = "Removes every reference picture, back to making a picture from the prompt alone";
 "参照画像をどう変えるかを入力してください" = "Describe how to change the reference images";
 "参照画像が見つかりません: %@" = "Reference image not found: %@";
 "参照画像は%lld枚までです" = "At most %lld reference images";

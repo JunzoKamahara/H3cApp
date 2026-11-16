@@ -360,6 +360,16 @@ struct CreationFormView: View {
     /// numbers them.
     private var imageEditSection: some View {
         VStack(alignment: .leading, spacing: H3Spacing.sm) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("画像の編集").font(.caption.weight(.semibold))
+                Spacer()
+                Button("参照をすべて取り除く", systemImage: "xmark.circle") {
+                    viewModel.removeAllImageEditReferences()
+                }
+                .font(.caption)
+                .disabled(viewModel.isGenerating)
+                .help("参照画像をすべて外して、プロンプトだけで画像をつくる形に戻します")
+            }
             Text("参照画像をもとに、プロンプトの指示で直した画像をつくります。プロンプトでは <Picture 1> のように番号で呼びます（例: Edit <Picture 1>. Replace the cup with a bird. Keep everything else.）。")
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
@@ -1182,13 +1192,17 @@ private struct EditReferenceTile: View {
             Button("取り除く", action: remove)
         }
         .overlay(alignment: .topTrailing) {
+            // Large enough to find and hit at a glance (it was a 13-pt
+            // mark that people did not notice).
             Button(action: remove) {
                 Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 18))
                     .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, Color.black.opacity(0.65))
+                    .foregroundStyle(.white, Color.black.opacity(0.75))
+                    .shadow(color: .black.opacity(0.4), radius: 1.5)
             }
             .buttonStyle(.plain)
-            .padding(3)
+            .padding(2)
             .help("この参照画像を取り除く")
         }
         .task(id: path) {
