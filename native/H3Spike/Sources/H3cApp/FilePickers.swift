@@ -37,12 +37,15 @@ func chooseFiles(allowedContentTypes: [UTType]) -> [String] {
 
 /// For registering an H3 checkpoint directory (e.g. a MiniMax-H3 snapshot
 /// containing FL2VA/Ref2VA) in ModelLibrary.
-func chooseDirectory() -> String? {
+/// `canCreate`: the panel offers 新規フォルダ, for choosing where something
+/// new goes.
+func chooseDirectory(canCreate: Bool = false, message: String? = nil) -> String? {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = true
     panel.canChooseFiles = false
-    panel.canCreateDirectories = false
+    panel.canCreateDirectories = canCreate
+    if let message { panel.message = message }
     return panel.runModal() == .OK ? panel.url?.path : nil
 }
 

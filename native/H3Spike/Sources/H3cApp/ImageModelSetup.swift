@@ -217,7 +217,48 @@ struct H3ImageModel: Identifiable, Hashable {
     var weightsURL: URL { URL(string: "https://huggingface.co/\(weightsRepo)/tree/\(weightsRevision)")! }
     var downloadBytes: Int64 { weights.reduce(0) { $0 + $1.bytes } }
 
-    var directory: String { h3AppSupportDirectory + "/ImageModels/" + folderName }
+    /// Where the app's image models go unless another place was chosen.
+    static let defaultLocation = h3AppSupportDirectory + "/ImageModels"
+
+    private var locationKey: String { "h3c-app.imageModelLocation." + id }
+
+    /// 保存する場所: the folder this model's own folder is made in - the
+    /// app's, or the one chosen in the model's sheet (another disk, say).
+    var location: String {
+        get { UserDefaults.standard.string(forKey: locationKey) ?? Self.defaultLocation }
+        nonmutating set {
+            if newValue == Self.defaultLocation {
+                UserDefaults.standard.removeObject(forKey: locationKey)
+            } else {
+                UserDefaults.standard.set(newValue, forKey: locationKey)
+            }
+        }
+    }
+
+    var usesDefaultLocation: Bool { location == Self.defaultLocation }
+
+    var directory: String { location + "/" + folderName }
+
+    /// Something of the model is in its folder: the location stays as it
+    /// is until that is removed.
+    var hasFiles: Bool {
+        !((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []).isEmpty
+    }
+
+    /// Why nothing can be written at `location`, if so. The app's own
+    /// folder is made when it is first needed; a chosen one must be there
+    /// (a disk that is not connected is not).
+    static func locationProblem(_ location: String) -> String? {
+        if location == defaultLocation { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: location, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return String(localized: "保存する場所「\(location)」が見つかりません。ディスクがつながっているか確かめるか、場所を選び直してください。")
+        }
+        guard FileManager.default.isWritableFile(atPath: location) else {
+            return String(localized: "「\(location)」には書き込めません（読み出し専用のディスクや、書き込みを許可されていないフォルダです）。ほかの場所を選んでください。")
+        }
+        return nil
+    }
 
     func path(_ relative: String) -> String { directory + "/" + relative }
 
@@ -274,9 +315,12 @@ struct H3ImageModel: Identifiable, Hashable {
         case noTextEncoder
         case noVideoTransformer
         case copy(String)
+        case location(String)
 
         var errorDescription: String? {
             switch self {
+            case .location(let problem):
+                return problem
             case .listing(let file):
                 return String(localized: "配布元の一覧にある「\(file)」が、記録してある版のもの（大きさ・SHA-256）と一致しません。ダウンロードは始めていません。")
             case .mismatch(let file):
@@ -491,6 +535,9 @@ final class H3ImageModelSetup: ObservableObject {
     private func run(videoModelPaths: [String]) async {
         let model = self.model
         do {
+            if let problem = H3ImageModel.locationProblem(model.location) {
+                throw H3ImageModel.SetupError.location(problem)
+            }
             // Before the weights come down: what the model cannot do without.
             let hasTextEncoder = model.hasTextEncoder
             let source = model.sharesTextEncoder ? H3ImageModel.textEncoderSource(in: videoModelPaths) : nil
@@ -540,6 +587,37 @@ final class H3ImageModelSetup: ObservableObject {
         } catch {
             phase = .failed(error.localizedDescription)
         }
+    }
+
+    /// 保存する場所 > 変更…: where the model is downloaded to and looked
+    /// for from now on (nil: the app's own folder). A folder named as the
+    /// model's own is taken as that folder, not as the place for another
+    /// inside it. Only while nothing of the model is at the present place
+    /// (すべて削除… first); a list entry left pointing there goes, and a
+    /// model already complete at the new place is listed. Returns why not,
+    /// or nil once changed.
+    @discardableResult
+    func setLocation(_ chosen: String?, library: ModelLibrary) -> String? {
+        var location = chosen.map { (($0 as NSString).expandingTildeInPath as NSString).standardizingPath }
+            ?? H3ImageModel.defaultLocation
+        if (location as NSString).lastPathComponent == model.folderName {
+            location = (location as NSString).deletingLastPathComponent
+        }
+        if location == model.location { return nil }
+        guard !isBusy else { return String(localized: "準備の途中は、保存する場所を変えられません。") }
+        guard !model.hasFiles else {
+            return String(localized: "今の場所にこのモデルのファイルがあります。場所を変えるには、先に「すべて削除…」で削除してください。")
+        }
+        if let problem = H3ImageModel.locationProblem(location) { return problem }
+        for entry in library.imageModels where entry.path == model.directory {
+            library.removeImageModel(id: entry.id)
+        }
+        model.location = location
+        phase = .idle
+        if model.complete {
+            ModelLibrary.registerImageModel(path: model.directory, name: model.displayName)
+        }
+        return nil
     }
 
     /// Returns whether any file was fetched or resumed.
@@ -594,6 +672,7 @@ struct H3ImageModelSetupView: View {
     @State private var agreed: Bool
     @State private var confirmingRemoval = false
     @State private var removalError: String?
+    @State private var locationError: String?
     @State private var version = 0
 
     init(library: ModelLibrary, model: H3ImageModel = .h3, busy: Bool = false, close: @escaping () -> Void) {
@@ -652,11 +731,15 @@ struct H3ImageModelSetupView: View {
             if let removalError {
                 Text(removalError).font(.caption).foregroundStyle(palette.errorColor)
             }
+            if let locationError {
+                Text(locationError).font(.caption).foregroundStyle(palette.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Spacer(minLength: 0)
             footer
         }
         .padding(H3Spacing.lg)
-        .frame(width: 640, height: 640)
+        .frame(width: 640, height: 680)
         .background(palette.canvas)
         .onChange(of: setup.phase) { _, _ in version += 1 }
         .alert("画像モデルを削除", isPresented: $confirmingRemoval) {
@@ -737,6 +820,10 @@ struct H3ImageModelSetupView: View {
     private var statusRows: some View {
         Grid(alignment: .leading, horizontalSpacing: H3Spacing.md, verticalSpacing: 6) {
             GridRow {
+                Text("保存する場所").font(.caption).foregroundStyle(palette.textSecondary)
+                locationRow
+            }
+            GridRow {
                 Text("重み").font(.caption).foregroundStyle(palette.textSecondary)
                 Text(model.weightsPresent ? String(localized: "ダウンロード済み") : String(localized: "まだありません")).font(.caption)
             }
@@ -777,6 +864,46 @@ struct H3ImageModelSetupView: View {
                 }
             }
         }
+    }
+
+    /// Whether 保存する場所 can change: nothing is being set up, and nothing
+    /// of the model is at the present place.
+    private var canChangeLocation: Bool {
+        _ = version; _ = setup.phase
+        return !setup.isBusy && !busy && !model.hasFiles
+    }
+
+    private var locationRow: some View {
+        let canChange = canChangeLocation
+        let lockedHelp = String(localized: "今の場所にこのモデルのファイルがあります。場所を変えるには、先に「すべて削除…」で削除してください。")
+        return HStack(spacing: H3Spacing.sm) {
+            Text(verbatim: model.directory).font(.caption)
+                .lineLimit(1).truncationMode(.middle)
+                .textSelection(.enabled)
+                .help(model.directory)
+            Button("変更…") { chooseLocation() }
+                .controlSize(.small)
+                .disabled(!canChange)
+                .help(canChange ? String(localized: "ほかのディスクなど、このモデルを置くフォルダを選びます。その中に「\(model.folderName)」フォルダを作ります")
+                                : lockedHelp)
+            if !model.usesDefaultLocation {
+                Button("標準に戻す") { setLocation(nil) }
+                    .controlSize(.small)
+                    .disabled(!canChange)
+                    .help(canChange ? String(localized: "アプリの標準の場所（\(H3ImageModel.defaultLocation)）に戻します") : lockedHelp)
+            }
+        }
+    }
+
+    private func chooseLocation() {
+        let message = String(localized: "「\(model.displayName)」を置くフォルダを選んでください。その中に「\(model.folderName)」フォルダを作ります。")
+        guard let path = chooseDirectory(canCreate: true, message: message) else { return }
+        setLocation(path)
+    }
+
+    private func setLocation(_ path: String?) {
+        locationError = setup.setLocation(path, library: library)
+        version += 1
     }
 
     private var transformerText: String {
@@ -837,7 +964,10 @@ struct H3ImageModelSetupView: View {
             Text("画像モデルを使えるようになりました。パネルの「動画／画像」を画像に切り替えて生成できます。")
                 .font(.caption).foregroundStyle(palette.textSecondary)
         case .idle:
-            if !model.weightsPresent {
+            if let problem = locationProblem {
+                Text(problem).font(.caption).foregroundStyle(palette.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if !model.weightsPresent {
                 let space = downloadSpaceCheck(needed: model.downloadBytes, destination: model.directory)
                 Text(space.text).font(.caption)
                     .foregroundStyle(space.fits ? palette.textSecondary : palette.errorColor)
@@ -847,6 +977,12 @@ struct H3ImageModelSetupView: View {
                     .font(.caption).foregroundStyle(palette.textSecondary)
             }
         }
+    }
+
+    /// Why nothing can be downloaded to the chosen place, if so.
+    private var locationProblem: String? {
+        _ = version; _ = setup.phase
+        return H3ImageModel.locationProblem(model.location)
     }
 
     private var footer: some View {
@@ -869,7 +1005,7 @@ struct H3ImageModelSetupView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(!agreed)
+                .disabled(!agreed || locationProblem != nil)
             } else if !verified {
                 Button("取得元と照合する") { setup.start(videoModelPaths: videoModelPaths) }
                     .buttonStyle(.borderedProminent)

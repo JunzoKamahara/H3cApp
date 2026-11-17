@@ -348,9 +348,7 @@ final class ModelDownloader: ObservableObject {
             if parent.isEmpty || parent == candidate { break }
             candidate = parent
         }
-        guard let values = try? URL(fileURLWithPath: candidate)
-            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]) else { return nil }
-        return values.volumeAvailableCapacityForImportantUsage
+        return volumeFreeBytes(at: candidate)
     }
 
     // MARK: Speed tracking
@@ -462,4 +460,16 @@ private extension CharacterSet {
         set.insert(charactersIn: "/")
         return set
     }()
+}
+
+/// Free space on the volume `path` is on (a link is followed to where it
+/// leads). The reading that counts what the system can purge is 0 on
+/// volumes that keep no such account - external disks that are not APFS,
+/// disk images - so the plain reading is taken there.
+func volumeFreeBytes(at path: String) -> Int64? {
+    let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+    guard let values = try? url.resourceValues(
+        forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey]) else { return nil }
+    if let important = values.volumeAvailableCapacityForImportantUsage, important > 0 { return important }
+    return values.volumeAvailableCapacity.map(Int64.init)
 }

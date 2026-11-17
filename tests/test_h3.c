@@ -407,6 +407,14 @@ static void test_weight_fingerprint(void) {
     snprintf(shard2, sizeof(shard2), "%s/model-00002-of-00002.safetensors", transformer);
     write_fake_shard(shard1, 0, 1700000000);
     write_fake_shard(shard2, 16, 1700000100);
+    /* What macOS leaves beside a file on exFAT or NTFS: not a shard (the
+     * store counts two below). */
+    char companion[320];
+    snprintf(companion, sizeof(companion), "%s/._model-00001-of-00002.safetensors", transformer);
+    FILE *junk = fopen(companion, "wb");
+    CHECK(junk != NULL);
+    CHECK(fwrite("\0\5\26\7", 4, 1, junk) == 1);
+    CHECK(fclose(junk) == 0);
 
     uint8_t original[32], original_legacy[32], id[32], legacy[32];
     fingerprint_directory(transformer, original, original_legacy);
@@ -449,6 +457,8 @@ static void test_weight_fingerprint(void) {
 
     CHECK(unlink(shard1) == 0);
     CHECK(unlink(renamed) == 0);
+    snprintf(companion, sizeof(companion), "%s/._model-00001-of-00002.safetensors", transformer);
+    CHECK(unlink(companion) == 0);
     CHECK(rmdir(transformer) == 0);
     CHECK(rmdir(second) == 0);
     CHECK(rmdir(root) == 0);

@@ -63,6 +63,12 @@ their own prompt and settings.
   print, ...) and the scene is described concretely. It edits pictures too,
   with up to 8 references (next section). Which image model is used is chosen in
   the model menu.
+- **Where the model is kept.** "Change…" beside "Location" in the download
+  sheet chooses the folder the model goes in, on another disk for example (a
+  folder with the model's name is made inside it). The location is chosen
+  before downloading; when files are already there, delete them with "Delete
+  All…" first. A folder that already holds an image model is registered with
+  "Add Image Model Folder…" in the model menu.
 - **Making an image.** Write a prompt and choose the shape (square, landscape,
   portrait), the size (Standard is 1024×1024 or 1344×768, Large twice that,
   Extra Large about 8 megapixels such as 2912×2912 or 3808×2176, "For video"

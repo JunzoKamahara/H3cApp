@@ -858,6 +858,15 @@ extension GenerationViewModel {
                     : "\"confirm_license\": true is required: the \(chosen.licenseName) applies (\(chosen.licenseURL.absoluteString)); it excludes the EU, the UK, the Republic of Korea and the USA, also for the images made")
             }
             guard !setup.isBusy else { return .error(409, "the image model is already being set up") }
+            // "location": the folder the model's own folder is made in
+            // (the sheet's 保存する場所); null goes back to the app's own.
+            if let location = body["location"] {
+                let chosen = location as? String
+                guard location is NSNull || chosen?.hasPrefix("/") == true || chosen?.hasPrefix("~/") == true else {
+                    return .error(400, "\"location\" must be an absolute path to a folder, or null for the app's own")
+                }
+                if let reason = setup.setLocation(chosen, library: library) { return .error(400, reason) }
+            }
             setup.start(videoModelPaths: ([library.activeModel].compactMap { $0 } + library.models).map(\.path))
         } else if request.method == "POST" {
             guard let path = body["path"] as? String else { return .error(400, "\"path\" is required") }
@@ -873,6 +882,7 @@ extension GenerationViewModel {
                 "model": model.id,
                 "name": model.displayName,
                 "phase": setup.phase.apiText,
+                "location": model.location,
                 "directory": model.directory,
                 "installed": model.complete,
                 "verified": model.verified,

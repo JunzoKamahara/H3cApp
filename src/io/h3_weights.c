@@ -41,9 +41,13 @@ static int has_suffix(const char *name, const char *suffix) {
 }
 
 /* A component directory may hold safetensors shards and/or GGUF files
- * (h3_gguf.c); both read into the same tensor table. */
+ * (h3_gguf.c); both read into the same tensor table. Not the hidden ones:
+ * on a disk that keeps no extended attributes (exFAT, NTFS) macOS puts a
+ * file's attributes in a "._name" companion beside it, which carries the
+ * suffix and is no weight file. */
 static int safetensors_name(const char *name) {
-    return has_suffix(name, ".safetensors") || has_suffix(name, ".gguf");
+    return name[0] != '.' &&
+           (has_suffix(name, ".safetensors") || has_suffix(name, ".gguf"));
 }
 
 static int compare_paths(const void *left, const void *right) {

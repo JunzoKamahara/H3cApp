@@ -479,9 +479,7 @@ func importableGGUFs(in folder: String) -> (picks: [ImportPick], skipped: [Strin
 
 /// Free space on the volume a path is on (the import writes there).
 func availableBytes(at path: String) -> Int64? {
-    let url = URL(fileURLWithPath: FileManager.default.fileExists(atPath: path) ? path : NSHomeDirectory())
-    return (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
-        .volumeAvailableCapacityForImportantUsage ?? nil
+    volumeFreeBytes(at: FileManager.default.fileExists(atPath: path) ? path : NSHomeDirectory())
 }
 
 // MARK: - What the picked files add up to
@@ -1238,9 +1236,7 @@ struct ModelImportView: View {
     }
 
     private func spaceText(_ plan: ImportPlan) -> String {
-        let free = (try? URL(fileURLWithPath: NSHomeDirectory())
-            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-            .volumeAvailableCapacityForImportantUsage) ?? nil
+        let free = volumeFreeBytes(at: NSHomeDirectory())
         let written = ByteCountFormatter.string(fromByteCount: Int64(plan.bytesWritten), countStyle: .file)
         let freeText = free.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "?"
         if plan.bytesWritten == 0 {

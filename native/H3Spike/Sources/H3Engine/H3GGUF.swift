@@ -134,7 +134,9 @@ public enum H3ModelFamily: String, Codable, Sendable {
     public static func detect(modelDirectory: String) -> H3ModelFamily {
         let transformer = (modelDirectory as NSString)
             .appendingPathComponent("FL2VA/transformer")
-        let files = ((try? FileManager.default.contentsOfDirectory(atPath: transformer)) ?? []).sorted()
+        // Not the hidden "._name" companions macOS keeps on exFAT and NTFS.
+        let files = ((try? FileManager.default.contentsOfDirectory(atPath: transformer)) ?? [])
+            .filter { !$0.hasPrefix(".") }.sorted()
         let single = files.filter { $0.lowercased().hasSuffix(".safetensors") }
         let candidates = files.filter { $0.lowercased().hasSuffix(".gguf") } + (single.count == 1 ? single : [])
         for file in candidates {

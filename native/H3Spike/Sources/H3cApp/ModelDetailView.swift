@@ -260,7 +260,7 @@ struct ModelDetail: Sendable {
 
     private static func files(_ dir: String, _ suffix: String) -> [String] {
         ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
-            .filter { $0.hasSuffix(suffix) }.sorted().map { dir + "/" + $0 }
+            .filter { $0.hasSuffix(suffix) && !$0.hasPrefix(".") }.sorted().map { dir + "/" + $0 }
     }
 
     static func fileSize(_ path: String) -> Int64 {
@@ -291,7 +291,7 @@ private struct SafetensorsSummary {
 
     init?(dir: String) {
         let paths = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [])
-            .filter { $0.hasSuffix(".safetensors") }.map { dir + "/" + $0 }
+            .filter { $0.hasSuffix(".safetensors") && !$0.hasPrefix(".") }.map { dir + "/" + $0 }
         for path in paths {
             files += 1
             bytes += ModelDetail.fileSize(path)
