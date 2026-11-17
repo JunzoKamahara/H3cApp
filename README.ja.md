@@ -2,7 +2,7 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
-**文章や写真から、音声付きのAI動画をMacだけで作れるアプリです。** [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3)を利用し、モデルをダウンロードしたあとはMac上で動画を生成します。クラウドの動画生成サービスやPython、複雑な設定は必要ありません。
+**文章や写真から、音声付きのAI動画と静止画をMacだけで作れるアプリです。** [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3)とその画像モデルを利用し、モデルをダウンロードしたあとはMac上で生成します。文章から静止画を描き、その画像や文章から動きと音のある動画を作れます（静止画はv0.10.0から）。クラウドの生成サービスやPython、複雑な設定は必要ありません。
 
 **Powered by MiniMax H3** — H3cAppはMiniMaxの公式製品ではなく、独立したアプリです。
 
@@ -12,6 +12,7 @@
 
 - **文章から動画を生成**：場面を文章で説明するだけで、音声付き動画を作成できます。
 - **写真から動画を生成**：最初の画像や最後の画像を指定できます。
+- **静止画を描く・直す**：文章から静止画を作り、手元の画像や生成した画像を「カップを小鳥に替えて」のような指示で直せます。約8メガピクセルまでの大きさで描け、高解像度化もできます。気に入った1枚は、そのまま動画の最初の画像にできます。
 - **参照画像・動画・音声を使って生成**：画像・動画・音声を参照にできます（追加のRef2VAモデルが必要）。一度符号化して小さなファイルに保存したRefMod（ComfyUI-MiniMaxH3Modと互換）も使えます。
 - **声や歌に合わせる**：録音した声や音楽に合わせて動画を生成できます。
 - **長い動画を作る**：動画の続きを生成し、複数の動画をつなげられます。
@@ -44,7 +45,15 @@ M1〜M4のMacでも、常駐かSSDストリーミングの計算方式を利用�
 
 表の数字は**モデルファイルの保存容量**であり、必要メモリではありません。GGUFの標準・軽量構成では、文章からの動画生成と最初・最後の画像を指定した生成が利用できます。参照画像・動画・音声を使うには、**追加のRef2VAモデル（約11〜21GB）**が必要です。
 
-M5で高速化用のキャッシュを作る場合は、**モデルごとに約19GB**の追加容量が必要です。Ref2VAも使う場合は、Ref2VA用のキャッシュとしてさらに約19GBが必要です。ダウンロード中のファイルや生成動画の保存用にも余裕を確保してください。モデルは外付けSSDにも保存できます。
+静止画を作るには、動画のモデルとは別に**画像モデル**を入れます。
+
+| 画像モデル | 必要な保存容量（目安） | 特徴 |
+|---|---:|---|
+| MiniMax H3 Image | 約22GB | 動画モデルのテキストエンコーダを使うので、先に動画モデルが必要 |
+| P-H3-Image（Pruna AI） | 約29GB | 動画モデルは不要。約8メガピクセルで最も良くなる |
+| P-H3-Image（動画モデルを使う） | 約10GB | 入れてある動画モデルのDiTを使う。生成時間は約2倍 |
+
+M5で高速化用のキャッシュを作る場合は、**モデルごとに約19GB**の追加容量が必要です。Ref2VAも使う場合は、Ref2VA用のキャッシュとしてさらに約19GBが必要です。ダウンロード中のファイルや生成動画の保存用にも余裕を確保してください。モデルは外付けSSDにも保存できます（画像モデルは、ダウンロードの画面の「保存する場所」で置く場所を選びます。v0.10.1から）。
 
 詳しくは[GGUFモデルの説明](docs/GGUF.ja.md)を参照してください。4・6・8ステップで生成するMiniMax H3の派生モデル[HyperFlow H3 Flash](docs/GGUF.ja.md#hyperflow-h3-flash)も取り込めます（DiTはQ4_K_Mで約9GB）。ComfyUI用のint8量子化（ConvRotを含む）のDiTも[取り込めます](docs/GGUF.ja.md#comfyui-の-int8-形式convrotの-dit)。
 
@@ -56,21 +65,24 @@ M5で高速化用のキャッシュを作る場合は、**モデルごとに約1
 4. 「夕暮れの海辺。穏やかな波の音と暖かい光」のような文章を入力し、長さと大きさを選んで**生成**します。
 5. 完成した動画を確認し、**「動画を書き出す…」**から保存します。
 
+静止画を作るときは、パネル左上の切り替えで**「画像」**を選び、モデルのメニューから画像モデルをダウンロードします。
+
 生成には、Macの性能や設定によって数分以上かかる場合があります。配布版の利用にXcodeやコマンド操作は必要ありません。
 
-画面付きの手順は[はじめての使い方](https://junzokamahara.github.io/H3cApp/getting-started.html)をご覧ください。
+画面付きの手順は[はじめての使い方](https://junzokamahara.github.io/H3cApp/getting-started.html)と[静止画をつくる・編集する](https://junzokamahara.github.io/H3cApp/image.html)をご覧ください。
 
 ## さらに詳しく
 
-- [動画の続きを作る・つなげて生成する](docs/GUIDE.ja.md)
+- [使い方ガイド（プロジェクト、静止画、動画の続きを作る・つなげて生成する）](docs/GUIDE.ja.md)
+- [静止画をつくる・編集する](https://junzokamahara.github.io/H3cApp/image.html) · [静止画を見比べる（モデルと高解像度化の比較）](https://junzokamahara.github.io/H3cApp/image-compare.html)
 - [GGUFモデルのダウンロードと取り込み](docs/GGUF.ja.md)
 - [RefMod（保存した参照）の作り方と使い方](docs/REFMOD.ja.md)
 - [操作ガイドと詳細設定](https://junzokamahara.github.io/H3cApp/guide.html)
 - [技術資料](docs/TECHNICAL.ja.md) · [ローカルAPI](docs/API.ja.md) · [ソースからのビルド](docs/BUILD.ja.md)
 - [よくある質問](https://junzokamahara.github.io/H3cApp/faq.html) · [不具合の報告](https://github.com/JunzoKamahara/H3cApp/issues)
 
-## 動画の公開とライセンス
+## 動画・画像の公開とライセンス
 
-生成した動画を公開するときは、MiniMax H3の利用条件に従い、**AIで生成したことを明示してください**。「動画を書き出す…」では、映像に「AI-generated with MiniMax H3」の表示を入れられます（初期設定でオン）。投稿先のAI生成ラベルや説明欄で示す方法もあります。動画ファイルのメタデータにもAI生成情報が記録されます。
+生成した動画や画像を公開するときは、MiniMax H3の利用条件に従い、**AIで生成したことを明示してください**。「動画を書き出す…」では、映像に「AI-generated with MiniMax H3」の表示を入れられます（初期設定でオン）。投稿先のAI生成ラベルや説明欄で示す方法もあります。動画ファイルと画像（PNG）のメタデータにもAI生成情報が記録されます。
 
-H3cApp本体は[MITライセンス](LICENSE)で公開され、[antirez/h3.c](https://github.com/antirez/h3.c)を基にしています。**モデルには別のライセンス**が適用されます。利用前に[MiniMax H3のライセンス](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE)などを確認してください。[第三者ライセンス表記](THIRD_PARTY_NOTICES.md)と[動画メタデータの技術説明](docs/TECHNICAL.ja.md#ライセンス)も参照できます。
+H3cApp本体は[MITライセンス](LICENSE)で公開され、[antirez/h3.c](https://github.com/antirez/h3.c)を基にしています。**モデルには別のライセンス**が適用されます。利用前に[MiniMax H3のライセンス](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE)などを確認してください。静止画のモデルのうちMiniMax H3 Imageには、動画モデルとは別の[MiniMax-H3-Image Community License Agreement](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/5f90473023975e6271b0ed1dd84c4e88e4bbc6d3/LICENSE)が適用されます（EU・英国・韓国・米国では、モデルも作った画像も使えません）。P-H3-Imageには、動画モデルと同じライセンスが適用されます。[第三者ライセンス表記](THIRD_PARTY_NOTICES.md)と[動画メタデータの技術説明](docs/TECHNICAL.ja.md#ライセンス)も参照できます。
