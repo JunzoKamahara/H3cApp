@@ -24,7 +24,7 @@ typedef struct {
     int text_prefetch_depth;   /* Qwen layers read ahead (H3_QWEN_PREFETCH_DEPTH) */
     /* DiT weights held for the whole denoise beyond what SSD streaming and
      * the int8 attention cache keep (both stream blocks): the resident
-     * mode's whole transformer. */
+     * mode's whole transformer, and LoRA factors. */
     uint64_t dit_resident_bytes;
     size_t text_tokens;
     size_t vision_tokens;
@@ -33,6 +33,10 @@ typedef struct {
     size_t dit_reference_tokens;   /* Ref2VA reference rows */
     const h3_plan_visual *visuals;
     size_t visual_count;
+    /* The DiT's dense linears run in int8 (a GPU with tensor units, and
+     * neither SSD streaming nor a HyperFlow checkpoint): fewer and smaller
+     * activation buffers per token. */
+    int dit_int8;
 } h3_plan_input;
 
 /* Qwen's causal attention: its fast kernel keeps one F32 score row per

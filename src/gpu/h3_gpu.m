@@ -2,6 +2,8 @@
  * profiling. The kernels are in h3_gpu_blocks.m, h3_gpu_linear.m,
  * h3_gpu_attention.m and h3_gpu_conv.m (and the upscale module's own files). */
 #include "h3_gpu_private.h"
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
 @implementation H3Tensor
 @end
 
@@ -964,6 +966,38 @@ void h3_gpu_tensor_free(h3_gpu_tensor *tensor) {
 
 size_t h3_gpu_tensor_elements(const h3_gpu_tensor *tensor) {
     return tensor ? TENSOR(tensor).elements : 0;
+}
+
+size_t h3_gpu_tensor_bytes(const h3_gpu_tensor *tensor) {
+    return tensor ? TENSOR(tensor).bytes : 0;
+}
+
+size_t h3_gpu_tensor_touched_bytes(const h3_gpu_tensor *tensor) {
+    if (!tensor || !TENSOR(tensor).bytes) return 0;
+    const mach_vm_size_t page = (mach_vm_size_t)vm_page_size;
+    mach_vm_address_t begin =
+        (mach_vm_address_t)(uintptr_t)TENSOR(tensor).buffer.contents;
+    mach_vm_address_t end = begin + TENSOR(tensor).bytes;
+    begin &= ~(page - 1);
+    end = (end + page - 1) & ~(page - 1);
+    enum { BATCH = 4096 };
+    int dispositions[BATCH];
+    size_t touched = 0;
+    while (begin < end) {
+        mach_vm_size_t count = (end - begin) / page;
+        if (count > BATCH) count = BATCH;
+        mach_vm_size_t returned = count;
+        if (mach_vm_page_range_query(
+                mach_task_self(), begin, count * page,
+                (mach_vm_address_t)(uintptr_t)dispositions,
+                &returned) != KERN_SUCCESS || !returned) break;
+        for (mach_vm_size_t index = 0; index < returned; index++)
+            if (dispositions[index] &
+                (VM_PAGE_QUERY_PAGE_PRESENT | VM_PAGE_QUERY_PAGE_PAGED_OUT))
+                touched += (size_t)page;
+        begin += returned * page;
+    }
+    return touched;
 }
 
 h3_gpu_dtype h3_gpu_tensor_dtype(const h3_gpu_tensor *tensor) {

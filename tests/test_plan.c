@@ -27,7 +27,7 @@ static h3_plan run(uint64_t ram, size_t text, size_t vision, size_t dit,
                    size_t generated, size_t reference,
                    const h3_plan_visual *visuals, size_t visual_count) {
     h3_plan_input input = {ram, 1, 1, 1, 0, text, vision, dit, generated,
-                           reference, visuals, visual_count};
+                           reference, visuals, visual_count, 0};
     h3_plan plan;
     memset(&plan, 0x5a, sizeof(plan));
     h3_plan_compute(&input, &plan);
@@ -80,7 +80,7 @@ int main(void) {
          * 16000-token sequence fits 24 GB there too, and costs more than
          * the one call's mask. */
         h3_plan_input input = {ram24, 1, 0, 1, 0, 16000, 15900, 60000, 40000,
-                               20000, NULL, 0};
+                               20000, NULL, 0, 0};
         h3_plan chunked;
         h3_plan_compute(&input, &chunked);
         check(chunked.verdict != H3_PLAN_TOO_LARGE,
@@ -106,6 +106,26 @@ int main(void) {
     check(plan.verdict == H3_PLAN_TIGHT, "peak at 90% of RAM is tight");
     plan = run((uint64_t)((double)peak / 1.5), 400, 0, 60000, 59600, 0, NULL, 0);
     check(plan.verdict == H3_PLAN_TOO_LARGE, "peak at 150% of RAM is refused");
+
+    {
+        /* The int8 path keeps fewer activation buffers a token; its
+         * estimate still covers the measured peaks (3.88 GiB at 9895
+         * tokens and 20 steps, 4.87 GiB at 21735 tokens and 2 steps). */
+        h3_plan_input input = {ram24, 0, 1, 1, 0, 30, 0, 9895, 9865, 0,
+                               NULL, 0, 0};
+        h3_plan bf16, int8;
+        h3_plan_compute(&input, &bf16);
+        input.dit_int8 = 1;
+        h3_plan_compute(&input, &int8);
+        check(int8.dit_bytes < bf16.dit_bytes,
+              "the int8 DiT needs less memory a token");
+        check((double)int8.dit_bytes > 3.88 * GIB,
+              "the int8 estimate covers 9895 measured tokens");
+        input.dit_tokens = 21735;
+        h3_plan_compute(&input, &int8);
+        check((double)int8.dit_bytes > 4.87 * GIB,
+              "the int8 estimate covers 21735 measured tokens");
+    }
 
     /* A long reference video: chunked VAE encode, its pixels held. */
     h3_plan_visual video = {1120, 640, 243};

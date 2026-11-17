@@ -374,6 +374,10 @@ struct h3_dit {
     h3_gpu_tensor *token_expand_parents;
     h3_gpu_tensor *token_original;
     int token_original_in_qkv;
+    /* activated is the qkv buffer (allocate_activations). */
+    int activated_in_qkv;
+    /* H3_DIT_FBC_LOG (h3_dit_fbc_log.c). */
+    struct h3_dit_fbc_log *fbc_log;
     size_t token_original_offset;
     size_t token_baseline_offset;
     h3_gpu_tensor *mod_mlp;
@@ -452,6 +456,15 @@ h3_gpu_tensor *h3_dit_f1(h3_dit *dit, const char *name, uint64_t width,
                          char *error, size_t error_size);
 h3_gpu_tensor *h3_dit_f2(h3_dit *dit, const char *name, uint64_t rows,
                          uint64_t columns, char *error, size_t error_size);
+/* H3_DIT_FBC_LOG (h3_dit_fbc_log.c): read the hidden state before the first
+ * block (stage 0), after it (1) and after the last block (2) of a step; the
+ * file is written when the transformer is freed. Does nothing unless the
+ * option is set. */
+typedef struct h3_dit_fbc_log h3_dit_fbc_log;
+int h3_dit_fbc_log_capture(h3_dit *dit, int step, int stage, char *error,
+                           size_t error_size);
+void h3_dit_fbc_log_write(const h3_dit *dit);
+void h3_dit_fbc_log_free(h3_dit_fbc_log *log);
 int h3_dit_copy_layout(h3_dit *dit, const h3_layout *layout,
                        char *error, size_t error_size);
 int h3_dit_validate_layout(h3_dit *dit, const h3_text_embedding *text,

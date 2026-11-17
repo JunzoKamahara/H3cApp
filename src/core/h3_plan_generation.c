@@ -1,5 +1,6 @@
 /* h3_plan_generation: what a generation will need, worked out the way h3_generate will (token counts, reference geometry, memory per stage) without loading weights. The arithmetic is in h3_plan.c. Split out of h3.c. */
 #include "h3_private.h"
+#include <sys/stat.h>
 /* Whether h3_gpu.m will run dense attention as one MPSGraph call (its
  * policy: Apple10 GPUs on macOS 26 or later, unless H3_SDPA_MODE says). */
 static int h3_plan_full_sdpa(const h3_ctx *ctx) {
@@ -336,12 +337,26 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
     uint64_t resident = params->ssd_streaming || cached ? 0 :
         hyperflow_resident ? hyperflow_resident :
         h3_device(ctx)->apple_gpu_family >= 10 ? 18ull << 30 : 37ull << 30;
+    /* A LoRA's factors stay on the GPU beside the blocks they patch
+     * (h3_lora.h): 1.61 GiB measured for a 1.29 GiB file. */
+    uint64_t lora_bytes = 0;
+    for (size_t index = 0; index < params->lora_count; index++) {
+        struct stat status;
+        if (params->loras[index].path &&
+            stat(params->loras[index].path, &status) == 0)
+            lora_bytes += (uint64_t)((double)status.st_size * 1.3);
+    }
     h3_plan_input input = {
         h3_device(ctx)->physical_memory, params->ssd_streaming,
-        h3_plan_full_sdpa(ctx), prefetch_depth, resident,
+        h3_plan_full_sdpa(ctx), prefetch_depth, resident + lora_bytes,
         text_tokens, vision_tokens, layout.seq_len,
         generated_rows, reference_rows,
-        visuals, visual_count};
+        visuals, visual_count,
+        /* As h3_dit_setup.c picks the int8 kernels. */
+        h3_device(ctx)->apple_gpu_family >= 10 && !params->ssd_streaming &&
+            !hyperflow_resident && !params->use_slower_bf16_mlp &&
+            !params->use_slower_bf16_qkv &&
+            !params->use_slower_bf16_attention_output};
     h3_plan_compute(&input, plan);
     ok = 1;
 

@@ -133,6 +133,12 @@ int h3_gpu_tensor_stream_file_f32(h3_gpu_tensor *tensor, const char *path,
                                   char *error, size_t error_size);
 void h3_gpu_tensor_free(h3_gpu_tensor *tensor);
 size_t h3_gpu_tensor_elements(const h3_gpu_tensor *tensor);
+/* Diagnostics (H3_DIT_ARENA_TRACE): the tensor's allocation in bytes, and how
+ * much of it has been touched - pages that are in RAM or were paged out or
+ * compressed. A page never written costs no memory, so the two differ for a
+ * buffer only part of which is used. An alias reports its own window. */
+size_t h3_gpu_tensor_bytes(const h3_gpu_tensor *tensor);
+size_t h3_gpu_tensor_touched_bytes(const h3_gpu_tensor *tensor);
 h3_gpu_dtype h3_gpu_tensor_dtype(const h3_gpu_tensor *tensor);
 int h3_gpu_tensor_read_f32(const h3_gpu_tensor *tensor, float *values,
                            size_t elements);

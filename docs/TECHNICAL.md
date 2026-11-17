@@ -634,8 +634,10 @@ Generate button on that verdict; `H3SPIKE_PLAN=1` prints them from the CLI.
   read ahead, 0.5 GiB more after images or video) plus 253 KiB a token
   (176 KiB of its own buffers, the rest the vision outputs it injects and
   its output); Qwen's vision tower 1.5 GiB plus 39 KiB a patch of the
-  largest image; the DiT 4.0 GiB plus 199.5 KiB a token (measured 190)
-  and 64 KiB more a text row;
+  largest image; the DiT 4.0 GiB plus 199.5 KiB a token (measured 190),
+  or 126 KiB a token where its linears run in int8 (a GPU with tensor
+  units, without SSD streaming or a HyperFlow checkpoint; measured 116
+  with the int8 cache), and 64 KiB more a text row;
   the video VAE encoder its chunked estimate plus the decoded references
   (F32) and 0.6 GiB. Every measured run came in under its estimate. Past 85% of the RAM the verdict is "tight" (expect swapping); past
   125% it is "too large", since running out of swap is what restarted the

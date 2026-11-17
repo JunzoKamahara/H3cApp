@@ -1224,8 +1224,75 @@ void h3_dit_release_backend_scratch(h3_dit *dit) {
         fprintf(stderr, "h3: warning: ccv scratch kept, GPU work pending\n");
 }
 
+/* H3_DIT_ARENA_TRACE: what each activation buffer was allocated and how much
+ * of it the run touched, per token of the sequence. Printed while the buffers
+ * still exist, so after a generation it shows what the denoise really used. */
+static void trace_activation_arena(const h3_dit *dit) {
+    const char *trace = h3_option("H3_DIT_ARENA_TRACE");
+    if (!trace || !*trace || !strcmp(trace, "0") || !dit->hidden ||
+        !dit->sequence) return;
+    const struct { const char *name; const h3_gpu_tensor *tensor; } rows[] = {
+        {"hidden", dit->hidden},
+        {"mod_attention", dit->mod_attention},
+        {"qkv", dit->qkv},
+        {"query", dit->query},
+        {"key", dit->key},
+        {"value", dit->value},
+        {"attention_heads",
+         dit->activation_aliases ? NULL : dit->attention_heads},
+        {"attention_output", dit->attention_output},
+        {"mod_mlp", dit->activation_aliases ? NULL : dit->mod_mlp},
+        {"mlp_output", dit->mlp_output},
+        {"fc1", dit->fc1},
+        {"activated", dit->activated_in_qkv ? NULL : dit->activated},
+        {"int8_activation", dit->int8_activation},
+        {"int8_activation_scales", dit->int8_activation_scales},
+        {"lowrank_tmp", dit->lowrank_tmp},
+        {"token_original", dit->token_original},
+        {"core_input", dit->core_input},
+        {"core_residual", dit->core_residual},
+        {"video_input", dit->video_input},
+        {"audio_input", dit->audio_input},
+        {"video_output_bf16", dit->video_output_bf16},
+        {"audio_output_bf16", dit->audio_output_bf16},
+        {"refined_text", dit->refined_text},
+        {"rope_cos", dit->rope_cos},
+        {"rope_sin", dit->rope_sin}
+    };
+    const double mib = 1024.0 * 1024.0;
+    double sequence = (double)dit->sequence;
+    size_t allocated_total = 0, touched_total = 0;
+    fprintf(stderr, "h3: DiT arena: %u tokens (aliases %s, int8 mlp %d, "
+            "int8 qkv %d, int8 attention out %d, activation in qkv %d)\n",
+            (unsigned)dit->sequence, dit->activation_aliases ? "on" : "off",
+            dit->int8_mlp, dit->int8_qkv, dit->int8_attention_out,
+            dit->activated_in_qkv);
+    fprintf(stderr, "h3: DiT arena: %-24s %12s %12s %10s %10s\n", "buffer",
+            "alloc MiB", "touched MiB", "alloc KiB/t", "touch KiB/t");
+    for (size_t index = 0; index < sizeof(rows) / sizeof(*rows); index++) {
+        if (!rows[index].tensor) continue;
+        size_t allocated = h3_gpu_tensor_bytes(rows[index].tensor);
+        size_t touched = h3_gpu_tensor_touched_bytes(rows[index].tensor);
+        allocated_total += allocated;
+        touched_total += touched;
+        fprintf(stderr, "h3: DiT arena: %-24s %12.1f %12.1f %10.2f %10.2f\n",
+                rows[index].name, (double)allocated / mib,
+                (double)touched / mib, (double)allocated / 1024.0 / sequence,
+                (double)touched / 1024.0 / sequence);
+    }
+    fprintf(stderr, "h3: DiT arena: %-24s %12.1f %12.1f %10.2f %10.2f\n",
+            "total", (double)allocated_total / mib,
+            (double)touched_total / mib,
+            (double)allocated_total / 1024.0 / sequence,
+            (double)touched_total / 1024.0 / sequence);
+}
+
 void h3_dit_free(h3_dit *dit) {
     if (!dit) return;
+    trace_activation_arena(dit);
+    h3_dit_fbc_log_write(dit);
+    h3_dit_fbc_log_free(dit->fbc_log);
+    dit->fbc_log = NULL;
     h3_lora_set_free(dit->loras);
     int steps = h3_dit_schedule_steps(dit->schedule);
     if (dit->row_maps) for (int step = 0; step < steps; step++)
@@ -1266,6 +1333,7 @@ void h3_dit_free(h3_dit *dit) {
         dit->attention_heads = NULL;
         dit->mod_mlp = NULL;
     }
+    if (dit->activated_in_qkv) dit->activated = NULL;
     FREE(video_input); FREE(audio_input);
     FREE(video_projected_f32); FREE(audio_projected_f32);
     FREE(video_projected); FREE(audio_projected);

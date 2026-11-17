@@ -67,6 +67,17 @@ static const double vision_output_per_token = 4.0 * 5120 * 2;
 static const double dit_fixed = 4.0 * GIB;
 static const double dit_per_token =
     2.0 * (3 * 5376 + 6 * 7168 + 3 * 14336);
+/* On the int8 path (h3_plan_input.dit_int8) the QKV projection writes its
+ * three heads directly and the MLP's activation lives in the QKV buffer,
+ * which token reduction can grow by a hidden-sized snapshot; the quantized
+ * activation takes a byte a value: 126 KiB. Measured with the int8
+ * attention cache streaming every block (docs/perf/
+ * DIFFUSERS_BASELINE.ja.md): 116.4 KiB a token and 2.45 GiB beside them at
+ * 2 steps, 2.78 at 20 (3.56 GiB at 9895 tokens, 4.87 at 21735, 3.88 at
+ * 9895 with 20 steps). Core reuse keeps two more hidden-sized buffers,
+ * which dit_fixed's margin over those covers up to about 60000 tokens. */
+static const double dit_int8_per_token =
+    2.0 * (4 * 5376 + 3 * 7168 + 14336) + 14336 + 64;
 /* Text rows cost more: the refined text and the text embedding are kept
  * beside them (7.98 GiB at 18999 tokens with 9261 text rows). */
 static const double dit_per_text_token = 64.0 * 1024.0;
@@ -184,7 +195,8 @@ void h3_plan_compute(const h3_plan_input *input, h3_plan *plan) {
         score_rows);
 
     plan->dit_bytes = (uint64_t)(dit_fixed + (double)input->dit_resident_bytes +
-        (double)input->dit_tokens * dit_per_token +
+        (double)input->dit_tokens *
+            (input->dit_int8 ? dit_int8_per_token : dit_per_token) +
         (double)input->text_tokens * dit_per_text_token +
         (input->full_sdpa ? 0.0 : chunked_sdpa_scores));
 
