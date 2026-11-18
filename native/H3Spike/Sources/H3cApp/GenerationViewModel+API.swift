@@ -199,11 +199,34 @@ extension GenerationViewModel {
                 "targets": plan.targets.map { ["path": $0.path, "label": $0.label, "bytes": $0.bytes] },
                 "caches": plan.caches.map { ["path": $0.path, "label": $0.label, "bytes": $0.bytes] },
                 "freed_bytes": plan.freedBytes, "cache_bytes": plan.cacheBytes,
-                "shared_bytes": plan.sharedBytes, "shared_files": plan.sharedFiles, "refused": plan.refused]
+                "shared_bytes": plan.sharedBytes, "shared_files": plan.sharedFiles, "refused": plan.refused,
+                // The image models reading this model's text encoder in
+                // place: with its files gone they read "next"'s (another
+                // video model's folder), or nothing (null).
+                "text_encoder_dependents": (files ? SharedTextEncoder.dependents(
+                    onVideoModel: path, imageModels: library.imageModels.map { (name: $0.name, path: $0.path) },
+                    videoModelPaths: library.models.map(\.path)) : []).map { dependent -> [String: Any] in
+                    ["name": dependent.name, "path": dependent.directory,
+                     "next": dependent.next.map { $0 as Any } ?? NSNull(),
+                     // "next" holds the same encoder (the pictures stay);
+                     // or the others hold a different one, and it makes
+                     // nothing until one is chosen.
+                     "same_encoder": dependent.sameEncoder, "needs_choice": dependent.needsChoice]
+                }]
             if json["dry_run"] as? Bool == true { return .json(200, report) }
             guard id != library.activeModelID else { return .error(409, "that model is in use") }
+            // Not from under an image being generated in any window that
+            // reads this model's text encoder; and from here on nothing
+            // new reads it.
+            if files, let problem = SharedTextEncoder.removalProblem(
+                videoModel: path, imageModels: library.imageModels.map { (name: $0.name, path: $0.path) },
+                videoModelPaths: library.models.map(\.path)) {
+                return .error(409, problem)
+            }
             library.removeModel(id: id)
+            if files { SharedTextEncoder.beginRemoval(ofVideoModel: path) }
             let failed = await Task.detached { plan.execute() }.value
+            if files { SharedTextEncoder.endRemoval(ofVideoModel: path) }
             return .json(200, report.merging(["ok": failed.isEmpty, "failed": failed]) { $1 })
         case ("POST", "/api/models/add_ref2va"):
             return await handleAddRef2VA(request)
@@ -229,7 +252,8 @@ extension GenerationViewModel {
         case ("POST", "/api/project/import-video"):
             return handleProjectRequest(request)
         case ("GET", "/api/image-models"), ("POST", "/api/image-models/add"),
-             ("POST", "/api/image-models/setup"), ("POST", "/api/image-models/setup/cancel"):
+             ("POST", "/api/image-models/setup"), ("POST", "/api/image-models/setup/cancel"),
+             ("POST", "/api/image-models/share-text-encoder"):
             return handleImageModelsRequest(request)
         case ("POST", "/api/project/import-image"), ("POST", "/api/project/show-image"),
              ("POST", "/api/project/use-image"), ("POST", "/api/project/delete-image"),
@@ -867,13 +891,55 @@ extension GenerationViewModel {
                 }
                 if let reason = setup.setLocation(chosen, library: library) { return .error(400, reason) }
             }
-            setup.start(videoModelPaths: ([library.activeModel].compactMap { $0 } + library.models).map(\.path))
+            setup.start(videoModelPaths: videoModelPaths)
+        } else if request.path == "/api/image-models/share-text-encoder" {
+            // The sheet's 動画モデルと共用にする… (the model's own copy of the
+            // text encoder goes, a video model's is read in place), or,
+            // for a model reading one already, ほかの動画モデルのものにする:
+            // {"video_model": "<folder>"} names the registered video model
+            // (otherwise the one holding the same files as the copy).
+            guard chosen.sharesTextEncoder else {
+                return .error(400, "\(chosen.displayName) has a text encoder of its own kind, not a video model's")
+            }
+            guard !setup.isBusy, !AppModels.shared.isGeneratingImageAnywhere else {
+                return .error(409, "the image model is being set up or is generating")
+            }
+            let named = body["video_model"] as? String
+            if let named, !SharedTextEncoder.candidates(in: videoModelPaths).contains(named) {
+                return .error(400, "\"video_model\" must be the folder of a registered video model that has a text encoder")
+            }
+            if chosen.hasTextEncoder {
+                // Started here, done in the background: the copy and the
+                // video model's files are read through and compared
+                // ("comparing the text encoder") before the copy goes.
+                if let reason = setup.shareTextEncoder(videoModelPaths: videoModelPaths, named: named) {
+                    return .error(409, reason)
+                }
+            } else if let named {
+                // Also in the background: its files are read through for
+                // their SHA-256 ("reading the text encoder"), then it is
+                // recorded - a request names it, so also when it differs
+                // from the one chosen before.
+                if let reason = setup.chooseTextEncoder(videoModel: named, confirmed: true) {
+                    return .error(409, reason)
+                }
+            } else {
+                return .error(409, "\(chosen.displayName) has no copy of the text encoder to give up; \"video_model\" chooses which video model's it reads")
+            }
         } else if request.method == "POST" {
             guard let path = body["path"] as? String else { return .error(400, "\"path\" is required") }
             projectMessage = nil
             if let reason = addImageModel(at: path, name: body["name"] as? String) {
                 projectMessage = nil
                 return .error(400, reason)
+            }
+        }
+        func source(_ model: H3ImageModel) -> String? { model.textEncoderSource(in: videoModelPaths) }
+        func readingText(_ model: H3ImageModel) -> String {
+            switch model.textEncoderReading(in: videoModelPaths) {
+            case .shared: return "shared"
+            case .needsChoice: return "needs_choice"
+            case .own, .missing: return "missing"
             }
         }
         func describe(_ model: H3ImageModel) -> [String: Any] {
@@ -886,6 +952,16 @@ extension GenerationViewModel {
                 "directory": model.directory,
                 "installed": model.complete,
                 "verified": model.verified,
+                // Where the text encoder is: "own" (in the model's folder),
+                // "shared" (a video model's, read in place: its folder is
+                // "text_encoder_directory") or "missing".
+                "text_encoder": model.hasTextEncoder ? "own" : readingText(model),
+                "text_encoder_directory": model.hasTextEncoder
+                    ? model.path(H3ImageModel.textEncoderFolder)
+                    : source(model).map(SharedTextEncoder.folder(inVideoModel:)) ?? NSNull(),
+                // The video model chosen for it (its folder), which is
+                // read whenever its files are there; null when none was.
+                "text_encoder_video_model": SharedTextEncoder.record(forImageModel: model.directory)?.videoModel ?? NSNull(),
                 "repo": model.weightsRepo,
                 "revision": model.weightsRevision,
                 "license": model.licenseName,

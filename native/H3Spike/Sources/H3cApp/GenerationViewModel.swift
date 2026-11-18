@@ -1661,7 +1661,20 @@ final class GenerationViewModel: ObservableObject {
         return cancelled
     }
 
-    func imageGenerationBegan(index: Int, total: Int) {
+    /// The models generating an image now: also one whose window has
+    /// closed, until its generation has stopped (AppModels.isGeneratingImageAnywhere).
+    /// With each, the image model's name and the video model's text
+    /// encoder folder its engine reads (nil: the image model's own) - the
+    /// folder the job was started with, whatever is chosen or listed
+    /// since: what must not be deleted meanwhile (SharedTextEncoder.removalProblem).
+    static var imageGenerators: [ObjectIdentifier: (model: String, textEncoder: String?)] = [:]
+
+    /// `engine`: the one the job generates with (not needed again for the
+    /// later images of a batch).
+    func imageGenerationBegan(index: Int, total: Int, reading engine: H3ImageEngine? = nil) {
+        if engine != nil || Self.imageGenerators[ObjectIdentifier(self)] == nil {
+            Self.imageGenerators[ObjectIdentifier(self)] = (library.activeImageModel?.name ?? "", engine?.textEncoderDirectory)
+        }
         isGenerating = true
         isGeneratingImage = true
         isCancelling = false
@@ -1743,6 +1756,7 @@ final class GenerationViewModel: ObservableObject {
     }
 
     func imageGenerationEnded() {
+        Self.imageGenerators[ObjectIdentifier(self)] = nil
         isGenerating = false
         isGeneratingImage = false
         isCancelling = false

@@ -154,6 +154,14 @@ int h3_image_reference_canvas_ph3(int width, int height,
 h3_image_ctx *h3_image_load_dir(const char *model_directory,
                                 const char *shader_source_path,
                                 char *error, size_t error_size);
+/* The same, with the text encoder read from text_encoder_directory (a
+ * video model's FL2VA/text_encoder, which MiniMax H3 Image shares) and not
+ * from the folder's own text_encoder/, which then need not be there. NULL:
+ * the folder's own, as h3_image_load_dir. */
+h3_image_ctx *h3_image_load_parts(const char *model_directory,
+                                  const char *text_encoder_directory,
+                                  const char *shader_source_path,
+                                  char *error, size_t error_size);
 void h3_image_free(h3_image_ctx *ctx);
 
 /* Which image model a folder holds. */

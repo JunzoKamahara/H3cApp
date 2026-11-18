@@ -81,5 +81,13 @@ let package = Package(
             path: "Sources/H3cApp",
             linkerSettings: h3LinkerSettings
         ),
+        // Run with CFFIXED_USER_HOME set to an empty folder: the tests
+        // make the app's models, which use its Application Support folder
+        // (tools/image_shared_text_encoder/README.md).
+        .testTarget(
+            name: "H3cAppTests",
+            dependencies: ["H3cApp"],
+            path: "Tests/H3cAppTests"
+        ),
     ]
 )

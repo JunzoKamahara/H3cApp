@@ -21,7 +21,9 @@ extension GenerationViewModel {
             if !FileManager.default.fileExists(atPath: model.path) {
                 return String(localized: "画像モデル「\(model.name)」のフォルダが見つかりません")
             }
-            return nil
+            // As for generating: not while the text encoder is compared or
+            // chosen, and not without one to read.
+            return Self.imageTextEncoderProblem(model: model.path, name: model.name, videoModelPaths: videoModelPaths)
         case .frame(let upscaler):
             if !upscaler.method.isAvailable { return upscaler.method.missingReason }
             return upscaleBlockedReason(upscaler)
@@ -74,12 +76,7 @@ extension GenerationViewModel {
         }
         let engine: H3ImageEngine
         do {
-            if let current = imageEngine, current.modelDirectory == model.path {
-                engine = current
-            } else {
-                engine = try H3ImageEngine(modelDirectory: model.path)
-                imageEngine = engine
-            }
+            engine = try imageEngine(for: model)
         } catch {
             errorMessage = Self.userFacingMessage(for: error)
             return false
@@ -106,7 +103,7 @@ extension GenerationViewModel {
                                    initImagePath: source.url.path, initStrength: strength.sigma)
         imageBatchStopped = false
         displayedImage = nil
-        imageGenerationBegan(index: 1, total: 1)
+        imageGenerationBegan(index: 1, total: 1, reading: engine)
         imageGenerationTask = Task {
             let startedAt = Date()
             var finished: H3ImageResult?
