@@ -273,6 +273,22 @@ check(os.path.getsize(os.path.join(own, "model.gguf")) == 5 << 20 and not os.pat
       and setup_state()["text_encoder"] == "own" and record() is None, "and stays, with nothing recorded")
 os.remove(os.path.join(own, "model.gguf"))
 write_own(near_data)
+# Only what was compared goes with the folder: anything else in it stops the switch.
+os.makedirs(os.path.join(own, "backup"))
+open(os.path.join(own, "backup", "notes.txt"), "w").write("the user's")
+status, answer, phase = share()
+check(status == 200 and phase.startswith("failed") and "backup" in phase,
+      "a copy whose folder holds a folder of the user's is not given up (%s %s)" % (status, phase))
+check(os.path.exists(os.path.join(own, "backup", "notes.txt")) and os.path.exists(os.path.join(own, "model.gguf"))
+      and not os.path.exists(leftover) and record() is None, "and stays, with what it holds")
+shutil.rmtree(os.path.join(own, "backup"))
+open(os.path.join(own, ".notes"), "w").write("the user's")
+status, answer, phase = share()
+check(status == 200 and phase.startswith("failed") and ".notes" in phase,
+      "nor one holding a hidden file (%s %s)" % (status, phase))
+check(os.path.exists(os.path.join(own, ".notes")) and os.path.exists(os.path.join(own, "model.gguf"))
+      and not os.path.exists(leftover) and record() is None, "which stays")
+os.remove(os.path.join(own, ".notes"))
 status, answer, phase = share()
 state = setup_state()
 check(status == 200 and phase == "idle", "the same contents: the copy is given up (%s %s)" % (status, phase))

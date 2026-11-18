@@ -142,6 +142,30 @@ extension GenerationViewModel {
 
     // MARK: Validation and summary
 
+    /// Why the image model's text encoder cannot be read now, if it cannot:
+    /// it is being compared or chosen (a copy is deleted, or the choice
+    /// recorded, when that ends), or there is none to read. Asked before
+    /// anything that makes the image engine work: generating, and 高解像度化
+    /// by redrawing.
+    static func imageTextEncoderProblem(model path: String, name: String, videoModelPaths: [String]) -> String? {
+        if let installed = H3ImageModel.installed(at: path) {
+            switch H3ImageModelSetup.of(installed).phase {
+            case .comparing, .reading:
+                return String(localized: "画像モデル「\(name)」のテキストエンコーダを照合しています。終わってから生成してください")
+            default:
+                break
+            }
+        }
+        switch SharedTextEncoder.reading(forImageModel: path, videoModelPaths: videoModelPaths) {
+        case .missing:
+            return String(localized: "画像モデル「\(name)」が読む、動画モデルのテキストエンコーダが見つかりません。動画モデルを置いたディスクがつながっているか確かめるか、動画モデルを導入してください")
+        case .needsChoice:
+            return String(localized: "画像モデル「\(name)」が読んでいた動画モデルのテキストエンコーダが見つかりません。ほかの動画モデルのものは、同じ内容と確かめられていないので、自動では切り替えません。モデル管理の画像モデルの「管理…」で、使うものを選んでください")
+        case .own, .shared:
+            return nil
+        }
+    }
+
     /// Why an image cannot be generated now (shown under the prompt).
     var imageValidationMessage: String? {
         if isImportingImages { return String(localized: "画像を取り込んでいます…") }
@@ -151,22 +175,8 @@ extension GenerationViewModel {
         if !FileManager.default.fileExists(atPath: model.path) {
             return String(localized: "画像モデル「\(model.name)」のフォルダが見つかりません")
         }
-        if let installed = H3ImageModel.installed(at: model.path) {
-            // The copy is deleted, or the choice recorded, when these end.
-            switch H3ImageModelSetup.of(installed).phase {
-            case .comparing, .reading:
-                return String(localized: "画像モデル「\(model.name)」のテキストエンコーダを照合しています。終わってから生成してください")
-            default:
-                break
-            }
-        }
-        switch SharedTextEncoder.reading(forImageModel: model.path, videoModelPaths: videoModelPaths) {
-        case .missing:
-            return String(localized: "画像モデル「\(model.name)」が読む、動画モデルのテキストエンコーダが見つかりません。動画モデルを置いたディスクがつながっているか確かめるか、動画モデルを導入してください")
-        case .needsChoice:
-            return String(localized: "画像モデル「\(model.name)」が読んでいた動画モデルのテキストエンコーダが見つかりません。ほかの動画モデルのものは、同じ内容と確かめられていないので、自動では切り替えません。モデル管理の画像モデルの「管理…」で、使うものを選んでください")
-        case .own, .shared:
-            break
+        if let problem = Self.imageTextEncoderProblem(model: model.path, name: model.name, videoModelPaths: videoModelPaths) {
+            return problem
         }
         if isUpscalingVideo {
             return upscalingIsImage ? String(localized: "画像を拡大しています。終わってから生成してください")

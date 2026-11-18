@@ -1372,6 +1372,7 @@
 "取り消す" = "Discard";
 "前の切り替えで残ったフォルダ「%@」があります。切り替えの記録と一致しないか、同じ内容のテキストエンコーダをほかに確かめられないので、自動では削除しません。中身を確かめて片付けてから、もう一度お試しください。複製はそのままにしました。" = "A folder left by an earlier switch, \"%@\", is there. It does not match the record of that switch, or no other text encoder is known to have the same contents, so it is not deleted automatically. Check what it holds, clear it away, and try again. The copy was left as it is.";
 "画像を生成している間は、共用に切り替えられません。複製はそのままにしました。" = "The text encoder cannot be shared while an image is being generated. The copy was left as it is.";
+"複製のフォルダに、テキストエンコーダのファイルではない「%@」があります。照合していないものは削除しないので、ほかの場所へ移すか削除してから、もう一度お試しください。複製はそのままにしました。" = "The copy's folder holds \"%@\", which is not a file of the text encoder. What has not been compared is not deleted: move it elsewhere or delete it, then try again. The copy was left as it is.";
 "準備の途中は、テキストエンコーダを変えられません。" = "The text encoder cannot be changed while the model is being set up.";
 "画像を生成している間は、テキストエンコーダを変えられません。" = "The text encoder cannot be changed while an image is being generated.";
 "フォルダ「text_encoder.removing」（約%@）が残っていますが、切り替えの記録と一致しないので、アプリは削除も復元もしません。「Finderで表示」で中身を確かめて、不要なら削除してください" = "A folder \"text_encoder.removing\" (about %@) is left, but it does not match the record of a switch, so the app neither deletes it nor puts it back. Check what it holds with \"Show in Finder\" and delete it if you do not need it";

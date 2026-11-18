@@ -212,9 +212,11 @@ struct H3ImageModel: Identifiable, Hashable {
 
     static let all = [h3, ph3, ph3LoRA]
 
-    /// The model the app installed at this folder, if it is one.
+    /// The model the app installed at this folder, if it is one - also
+    /// when the path is a link to the folder: what is done to the install
+    /// (its text encoder compared, a copy given up) is done to that folder.
     static func installed(at path: String) -> H3ImageModel? {
-        all.first { $0.directory == path }
+        all.first { SharedTextEncoder.sameFolder($0.directory, path) }
     }
 
     var weightsURL: URL { URL(string: "https://huggingface.co/\(weightsRepo)/tree/\(weightsRevision)")! }
@@ -579,7 +581,15 @@ final class H3ImageModelSetup: ObservableObject {
     func cancel() {
         task?.cancel()
         downloader.cancel()
-        if isBusy { phase = .idle }
+        switch phase {
+        case .comparing, .reading:
+            // Busy until the task says it has stopped: it may already be
+            // deleting the copy, which no cancellation stops, and nothing
+            // else - a generation, another switch - may begin before that.
+            break
+        default:
+            if isBusy { phase = .idle }
+        }
     }
 
     /// 動画モデルと共用にする…: gives up the model's own copy of the text
@@ -602,7 +612,7 @@ final class H3ImageModelSetup: ObservableObject {
             return SharedTextEncoder.SwitchError.leftover(leaving).localizedDescription
         }
         guard let offer = SharedTextEncoder.possibleSwitch(forImageModel: model.directory, videoModelPaths: videoModelPaths),
-              named == nil || named == offer.videoModel else {
+              named.map({ SharedTextEncoder.sameFolder($0, offer.videoModel) }) ?? true else {
             return SharedTextEncoder.SwitchError.nothingToGiveUp.localizedDescription
         }
         phase = .comparing(done: 0, total: 0)

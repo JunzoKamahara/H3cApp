@@ -27,6 +27,17 @@ enum SharedTextEncoder {
         !((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []).isEmpty
     }
 
+    /// The folder a path names, however it is spelled: a link to a folder
+    /// and the folder itself are one (a path that is not there stays as
+    /// written).
+    static func identity(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    static func sameFolder(_ a: String, _ b: String) -> Bool {
+        a == b || identity(a) == identity(b)
+    }
+
     static func ownFolder(ofImageModel directory: String) -> String {
         directory + "/" + H3ImageModel.textEncoderFolder
     }
@@ -77,6 +88,15 @@ enum SharedTextEncoder {
                                 modified: attributes[.modificationDate] as? Date)
         }
         return result
+    }
+
+    /// What `folder` holds besides the regular files named: a folder, a
+    /// hidden file, a file not named (the first of them; .DS_Store is the
+    /// Finder's, not counted). Such a thing was not compared and is in no
+    /// record, so a folder holding one is never deleted.
+    private static func unaccounted(in folder: String, besides names: Set<String>) -> String? {
+        Set((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? [])
+            .subtracting([".DS_Store"]).subtracting(names).sorted().first
     }
 
     // The SHA-256 of whole files that have been read through, kept in the
@@ -270,22 +290,26 @@ enum SharedTextEncoder {
 
     /// The registered video models that have a text encoder, in the order given.
     static func candidates(in videoModelPaths: [String]) -> [String] {
+        // One per folder: a link to a video model is that video model.
         var seen = Set<String>()
-        return videoModelPaths.filter { seen.insert($0).inserted && holdsFiles(folder(inVideoModel: $0)) }
+        return videoModelPaths.filter { seen.insert(identity($0)).inserted && holdsFiles(folder(inVideoModel: $0)) }
     }
 
     /// Where the image model at `directory` reads its text encoder.
-    /// `without`: a video model taken as gone (what deleting it would do).
+    /// `without`: a video model taken as gone (what deleting it would do) -
+    /// the folder, under whatever path it is listed or recorded.
     static func reading(forImageModel directory: String, videoModelPaths: [String],
                         without gone: String? = nil) -> Reading {
         if hasOwn(imageModel: directory) || !applies(toImageModel: directory) { return .own }
-        let candidates = candidates(in: videoModelPaths.filter { $0 != gone })
+        let goneFolder = gone.map(identity)
+        func isGone(_ path: String) -> Bool { goneFolder.map { identity(path) == $0 } ?? false }
+        let candidates = candidates(in: goneFolder == nil ? videoModelPaths : videoModelPaths.filter { !isGone($0) })
         guard let record = record(forImageModel: directory) else {
             // Nothing was chosen (a folder the user put together): the first.
             return candidates.first.map { .shared(videoModel: $0) } ?? .missing
         }
         // The chosen video model, while its folder holds what it held.
-        if record.videoModel != gone,
+        if !isGone(record.videoModel),
            looksSame(fingerprint(of: folder(inVideoModel: record.videoModel)), record.files) {
             return .shared(videoModel: record.videoModel)
         }
@@ -332,9 +356,9 @@ enum SharedTextEncoder {
                            videoModelPaths: [String]) -> [Dependent] {
         let mark = fingerprint(of: folder(inVideoModel: path))
         return imageModels.compactMap { image in
-            guard reading(forImageModel: image.path, videoModelPaths: videoModelPaths) == .shared(videoModel: path) else {
-                return nil
-            }
+            // Read under any path of that folder (a link to it, say).
+            guard case .shared(let read) = reading(forImageModel: image.path, videoModelPaths: videoModelPaths),
+                  sameFolder(read, path) else { return nil }
             switch reading(forImageModel: image.path, videoModelPaths: videoModelPaths, without: path) {
             case .shared(let next):
                 return Dependent(name: image.name, directory: image.path, next: next,
@@ -399,6 +423,7 @@ enum SharedTextEncoder {
         case engine(String)
         case remove(String)
         case leftover(String)
+        case extra(String)
         case generating
 
         var errorDescription: String? {
@@ -413,6 +438,8 @@ enum SharedTextEncoder {
                 return String(localized: "複製したテキストエンコーダを削除できませんでした（詳細: \(detail)）")
             case .leftover(let path):
                 return String(localized: "前の切り替えで残ったフォルダ「\(path)」があります。切り替えの記録と一致しないか、同じ内容のテキストエンコーダをほかに確かめられないので、自動では削除しません。中身を確かめて片付けてから、もう一度お試しください。複製はそのままにしました。")
+            case .extra(let name):
+                return String(localized: "複製のフォルダに、テキストエンコーダのファイルではない「\(name)」があります。照合していないものは削除しないので、ほかの場所へ移すか削除してから、もう一度お試しください。複製はそのままにしました。")
             case .generating:
                 return String(localized: "画像を生成している間は、共用に切り替えられません。複製はそのままにしました。")
             }
@@ -423,12 +450,18 @@ enum SharedTextEncoder {
     /// model's encoder through, and returns the video model's files with
     /// their SHA-256 when the two are the same, byte for byte. Throws
     /// SwitchError.differs otherwise, and CancellationError when the task
-    /// is cancelled. Minutes for 18 to 27 GB on each side.
+    /// is cancelled. Minutes for 18 to 27 GB on each side. Only the
+    /// regular files are compared: a copy's folder holding anything else
+    /// is refused before any reading (SwitchError.extra), as it is when
+    /// the copy is to go.
     static func compareContents(imageModel directory: String, videoModel: String,
                                 progress: @escaping @Sendable (Int64, Int64) -> Void) throws -> [String: FileMark] {
         let own = regularFiles(in: ownFolder(ofImageModel: directory))
         let other = regularFiles(in: folder(inVideoModel: videoModel))
         guard !own.isEmpty, Set(own.keys) == Set(other.keys) else { throw SwitchError.nothingToGiveUp }
+        if let extra = unaccounted(in: ownFolder(ofImageModel: directory), besides: Set(own.keys)) {
+            throw SwitchError.extra(extra)
+        }
         for (name, copy) in own where copy.bytes != other[name]?.bytes { throw SwitchError.differs(name) }
         let half = own.values.reduce(Int64(0)) { $0 + $1.bytes }
         let marks = try fullFingerprint(of: folder(inVideoModel: videoModel)) { progress($0, 2 * half) }
@@ -450,11 +483,18 @@ enum SharedTextEncoder {
     /// the video model, then deletes the copy (not to the Trash: it is a
     /// copy, and the space is the point). Deletes nothing else: with a
     /// text_encoder.removing in the way (finishInterruptedSwitch first)
-    /// it throws SwitchError.leftover.
+    /// it throws SwitchError.leftover, and when the copy's folder holds
+    /// anything but the files that were compared - a folder, a hidden
+    /// file, a file added or of another size since - SwitchError.extra or
+    /// .differs: the whole folder goes, so all of it must be accounted for.
     static func switchToShared(imageModel directory: String, videoModel: String, files: [String: FileMark]) throws {
         let own = ownFolder(ofImageModel: directory)
         let leaving = own + ".removing"
         guard !FileManager.default.fileExists(atPath: leaving) else { throw SwitchError.leftover(leaving) }
+        let manifest = regularFiles(in: own).mapValues(\.bytes)
+        guard !manifest.isEmpty else { throw SwitchError.nothingToGiveUp }
+        if let extra = unaccounted(in: own, besides: Set(files.keys)) { throw SwitchError.extra(extra) }
+        for (name, mark) in files where manifest[name] != mark.bytes { throw SwitchError.differs(name) }
         do {
             _ = try H3ImageEngine(modelDirectory: directory, textEncoderDirectory: folder(inVideoModel: videoModel))
         } catch {
@@ -465,7 +505,6 @@ enum SharedTextEncoder {
         // the record names what is being deleted before any of it goes, so
         // that a deletion cut short can be finished or undone later.
         let previous = record(forImageModel: directory)
-        let manifest = regularFiles(in: own).mapValues(\.bytes)
         do {
             try write(Record(videoModel: videoModel, files: files, removing: manifest), forImageModel: directory)
             try FileManager.default.moveItem(atPath: own, toPath: leaving)
@@ -506,8 +545,8 @@ enum SharedTextEncoder {
     private static func recognizedLeftover(_ leaving: String, record: Record?) -> [String: Int64]? {
         guard let manifest = record?.removing, !manifest.isEmpty else { return nil }
         let held = regularFiles(in: leaving).mapValues(\.bytes)
-        let entries = Set((try? FileManager.default.contentsOfDirectory(atPath: leaving)) ?? []).subtracting([".DS_Store"])
-        guard entries == Set(held.keys), held.allSatisfy({ manifest[$0.key] == $0.value }) else { return nil }
+        guard unaccounted(in: leaving, besides: Set(held.keys)) == nil,
+              held.allSatisfy({ manifest[$0.key] == $0.value }) else { return nil }
         return held
     }
 

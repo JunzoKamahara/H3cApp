@@ -122,6 +122,131 @@ final class SharedTextEncoderTests: XCTestCase {
         XCTAssertEqual(SharedTextEncoder.record(forImageModel: image)?.videoModel, other)
     }
 
+    // MARK: While the text encoder is compared or chosen
+
+    /// A link to the install is the install, 高解像度化 by redrawing waits as
+    /// generating does, and a cancelled reading keeps the setup busy until
+    /// its task has stopped.
+    func testNothingBeginsUntilAReadingHasStopped() async throws {
+        let image = H3ImageModel.h3.directory
+        try FileManager.default.createDirectory(atPath: image, withIntermediateDirectories: true)
+        let link = root + "/Link"
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: image)
+        XCTAssertEqual(H3ImageModel.installed(at: link), .h3, "the folder under another path")
+        let chosen = try videoModel("Chosen", ["model.gguf": data(1)])
+        func problem(_ path: String) -> String? {
+            GenerationViewModel.imageTextEncoderProblem(model: path, name: "Linked", videoModelPaths: [chosen])
+        }
+        ModelLibrary.registerImageModel(path: link, name: "Linked")
+        let window = anotherWindow()
+        XCTAssertEqual(window.library.activeImageModel?.path, link)
+        XCTAssertNil(problem(link))
+
+        let setup = H3ImageModelSetup.of(.h3)
+        XCTAssertNil(setup.chooseTextEncoder(videoModel: chosen))
+        XCTAssertNotNil(problem(image))
+        XCTAssertNotNil(problem(link), "also for the install reached through a link")
+        XCTAssertEqual(window.imageUpscaleBlockedReason(.redraw), problem(link), "redrawing waits as generating does")
+
+        setup.cancel()
+        XCTAssertTrue(setup.isBusy, "busy until the task has stopped")
+        XCTAssertNotNil(problem(link))
+        XCTAssertNotNil(setup.chooseTextEncoder(videoModel: chosen), "nothing else begins meanwhile")
+        XCTAssertNotNil(setup.shareTextEncoder(videoModelPaths: [chosen]))
+        for _ in 0 ..< 100 where setup.isBusy { try await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertEqual(setup.phase, .idle)
+        XCTAssertNil(SharedTextEncoder.record(forImageModel: image), "a cancelled choice records nothing")
+        XCTAssertNil(problem(link))
+    }
+
+    // MARK: Giving up a copy
+
+    /// Only the files that were compared may go with the folder: a copy's
+    /// folder holding anything else is neither compared nor deleted.
+    func testACopyHoldingAnythingElseIsNotGivenUp() throws {
+        let files = ["model.gguf": data(1)]
+        let source = try videoModel("Source", files)
+        let image = root + "/Image"
+        let own = SharedTextEncoder.ownFolder(ofImageModel: image)
+        try write(files, to: own)
+        func refusal(_ body: () throws -> Void) -> String? {
+            do { try body() } catch SharedTextEncoder.SwitchError.extra(let name) { return "extra " + name
+            } catch SharedTextEncoder.SwitchError.differs(let name) { return "differs " + name
+            } catch SharedTextEncoder.SwitchError.engine { return "engine"
+            } catch { return "other \(error)" }
+            return nil
+        }
+        var marks: [String: SharedTextEncoder.FileMark] = [:]
+        XCTAssertNil(refusal { marks = try SharedTextEncoder.compareContents(imageModel: image, videoModel: source) { _, _ in } })
+        XCTAssertNotNil(marks["model.gguf"]?.sha256)
+
+        // A folder of the user's, a hidden file, a file not compared.
+        for (extra, make) in [
+            ("backup", { try self.write(["notes.txt": self.data(7, 10)], to: own + "/backup") }),
+            (".notes", { try self.data(7, 10).write(to: URL(fileURLWithPath: own + "/.notes")) }),
+            ("other.bin", { try self.data(7, 10).write(to: URL(fileURLWithPath: own + "/other.bin")) }),
+        ] as [(String, () throws -> Void)] {
+            try make()
+            XCTAssertEqual(refusal { _ = try SharedTextEncoder.compareContents(imageModel: image, videoModel: source) { _, _ in } },
+                           extra == "other.bin" ? "other nothingToGiveUp" : "extra " + extra)
+            XCTAssertEqual(refusal { try SharedTextEncoder.switchToShared(imageModel: image, videoModel: source, files: marks) },
+                           "extra " + extra)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: own + "/" + extra), "\(extra) is still there")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: own + "/model.gguf"))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: own + ".removing"))
+            XCTAssertNil(SharedTextEncoder.record(forImageModel: image))
+            try FileManager.default.removeItem(atPath: own + "/" + extra)
+        }
+        if FileManager.default.fileExists(atPath: own + "/backup/notes.txt") { XCTFail("the loop removes it") }
+
+        // A file that is no longer the one compared.
+        try data(1, 100).write(to: URL(fileURLWithPath: own + "/model.gguf"))
+        XCTAssertEqual(refusal { try SharedTextEncoder.switchToShared(imageModel: image, videoModel: source, files: marks) },
+                       "differs model.gguf")
+        XCTAssertEqual(names(in: own), ["model.gguf"])
+
+        // The Finder's .DS_Store is not the user's: past these checks (and
+        // stopped at the next one, the folder not being an image model).
+        try write(files, to: own)
+        try data(0, 10).write(to: URL(fileURLWithPath: own + "/.DS_Store"))
+        XCTAssertEqual(refusal { try SharedTextEncoder.switchToShared(imageModel: image, videoModel: source, files: marks) }, "engine")
+        XCTAssertEqual(names(in: own), [".DS_Store", "model.gguf"])
+    }
+
+    // MARK: Deleting a video model
+
+    /// A video model listed or recorded under a link is that video model:
+    /// deleting its files counts the image models that read it through the
+    /// link, and the link is not what they would read next.
+    func testDeletingAVideoModelCountsWhatReadsItThroughALink() throws {
+        let files = ["model.gguf": data(1)]
+        let video = try videoModel("Real", files)
+        let alias = root + "/Alias"
+        try FileManager.default.createSymbolicLink(atPath: alias, withDestinationPath: video)
+        let image = root + "/Image"
+        try FileManager.default.createDirectory(atPath: image, withIntermediateDirectories: true)
+        try SharedTextEncoder.choose(
+            videoModel: alias, files: SharedTextEncoder.fullFingerprint(of: SharedTextEncoder.folder(inVideoModel: alias)),
+            forImageModel: image)
+        let images = [(name: "Image", path: image)]
+
+        XCTAssertEqual(SharedTextEncoder.reading(forImageModel: image, videoModelPaths: [alias, video]), .shared(videoModel: alias))
+        XCTAssertEqual(SharedTextEncoder.candidates(in: [alias, video]), [alias], "one folder, listed twice")
+        for deleted in [video, alias] {
+            let found = SharedTextEncoder.dependents(onVideoModel: deleted, imageModels: images, videoModelPaths: [alias, video])
+            XCTAssertEqual(found.map(\.directory), [image], "deleting \(deleted)")
+            XCTAssertNil(found.first?.next, "the other path of the same folder is no replacement")
+            XCTAssertEqual(found.first?.needsChoice, false)
+        }
+
+        // Another folder with the same encoder is one.
+        let twin = try videoModel("Twin", files)
+        _ = try SharedTextEncoder.fullFingerprint(of: SharedTextEncoder.folder(inVideoModel: twin))
+        let found = SharedTextEncoder.dependents(onVideoModel: video, imageModels: images, videoModelPaths: [alias, video, twin])
+        XCTAssertEqual(found.first?.next, twin)
+        XCTAssertEqual(found.first?.sameEncoder, true)
+    }
+
     // MARK: A switch cut short
 
     /// The record of a switch whose copy held `files`, the video model's

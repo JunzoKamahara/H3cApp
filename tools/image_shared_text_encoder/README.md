@@ -12,8 +12,9 @@ checks:
 - a setup beside the video model (a clone), and a clone not being given up;
 - a real copy being given up only after its contents are compared with the
   video model's (a copy of another size, and one of the same size whose last
-  byte differs, stay), and not while a `text_encoder.removing` that no switch
-  recorded is in the folder;
+  byte differs, stay), not while a `text_encoder.removing` that no switch
+  recorded is in the folder, and not when the copy's folder holds anything
+  that was not compared (a folder, a hidden file);
 - what deleting a video model would do to the image model;
 - choosing another video model's encoder (its files are read through for
   their SHA-256);
@@ -50,9 +51,11 @@ script turns the local API on in it. Port 8420 must be free: quit H3cApp
 first. The setup fetches the model's `LICENSE` from Hugging Face.
 
 What the API cannot reach is in `native/H3Spike/Tests/H3cAppTests`: the answer
-to the question about a different encoder while another window generates, and
-a switch cut short with files in `text_encoder/` that may be part of an
-encoder. They use the app's models, so they are skipped unless
+to the question about a different encoder while another window generates; a
+switch cut short with files in `text_encoder/` that may be part of an
+encoder; a cancelled reading keeping the setup busy until it has stopped, and
+redrawing waiting as generating does; an install or a video model reached
+through a link. They use the app's models, so they are skipped unless
 `CFFIXED_USER_HOME` names a folder for them:
 
     CFFIXED_USER_HOME=<empty dir> swift test --package-path native/H3Spike \

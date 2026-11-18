@@ -21,7 +21,9 @@ extension GenerationViewModel {
             if !FileManager.default.fileExists(atPath: model.path) {
                 return String(localized: "画像モデル「\(model.name)」のフォルダが見つかりません")
             }
-            return nil
+            // As for generating: not while the text encoder is compared or
+            // chosen, and not without one to read.
+            return Self.imageTextEncoderProblem(model: model.path, name: model.name, videoModelPaths: videoModelPaths)
         case .frame(let upscaler):
             if !upscaler.method.isAvailable { return upscaler.method.missingReason }
             return upscaleBlockedReason(upscaler)
