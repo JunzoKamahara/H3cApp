@@ -411,6 +411,23 @@ check(os.path.getsize(os.path.join(leftover, "model.gguf")) == 6 << 20 and setup
 stop()
 shutil.rmtree(leftover)
 
+# 10b. Cut short, the video model gone since, and a file in text_encoder/
+# that may be only part of an encoder: the copy left behind is not deleted
+# for it (nor put back over it).
+os.makedirs(own)
+with open(os.path.join(own, "partial.gguf"), "wb") as f:
+    f.write(os.urandom(1 << 20))
+leave(far_data, 6 << 20)
+detach()
+start()
+time.sleep(3)
+check(os.path.getsize(os.path.join(leftover, "model.gguf")) == 6 << 20
+      and os.listdir(own) == ["partial.gguf"] and "removing" in record(),
+      "files in text_encoder/ do not let the copy left behind be deleted")
+stop()
+shutil.rmtree(own)
+shutil.rmtree(leftover)
+
 # 11. Cut short, and the video model gone since: a copy that is whole is put back.
 leave(far_data, 6 << 20)
 detach()

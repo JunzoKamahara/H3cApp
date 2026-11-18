@@ -49,6 +49,15 @@ preferences domain (`H3cAppDevCheck`) is removed before and after, and the
 script turns the local API on in it. Port 8420 must be free: quit H3cApp
 first. The setup fetches the model's `LICENSE` from Hugging Face.
 
+What the API cannot reach is in `native/H3Spike/Tests/H3cAppTests`: the answer
+to the question about a different encoder while another window generates, and
+a switch cut short with files in `text_encoder/` that may be part of an
+encoder. They use the app's models, so they are skipped unless
+`CFFIXED_USER_HOME` names a folder for them:
+
+    CFFIXED_USER_HOME=<empty dir> swift test --package-path native/H3Spike \
+        --scratch-path "${TMPDIR}H3cApp-build-scratch" --filter H3cAppTests
+
 To see that the pictures are the same with a shared encoder as with a copy,
 generate with the engine's tool, once with the encoder in the folder and
 once with `text_encoder=<video model>/FL2VA/text_encoder`, and compare the

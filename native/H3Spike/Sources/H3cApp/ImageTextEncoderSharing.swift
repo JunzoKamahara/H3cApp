@@ -412,7 +412,7 @@ enum SharedTextEncoder {
             case .remove(let detail):
                 return String(localized: "複製したテキストエンコーダを削除できませんでした（詳細: \(detail)）")
             case .leftover(let path):
-                return String(localized: "前の切り替えで残ったフォルダ「\(path)」があります。切り替えの記録と一致しないので、自動では削除しません。中身を確かめて片付けてから、もう一度お試しください。複製はそのままにしました。")
+                return String(localized: "前の切り替えで残ったフォルダ「\(path)」があります。切り替えの記録と一致しないか、同じ内容のテキストエンコーダをほかに確かめられないので、自動では削除しません。中身を確かめて片付けてから、もう一度お試しください。複製はそのままにしました。")
             case .generating:
                 return String(localized: "画像を生成している間は、共用に切り替えられません。複製はそのままにしました。")
             }
@@ -515,11 +515,13 @@ enum SharedTextEncoder {
     /// quit, crashed, or could not delete it. Only a text_encoder.removing
     /// that the record of the switch accounts for is acted on (each file
     /// listed there, at its size, and nothing else in the folder); any
-    /// other is left as it is. With an encoder to read - the folder's own,
-    /// or a video model's whose files are known to have the recorded
-    /// SHA-256 - the rest of the copy goes. With none, the copy is put back
-    /// when it still holds every file listed, and left otherwise: the last
-    /// copy is never deleted.
+    /// other is left as it is. With a whole encoder to read - a video
+    /// model's whose files are known to have the recorded SHA-256 - the
+    /// rest of the copy goes. With none, the copy is put back when it
+    /// still holds every file listed and the folder has no text_encoder/
+    /// files of its own, and left otherwise: the last copy is never
+    /// deleted, also not for files in text_encoder/ that may be only part
+    /// of an encoder.
     @discardableResult
     static func finishInterruptedSwitch(imageModel directory: String, videoModelPaths: [String]) -> Leftover {
         let own = ownFolder(ofImageModel: directory)
@@ -538,16 +540,19 @@ enum SharedTextEncoder {
             return .unrecognized(bytes(of: leaving))
         }
         let bytes = held.values.reduce(0, +)
-        var canRead = !regularFiles(in: own).isEmpty
-        if !canRead, case .shared(let source) = reading(forImageModel: directory, videoModelPaths: videoModelPaths) {
-            canRead = isSame(fingerprint(of: folder(inVideoModel: source)), record.files)
+        // A whole encoder elsewhere: a video model whose files are known
+        // to have the recorded SHA-256. Files in the folder's own
+        // text_encoder/ do not count - nothing says they are all of it.
+        let verified = ([record.videoModel] + candidates(in: videoModelPaths)).contains {
+            isSame(fingerprint(of: folder(inVideoModel: $0)), record.files)
         }
-        if canRead {
+        if verified {
             guard (try? FileManager.default.removeItem(atPath: leaving)) != nil else { return .left(bytes) }
             forget()
             return .removed
         }
-        guard held == record.removing else { return .left(bytes) }
+        // Put back only into an empty place, and only when whole.
+        guard regularFiles(in: own).isEmpty, held == record.removing else { return .left(bytes) }
         do {
             // An emptied text_encoder/ may be in the way (rmdir: only if empty).
             if FileManager.default.fileExists(atPath: own) {

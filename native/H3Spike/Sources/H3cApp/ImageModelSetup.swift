@@ -695,17 +695,29 @@ final class H3ImageModelSetup: ObservableObject {
         return nil
     }
 
-    /// The user's answer to pendingChoice.
-    func confirmChoice(_ accepted: Bool) {
-        guard let choice = pendingChoice else { return }
+    /// The user's answer to pendingChoice. A yes is refused, and the
+    /// choice kept waiting, while an image is generated in any window (one
+    /// may have begun while the question was up) or the model is being
+    /// set up. Returns why it was refused.
+    @discardableResult
+    func confirmChoice(_ accepted: Bool) -> String? {
+        guard let choice = pendingChoice else { return nil }
+        guard accepted else {
+            pendingChoice = nil
+            return nil
+        }
+        guard !isBusy else { return String(localized: "準備の途中は、テキストエンコーダを変えられません。") }
+        guard !AppModels.shared.isGeneratingImageAnywhere else {
+            return String(localized: "画像を生成している間は、テキストエンコーダを変えられません。生成が終わってから、もう一度確かめてください。")
+        }
         pendingChoice = nil
-        guard accepted else { return }
         do {
             try SharedTextEncoder.choose(videoModel: choice.videoModel, files: choice.files, forImageModel: model.directory)
             phase = .idle
         } catch {
             phase = .failed(error.localizedDescription)
         }
+        return nil
     }
 
     private func run(videoModelPaths: [String]) async {
@@ -898,6 +910,8 @@ struct H3ImageModelSetupView: View {
     /// Counts the background looks at the folder, so the rows that read
     /// it are drawn again after each.
     @State private var looked = 0
+    /// The question about setup.pendingChoice is up.
+    @State private var confirmingChoice = false
 
     init(library: ModelLibrary, model: H3ImageModel = .h3, busy: Bool = false, close: @escaping () -> Void) {
         self.library = library
@@ -984,10 +998,13 @@ struct H3ImageModelSetupView: View {
         } message: { offer in
             Text("この画像モデルのフォルダにあるテキストエンコーダの複製（約\(gigabytes(offer.freedBytes))）と、動画モデル「\(videoModelName(offer.videoModel))」のものを全部読んで、内容（SHA-256）が同じことを確かめます。同じなら複製を削除し、以後は動画モデルのものを読みます。違えば何も変えません。照合には数分かかります。")
         }
-        .alert("テキストエンコーダを変える", isPresented: Binding(
-            get: { setup.pendingChoice != nil }, set: { if !$0 { setup.confirmChoice(false) } }
-        ), presenting: setup.pendingChoice) { _ in
-            Button("変える", role: .destructive) { setup.confirmChoice(true) }
+        .onChange(of: setup.pendingChoice) { _, choice in
+            if choice != nil { confirmingChoice = true }
+        }
+        .alert("テキストエンコーダを変える", isPresented: $confirmingChoice, presenting: setup.pendingChoice) { _ in
+            // Refused while an image is generated: the choice stays
+            // waiting (the row below), to be confirmed once it has ended.
+            Button("変える", role: .destructive) { switchError = setup.confirmChoice(true) }
             Button("キャンセル", role: .cancel) { setup.confirmChoice(false) }
         } message: { choice in
             Text("動画モデル「\(videoModelName(choice.videoModel))」のテキストエンコーダは、これまで読んでいたものと中身が違います（SHA-256が違います）。同じプロンプトとシードでも、これまでと違う画像になります。")
@@ -1246,6 +1263,17 @@ struct H3ImageModelSetupView: View {
                 .fixedSize()
                 .disabled(setup.isBusy || busy)
                 .help("選んだ動画モデルのテキストエンコーダを全部読み、これまでのものと内容（SHA-256）が同じなら、そのまま切り替えます。違えば、同じシードでも画像が変わるので、変える前に確かめます")
+            }
+            if let choice = setup.pendingChoice, !confirmingChoice {
+                HStack(spacing: H3Spacing.sm) {
+                    Text("動画モデル「\(videoModelName(choice.videoModel))」のものへの変更は、確認待ちです").font(.caption)
+                        .foregroundStyle(palette.textSecondary)
+                    Button("確かめる…") { confirmingChoice = true }
+                        .controlSize(.small)
+                        .disabled(setup.isBusy || busy)
+                    Button("取り消す") { setup.confirmChoice(false) }
+                        .controlSize(.small)
+                }
             }
             if let leftover = { _ = version; _ = setup.phase; _ = looked; return SharedTextEncoder.leftover(inImageModel: model.directory) }(),
                !setup.isBusy {

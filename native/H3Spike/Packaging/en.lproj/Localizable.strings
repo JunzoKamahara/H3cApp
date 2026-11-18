@@ -1366,7 +1366,11 @@
 "動画モデルがありません。先に動画モデル（MiniMax-H3）を導入してください" = "No video model. Install a video model (MiniMax-H3) first";
 "%@（複製したテキストエンコーダを含みます。同じディスクなら、実際に増えるのはダウンロードした分だけです）" = "%@ (including the copied text encoder; on the same disk only the download takes real space)";
 "テキストエンコーダを複製しています…" = "Copying the text encoder…";
-"前の切り替えで残ったフォルダ「%@」があります。切り替えの記録と一致しないので、自動では削除しません。中身を確かめて片付けてから、もう一度お試しください。複製はそのままにしました。" = "A folder left by an earlier switch, \"%@\", is there. It does not match the record of that switch, so it is not deleted automatically. Check what it holds, clear it away, and try again. The copy was left as it is.";
+"画像を生成している間は、テキストエンコーダを変えられません。生成が終わってから、もう一度確かめてください。" = "The text encoder cannot be changed while an image is being generated. Confirm again once the generation has ended.";
+"動画モデル「%@」のものへの変更は、確認待ちです" = "The change to the one of the video model \"%@\" is waiting to be confirmed";
+"確かめる…" = "Confirm…";
+"取り消す" = "Discard";
+"前の切り替えで残ったフォルダ「%@」があります。切り替えの記録と一致しないか、同じ内容のテキストエンコーダをほかに確かめられないので、自動では削除しません。中身を確かめて片付けてから、もう一度お試しください。複製はそのままにしました。" = "A folder left by an earlier switch, \"%@\", is there. It does not match the record of that switch, or no other text encoder is known to have the same contents, so it is not deleted automatically. Check what it holds, clear it away, and try again. The copy was left as it is.";
 "画像を生成している間は、共用に切り替えられません。複製はそのままにしました。" = "The text encoder cannot be shared while an image is being generated. The copy was left as it is.";
 "準備の途中は、テキストエンコーダを変えられません。" = "The text encoder cannot be changed while the model is being set up.";
 "画像を生成している間は、テキストエンコーダを変えられません。" = "The text encoder cannot be changed while an image is being generated.";

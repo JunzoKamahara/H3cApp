@@ -1,0 +1,213 @@
+import XCTest
+@testable import H3cApp
+
+/// The text encoder MiniMax H3 Image shares with a video model
+/// (SharedTextEncoder): what the app's API cannot reach - the answer to the
+/// question about a different encoder, and a switch cut short in states no
+/// switch leaves by itself. Nothing is generated; the encoders are a few
+/// kilobytes.
+///
+/// The tests make the app's models, which read and write its Application
+/// Support folder: they are skipped unless CFFIXED_USER_HOME names a folder
+/// for them (tools/image_shared_text_encoder/README.md).
+@MainActor
+final class SharedTextEncoderTests: XCTestCase {
+    private var root = ""
+    private var acquired: [GenerationViewModel] = []
+
+    override func setUp() async throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] == nil,
+                      "set CFFIXED_USER_HOME to an empty folder: the tests use the app's Application Support folder")
+        root = NSTemporaryDirectory() + "h3-shared-text-encoder-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() async throws {
+        // Nothing to undo after a skipped test - and nothing of the real
+        // app's may be touched: only what setUp and the tests made, under
+        // the folder CFFIXED_USER_HOME names.
+        guard !root.isEmpty, let home = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else { return }
+        for model in acquired {
+            model.imageGenerationEnded()
+            AppModels.shared.release(model)
+        }
+        acquired = []
+        try? FileManager.default.removeItem(atPath: root)
+        let image = (H3ImageModel.h3.directory as NSString).resolvingSymlinksInPath
+        if image.hasPrefix((home as NSString).resolvingSymlinksInPath + "/") {
+            try? FileManager.default.removeItem(atPath: image)
+        }
+        // The test runner's own preferences, not the app's.
+        for key in UserDefaults.standard.dictionaryRepresentation().keys
+        where key.hasPrefix("H3ModelLibrary.") || key.hasPrefix("h3c-app.") || key.hasPrefix("H3cApp.") {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
+    /// A stand-in video model holding these files as its text encoder.
+    private func videoModel(_ name: String, _ files: [String: Data]) throws -> String {
+        let path = root + "/" + name
+        let folder = SharedTextEncoder.folder(inVideoModel: path)
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        for (file, data) in files { try data.write(to: URL(fileURLWithPath: folder + "/" + file)) }
+        return path
+    }
+
+    private func write(_ files: [String: Data], to folder: String) throws {
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        for (file, data) in files { try data.write(to: URL(fileURLWithPath: folder + "/" + file)) }
+    }
+
+    private func names(in folder: String) -> [String] {
+        ((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []).sorted()
+    }
+
+    /// A model as another window's, beside the primary one.
+    private func anotherWindow() -> GenerationViewModel {
+        let first = AppModels.shared.acquire().model
+        let second = AppModels.shared.acquire().model
+        acquired += [first, second]
+        return second === AppModels.shared.primary ? first : second
+    }
+
+    private func data(_ byte: UInt8, _ count: Int = 4096) -> Data { Data(repeating: byte, count: count) }
+
+    // MARK: Generating in another window
+
+    func testNoSwitchWhileAnotherWindowGenerates() {
+        let setup = H3ImageModelSetup.of(.h3)
+        let window = anotherWindow()
+        XCTAssertFalse(AppModels.shared.isGeneratingImageAnywhere)
+        window.imageGenerationBegan(index: 1, total: 1)
+        XCTAssertTrue(AppModels.shared.isGeneratingImageAnywhere)
+        XCTAssertEqual(setup.shareTextEncoder(videoModelPaths: []),
+                       SharedTextEncoder.SwitchError.generating.localizedDescription)
+        XCTAssertNotNil(setup.chooseTextEncoder(videoModel: root + "/None"))
+        XCTAssertEqual(setup.phase, .idle)
+        // Its window closes: the generation counts until it has stopped.
+        AppModels.shared.release(window)
+        XCTAssertTrue(AppModels.shared.isGeneratingImageAnywhere)
+        XCTAssertEqual(setup.shareTextEncoder(videoModelPaths: []),
+                       SharedTextEncoder.SwitchError.generating.localizedDescription)
+        window.imageGenerationEnded()
+        XCTAssertFalse(AppModels.shared.isGeneratingImageAnywhere)
+    }
+
+    /// The question about a different encoder is up, a generation begins in
+    /// another window, and the answer is yes: refused, the choice kept.
+    func testConfirmingAChoiceWhileAnotherWindowGenerates() async throws {
+        let image = H3ImageModel.h3.directory
+        try FileManager.default.createDirectory(atPath: image, withIntermediateDirectories: true)
+        let chosen = try videoModel("Chosen", ["model.gguf": data(1)])
+        let other = try videoModel("Other", ["model.gguf": data(2)])
+        try SharedTextEncoder.choose(
+            videoModel: chosen, files: SharedTextEncoder.fullFingerprint(of: SharedTextEncoder.folder(inVideoModel: chosen)),
+            forImageModel: image)
+
+        let setup = H3ImageModelSetup.of(.h3)
+        XCTAssertNil(setup.chooseTextEncoder(videoModel: other))
+        for _ in 0 ..< 100 where setup.pendingChoice == nil { try await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertEqual(setup.pendingChoice?.videoModel, other, "a different encoder waits for the user's word")
+        XCTAssertEqual(SharedTextEncoder.record(forImageModel: image)?.videoModel, chosen)
+
+        let window = anotherWindow()
+        window.imageGenerationBegan(index: 1, total: 1)
+        XCTAssertNotNil(setup.confirmChoice(true), "refused while an image is generated")
+        XCTAssertEqual(setup.pendingChoice?.videoModel, other, "the choice is kept waiting")
+        XCTAssertEqual(SharedTextEncoder.record(forImageModel: image)?.videoModel, chosen, "and nothing is recorded")
+
+        window.imageGenerationEnded()
+        XCTAssertNil(setup.confirmChoice(true))
+        XCTAssertNil(setup.pendingChoice)
+        XCTAssertEqual(SharedTextEncoder.record(forImageModel: image)?.videoModel, other)
+    }
+
+    // MARK: A switch cut short
+
+    /// The record of a switch whose copy held `files`, the video model's
+    /// encoder being those same files; `source` is that video model.
+    private func switchRecord(image: String, source: String, files: [String: Data]) throws {
+        try FileManager.default.createDirectory(atPath: image, withIntermediateDirectories: true)
+        let marks = try SharedTextEncoder.fullFingerprint(of: SharedTextEncoder.folder(inVideoModel: source))
+        try SharedTextEncoder.write(
+            SharedTextEncoder.Record(videoModel: source, files: marks, removing: files.mapValues { Int64($0.count) }),
+            forImageModel: image)
+    }
+
+    /// text_encoder/ holds a file - perhaps part of an encoder - and the
+    /// video model has gone: what is left of the copy is not deleted for it.
+    func testALeftoverIsKeptWhenTheFoldersOwnFilesMayBePartial() throws {
+        let files = ["a.gguf": data(1), "b.gguf": data(2, 8192)]
+        let source = try videoModel("Source", files)
+        let image = root + "/Image"
+        try switchRecord(image: image, source: source, files: files)
+        try FileManager.default.removeItem(atPath: source)
+        let own = SharedTextEncoder.ownFolder(ofImageModel: image)
+        let leaving = own + ".removing"
+
+        // Part of the copy deleted, and one file back in text_encoder/.
+        try write(["a.gguf": files["a.gguf"]!], to: own)
+        try write(["b.gguf": files["b.gguf"]!], to: leaving)
+        XCTAssertEqual(SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: []), .left(8192))
+        XCTAssertEqual(names(in: leaving), ["b.gguf"])
+        XCTAssertEqual(names(in: own), ["a.gguf"])
+
+        // The whole copy left, and a file in text_encoder/: neither deleted
+        // nor put back over it.
+        try write(["a.gguf": files["a.gguf"]!], to: leaving)
+        XCTAssertEqual(SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: []), .left(4096 + 8192))
+        XCTAssertEqual(names(in: leaving), ["a.gguf", "b.gguf"])
+        XCTAssertEqual(names(in: own), ["a.gguf"])
+        XCTAssertNotNil(SharedTextEncoder.record(forImageModel: image)?.removing)
+
+        // With text_encoder/ empty, the whole copy is put back.
+        try FileManager.default.removeItem(atPath: own + "/a.gguf")
+        XCTAssertEqual(SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: []), .restored)
+        XCTAssertEqual(names(in: own), ["a.gguf", "b.gguf"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: leaving))
+        XCTAssertNil(SharedTextEncoder.record(forImageModel: image)?.removing)
+    }
+
+    /// The copy left behind goes only for a video model whose files are
+    /// known to have the recorded SHA-256, and only when it is what the
+    /// record names.
+    func testALeftoverGoesOnlyForAVerifiedEncoder() throws {
+        let files = ["model.gguf": data(1)]
+        let source = try videoModel("Source", files)
+        let image = root + "/Image"
+        try switchRecord(image: image, source: source, files: files)
+        let leaving = SharedTextEncoder.ownFolder(ofImageModel: image) + ".removing"
+
+        // Not what the record names: another size.
+        try write(["model.gguf": data(1, 100)], to: leaving)
+        XCTAssertEqual(SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: [source]), .unrecognized(100))
+        // A file the record does not list.
+        try write(["model.gguf": files["model.gguf"]!, "other.bin": data(3, 10)], to: leaving)
+        XCTAssertEqual(SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: [source]), .unrecognized(4096 + 10))
+        try FileManager.default.removeItem(atPath: leaving + "/other.bin")
+
+        // The video model's file has changed since (the same size and first
+        // bytes would do no better: its SHA-256 is no longer known).
+        let encoder = SharedTextEncoder.folder(inVideoModel: source) + "/model.gguf"
+        try data(9).write(to: URL(fileURLWithPath: encoder))
+        XCTAssertEqual(SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: [source]), .restored,
+                       "nothing verified to read: the whole copy is put back, not deleted")
+        try FileManager.default.moveItem(atPath: SharedTextEncoder.ownFolder(ofImageModel: image), toPath: leaving)
+        try switchRecord(image: image, source: try videoModel("Same", files), files: files)
+
+        // What the record names, and a video model known to hold the same.
+        XCTAssertEqual(SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: [root + "/Same"]), .removed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: leaving))
+        XCTAssertNil(SharedTextEncoder.record(forImageModel: image)?.removing)
+    }
+
+    /// Without a record of a switch nothing is touched.
+    func testALeftoverWithNoRecordIsKept() throws {
+        let image = root + "/Image"
+        let source = try videoModel("Source", ["model.gguf": data(1)])
+        let leaving = SharedTextEncoder.ownFolder(ofImageModel: image) + ".removing"
+        try write(["model.gguf": data(1)], to: leaving)
+        XCTAssertEqual(SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: [source]), .unrecognized(4096))
+        XCTAssertEqual(names(in: leaving), ["model.gguf"])
+    }
+}
