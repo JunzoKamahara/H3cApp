@@ -172,13 +172,15 @@ final class SharedTextEncoderTests: XCTestCase {
         func refusal(_ body: () throws -> Void) -> String? {
             do { try body() } catch SharedTextEncoder.SwitchError.extra(let name) { return "extra " + name
             } catch SharedTextEncoder.SwitchError.differs(let name) { return "differs " + name
+            } catch SharedTextEncoder.SwitchError.changed(let path) { return "changed " + (path as NSString).lastPathComponent
             } catch SharedTextEncoder.SwitchError.engine { return "engine"
             } catch { return "other \(error)" }
             return nil
         }
-        var marks: [String: SharedTextEncoder.FileMark] = [:]
-        XCTAssertNil(refusal { marks = try SharedTextEncoder.compareContents(imageModel: image, videoModel: source) { _, _ in } })
-        XCTAssertNotNil(marks["model.gguf"]?.sha256)
+        var compared: SharedTextEncoder.Compared?
+        XCTAssertNil(refusal { compared = try SharedTextEncoder.compareContents(imageModel: image, videoModel: source) { _, _ in } })
+        let marks = try XCTUnwrap(compared)
+        XCTAssertNotNil(marks.files["model.gguf"]?.sha256)
 
         // A folder of the user's, a hidden file, a file not compared.
         for (extra, make) in [
@@ -189,7 +191,7 @@ final class SharedTextEncoderTests: XCTestCase {
             try make()
             XCTAssertEqual(refusal { _ = try SharedTextEncoder.compareContents(imageModel: image, videoModel: source) { _, _ in } },
                            extra == "other.bin" ? "other nothingToGiveUp" : "extra " + extra)
-            XCTAssertEqual(refusal { try SharedTextEncoder.switchToShared(imageModel: image, videoModel: source, files: marks) },
+            XCTAssertEqual(refusal { try SharedTextEncoder.switchToShared(imageModel: image, videoModel: source, compared: marks) },
                            "extra " + extra)
             XCTAssertTrue(FileManager.default.fileExists(atPath: own + "/" + extra), "\(extra) is still there")
             XCTAssertTrue(FileManager.default.fileExists(atPath: own + "/model.gguf"))
@@ -199,18 +201,82 @@ final class SharedTextEncoderTests: XCTestCase {
         }
         if FileManager.default.fileExists(atPath: own + "/backup/notes.txt") { XCTFail("the loop removes it") }
 
-        // A file that is no longer the one compared.
-        try data(1, 100).write(to: URL(fileURLWithPath: own + "/model.gguf"))
-        XCTAssertEqual(refusal { try SharedTextEncoder.switchToShared(imageModel: image, videoModel: source, files: marks) },
-                       "differs model.gguf")
-        XCTAssertEqual(names(in: own), ["model.gguf"])
-
         // The Finder's .DS_Store is not the user's: past these checks (and
         // stopped at the next one, the folder not being an image model).
-        try write(files, to: own)
         try data(0, 10).write(to: URL(fileURLWithPath: own + "/.DS_Store"))
-        XCTAssertEqual(refusal { try SharedTextEncoder.switchToShared(imageModel: image, videoModel: source, files: marks) }, "engine")
+        XCTAssertEqual(refusal { try SharedTextEncoder.switchToShared(imageModel: image, videoModel: source, compared: marks) }, "engine")
         XCTAssertEqual(names(in: own), [".DS_Store", "model.gguf"])
+    }
+
+    /// The copy is deleted for what was compared, not for what is there
+    /// later: a file written to or replaced since stops the switch, also
+    /// when its size is the same - and so does a change of the video
+    /// model's file, which is what would be read from then on.
+    func testACopyChangedSinceItWasComparedIsNotGivenUp() throws {
+        let files = ["model.gguf": data(1)]
+        let source = try videoModel("Source", files)
+        let image = root + "/Image"
+        let own = SharedTextEncoder.ownFolder(ofImageModel: image)
+        let copy = URL(fileURLWithPath: own + "/model.gguf")
+        let encoder = URL(fileURLWithPath: SharedTextEncoder.folder(inVideoModel: source) + "/model.gguf")
+        try write(files, to: own)
+        func date(_ url: URL) throws -> Date {
+            try XCTUnwrap(FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)
+        }
+        func number(_ url: URL) throws -> UInt64 {
+            try XCTUnwrap(FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? NSNumber).uint64Value
+        }
+        func switching(_ compared: SharedTextEncoder.Compared) -> String {
+            do { try SharedTextEncoder.switchToShared(imageModel: image, videoModel: source, compared: compared)
+            } catch SharedTextEncoder.SwitchError.changed(let path) { return "changed " + path
+            } catch SharedTextEncoder.SwitchError.engine { return "engine"
+            } catch { return "other \(error)" }
+            return "switched"
+        }
+        func unchanged() {
+            XCTAssertEqual(names(in: own), ["model.gguf"])
+            XCTAssertFalse(FileManager.default.fileExists(atPath: own + ".removing"))
+            XCTAssertNil(SharedTextEncoder.record(forImageModel: image))
+        }
+        // A date of whole seconds, which can be given to another file exactly.
+        let whole = Date(timeIntervalSinceReferenceDate: (Date().timeIntervalSinceReferenceDate - 100).rounded(.down))
+        try FileManager.default.setAttributes([.modificationDate: whole], ofItemAtPath: copy.path)
+        var compared = try SharedTextEncoder.compareContents(imageModel: image, videoModel: source) { _, _ in }
+        // Nothing changed: past the checks (stopped at the next one, the
+        // folder not being an image model).
+        XCTAssertEqual(switching(compared), "engine")
+
+        // Written to in place: the same size and file, a later date.
+        let read = try date(copy), file = try number(copy)
+        XCTAssertEqual(read, whole)
+        let handle = try FileHandle(forWritingTo: copy)
+        try handle.write(contentsOf: data(9))
+        try handle.close()
+        try FileManager.default.setAttributes([.modificationDate: read.addingTimeInterval(1)], ofItemAtPath: copy.path)
+        XCTAssertEqual(try number(copy), file)
+        XCTAssertEqual(switching(compared), "changed " + copy.path)
+        unchanged()
+
+        // Replaced by another file of the same size, given the date the
+        // one compared had.
+        try data(9).write(to: copy, options: .atomic)
+        try FileManager.default.setAttributes([.modificationDate: read], ofItemAtPath: copy.path)
+        XCTAssertEqual(try date(copy), read)
+        XCTAssertNotEqual(try number(copy), file)
+        XCTAssertEqual(switching(compared), "changed " + copy.path)
+        unchanged()
+        XCTAssertEqual(try Data(contentsOf: copy), data(9))
+
+        // The video model's file changed after the two were found the same.
+        try data(1).write(to: copy)
+        compared = try SharedTextEncoder.compareContents(imageModel: image, videoModel: source) { _, _ in }
+        XCTAssertEqual(switching(compared), "engine")
+        let was = try date(encoder)
+        try data(9).write(to: encoder)
+        try FileManager.default.setAttributes([.modificationDate: was.addingTimeInterval(1)], ofItemAtPath: encoder.path)
+        XCTAssertEqual(switching(compared), "changed " + SharedTextEncoder.folder(inVideoModel: source))
+        unchanged()
+        XCTAssertEqual(try Data(contentsOf: copy), data(1))
     }
 
     // MARK: Deleting a video model

@@ -623,7 +623,7 @@ final class H3ImageModelSetup: ObservableObject {
     private func runShare(videoModel: String) async {
         let model = self.model
         do {
-            let files = try await Self.compare(imageModel: model.directory, videoModel: videoModel) { done, total in
+            let compared = try await Self.compare(imageModel: model.directory, videoModel: videoModel) { done, total in
                 Task { @MainActor in
                     if case .comparing = self.phase { self.phase = .comparing(done: done, total: total) }
                 }
@@ -633,7 +633,7 @@ final class H3ImageModelSetup: ObservableObject {
             // begins from here on: the form refuses while this runs.)
             guard !AppModels.shared.isGeneratingImageAnywhere else { throw SharedTextEncoder.SwitchError.generating }
             try await Task.detached(priority: .userInitiated) {
-                try SharedTextEncoder.switchToShared(imageModel: model.directory, videoModel: videoModel, files: files)
+                try SharedTextEncoder.switchToShared(imageModel: model.directory, videoModel: videoModel, compared: compared)
                 model.noteTextEncoderShared(from: SharedTextEncoder.folder(inVideoModel: videoModel))
             }.value
             phase = .idle
@@ -647,7 +647,7 @@ final class H3ImageModelSetup: ObservableObject {
     /// Off the main actor, and stopped by the task's cancellation.
     private nonisolated static func compare(
         imageModel: String, videoModel: String, progress: @escaping @Sendable (Int64, Int64) -> Void
-    ) async throws -> [String: SharedTextEncoder.FileMark] {
+    ) async throws -> SharedTextEncoder.Compared {
         try SharedTextEncoder.compareContents(imageModel: imageModel, videoModel: videoModel, progress: progress)
     }
 

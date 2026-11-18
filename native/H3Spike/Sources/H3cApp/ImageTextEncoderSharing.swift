@@ -71,6 +71,19 @@ enum SharedTextEncoder {
         let path: String
         let bytes: Int64
         let modified: Date?
+        /// The file's number on its volume: another file put in its place
+        /// has another.
+        let number: UInt64?
+
+        var stamp: Stamp { Stamp(bytes: bytes, modified: modified, number: number) }
+    }
+
+    /// A file as it was when it was read: by this it is known later not to
+    /// have been written to or replaced since.
+    struct Stamp: Equatable, Sendable {
+        let bytes: Int64
+        let modified: Date?
+        let number: UInt64?
     }
 
     private static let headBytes = 1 << 20
@@ -85,7 +98,8 @@ enum SharedTextEncoder {
             guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
                   attributes[.type] as? FileAttributeType == .typeRegular else { continue }
             result[name] = File(path: path, bytes: (attributes[.size] as? NSNumber)?.int64Value ?? 0,
-                                modified: attributes[.modificationDate] as? Date)
+                                modified: attributes[.modificationDate] as? Date,
+                                number: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value)
         }
         return result
     }
@@ -424,6 +438,7 @@ enum SharedTextEncoder {
         case remove(String)
         case leftover(String)
         case extra(String)
+        case changed(String)
         case generating
 
         var errorDescription: String? {
@@ -440,22 +455,33 @@ enum SharedTextEncoder {
                 return String(localized: "前の切り替えで残ったフォルダ「\(path)」があります。切り替えの記録と一致しないか、同じ内容のテキストエンコーダをほかに確かめられないので、自動では削除しません。中身を確かめて片付けてから、もう一度お試しください。複製はそのままにしました。")
             case .extra(let name):
                 return String(localized: "複製のフォルダに、テキストエンコーダのファイルではない「\(name)」があります。照合していないものは削除しないので、ほかの場所へ移すか削除してから、もう一度お試しください。複製はそのままにしました。")
+            case .changed(let path):
+                return String(localized: "「\(path)」が、照合したあとに変わっています。照合したものと同じとは言えないので、切り替えをやめました。もう一度お試しください。複製はそのままにしました。")
             case .generating:
                 return String(localized: "画像を生成している間は、共用に切り替えられません。複製はそのままにしました。")
             }
         }
     }
 
+    /// What compareContents found to be the same.
+    struct Compared: Sendable {
+        /// The video model's files, with their SHA-256.
+        let files: [String: FileMark]
+        /// The copy's files as they were when read.
+        let copy: [String: Stamp]
+    }
+
     /// Reads every file of the image model's own copy and of the video
     /// model's encoder through, and returns the video model's files with
-    /// their SHA-256 when the two are the same, byte for byte. Throws
+    /// their SHA-256 (and what the copy's files were) when the two are
+    /// the same, byte for byte. Throws
     /// SwitchError.differs otherwise, and CancellationError when the task
     /// is cancelled. Minutes for 18 to 27 GB on each side. Only the
     /// regular files are compared: a copy's folder holding anything else
     /// is refused before any reading (SwitchError.extra), as it is when
     /// the copy is to go.
     static func compareContents(imageModel directory: String, videoModel: String,
-                                progress: @escaping @Sendable (Int64, Int64) -> Void) throws -> [String: FileMark] {
+                                progress: @escaping @Sendable (Int64, Int64) -> Void) throws -> Compared {
         let own = regularFiles(in: ownFolder(ofImageModel: directory))
         let other = regularFiles(in: folder(inVideoModel: videoModel))
         guard !own.isEmpty, Set(own.keys) == Set(other.keys) else { throw SwitchError.nothingToGiveUp }
@@ -474,27 +500,39 @@ enum SharedTextEncoder {
             }
             guard sha256 == marks[name]?.sha256 else { throw SwitchError.differs(name) }
         }
-        return marks
+        return Compared(files: marks, copy: own.mapValues(\.stamp))
     }
 
-    /// Gives up the image model's own copy for the video model's, whose
-    /// files `files` are (from compareContents: the same as the copy's).
+    /// Gives up the image model's own copy for the video model's, the two
+    /// having been `compared` (compareContents) and found the same.
     /// Checks that the engine takes the model with that encoder, records
     /// the video model, then deletes the copy (not to the Trash: it is a
     /// copy, and the space is the point). Deletes nothing else: with a
     /// text_encoder.removing in the way (finishInterruptedSwitch first)
     /// it throws SwitchError.leftover, and when the copy's folder holds
     /// anything but the files that were compared - a folder, a hidden
-    /// file, a file added or of another size since - SwitchError.extra or
-    /// .differs: the whole folder goes, so all of it must be accounted for.
-    static func switchToShared(imageModel directory: String, videoModel: String, files: [String: FileMark]) throws {
+    /// file, a file added since - SwitchError.extra: the whole folder
+    /// goes, so all of it must be accounted for. Nor is a copy deleted
+    /// that is no longer what was compared, or for an encoder that is no
+    /// longer (SwitchError.changed): each file of the copy must have the
+    /// size, the date and the file number it had when it was read, and
+    /// the video model's files the SHA-256 found then (known only while
+    /// their size and date stay).
+    static func switchToShared(imageModel directory: String, videoModel: String, compared: Compared) throws {
+        let files = compared.files
         let own = ownFolder(ofImageModel: directory)
         let leaving = own + ".removing"
         guard !FileManager.default.fileExists(atPath: leaving) else { throw SwitchError.leftover(leaving) }
-        let manifest = regularFiles(in: own).mapValues(\.bytes)
+        let held = regularFiles(in: own)
+        let manifest = held.mapValues(\.bytes)
         guard !manifest.isEmpty else { throw SwitchError.nothingToGiveUp }
-        if let extra = unaccounted(in: own, besides: Set(files.keys)) { throw SwitchError.extra(extra) }
-        for (name, mark) in files where manifest[name] != mark.bytes { throw SwitchError.differs(name) }
+        if let extra = unaccounted(in: own, besides: Set(compared.copy.keys)) { throw SwitchError.extra(extra) }
+        for (name, stamp) in compared.copy.sorted(by: { $0.key < $1.key }) where held[name]?.stamp != stamp {
+            throw SwitchError.changed(own + "/" + name)
+        }
+        guard isSame(fingerprint(of: folder(inVideoModel: videoModel)), files) else {
+            throw SwitchError.changed(folder(inVideoModel: videoModel))
+        }
         do {
             _ = try H3ImageEngine(modelDirectory: directory, textEncoderDirectory: folder(inVideoModel: videoModel))
         } catch {
