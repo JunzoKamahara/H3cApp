@@ -382,7 +382,7 @@ extension GenerationViewModel {
         imageBatchStopped = false
         displayedImage = nil
         // Now, not in the task: whoever asked sees a generation running.
-        imageGenerationBegan(index: 1, total: total)
+        imageGenerationBegan(index: 1, total: total, reading: engine)
         imageGenerationTask = Task {
             for index in 1 ... total {
                 let seed = index == 1 ? (fixedSeed ?? UInt64.random(in: UInt64.min ... UInt64.max))

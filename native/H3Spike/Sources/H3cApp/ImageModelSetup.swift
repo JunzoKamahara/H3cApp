@@ -611,8 +611,8 @@ final class H3ImageModelSetup: ObservableObject {
         guard !FileManager.default.fileExists(atPath: leaving) else {
             return SharedTextEncoder.SwitchError.leftover(leaving).localizedDescription
         }
-        guard let offer = SharedTextEncoder.possibleSwitch(forImageModel: model.directory, videoModelPaths: videoModelPaths),
-              named.map({ SharedTextEncoder.sameFolder($0, offer.videoModel) }) ?? true else {
+        guard let offer = SharedTextEncoder.possibleSwitch(forImageModel: model.directory, videoModelPaths: videoModelPaths,
+                                                           named: named) else {
             return SharedTextEncoder.SwitchError.nothingToGiveUp.localizedDescription
         }
         phase = .comparing(done: 0, total: 0)

@@ -255,6 +255,12 @@ enum SharedTextEncoder {
 
     static let recordFile = "H3IMAGE_TEXT_ENCODER.json"
 
+    /// Held by whatever reads the record and then writes it or moves the
+    /// folders it speaks of - a choice, a switch, the settling of what a
+    /// switch left - so that one of them, on another thread, does not
+    /// write over what another has just recorded.
+    private static let commits = NSLock()
+
     struct Record: Codable, Equatable, Sendable {
         /// The video model folder chosen for the image model.
         var videoModel: String
@@ -301,6 +307,8 @@ enum SharedTextEncoder {
     /// Records the video model as the one whose text encoder the image
     /// model reads. `files`: that encoder, from fullFingerprint.
     static func choose(videoModel: String, files: [String: FileMark], forImageModel directory: String) throws {
+        commits.lock()
+        defer { commits.unlock() }
         // What a switch cut short left stays as recorded: it is another matter.
         let before = record(forImageModel: directory)
         try write(Record(videoModel: videoModel, files: files, removing: before?.removing,
@@ -343,15 +351,20 @@ enum SharedTextEncoder {
 
     /// Why the files of the video model at `path` cannot be deleted now,
     /// if they cannot: an image is being generated (in any window, also
-    /// one being stopped) and an image model reads this video model's text
-    /// encoder in place - the generation may open its files yet.
+    /// one being stopped) with this video model's text encoder - the
+    /// generation may open its files yet. That is the folder a running
+    /// job was started with (a folder with no record reads the video
+    /// model in use in its window, which the list's order does not tell);
+    /// and, for any job, an image model the list says reads it in place.
     @MainActor
     static func removalProblem(videoModel path: String, imageModels: [(name: String, path: String)],
                                videoModelPaths: [String]) -> String? {
-        guard AppModels.shared.isGeneratingImageAnywhere,
-              let reader = dependents(onVideoModel: path, imageModels: imageModels, videoModelPaths: videoModelPaths).first
+        let encoder = identity(folder(inVideoModel: path))
+        let job = GenerationViewModel.imageGenerators.values.first { $0.textEncoder.map(identity) == encoder }
+        guard let reader = job?.model ?? (AppModels.shared.isGeneratingImageAnywhere
+            ? dependents(onVideoModel: path, imageModels: imageModels, videoModelPaths: videoModelPaths).first?.name : nil)
         else { return nil }
-        return String(localized: "画像を生成している間は、この動画モデルのファイルを削除できません。画像モデル「\(reader.name)」がそのテキストエンコーダを読んでいます。生成が終わってから、もう一度お試しください。")
+        return String(localized: "画像を生成している間は、この動画モデルのファイルを削除できません。画像モデル「\(reader)」がそのテキストエンコーダを読んでいます。生成が終わってから、もう一度お試しください。")
     }
 
     /// Where the image model at `directory` reads its text encoder.
@@ -463,11 +476,15 @@ enum SharedTextEncoder {
     /// The image model's own text encoder could go: a registered video
     /// model holds files of the same names, sizes and heads, and the copy
     /// takes space of its own. Only an offer: the files are compared
-    /// through before anything is deleted (compareContents).
-    static func possibleSwitch(forImageModel directory: String, videoModelPaths: [String]) -> Switch? {
+    /// through before anything is deleted (compareContents). `named`:
+    /// only that video model (one of those listed), not the first that
+    /// would do.
+    static func possibleSwitch(forImageModel directory: String, videoModelPaths: [String],
+                               named: String? = nil) -> Switch? {
         let own = ownFolder(ofImageModel: directory)
         guard let mark = fingerprint(of: own) else { return nil }
-        let ordered = [record(forImageModel: directory)?.videoModel].compactMap { $0 } + videoModelPaths
+        let listed = [record(forImageModel: directory)?.videoModel].compactMap { $0 } + videoModelPaths
+        let ordered = named.map { name in listed.filter { sameFolder($0, name) } } ?? listed
         guard let match = candidates(in: ordered).first(where: {
             looksSame(fingerprint(of: folder(inVideoModel: $0)), mark)
         }) else { return nil }
@@ -566,6 +583,8 @@ enum SharedTextEncoder {
     /// the video model's files the SHA-256 found then (known only while
     /// their size and date stay).
     static func switchToShared(imageModel directory: String, videoModel: String, compared: Compared) throws {
+        commits.lock()
+        defer { commits.unlock() }
         let files = compared.files
         let own = ownFolder(ofImageModel: directory)
         let leaving = own + ".removing"
@@ -649,6 +668,8 @@ enum SharedTextEncoder {
     /// of an encoder.
     @discardableResult
     static func finishInterruptedSwitch(imageModel directory: String, videoModelPaths: [String]) -> Leftover {
+        commits.lock()
+        defer { commits.unlock() }
         let own = ownFolder(ofImageModel: directory)
         let leaving = own + ".removing"
         var record = record(forImageModel: directory)

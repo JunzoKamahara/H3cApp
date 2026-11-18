@@ -103,7 +103,7 @@ extension GenerationViewModel {
                                    initImagePath: source.url.path, initStrength: strength.sigma)
         imageBatchStopped = false
         displayedImage = nil
-        imageGenerationBegan(index: 1, total: 1)
+        imageGenerationBegan(index: 1, total: 1, reading: engine)
         imageGenerationTask = Task {
             let startedAt = Date()
             var finished: H3ImageResult?

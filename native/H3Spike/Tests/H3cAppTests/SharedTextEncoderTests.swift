@@ -208,6 +208,26 @@ final class SharedTextEncoderTests: XCTestCase {
         XCTAssertEqual(names(in: own), [".DS_Store", "model.gguf"])
     }
 
+    /// The video model named is the one offered, not only when it is the
+    /// first that would do.
+    func testASwitchToTheVideoModelNamed() throws {
+        let contents = ["model.gguf": Data((0 ..< (2 << 20)).map { UInt8(truncatingIfNeeded: $0 &* 31) })]
+        let first = try videoModel("First", contents)
+        let second = try videoModel("Second", contents)
+        let different = try videoModel("Different", ["model.gguf": data(3, 2 << 20)])
+        let image = root + "/Image"
+        try write(contents, to: SharedTextEncoder.ownFolder(ofImageModel: image))
+        let listed = [first, second, different]
+        func offer(_ named: String?) -> String? {
+            SharedTextEncoder.possibleSwitch(forImageModel: image, videoModelPaths: listed, named: named)?.videoModel
+        }
+        XCTAssertEqual(offer(nil), first)
+        XCTAssertEqual(offer(first), first)
+        XCTAssertEqual(offer(second), second, "a later one that holds the same")
+        XCTAssertNil(offer(different), "one that does not")
+        XCTAssertNil(offer(root + "/NotListed"))
+    }
+
     /// The copy is deleted for what was compared, not for what is there
     /// later: a file written to or replaced since stops the switch, also
     /// when its size is the same - and so does a change of the video
@@ -369,6 +389,27 @@ final class SharedTextEncoderTests: XCTestCase {
         XCTAssertNotNil(problem(read), "its window closed, the generation not yet stopped")
         window.imageGenerationEnded()
         XCTAssertNil(problem(read))
+
+        // A folder with no record reads the video model in use in its
+        // window - here the second of the list, which a job was started with.
+        let loose = root + "/Loose"
+        try FileManager.default.createDirectory(atPath: loose, withIntermediateDirectories: true)
+        func looseProblem(_ video: String) -> String? {
+            SharedTextEncoder.removalProblem(videoModel: video, imageModels: [(name: "Loose", path: loose)],
+                                             videoModelPaths: [read, unread])
+        }
+        XCTAssertEqual(SharedTextEncoder.reading(forImageModel: loose, videoModelPaths: [read, unread]), .shared(videoModel: read))
+        let alias = root + "/UnreadAlias"
+        try FileManager.default.createSymbolicLink(atPath: alias, withDestinationPath: unread)
+        window.imageGenerationBegan(index: 1, total: 1)
+        GenerationViewModel.imageGenerators[ObjectIdentifier(window)] =
+            (model: "Loose", textEncoder: SharedTextEncoder.folder(inVideoModel: alias))
+        XCTAssertNotNil(looseProblem(unread), "the folder the job reads, whatever the list's order says")
+        window.imageGenerationBegan(index: 2, total: 2)
+        XCTAssertNotNil(looseProblem(unread), "also for the later images of a batch")
+        window.imageGenerationEnded()
+        XCTAssertNil(looseProblem(unread))
+        XCTAssertNil(looseProblem(read))
 
         // The deletion decided: not read any more, before the files have gone.
         XCTAssertEqual(SharedTextEncoder.reading(forImageModel: image, videoModelPaths: [read, unread]), .shared(videoModel: read))
