@@ -279,7 +279,105 @@ final class SharedTextEncoderTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: copy), data(1))
     }
 
+    /// What is left of a copy goes only for the encoder the copy was
+    /// compared with - not for another one chosen since.
+    func testALeftoverIsNotDeletedForAnEncoderChosenSince() throws {
+        let files = ["a.gguf": data(1), "b.gguf": data(2, 8192)]
+        let source = try videoModel("Source", files)
+        let image = root + "/Image"
+        try switchRecord(image: image, source: source, files: files)
+        let leaving = SharedTextEncoder.ownFolder(ofImageModel: image) + ".removing"
+        // Part of the copy was deleted, and the video model has gone since.
+        try write(["b.gguf": files["b.gguf"]!], to: leaving)
+        try FileManager.default.removeItem(atPath: source)
+        XCTAssertEqual(SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: []), .left(8192))
+
+        // Another video model, with a different encoder, is chosen.
+        let other = try videoModel("Other", ["a.gguf": data(8), "b.gguf": data(9, 8192)])
+        let marks = try SharedTextEncoder.fullFingerprint(of: SharedTextEncoder.folder(inVideoModel: other))
+        try SharedTextEncoder.choose(videoModel: other, files: marks, forImageModel: image)
+        let record = try XCTUnwrap(SharedTextEncoder.record(forImageModel: image))
+        XCTAssertEqual(record.files, marks)
+        XCTAssertNotNil(record.removing)
+        XCTAssertNotEqual(record.removingEncoder, marks, "what the copy was compared with stays on record")
+
+        XCTAssertEqual(SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: [other]), .left(8192),
+                       "the encoder chosen now is not the one the copy was the same as")
+        XCTAssertEqual(names(in: leaving), ["b.gguf"])
+        XCTAssertEqual(SharedTextEncoder.reading(forImageModel: image, videoModelPaths: [other]), .shared(videoModel: other))
+
+        // The first video model back, with the encoder the copy was compared with.
+        let back = try videoModel("Source", files)
+        _ = try SharedTextEncoder.fullFingerprint(of: SharedTextEncoder.folder(inVideoModel: back))
+        XCTAssertEqual(SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: [other, back]), .removed)
+        let after = try XCTUnwrap(SharedTextEncoder.record(forImageModel: image))
+        XCTAssertEqual(after.videoModel, other, "the choice stays")
+        XCTAssertNil(after.removing)
+        XCTAssertNil(after.removingEncoder)
+    }
+
+    // MARK: What is known of a file
+
+    /// The SHA-256 found by reading a file through is that file's: another
+    /// put in its place is not known, also with the same size and date.
+    func testAFilePutInPlaceOfOneReadThroughIsNotKnown() throws {
+        let video = try videoModel("Video", ["model.gguf": data(1)])
+        let folder = SharedTextEncoder.folder(inVideoModel: video)
+        let file = folder + "/model.gguf"
+        let whole = Date(timeIntervalSinceReferenceDate: (Date().timeIntervalSinceReferenceDate - 100).rounded(.down))
+        try FileManager.default.setAttributes([.modificationDate: whole], ofItemAtPath: file)
+        let read = try SharedTextEncoder.fullFingerprint(of: folder)
+        XCTAssertNotNil(read["model.gguf"]?.sha256)
+        XCTAssertEqual(SharedTextEncoder.fingerprint(of: folder), read, "known while it is the file that was read")
+
+        // Another file of the same size, given the same date.
+        try data(9).write(to: URL(fileURLWithPath: file), options: .atomic)
+        try FileManager.default.setAttributes([.modificationDate: whole], ofItemAtPath: file)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: file)[.modificationDate] as? Date, whole)
+        let now = try XCTUnwrap(SharedTextEncoder.fingerprint(of: folder)?["model.gguf"])
+        XCTAssertNil(now.sha256, "not the file whose SHA-256 was found")
+        XCTAssertNotEqual(now.head, read["model.gguf"]?.head, "and its first bytes are read anew")
+        XCTAssertFalse(SharedTextEncoder.isSame(SharedTextEncoder.fingerprint(of: folder), read))
+        XCTAssertEqual(try SharedTextEncoder.fullFingerprint(of: folder)["model.gguf"]?.sha256, FileHash.sha256(of: data(9)))
+    }
+
     // MARK: Deleting a video model
+
+    /// A video model's files are not deleted from under an image being
+    /// generated in any window while an image model reads its text
+    /// encoder; and once the deletion is decided, nothing new reads it.
+    func testAVideoModelsFilesStayWhileAnImageThatReadsThemIsGenerated() throws {
+        let files = ["model.gguf": data(1)]
+        let read = try videoModel("Read", files)
+        let unread = try videoModel("Unread", ["model.gguf": data(2)])
+        let image = root + "/Image"
+        try FileManager.default.createDirectory(atPath: image, withIntermediateDirectories: true)
+        try SharedTextEncoder.choose(
+            videoModel: read, files: SharedTextEncoder.fullFingerprint(of: SharedTextEncoder.folder(inVideoModel: read)),
+            forImageModel: image)
+        let images = [(name: "Image", path: image)]
+        func problem(_ video: String) -> String? {
+            SharedTextEncoder.removalProblem(videoModel: video, imageModels: images, videoModelPaths: [read, unread])
+        }
+        XCTAssertNil(problem(read), "nothing is generated")
+
+        let window = anotherWindow()
+        window.imageGenerationBegan(index: 1, total: 1)
+        XCTAssertNotNil(problem(read))
+        XCTAssertNil(problem(unread), "no image model reads that one")
+        AppModels.shared.release(window)
+        XCTAssertNotNil(problem(read), "its window closed, the generation not yet stopped")
+        window.imageGenerationEnded()
+        XCTAssertNil(problem(read))
+
+        // The deletion decided: not read any more, before the files have gone.
+        XCTAssertEqual(SharedTextEncoder.reading(forImageModel: image, videoModelPaths: [read, unread]), .shared(videoModel: read))
+        SharedTextEncoder.removal(ofVideoModel: read, began: true)
+        XCTAssertEqual(SharedTextEncoder.reading(forImageModel: image, videoModelPaths: [read, unread]), .needsChoice)
+        XCTAssertNotNil(GenerationViewModel.imageTextEncoderProblem(model: image, name: "Image", videoModelPaths: [read, unread]))
+        SharedTextEncoder.removal(ofVideoModel: read, began: false)
+        XCTAssertEqual(SharedTextEncoder.reading(forImageModel: image, videoModelPaths: [read, unread]), .shared(videoModel: read))
+    }
 
     /// A video model listed or recorded under a link is that video model:
     /// deleting its files counts the image models that read it through the
@@ -321,7 +419,8 @@ final class SharedTextEncoderTests: XCTestCase {
         try FileManager.default.createDirectory(atPath: image, withIntermediateDirectories: true)
         let marks = try SharedTextEncoder.fullFingerprint(of: SharedTextEncoder.folder(inVideoModel: source))
         try SharedTextEncoder.write(
-            SharedTextEncoder.Record(videoModel: source, files: marks, removing: files.mapValues { Int64($0.count) }),
+            SharedTextEncoder.Record(videoModel: source, files: marks, removing: files.mapValues { Int64($0.count) },
+                                     removingEncoder: marks),
             forImageModel: image)
     }
 

@@ -88,7 +88,7 @@ enum SharedTextEncoder {
 
     private static let headBytes = 1 << 20
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var headCache: [String: (bytes: Int64, modified: Date?, head: String)] = [:]
+    nonisolated(unsafe) private static var headCache: [String: (stamp: Stamp, head: String)] = [:]
 
     /// The regular files of a folder (a link to one counts), by name.
     private static func regularFiles(in folder: String) -> [String: File] {
@@ -115,11 +115,21 @@ enum SharedTextEncoder {
 
     // The SHA-256 of whole files that have been read through, kept in the
     // app's folder by path with the size and date the file had: reading 18
-    // to 27 GB takes a minute or more, so it is done once per file.
+    // to 27 GB takes a minute or more, so it is done once per file. And
+    // with the file's number and its volume: another file put in its place
+    // with the same size and date is not the file that was read. An entry
+    // without them (or a file with no number) is not known.
     private struct KnownHash: Codable {
         var bytes: Int64
         var modified: Double
         var sha256: String
+        var number: UInt64?
+        var volume: String?
+    }
+
+    /// The UUID of the volume a file is on (nil for a volume with none).
+    private static func volume(of path: String) -> String? {
+        (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.volumeUUIDStringKey]))?.volumeUUIDString
     }
 
     private static let knownHashesPath = h3AppSupportDirectory + "/text-encoder-hashes.json"
@@ -135,20 +145,23 @@ enum SharedTextEncoder {
     }
 
     private static func knownHash(of file: File) -> String? {
-        guard let modified = file.modified else { return nil }
+        guard let modified = file.modified, let number = file.number else { return nil }
         lock.lock()
-        defer { lock.unlock() }
-        guard let known = loadedHashes()[file.path], known.bytes == file.bytes,
-              known.modified == modified.timeIntervalSinceReferenceDate else { return nil }
+        let known = loadedHashes()[file.path]
+        lock.unlock()
+        guard let known, known.bytes == file.bytes, known.modified == modified.timeIntervalSinceReferenceDate,
+              known.number == number, known.volume == volume(of: file.path) else { return nil }
         return known.sha256
     }
 
     private static func remember(_ sha256: String, of file: File) {
-        guard let modified = file.modified else { return }
+        guard let modified = file.modified, let number = file.number else { return }
+        let volume = volume(of: file.path)
         lock.lock()
         defer { lock.unlock() }
         var all = loadedHashes()
-        all[file.path] = KnownHash(bytes: file.bytes, modified: modified.timeIntervalSinceReferenceDate, sha256: sha256)
+        all[file.path] = KnownHash(bytes: file.bytes, modified: modified.timeIntervalSinceReferenceDate, sha256: sha256,
+                                   number: number, volume: volume)
         knownHashes = all
         if let data = try? JSONEncoder().encode(all) {
             try? data.write(to: URL(fileURLWithPath: knownHashesPath), options: .atomic)
@@ -160,7 +173,7 @@ enum SharedTextEncoder {
         let cached = headCache[file.path]
         lock.unlock()
         var head: String
-        if let cached, cached.bytes == file.bytes, cached.modified == file.modified {
+        if let cached, file.number != nil, cached.stamp == file.stamp {
             head = cached.head
         } else {
             guard let handle = FileHandle(forReadingAtPath: file.path) else { return nil }
@@ -168,7 +181,7 @@ enum SharedTextEncoder {
             try? handle.close()
             head = FileHash.sha256(of: data)
             lock.lock()
-            headCache[file.path] = (file.bytes, file.modified, head)
+            headCache[file.path] = (file.stamp, head)
             lock.unlock()
         }
         return FileMark(bytes: file.bytes, head: head, sha256: knownHash(of: file))
@@ -251,6 +264,11 @@ enum SharedTextEncoder {
         /// their sizes, from before the first of them is deleted until the
         /// last is gone (finishInterruptedSwitch).
         var removing: [String: Int64]?
+        /// The encoder that copy was found to be the same as, each file
+        /// with its SHA-256. Kept apart from `files`: another encoder may
+        /// be chosen before what is left of the copy is settled, and the
+        /// copy is deleted only for the encoder it was compared with.
+        var removingEncoder: [String: FileMark]?
     }
 
     static func record(forImageModel directory: String) -> Record? {
@@ -283,8 +301,10 @@ enum SharedTextEncoder {
     /// Records the video model as the one whose text encoder the image
     /// model reads. `files`: that encoder, from fullFingerprint.
     static func choose(videoModel: String, files: [String: FileMark], forImageModel directory: String) throws {
-        try write(Record(videoModel: videoModel, files: files,
-                         removing: record(forImageModel: directory)?.removing), forImageModel: directory)
+        // What a switch cut short left stays as recorded: it is another matter.
+        let before = record(forImageModel: directory)
+        try write(Record(videoModel: videoModel, files: files, removing: before?.removing,
+                         removingEncoder: before?.removingEncoder), forImageModel: directory)
     }
 
     // MARK: Which one is read
@@ -309,15 +329,42 @@ enum SharedTextEncoder {
         return videoModelPaths.filter { seen.insert(identity($0)).inserted && holdsFiles(folder(inVideoModel: $0)) }
     }
 
+    // The video models whose files are being deleted now (their folders):
+    // not read from the moment the deletion is decided.
+    nonisolated(unsafe) private static var going: Set<String> = []
+
+    /// Says that the files of the video model at `path` are being deleted
+    /// (`began`), or that the deletion has ended.
+    static func removal(ofVideoModel path: String, began: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        if began { going.insert(identity(path)) } else { going.remove(identity(path)) }
+    }
+
+    /// Why the files of the video model at `path` cannot be deleted now,
+    /// if they cannot: an image is being generated (in any window, also
+    /// one being stopped) and an image model reads this video model's text
+    /// encoder in place - the generation may open its files yet.
+    @MainActor
+    static func removalProblem(videoModel path: String, imageModels: [(name: String, path: String)],
+                               videoModelPaths: [String]) -> String? {
+        guard AppModels.shared.isGeneratingImageAnywhere,
+              let reader = dependents(onVideoModel: path, imageModels: imageModels, videoModelPaths: videoModelPaths).first
+        else { return nil }
+        return String(localized: "画像を生成している間は、この動画モデルのファイルを削除できません。画像モデル「\(reader.name)」がそのテキストエンコーダを読んでいます。生成が終わってから、もう一度お試しください。")
+    }
+
     /// Where the image model at `directory` reads its text encoder.
     /// `without`: a video model taken as gone (what deleting it would do) -
     /// the folder, under whatever path it is listed or recorded.
     static func reading(forImageModel directory: String, videoModelPaths: [String],
                         without gone: String? = nil) -> Reading {
         if hasOwn(imageModel: directory) || !applies(toImageModel: directory) { return .own }
-        let goneFolder = gone.map(identity)
-        func isGone(_ path: String) -> Bool { goneFolder.map { identity(path) == $0 } ?? false }
-        let candidates = candidates(in: goneFolder == nil ? videoModelPaths : videoModelPaths.filter { !isGone($0) })
+        lock.lock()
+        let goneFolders = going.union([gone].compactMap { $0 }.map(identity))
+        lock.unlock()
+        func isGone(_ path: String) -> Bool { !goneFolders.isEmpty && goneFolders.contains(identity(path)) }
+        let candidates = candidates(in: goneFolders.isEmpty ? videoModelPaths : videoModelPaths.filter { !isGone($0) })
         guard let record = record(forImageModel: directory) else {
             // Nothing was chosen (a folder the user put together): the first.
             return candidates.first.map { .shared(videoModel: $0) } ?? .missing
@@ -544,7 +591,8 @@ enum SharedTextEncoder {
         // that a deletion cut short can be finished or undone later.
         let previous = record(forImageModel: directory)
         do {
-            try write(Record(videoModel: videoModel, files: files, removing: manifest), forImageModel: directory)
+            try write(Record(videoModel: videoModel, files: files, removing: manifest, removingEncoder: files),
+                      forImageModel: directory)
             try FileManager.default.moveItem(atPath: own, toPath: leaving)
         } catch {
             try? write(previous, forImageModel: directory)
@@ -605,8 +653,9 @@ enum SharedTextEncoder {
         let leaving = own + ".removing"
         var record = record(forImageModel: directory)
         func forget() {
-            guard record?.removing != nil else { return }
+            guard record?.removing != nil || record?.removingEncoder != nil else { return }
             record?.removing = nil
+            record?.removingEncoder = nil
             try? write(record, forImageModel: directory)
         }
         guard FileManager.default.fileExists(atPath: leaving) else {
@@ -618,11 +667,15 @@ enum SharedTextEncoder {
         }
         let bytes = held.values.reduce(0, +)
         // A whole encoder elsewhere: a video model whose files are known
-        // to have the recorded SHA-256. Files in the folder's own
-        // text_encoder/ do not count - nothing says they are all of it.
-        let verified = ([record.videoModel] + candidates(in: videoModelPaths)).contains {
-            isSame(fingerprint(of: folder(inVideoModel: $0)), record.files)
-        }
+        // to have the SHA-256 of the encoder the copy was compared with -
+        // not of the one chosen now, which may be another. Files in the
+        // folder's own text_encoder/ do not count - nothing says they are
+        // all of it.
+        let verified = record.removingEncoder.map { encoder in
+            ([record.videoModel] + candidates(in: videoModelPaths)).contains {
+                isSame(fingerprint(of: folder(inVideoModel: $0)), encoder)
+            }
+        } ?? false
         if verified {
             guard (try? FileManager.default.removeItem(atPath: leaving)) != nil else { return .left(bytes) }
             forget()

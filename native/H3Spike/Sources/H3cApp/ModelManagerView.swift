@@ -281,15 +281,25 @@ struct ModelManagerView: View {
     /// moves its files to the Trash.
     private func remove(_ model: H3ModelEntry, deleting plan: ModelRemovalPlan) {
         removingModel = nil
+        // Not from under an image being generated in any window that reads
+        // this model's text encoder; and from here on nothing new reads it.
+        if plan.includesFiles, let problem = SharedTextEncoder.removalProblem(
+            videoModel: model.path, imageModels: library.imageModels.map { (name: $0.name, path: $0.path) },
+            videoModelPaths: library.models.map(\.path)) {
+            removalMessage = problem
+            return
+        }
         let wasActive = model.id == library.activeModelID
         library.removeModel(id: model.id)
         if wasActive { onActiveModelChange(library.activeModelID) }
-        let name = model.name
+        let name = model.name, path = model.path, deletesFiles = plan.includesFiles
+        if deletesFiles { SharedTextEncoder.removal(ofVideoModel: path, began: true) }
         removalMessage = plan.includesFiles
             ? String(localized: "「\(name)」のファイルをゴミ箱に移しています…")
             : String(localized: "「\(name)」をモデル管理から外しました（ファイルは残っています）。")
         Task {
             let failed = await Task.detached { plan.execute() }.value
+            if deletesFiles { SharedTextEncoder.removal(ofVideoModel: path, began: false) }
             let format = { (bytes: Int64) in ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
             var message: String
             if !failed.isEmpty {

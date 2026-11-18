@@ -215,8 +215,18 @@ extension GenerationViewModel {
                 }]
             if json["dry_run"] as? Bool == true { return .json(200, report) }
             guard id != library.activeModelID else { return .error(409, "that model is in use") }
+            // Not from under an image being generated in any window that
+            // reads this model's text encoder; and from here on nothing
+            // new reads it.
+            if files, let problem = SharedTextEncoder.removalProblem(
+                videoModel: path, imageModels: library.imageModels.map { (name: $0.name, path: $0.path) },
+                videoModelPaths: library.models.map(\.path)) {
+                return .error(409, problem)
+            }
             library.removeModel(id: id)
+            if files { SharedTextEncoder.removal(ofVideoModel: path, began: true) }
             let failed = await Task.detached { plan.execute() }.value
+            if files { SharedTextEncoder.removal(ofVideoModel: path, began: false) }
             return .json(200, report.merging(["ok": failed.isEmpty, "failed": failed]) { $1 })
         case ("POST", "/api/models/add_ref2va"):
             return await handleAddRef2VA(request)

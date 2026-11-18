@@ -185,9 +185,11 @@ def leave(data, listed_bytes=None):
         f.write(data)
     if record() is None:
         return
-    kept = {key: value for key, value in record().items() if key != "removing"}
+    kept = {key: value for key, value in record().items() if key not in ("removing", "removingEncoder")}
     if listed_bytes is not None:
         kept["removing"] = {"model.gguf": listed_bytes}
+        # The encoder the copy was compared with: the one recorded then.
+        kept["removingEncoder"] = kept["files"]
     json.dump(kept, open(os.path.join(image, "H3IMAGE_TEXT_ENCODER.json"), "w"))
 
 
