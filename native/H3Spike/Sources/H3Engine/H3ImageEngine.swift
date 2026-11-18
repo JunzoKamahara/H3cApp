@@ -147,6 +147,8 @@ public final class H3ImageEngine: @unchecked Sendable {
 
     private let ctx: OpaquePointer
     public let modelDirectory: String
+    /// The text encoder folder it reads, when not the model folder's own.
+    public let textEncoderDirectory: String?
     private var currentCancelFlag: CancelFlag?
     /// Which image model the folder holds (h3_image_get_info).
     public let modelName: String
@@ -160,13 +162,18 @@ public final class H3ImageEngine: @unchecked Sendable {
 
     /// Checks the folder (transformer/, vae/, text_encoder/, tokenizer/ and
     /// that the transformer is a still-image checkpoint); loads nothing yet.
-    public init(modelDirectory: String) throws {
+    /// `textEncoderDirectory`: a video model's FL2VA/text_encoder, read in
+    /// place of the folder's own text_encoder/ (which then need not be
+    /// there); nil for the folder's own.
+    public init(modelDirectory: String, textEncoderDirectory: String? = nil) throws {
         var error = [CChar](repeating: 0, count: 512)
-        guard let ctx = h3_image_load_dir(modelDirectory, "h3_shaders.metal", &error, error.count) else {
+        guard let ctx = h3_image_load_parts(modelDirectory, textEncoderDirectory, "h3_shaders.metal",
+                                            &error, error.count) else {
             throw H3EngineError.loadFailed(String(cString: error))
         }
         self.ctx = ctx
         self.modelDirectory = modelDirectory
+        self.textEncoderDirectory = textEncoderDirectory
         var info = h3_image_info()
         h3_image_get_info(ctx, &info)
         modelName = info.name.map { String(cString: $0) } ?? "MiniMax H3 Image"

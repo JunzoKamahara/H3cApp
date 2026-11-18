@@ -147,6 +147,7 @@ struct ModelManagerView: View {
         }
         .sheet(item: $removingModel) { model in
             ModelRemoveView(model: model, others: library.models.filter { $0.id != model.id },
+                            imageModels: library.imageModels,
                             onRemove: { plan in remove(model, deleting: plan) },
                             onCancel: { removingModel = nil })
         }
@@ -822,7 +823,8 @@ struct ModelManagerView: View {
             return
         }
         do {
-            _ = try H3ImageEngine(modelDirectory: path)
+            _ = try H3ImageEngine(modelDirectory: path, textEncoderDirectory: SharedTextEncoder.directory(
+                forImageModel: path, videoModelPaths: library.models.map(\.path)))
             library.addImageModel(path: path)
             imageModelMessage = nil
         } catch {

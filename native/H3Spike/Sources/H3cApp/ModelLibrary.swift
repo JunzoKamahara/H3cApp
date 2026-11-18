@@ -233,8 +233,8 @@ final class ModelLibrary: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private var listsObserver: NSObjectProtocol?
-    private static let modelsKey = "H3ModelLibrary.models"
-    private static let activeModelKey = "H3ModelLibrary.activeModelID"
+    private nonisolated static let modelsKey = "H3ModelLibrary.models"
+    private nonisolated static let activeModelKey = "H3ModelLibrary.activeModelID"
     private static let imageModelsKey = "H3ModelLibrary.imageModels"
     private static let activeImageModelKey = "H3ModelLibrary.activeImageModelID"
     private static let lorasKey = "H3ModelLibrary.loras"
@@ -425,6 +425,16 @@ final class ModelLibrary: ObservableObject {
                                    kind: GenerationKind.image.rawValue))
         encodeArray(models, key: imageModelsKey)
         NotificationCenter.default.post(name: listsChanged, object: nil)
+    }
+
+    /// The registered video model folders as saved, the one last chosen
+    /// first: for code with no window's library at hand (an image model
+    /// asking where a text encoder to read is).
+    nonisolated static func storedVideoModelPaths() -> [String] {
+        guard let data = UserDefaults.standard.data(forKey: modelsKey),
+              let models = try? JSONDecoder().decode([H3ModelEntry].self, from: data) else { return [] }
+        let active = UUID(uuidString: UserDefaults.standard.string(forKey: activeModelKey) ?? "")
+        return (models.filter { $0.id == active } + models.filter { $0.id != active }).map(\.path)
     }
 
     /// The image model last chosen, or the first one.

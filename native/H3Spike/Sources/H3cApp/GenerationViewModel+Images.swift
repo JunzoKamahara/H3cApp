@@ -151,6 +151,9 @@ extension GenerationViewModel {
         if !FileManager.default.fileExists(atPath: model.path) {
             return String(localized: "画像モデル「\(model.name)」のフォルダが見つかりません")
         }
+        if SharedTextEncoder.isMissing(forImageModel: model.path, videoModelPaths: videoModelPaths) {
+            return String(localized: "画像モデル「\(model.name)」が読む、動画モデルのテキストエンコーダが見つかりません。動画モデルを置いたディスクがつながっているか確かめるか、動画モデルを導入してください")
+        }
         if isUpscalingVideo {
             return upscalingIsImage ? String(localized: "画像を拡大しています。終わってから生成してください")
                                     : String(localized: "動画を拡大しています。終わってから生成してください")
@@ -186,8 +189,24 @@ extension GenerationViewModel {
     /// (it only looks at the folder); nil when the folder is not a model.
     func activeImageEngine() -> H3ImageEngine? {
         guard let model = library.activeImageModel else { return nil }
-        if let current = imageEngine, current.modelDirectory == model.path { return current }
-        guard let engine = try? H3ImageEngine(modelDirectory: model.path) else { return nil }
+        return try? imageEngine(for: model)
+    }
+
+    /// The registered video models, the one in use first: where an image
+    /// model without a text encoder of its own reads one (SharedTextEncoder).
+    var videoModelPaths: [String] {
+        ([library.activeModel].compactMap { $0 } + library.models).map(\.path)
+    }
+
+    /// The engine for an image model folder: the one made last, while the
+    /// folder and the text encoder it reads are the same.
+    func imageEngine(for model: H3ModelEntry) throws -> H3ImageEngine {
+        let textEncoder = SharedTextEncoder.directory(forImageModel: model.path, videoModelPaths: videoModelPaths)
+        if let current = imageEngine, current.modelDirectory == model.path,
+           current.textEncoderDirectory == textEncoder {
+            return current
+        }
+        let engine = try H3ImageEngine(modelDirectory: model.path, textEncoderDirectory: textEncoder)
         imageEngine = engine
         return engine
     }
@@ -271,7 +290,8 @@ extension GenerationViewModel {
             return nil
         }
         do {
-            _ = try H3ImageEngine(modelDirectory: path)
+            _ = try H3ImageEngine(modelDirectory: path, textEncoderDirectory: SharedTextEncoder.directory(
+                forImageModel: path, videoModelPaths: videoModelPaths))
         } catch {
             let reason = String(localized: "画像モデルとして使えません（詳細: \(error.localizedDescription)）")
             projectMessage = reason
@@ -308,12 +328,7 @@ extension GenerationViewModel {
         }
         let engine: H3ImageEngine
         do {
-            if let current = imageEngine, current.modelDirectory == model.path {
-                engine = current
-            } else {
-                engine = try H3ImageEngine(modelDirectory: model.path)
-                imageEngine = engine
-            }
+            engine = try imageEngine(for: model)
         } catch {
             errorMessage = Self.userFacingMessage(for: error)
             return

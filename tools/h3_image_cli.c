@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
     if (argc < 4) {
         fprintf(stderr, "usage: %s <model dir> <prompt> <out.ppm> [WxH] [seed] "
                         "[shaders.metal] [reference image | latent=<file> | "
-                        "short=<pixels>]...\n", argv[0]);
+                        "short=<pixels> | text_encoder=<folder>]...\n", argv[0]);
         return 2;
     }
     int width = 1024, height = 1024;
@@ -44,7 +44,14 @@ int main(int argc, char **argv) {
     unsigned long long seed = argc > 5 ? strtoull(argv[5], NULL, 10) : 0;
     const char *shaders = argc > 6 ? argv[6] : "h3_shaders.metal";
     char error[512] = "";
-    h3_image_ctx *ctx = h3_image_load_dir(argv[1], shaders, error, sizeof(error));
+    /* text_encoder=<folder>: a video model's FL2VA/text_encoder, read in
+     * place of the model folder's own. */
+    const char *text_encoder = NULL;
+    for (int index = 7; index < argc; index++)
+        if (!strncmp(argv[index], "text_encoder=", 13))
+            text_encoder = argv[index] + 13;
+    h3_image_ctx *ctx = h3_image_load_parts(argv[1], text_encoder, shaders,
+                                            error, sizeof(error));
     if (!ctx) {
         fprintf(stderr, "%s\n", error);
         return 1;
@@ -57,6 +64,8 @@ int main(int argc, char **argv) {
     for (int index = 7; index < argc; index++) {
         if (!strcmp(argv[index], "plan")) {
             plan_only = 1;
+        } else if (!strncmp(argv[index], "text_encoder=", 13)) {
+            continue;
         } else if (!strncmp(argv[index], "short=", 6)) {
             short_edge = atoi(argv[index] + 6);
         } else if (!strncmp(argv[index], "latent=", 7)) {

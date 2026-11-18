@@ -221,6 +221,8 @@ struct ModelRemovalPlan: Sendable {
 struct ModelRemoveView: View {
     let model: H3ModelEntry
     let others: [H3ModelEntry]
+    /// The registered image models: one may read this model's text encoder.
+    var imageModels: [H3ModelEntry] = []
     /// Called with the plan; the caller unregisters the model first (and
     /// moves off it if in use), then runs the plan.
     var onRemove: (_ plan: ModelRemovalPlan) -> Void
@@ -230,6 +232,8 @@ struct ModelRemoveView: View {
     @State private var deleteFiles = false
     @State private var plan: ModelRemovalPlan?
     @State private var confirmingFiles = false
+    /// The image models reading this model's text encoder in place.
+    @State private var dependents: [SharedTextEncoder.Dependent] = []
 
     private var palette: H3Palette { H3Palette(colorScheme) }
     private func size(_ bytes: Int64) -> String {
@@ -249,6 +253,17 @@ struct ModelRemoveView: View {
             }
             Toggle("モデルファイルも削除する", isOn: $deleteFiles)
             if deleteFiles {
+                ForEach(dependents) { dependent in
+                    if let next = dependent.next {
+                        Text("画像モデル「\(dependent.name)」は、このモデルのテキストエンコーダを読んでいます。削除すると「\(others.first { $0.path == next }?.name ?? (next as NSString).lastPathComponent)」のものを読むようになります（テキストエンコーダが違うと、同じシードでも画像が少し変わります）。")
+                            .font(.caption).foregroundStyle(palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("画像モデル「\(dependent.name)」は、このモデルのテキストエンコーダを読んでいます。削除すると、ほかの動画モデルを導入するまで、その画像モデルでは生成できなくなります。")
+                            .font(.caption).foregroundStyle(palette.errorColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 filesSection
             }
             Spacer(minLength: 0)
@@ -279,6 +294,11 @@ struct ModelRemoveView: View {
             plan = nil
             let path = model.path, id = model.id, files = deleteFiles
             let others = self.others.map { (path: $0.path, id: $0.id) }
+            let images = imageModels.map { (name: $0.name, path: $0.path) }
+            let videos = [path] + others.map(\.path)
+            dependents = await Task.detached {
+                SharedTextEncoder.dependents(onVideoModel: path, imageModels: images, videoModelPaths: videos)
+            }.value
             plan = await Task.detached {
                 ModelRemovalPlan.make(modelPath: path, id: id, others: others, includeFiles: files)
             }.value

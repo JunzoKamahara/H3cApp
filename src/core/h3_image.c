@@ -199,6 +199,14 @@ void h3_image_get_info(const h3_image_ctx *ctx, h3_image_info *info) {
 h3_image_ctx *h3_image_load_dir(const char *model_directory,
                                 const char *shader_source_path,
                                 char *error, size_t error_size) {
+    return h3_image_load_parts(model_directory, NULL, shader_source_path,
+                               error, error_size);
+}
+
+h3_image_ctx *h3_image_load_parts(const char *model_directory,
+                                  const char *text_encoder_directory,
+                                  const char *shader_source_path,
+                                  char *error, size_t error_size) {
     if (error && error_size) error[0] = '\0';
     if (!model_directory || !shader_source_path) {
         fail(error, error_size, "invalid image model arguments");
@@ -208,7 +216,9 @@ h3_image_ctx *h3_image_load_dir(const char *model_directory,
     if (ctx) {
         ctx->transformer = join(model_directory, "transformer");
         ctx->vae = join(model_directory, "vae");
-        ctx->text_encoder = join(model_directory, "text_encoder");
+        ctx->text_encoder = text_encoder_directory
+            ? strdup(text_encoder_directory)
+            : join(model_directory, "text_encoder");
         ctx->tokenizer = join(model_directory, "tokenizer/tokenizer.json");
         ctx->shaders = strdup(shader_source_path);
     }
@@ -223,6 +233,12 @@ h3_image_ctx *h3_image_load_dir(const char *model_directory,
         !exists(ctx->vae, 1) ? "vae" :
         !exists(ctx->text_encoder, 1) ? "text_encoder" :
         !exists(ctx->tokenizer, 0) ? "tokenizer/tokenizer.json" : NULL;
+    if (missing && text_encoder_directory && !strcmp(missing, "text_encoder")) {
+        fail(error, error_size, "the text encoder folder %s of the image model "
+             "in %s is not there", text_encoder_directory, model_directory);
+        h3_image_free(ctx);
+        return NULL;
+    }
     if (missing) {
         fail(error, error_size, "%s is not an image model folder: it has no %s",
              model_directory, missing);

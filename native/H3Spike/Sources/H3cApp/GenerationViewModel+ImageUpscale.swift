@@ -74,12 +74,7 @@ extension GenerationViewModel {
         }
         let engine: H3ImageEngine
         do {
-            if let current = imageEngine, current.modelDirectory == model.path {
-                engine = current
-            } else {
-                engine = try H3ImageEngine(modelDirectory: model.path)
-                imageEngine = engine
-            }
+            engine = try imageEngine(for: model)
         } catch {
             errorMessage = Self.userFacingMessage(for: error)
             return false

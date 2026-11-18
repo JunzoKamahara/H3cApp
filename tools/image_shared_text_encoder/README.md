@@ -1,0 +1,43 @@
+# Check of the shared text encoder
+
+MiniMax H3 Image uses a video model's text encoder. On the video model's
+volume the app clones it into the image model's folder; on another volume it
+makes no copy and reads the video model's where it is (`SharedTextEncoder`
+in `native/H3Spike/Sources/H3cApp/ImageTextEncoderSharing.swift`, and
+`h3_image_load_parts` in the engine).
+
+`check.py` drives a development build of H3cApp over its local HTTP API and
+checks: a setup beside the video model (a clone), a clone not being given up,
+a real copy being given up for the video model's, what deleting a video model
+would do to the image model, choosing another video model's, the chosen video
+model's disk going away and coming back, no text encoder being left to read,
+a folder without `text_encoder/` being accepted, and a setup with the video
+model on another volume (no copy). Nothing is generated and no weights are
+loaded.
+
+    make libh3.a
+    swift build --package-path native/H3Spike --scratch-path "${TMPDIR}H3cApp-build-scratch" --product H3cApp
+    python3 tools/image_shared_text_encoder/check.py \
+        "${TMPDIR}H3cApp-build-scratch/debug/H3cApp" <empty work dir> <weights dir>
+
+`<weights dir>` holds MiniMax H3 Image's DiT and VAE as Comfy-Org publishes
+them (`diffusion_models/`, `vae/`). They are cloned into the work dir, which
+must be on the same APFS volume, with a record of their hashes, so the app
+does not read 22 GB to check them. The video models are stand-ins of a few
+megabytes; the second is on a 200 MB disk image the script makes, mounts and
+unmounts (`/Volumes/H3ShareCheck`).
+
+As in `tools/image_phase1`, the app under test is a copy named
+`H3cAppDevCheck` run with `CFFIXED_USER_HOME` set to `<work dir>/home`; its
+preferences domain (`H3cAppDevCheck`) is removed before and after, and the
+script turns the local API on in it. Port 8420 must be free: quit H3cApp
+first. The setup fetches the model's `LICENSE` from Hugging Face.
+
+To see that the pictures are the same with a shared encoder as with a copy,
+generate with the engine's tool, once with the encoder in the folder and
+once with `text_encoder=<video model>/FL2VA/text_encoder`, and compare the
+two `.ppm` files:
+
+    make build/bin/h3_image_cli
+    build/bin/h3_image_cli <image model dir> "<prompt>" out.ppm 1024x1024 1 build/h3_shaders.metal \
+        text_encoder=<video model>/FL2VA/text_encoder

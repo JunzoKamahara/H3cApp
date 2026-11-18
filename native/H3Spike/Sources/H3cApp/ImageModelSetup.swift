@@ -9,9 +9,10 @@ import SwiftUI
 /// - MiniMax H3 Image (plans/IMAGE_PLAN.ja.md, phase 3): the ComfyUI int8 +
 ///   ConvRot DiT and the fp16 VAE from Comfy-Org's re-publication, the VAE's
 ///   config.json and the license text from MiniMax's own repository, and the
-///   text encoder and tokenizer of a video model already on this Mac (the
-///   image model uses the same ones; they are copied, which on one volume
-///   takes no extra space).
+///   text encoder of a video model already on this Mac (the image model
+///   uses the same one). On the video model's volume it is copied, which
+///   there takes no extra space; on another disk it is read where the
+///   video model keeps it (SharedTextEncoder).
 /// - P-H3-Image (Pruna AI; phase 8): the int8 + ConvRot DiT and the bf16
 ///   text encoder (Qwen3-VL-4B with its text connector) and VAE from
 ///   PrunaAI/P-H3-Image-Comfy, the VAE config and the tokenizer from the
@@ -55,7 +56,8 @@ struct H3ImageModel: Identifiable, Hashable {
     let authorizationURL: URL?
     let weights: [Weight]
     let smallFiles: [SmallFile]
-    /// It takes the text encoder of a video model already installed.
+    /// It takes the text encoder of a video model already installed: a
+    /// clone in its own folder, or the video model's read in place.
     let sharesTextEncoder: Bool
     let licenseAcceptedKey: String
     let provenanceNote: String
@@ -279,9 +281,17 @@ struct H3ImageModel: Identifiable, Hashable {
         !((try? FileManager.default.contentsOfDirectory(atPath: path(Self.transformerFolder))) ?? []).isEmpty
     }
 
-    /// Everything the engine needs: the folder is an image model.
+    /// The video model whose text encoder this model reads in place:
+    /// nil when it has its own, or when there is none to read.
+    func textEncoderSource(in videoModelPaths: [String] = ModelLibrary.storedVideoModelPaths()) -> String? {
+        sharesTextEncoder ? SharedTextEncoder.source(forImageModel: directory, videoModelPaths: videoModelPaths) : nil
+    }
+
+    /// Everything the engine needs: the folder is an image model (with a
+    /// video model's text encoder to read, when it keeps none).
     var complete: Bool {
-        weightsPresent && smallFiles.allSatisfy { fileSize($0.localPath) != nil } && hasTextEncoder
+        weightsPresent && smallFiles.allSatisfy { fileSize($0.localPath) != nil }
+            && (hasTextEncoder || textEncoderSource() != nil)
             && (!usesVideoTransformer || hasTransformer)
     }
 
@@ -362,14 +372,6 @@ struct H3ImageModel: Identifiable, Hashable {
         try data.write(to: destination, options: .atomic)
     }
 
-    /// The video model whose text encoder the image model can share: the
-    /// first of these folders that has one.
-    static func textEncoderSource(in modelPaths: [String]) -> String? {
-        modelPaths.map { $0 + "/FL2VA/text_encoder" }.first { folder in
-            !((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []).isEmpty
-        }
-    }
-
     /// The video model whose FL2VA DiT the LoRA install uses.
     static func transformerSource(in modelPaths: [String]) -> String? {
         modelPaths.map { $0 + "/FL2VA/transformer" }.first { folder in
@@ -384,8 +386,9 @@ struct H3ImageModel: Identifiable, Hashable {
         try shareFolder(from: source, to: Self.transformerFolder)
     }
 
-    /// Copies a video model's text encoder (a clone where the volume makes
-    /// one) unless one is here already. Copies files: off the main actor.
+    /// Copies a video model's text encoder unless one is here already.
+    /// Only where the copy is a clone (SharedTextEncoder.copyIsClone);
+    /// elsewhere the video model's is read in place. Off the main actor.
     func shareTextEncoder(from source: String) throws {
         if hasTextEncoder { return }
         try shareFolder(from: source, to: Self.textEncoderFolder)
@@ -408,7 +411,7 @@ struct H3ImageModel: Identifiable, Hashable {
 
     /// Hashes the weights against the pinned revision and writes the
     /// record. A file whose hash differs is deleted and named in the error.
-    func verify(textEncoderSource: String?, transformerSource: String? = nil,
+    func verify(textEncoderNote: String?, transformerSource: String? = nil,
                 progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
         let total = downloadBytes
         var done: Int64 = 0
@@ -437,9 +440,7 @@ struct H3ImageModel: Identifiable, Hashable {
             }
         }
         var note = provenanceNote
-        if let textEncoderSource {
-            note += " text_encoder/ is a copy of the video model's at \(textEncoderSource) (the same Qwen3-VL language layers)."
-        }
+        if let textEncoderNote { note += textEncoderNote }
         if let transformerSource {
             note += " transformer/ is a copy of the video model's FL2VA DiT at \(transformerSource), to which lora/ is applied at strength 1."
         }
@@ -453,6 +454,27 @@ struct H3ImageModel: Identifiable, Hashable {
         try encoder.encode(provenance).write(to: URL(fileURLWithPath: path(Self.provenanceFile)), options: .atomic)
     }
 
+    /// What the record says of a text encoder copied from a video model.
+    static func textEncoderNote(copiedFrom folder: String) -> String {
+        " text_encoder/ is a copy of the video model's at \(folder) (the same Qwen3-VL language layers)."
+    }
+
+    /// What the record says when the video model's text encoder is read in place.
+    static func textEncoderNote(sharedFrom folder: String) -> String {
+        " There is no text_encoder/ here: the app reads the video model's at \(folder) (the same Qwen3-VL language layers)."
+    }
+
+    /// Rewrites the record's note once the folder's own text encoder has
+    /// gone for a video model's (the hashes it holds are untouched).
+    func noteTextEncoderShared(from folder: String) {
+        guard var record = provenance else { return }
+        record.note = provenanceNote + Self.textEncoderNote(sharedFrom: folder)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try? encoder.encode(record).write(to: URL(fileURLWithPath: path(Self.provenanceFile)), options: .atomic)
+    }
+
     func bytesOnDisk() -> Int64 {
         guard let enumerator = FileManager.default.enumerator(atPath: directory) else { return 0 }
         var total: Int64 = 0
@@ -464,6 +486,7 @@ struct H3ImageModel: Identifiable, Hashable {
 
     func removeAll() throws {
         try FileManager.default.removeItem(atPath: directory)
+        SharedTextEncoder.record(videoModel: nil, forImageModel: directory)
     }
 }
 
@@ -540,10 +563,13 @@ final class H3ImageModelSetup: ObservableObject {
             }
             // Before the weights come down: what the model cannot do without.
             let hasTextEncoder = model.hasTextEncoder
-            let source = model.sharesTextEncoder ? H3ImageModel.textEncoderSource(in: videoModelPaths) : nil
+            let source = model.textEncoderSource(in: videoModelPaths)
             guard !model.sharesTextEncoder || hasTextEncoder || source != nil else {
                 throw H3ImageModel.SetupError.noTextEncoder
             }
+            // What the record will say of the text encoder: nothing new for
+            // one that was here already.
+            var textEncoderNote: String?
             let hasTransformer = model.hasTransformer
             let transformerSource = model.usesVideoTransformer
                 ? H3ImageModel.transformerSource(in: videoModelPaths) : nil
@@ -556,10 +582,24 @@ final class H3ImageModelSetup: ObservableObject {
             for file in model.smallFiles { try await model.fetchSmallFile(file) }
             try Task.checkCancellation()
             if !hasTextEncoder, let source {
-                phase = .sharing
-                try await Task.detached(priority: .userInitiated) {
-                    try model.shareTextEncoder(from: source)
-                }.value
+                // A clone on the video model's volume; read in place from
+                // another disk, where a copy would take its whole size again.
+                let folder = SharedTextEncoder.folder(inVideoModel: source)
+                try FileManager.default.createDirectory(atPath: model.directory, withIntermediateDirectories: true)
+                if SharedTextEncoder.copyIsClone(from: folder, to: model.directory) {
+                    phase = .sharing
+                    try await Task.detached(priority: .userInitiated) {
+                        try model.shareTextEncoder(from: folder)
+                    }.value
+                    textEncoderNote = H3ImageModel.textEncoderNote(copiedFrom: folder)
+                } else {
+                    // One chosen before stays the choice, also while its
+                    // disk is away and another is read.
+                    if SharedTextEncoder.recordedSource(forImageModel: model.directory) == nil {
+                        SharedTextEncoder.record(videoModel: source, forImageModel: model.directory)
+                    }
+                    textEncoderNote = H3ImageModel.textEncoderNote(sharedFrom: folder)
+                }
             }
             if !hasTransformer, let transformerSource {
                 phase = .sharing
@@ -570,7 +610,14 @@ final class H3ImageModelSetup: ObservableObject {
             try Task.checkCancellation()
             if fetched || !model.verified {
                 phase = .verifying(done: 0, total: 0)
-                try await model.verify(textEncoderSource: source, transformerSource: transformerSource) { done, total in
+                // An encoder here from before: as the record was written
+                // then, a copy of the video model first in the list.
+                if textEncoderNote == nil, model.sharesTextEncoder, hasTextEncoder,
+                   let first = SharedTextEncoder.candidates(in: videoModelPaths).first {
+                    textEncoderNote = H3ImageModel.textEncoderNote(
+                        copiedFrom: SharedTextEncoder.folder(inVideoModel: first))
+                }
+                try await model.verify(textEncoderNote: textEncoderNote, transformerSource: transformerSource) { done, total in
                     Task { @MainActor in
                         if case .verifying = self.phase { self.phase = .verifying(done: done, total: total) }
                     }
@@ -674,6 +721,12 @@ struct H3ImageModelSetupView: View {
     @State private var removalError: String?
     @State private var locationError: String?
     @State private var version = 0
+    /// The folder's own text encoder can go for a video model's (it is a
+    /// copy that takes space): looked up in the background.
+    @State private var textEncoderSwitch: SharedTextEncoder.Switch?
+    @State private var confirmingSwitch = false
+    @State private var switching = false
+    @State private var switchError: String?
 
     init(library: ModelLibrary, model: H3ImageModel = .h3, busy: Bool = false, close: @escaping () -> Void) {
         self.library = library
@@ -713,7 +766,7 @@ struct H3ImageModelSetupView: View {
                 } else if model.kind == .ph3 {
                     Text("静止画をつくるモデル「P-H3-Image」（Pruna AI、MiniMax H3を基にした画像用のモデル）の重み（DiT・テキストエンコーダ・VAE、どれもint8版）を、Hugging Faceの\(model.weightsRepo)（ComfyUI用、revision \(String(model.weightsRevision.prefix(8)))、\(model.weightsRevisionDate)）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約\(gigabytes(model.downloadBytes))が「\(model.directory)」に置かれます。動画モデルは要りません。文章からの生成と、参照画像（8枚まで）を使った編集ができます。")
                 } else {
-                    Text("静止画をつくるモデル「MiniMax H3 Image」の重みを、Hugging Faceの\(model.weightsRepo)（ComfyUI用のint8版、revision \(String(model.weightsRevision.prefix(8)))、\(model.weightsRevisionDate)）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約\(gigabytes(model.downloadBytes))が「\(model.directory)」に置かれます。テキストエンコーダは、導入済みの動画モデルのものを複製して使います（同じディスクなら容量は増えません）。")
+                    Text("静止画をつくるモデル「MiniMax H3 Image」の重みを、Hugging Faceの\(model.weightsRepo)（ComfyUI用のint8版、revision \(String(model.weightsRevision.prefix(8)))、\(model.weightsRevisionDate)）からダウンロードし、各ファイルのSHA-256をその版の記録と照合します。約\(gigabytes(model.downloadBytes))が「\(model.directory)」に置かれます。テキストエンコーダは、導入済みの動画モデルのものを使います。動画モデルと同じディスクなら複製し（容量は増えません）、別のディスクなら複製せずに、動画モデルのものをそのまま読みます。")
                 }
             }
             .font(.caption).foregroundStyle(palette.textSecondary)
@@ -735,6 +788,10 @@ struct H3ImageModelSetupView: View {
                 Text(locationError).font(.caption).foregroundStyle(palette.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let switchError {
+                Text(switchError).font(.caption).foregroundStyle(palette.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Spacer(minLength: 0)
             footer
         }
@@ -747,6 +804,42 @@ struct H3ImageModelSetupView: View {
             Button("キャンセル", role: .cancel) {}
         } message: {
             Text("ダウンロードした画像モデル（計\(gigabytes(model.bytesOnDisk()))）を削除し、一覧からも外します。また使うには、もう一度ダウンロードが必要です。動画モデルは変わりません。")
+        }
+        .alert("テキストエンコーダを動画モデルと共用にする", isPresented: $confirmingSwitch, presenting: textEncoderSwitch) { offer in
+            Button("共用にする", role: .destructive) { switchToShared(offer) }
+            Button("キャンセル", role: .cancel) {}
+        } message: { offer in
+            Text("この画像モデルのフォルダにあるテキストエンコーダの複製（約\(gigabytes(offer.freedBytes))）を削除し、動画モデル「\(videoModelName(offer.videoModel))」のものを読むようにします。同じファイルなので、つくる画像は変わりません。以後、この動画モデルのファイルを削除すると、ほかの動画モデルのテキストエンコーダを読みます。")
+        }
+        .task(id: version) {
+            guard model.sharesTextEncoder else { return }
+            let directory = model.directory, paths = videoModelPaths
+            textEncoderSwitch = await Task.detached {
+                SharedTextEncoder.possibleSwitch(forImageModel: directory, videoModelPaths: paths)
+            }.value
+        }
+    }
+
+    /// The name a video model folder is listed under.
+    private func videoModelName(_ path: String) -> String {
+        library.models.first { $0.path == path }?.name ?? (path as NSString).lastPathComponent
+    }
+
+    private func switchToShared(_ offer: SharedTextEncoder.Switch) {
+        let model = self.model
+        switching = true
+        switchError = nil
+        Task {
+            do {
+                try await Task.detached {
+                    try SharedTextEncoder.switchToShared(imageModel: model.directory, videoModel: offer.videoModel)
+                    model.noteTextEncoderShared(from: SharedTextEncoder.folder(inVideoModel: offer.videoModel))
+                }.value
+            } catch {
+                switchError = error.localizedDescription
+            }
+            switching = false
+            version += 1
         }
     }
 
@@ -842,9 +935,10 @@ struct H3ImageModelSetupView: View {
             if model.sharesTextEncoder {
                 GridRow {
                     Text("テキストエンコーダ").font(.caption).foregroundStyle(palette.textSecondary)
-                    Text(textEncoderText).font(.caption)
-                        .fixedSize(horizontal: false, vertical: true)
+                    textEncoderRow
                 }
+            }
+            if model.sharesTextEncoder && model.hasTextEncoder {
                 GridRow {
                     Text("使用容量").font(.caption).foregroundStyle(palette.textSecondary)
                     Text("\(gigabytes({ _ = version; return model.bytesOnDisk() }()))（複製したテキストエンコーダを含みます。同じディスクなら、実際に増えるのはダウンロードした分だけです）")
@@ -920,10 +1014,56 @@ struct H3ImageModelSetupView: View {
         if model.hasTextEncoder {
             return String(localized: "複製済み")
         }
-        if H3ImageModel.textEncoderSource(in: videoModelPaths) != nil {
+        guard let source = model.textEncoderSource(in: videoModelPaths) else {
+            return String(localized: "動画モデルがありません。先に動画モデル（MiniMax-H3）を導入してください")
+        }
+        let recorded = SharedTextEncoder.recordedSource(forImageModel: model.directory)
+        if let recorded, recorded != source {
+            return String(localized: "動画モデル「\(videoModelName(source))」のものを読んでいます（選んであった「\(videoModelName(recorded))」のものが見つからないため）")
+        }
+        if recorded == nil,
+           SharedTextEncoder.copyIsClone(from: SharedTextEncoder.folder(inVideoModel: source), to: model.directory) {
             return String(localized: "導入済みの動画モデルから複製します")
         }
-        return String(localized: "動画モデルがありません。先に動画モデル（MiniMax-H3）を導入してください")
+        return String(localized: "動画モデル「\(videoModelName(source))」のものを読みます（別のディスクなので複製しません）")
+    }
+
+    /// The other video models whose text encoder could be read instead.
+    private var otherTextEncoderSources: [String] {
+        _ = version; _ = setup.phase
+        guard !model.hasTextEncoder, SharedTextEncoder.recordedSource(forImageModel: model.directory) != nil,
+              let source = model.textEncoderSource(in: videoModelPaths) else { return [] }
+        return SharedTextEncoder.candidates(in: videoModelPaths).filter { $0 != source }
+    }
+
+    @ViewBuilder private var textEncoderRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(textEncoderText).font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.hasTextEncoder, let offer = textEncoderSwitch {
+                HStack(spacing: H3Spacing.sm) {
+                    Button("動画モデルと共用にする…") { confirmingSwitch = true }
+                        .controlSize(.small)
+                        .disabled(setup.isBusy || busy || switching)
+                        .help("このフォルダの複製を削除して、動画モデル「\(videoModelName(offer.videoModel))」のテキストエンコーダを読むようにします")
+                    Text("複製が約\(gigabytes(offer.freedBytes))を占めています").font(.caption)
+                        .foregroundStyle(palette.textSecondary)
+                }
+            } else if !otherTextEncoderSources.isEmpty {
+                Menu("ほかの動画モデルのものにする") {
+                    ForEach(otherTextEncoderSources, id: \.self) { path in
+                        Button(videoModelName(path)) {
+                            SharedTextEncoder.record(videoModel: path, forImageModel: model.directory)
+                            version += 1
+                        }
+                    }
+                }
+                .controlSize(.small)
+                .fixedSize()
+                .disabled(setup.isBusy || busy)
+                .help("テキストエンコーダが違うと（量子化の違いなど）、同じシードでも画像が少し変わります")
+            }
+        }
     }
 
     @ViewBuilder private var progressView: some View {
