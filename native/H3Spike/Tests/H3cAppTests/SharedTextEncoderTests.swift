@@ -383,6 +383,99 @@ final class SharedTextEncoderTests: XCTestCase {
         }
     }
 
+    // MARK: A switch and the deletion of its video model
+
+    /// Once the deletion of a video model's files is decided, no copy is
+    /// given up for it and no leftover deleted for it: the copy would be
+    /// the last one.
+    func testNoCopyGoesForAVideoModelBeingDeleted() throws {
+        let files = ["model.gguf": data(1)]
+        let source = try videoModel("Source", files)
+        let image = root + "/Image"
+        let own = SharedTextEncoder.ownFolder(ofImageModel: image)
+        try write(files, to: own)
+        let compared = try SharedTextEncoder.compareContents(imageModel: image, videoModel: source) { _, _ in }
+
+        // The comparison is done; the deletion is decided before the switch.
+        XCTAssertEqual(SharedTextEncoder.beginRemoval(ofVideoModel: source, imageModels: [(name: "Image", path: image)],
+                                                      videoModelPaths: [source]).count, 0, "the image model has its own")
+        XCTAssertThrowsError(try SharedTextEncoder.switchToShared(imageModel: image, videoModel: source, compared: compared) { _, _ in })
+        XCTAssertEqual(names(in: own), ["model.gguf"], "the copy stays")
+        XCTAssertNil(SharedTextEncoder.record(forImageModel: image))
+        XCTAssertNil(SharedTextEncoder.possibleSwitch(forImageModel: image, videoModelPaths: [source]))
+        XCTAssertThrowsError(try SharedTextEncoder.compareContents(imageModel: image, videoModel: source) { _, _ in })
+
+        // What an earlier switch left is not deleted for it either: put back.
+        let leaving = own + ".removing"
+        try FileManager.default.moveItem(atPath: own, toPath: leaving)
+        try SharedTextEncoder.write(
+            SharedTextEncoder.Record(videoModel: source, files: compared.files, removing: ["model.gguf": 4096],
+                                     removingEncoder: compared.files), forImageModel: image)
+        XCTAssertEqual(SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: [source]), .restored)
+        XCTAssertEqual(names(in: own), ["model.gguf"])
+
+        // The deletion not made after all: the switch goes through, and a
+        // deletion asked for after it is told of the image model.
+        SharedTextEncoder.endRemoval(ofVideoModel: source)
+        try SharedTextEncoder.switchToShared(imageModel: image, videoModel: source, compared: compared) { _, _ in }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: own))
+        XCTAssertEqual(SharedTextEncoder.beginRemoval(ofVideoModel: source, imageModels: [(name: "Image", path: image)],
+                                                      videoModelPaths: [source]).map(\.directory), [image])
+        SharedTextEncoder.endRemoval(ofVideoModel: source)
+    }
+
+    /// A copy is given up for a video model on one thread while that video
+    /// model's files are deleted on another, as Model Management does it:
+    /// whichever comes first, the image model is left with an encoder to
+    /// read - its copy, or the video model's, which is then not deleted
+    /// without a word about the image model.
+    func testASwitchAndTheDeletionOfItsVideoModelAtOnce() async throws {
+        var files: [String: Data] = [:]
+        for index in 0 ..< 32 { files["part-\(index).gguf"] = data(UInt8(index), 1024) }
+        // One video model for every round (put back after a round that
+        // deleted it: the same files, whose SHA-256 stays known).
+        let source = try videoModel("Source", files)
+        let trash = root + "/Trash"
+        var switched = 0, deleted = 0
+        for round in 0 ..< 80 {
+            let image = root + "/Image-\(round)"
+            let own = SharedTextEncoder.ownFolder(ofImageModel: image)
+            try write(files, to: own)
+            let compared = try SharedTextEncoder.compareContents(imageModel: image, videoModel: source) { _, _ in }
+            // Now the switch ahead, now the deletion, by up to about the
+            // time the switch takes to check the copy before deleting it.
+            let lag = UInt32(round / 2 % 40) * 100
+            let switchLag = round % 2 == 0 ? 0 : lag, deleteLag = round % 2 == 0 ? lag : 0
+            let switching = Task.detached { () -> Bool in
+                usleep(switchLag)
+                return (try? SharedTextEncoder.switchToShared(imageModel: image, videoModel: source, compared: compared) { _, _ in }) != nil
+            }
+            let deleting = Task.detached { () -> Bool in
+                usleep(deleteLag)
+                // The sheet warned of no image model: this one had its own.
+                let readers = SharedTextEncoder.beginRemoval(ofVideoModel: source, imageModels: [(name: "Image", path: image)],
+                                                             videoModelPaths: [source])
+                defer { SharedTextEncoder.endRemoval(ofVideoModel: source) }
+                guard readers.isEmpty else { return false }
+                return (try? FileManager.default.moveItem(atPath: source, toPath: trash)) != nil
+            }
+            let didSwitch = await switching.value, didDelete = await deleting.value
+            let copy = names(in: own).count == files.count
+            let encoder = names(in: SharedTextEncoder.folder(inVideoModel: source)).count == files.count
+            XCTAssertTrue(copy || encoder, "round \(round): nothing left to read (switched \(didSwitch), deleted \(didDelete))")
+            XCTAssertFalse(didSwitch && didDelete, "round \(round): the copy and the video model both went")
+            XCTAssertEqual(copy, !didSwitch, "round \(round)")
+            XCTAssertEqual(encoder, !didDelete, "round \(round)")
+            switched += didSwitch ? 1 : 0
+            deleted += didDelete ? 1 : 0
+            if !(copy || encoder) { break }
+            if didDelete { try FileManager.default.moveItem(atPath: trash, toPath: source) }
+        }
+        // Both orders were met.
+        XCTAssertGreaterThan(switched, 0)
+        XCTAssertGreaterThan(deleted, 0)
+    }
+
     // MARK: What is known of a file
 
     /// The SHA-256 found by reading a file through is that file's: another
@@ -460,10 +553,10 @@ final class SharedTextEncoderTests: XCTestCase {
 
         // The deletion decided: not read any more, before the files have gone.
         XCTAssertEqual(SharedTextEncoder.reading(forImageModel: image, videoModelPaths: [read, unread]), .shared(videoModel: read))
-        SharedTextEncoder.removal(ofVideoModel: read, began: true)
+        SharedTextEncoder.beginRemoval(ofVideoModel: read)
         XCTAssertEqual(SharedTextEncoder.reading(forImageModel: image, videoModelPaths: [read, unread]), .needsChoice)
         XCTAssertNotNil(GenerationViewModel.imageTextEncoderProblem(model: image, name: "Image", videoModelPaths: [read, unread]))
-        SharedTextEncoder.removal(ofVideoModel: read, began: false)
+        SharedTextEncoder.endRemoval(ofVideoModel: read)
         XCTAssertEqual(SharedTextEncoder.reading(forImageModel: image, videoModelPaths: [read, unread]), .shared(videoModel: read))
     }
 

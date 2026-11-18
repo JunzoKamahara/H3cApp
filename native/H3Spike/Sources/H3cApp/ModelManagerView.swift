@@ -281,25 +281,37 @@ struct ModelManagerView: View {
     /// moves its files to the Trash.
     private func remove(_ model: H3ModelEntry, deleting plan: ModelRemovalPlan) {
         removingModel = nil
-        // Not from under an image being generated in any window that reads
-        // this model's text encoder; and from here on nothing new reads it.
-        if plan.includesFiles, let problem = SharedTextEncoder.removalProblem(
-            videoModel: model.path, imageModels: library.imageModels.map { (name: $0.name, path: $0.path) },
-            videoModelPaths: library.models.map(\.path)) {
-            removalMessage = problem
-            return
+        let name = model.name, path = model.path, deletesFiles = plan.includesFiles
+        if deletesFiles {
+            // Not from under an image being generated in any window that
+            // reads this model's text encoder.
+            let images = library.imageModels.map { (name: $0.name, path: $0.path) }
+            if let problem = SharedTextEncoder.removalProblem(
+                videoModel: path, imageModels: images, videoModelPaths: library.models.map(\.path)) {
+                removalMessage = problem
+                return
+            }
+            // From here on nothing new reads it, and no copy is given up
+            // for it. A copy given up for it while the sheet was open has
+            // made an image model read it that the sheet did not warn of:
+            // not deleted then (the list as the sheet has it, this model first).
+            let videos = [path] + library.models.filter { $0.id != model.id }.map(\.path)
+            let readers = SharedTextEncoder.beginRemoval(ofVideoModel: path, imageModels: images, videoModelPaths: videos)
+            if let reader = readers.first(where: { !plan.warnedDependents.contains($0.directory) }) {
+                SharedTextEncoder.endRemoval(ofVideoModel: path)
+                removalMessage = String(localized: "画像モデル「\(reader.name)」が、この動画モデルのテキストエンコーダを読むようになりました。ファイルは削除していません。もう一度「削除…」を開いて、その画像モデルがどうなるかを確かめてください。")
+                return
+            }
         }
         let wasActive = model.id == library.activeModelID
         library.removeModel(id: model.id)
         if wasActive { onActiveModelChange(library.activeModelID) }
-        let name = model.name, path = model.path, deletesFiles = plan.includesFiles
-        if deletesFiles { SharedTextEncoder.removal(ofVideoModel: path, began: true) }
         removalMessage = plan.includesFiles
             ? String(localized: "「\(name)」のファイルをゴミ箱に移しています…")
             : String(localized: "「\(name)」をモデル管理から外しました（ファイルは残っています）。")
         Task {
             let failed = await Task.detached { plan.execute() }.value
-            if deletesFiles { SharedTextEncoder.removal(ofVideoModel: path, began: false) }
+            if deletesFiles { SharedTextEncoder.endRemoval(ofVideoModel: path) }
             let format = { (bytes: Int64) in ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
             var message: String
             if !failed.isEmpty {

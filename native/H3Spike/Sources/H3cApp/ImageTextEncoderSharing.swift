@@ -333,7 +333,10 @@ enum SharedTextEncoder {
     /// The registered video models that have a text encoder, in the order given.
     static func candidates(in videoModelPaths: [String]) -> [String] {
         // One per folder: a link to a video model is that video model.
-        var seen = Set<String>()
+        // Not one whose files are being deleted.
+        lock.lock()
+        var seen = going
+        lock.unlock()
         return videoModelPaths.filter { seen.insert(identity($0)).inserted && holdsFiles(folder(inVideoModel: $0)) }
     }
 
@@ -341,12 +344,38 @@ enum SharedTextEncoder {
     // not read from the moment the deletion is decided.
     nonisolated(unsafe) private static var going: Set<String> = []
 
-    /// Says that the files of the video model at `path` are being deleted
-    /// (`began`), or that the deletion has ended.
-    static func removal(ofVideoModel path: String, began: Bool) {
+    /// Says that the files of the video model at `path` are about to be
+    /// deleted. Waits for a choice, a switch or the settling of a leftover
+    /// that is under way - it may be deleting a copy for this very video
+    /// model - and from then on none of them takes this video model: no
+    /// copy is given up, and no leftover deleted, for an encoder that is
+    /// going. Returns the image models that read its text encoder in place
+    /// at that moment: after such a switch, one more than a moment ago,
+    /// which whoever asked for the deletion has not been told of
+    /// (endRemoval then, and nothing deleted).
+    @discardableResult
+    static func beginRemoval(ofVideoModel path: String, imageModels: [(name: String, path: String)] = [],
+                             videoModelPaths: [String] = []) -> [Dependent] {
+        commits.lock()
+        defer { commits.unlock() }
+        let readers = dependents(onVideoModel: path, imageModels: imageModels, videoModelPaths: videoModelPaths)
+        lock.lock()
+        going.insert(identity(path))
+        lock.unlock()
+        return readers
+    }
+
+    /// The deletion begun with beginRemoval has ended (or was not made).
+    static func endRemoval(ofVideoModel path: String) {
         lock.lock()
         defer { lock.unlock() }
-        if began { going.insert(identity(path)) } else { going.remove(identity(path)) }
+        going.remove(identity(path))
+    }
+
+    private static func isGoing(_ path: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !going.isEmpty && going.contains(identity(path))
     }
 
     /// Why the files of the video model at `path` cannot be deleted now,
@@ -548,7 +577,9 @@ enum SharedTextEncoder {
                                 progress: @escaping @Sendable (Int64, Int64) -> Void) throws -> Compared {
         let own = regularFiles(in: ownFolder(ofImageModel: directory))
         let other = regularFiles(in: folder(inVideoModel: videoModel))
-        guard !own.isEmpty, Set(own.keys) == Set(other.keys) else { throw SwitchError.nothingToGiveUp }
+        guard !isGoing(videoModel), !own.isEmpty, Set(own.keys) == Set(other.keys) else {
+            throw SwitchError.nothingToGiveUp
+        }
         if let extra = unaccounted(in: ownFolder(ofImageModel: directory), besides: Set(own.keys)) {
             throw SwitchError.extra(extra)
         }
@@ -581,10 +612,19 @@ enum SharedTextEncoder {
     /// longer (SwitchError.changed): each file of the copy must have the
     /// size, the date and the file number it had when it was read, and
     /// the video model's files the SHA-256 found then (known only while
-    /// their size and date stay).
-    static func switchToShared(imageModel directory: String, videoModel: String, compared: Compared) throws {
+    /// their size and date stay). And not for a video model whose files
+    /// are being deleted (beginRemoval): that deletion waits for a switch
+    /// under way, and a switch after it finds the video model going.
+    /// `engineCheck`: for the tests, whose folders are not image models.
+    static func switchToShared(
+        imageModel directory: String, videoModel: String, compared: Compared,
+        engineCheck: (_ imageModel: String, _ textEncoder: String) throws -> Void = {
+            _ = try H3ImageEngine(modelDirectory: $0, textEncoderDirectory: $1)
+        }
+    ) throws {
         commits.lock()
         defer { commits.unlock() }
+        guard !isGoing(videoModel) else { throw SwitchError.nothingToGiveUp }
         let files = compared.files
         let own = ownFolder(ofImageModel: directory)
         let leaving = own + ".removing"
@@ -600,7 +640,7 @@ enum SharedTextEncoder {
             throw SwitchError.changed(folder(inVideoModel: videoModel))
         }
         do {
-            _ = try H3ImageEngine(modelDirectory: directory, textEncoderDirectory: folder(inVideoModel: videoModel))
+            try engineCheck(directory, folder(inVideoModel: videoModel))
         } catch {
             throw SwitchError.engine(error.localizedDescription)
         }
@@ -692,9 +732,10 @@ enum SharedTextEncoder {
         // not of the one chosen now, which may be another. Files in the
         // folder's own text_encoder/ do not count - nothing says they are
         // all of it.
+        // Nor does one whose files are being deleted.
         let verified = record.removingEncoder.map { encoder in
             ([record.videoModel] + candidates(in: videoModelPaths)).contains {
-                isSame(fingerprint(of: folder(inVideoModel: $0)), encoder)
+                !isGoing($0) && isSame(fingerprint(of: folder(inVideoModel: $0)), encoder)
             }
         } ?? false
         if verified {

@@ -56,6 +56,9 @@ struct ModelRemovalPlan: Sendable {
     /// AdaLN curves built for generating (they can be rebuilt).
     var caches: [Target] = []
     var includesFiles = false
+    /// The image models (their folders) the sheet said read this model's
+    /// text encoder: one that has come to since is not deleted from under.
+    var warnedDependents: [String] = []
     /// Space emptying the Trash gives back.
     var freedBytes: Int64 = 0
     /// Space deleting the caches gives back right away.
@@ -281,7 +284,7 @@ struct ModelRemoveView: View {
                 Button(deleteFiles ? String(localized: "外してゴミ箱に移す") : String(localized: "外す"),
                        role: .destructive) {
                     // Deleting the files asks once more.
-                    if deleteFiles { confirmingFiles = true } else if let plan { onRemove(plan) }
+                    if deleteFiles { confirmingFiles = true } else if let plan { onRemove(warned(plan)) }
                 }
                 // A sheet's destructive button is not red by itself.
                 .buttonStyle(.borderedProminent)
@@ -290,7 +293,7 @@ struct ModelRemoveView: View {
             }
         }
         .alert("モデルファイルを本当に削除してもいいですか？", isPresented: $confirmingFiles) {
-            Button("削除する", role: .destructive) { if let plan { onRemove(plan) } }
+            Button("削除する", role: .destructive) { if let plan { onRemove(warned(plan)) } }
             Button("キャンセル", role: .cancel) {}
         } message: {
             Text(confirmationText)
@@ -311,6 +314,13 @@ struct ModelRemoveView: View {
                 ModelRemovalPlan.make(modelPath: path, id: id, others: others, includeFiles: files)
             }.value
         }
+    }
+
+    /// The plan, with the image models this sheet has warned of.
+    private func warned(_ plan: ModelRemovalPlan) -> ModelRemovalPlan {
+        var plan = plan
+        plan.warnedDependents = dependents.map(\.directory)
+        return plan
     }
 
     private var confirmationText: String {

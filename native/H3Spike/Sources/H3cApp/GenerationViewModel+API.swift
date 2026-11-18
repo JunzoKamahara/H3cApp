@@ -224,9 +224,9 @@ extension GenerationViewModel {
                 return .error(409, problem)
             }
             library.removeModel(id: id)
-            if files { SharedTextEncoder.removal(ofVideoModel: path, began: true) }
+            if files { SharedTextEncoder.beginRemoval(ofVideoModel: path) }
             let failed = await Task.detached { plan.execute() }.value
-            if files { SharedTextEncoder.removal(ofVideoModel: path, began: false) }
+            if files { SharedTextEncoder.endRemoval(ofVideoModel: path) }
             return .json(200, report.merging(["ok": failed.isEmpty, "failed": failed]) { $1 })
         case ("POST", "/api/models/add_ref2va"):
             return await handleAddRef2VA(request)
