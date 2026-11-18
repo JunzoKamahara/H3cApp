@@ -207,7 +207,11 @@ extension GenerationViewModel {
                     onVideoModel: path, imageModels: library.imageModels.map { (name: $0.name, path: $0.path) },
                     videoModelPaths: library.models.map(\.path)) : []).map { dependent -> [String: Any] in
                     ["name": dependent.name, "path": dependent.directory,
-                     "next": dependent.next.map { $0 as Any } ?? NSNull()]
+                     "next": dependent.next.map { $0 as Any } ?? NSNull(),
+                     // "next" holds the same encoder (the pictures stay);
+                     // or the others hold a different one, and it makes
+                     // nothing until one is chosen.
+                     "same_encoder": dependent.sameEncoder, "needs_choice": dependent.needsChoice]
                 }]
             if json["dry_run"] as? Bool == true { return .json(200, report) }
             guard id != library.activeModelID else { return .error(409, "that model is in use") }
@@ -895,19 +899,18 @@ extension GenerationViewModel {
                 return .error(400, "\"video_model\" must be the folder of a registered video model that has a text encoder")
             }
             if chosen.hasTextEncoder {
-                guard let offer = SharedTextEncoder.possibleSwitch(
-                    forImageModel: chosen.directory, videoModelPaths: videoModelPaths),
-                      named == nil || named == offer.videoModel else {
-                    return .error(409, "no registered video model holds the same text encoder as the copy in \(chosen.directory), or the copy takes no space of its own (a clone)")
+                // Started here, done in the background: the copy and the
+                // video model's files are read through and compared
+                // ("comparing the text encoder") before the copy goes.
+                if let reason = setup.shareTextEncoder(videoModelPaths: videoModelPaths, named: named) {
+                    return .error(409, reason)
                 }
+            } else if let named {
                 do {
-                    try SharedTextEncoder.switchToShared(imageModel: chosen.directory, videoModel: offer.videoModel)
-                    chosen.noteTextEncoderShared(from: SharedTextEncoder.folder(inVideoModel: offer.videoModel))
+                    try SharedTextEncoder.choose(videoModel: named, forImageModel: chosen.directory)
                 } catch {
                     return .error(500, error.localizedDescription)
                 }
-            } else if let named {
-                SharedTextEncoder.record(videoModel: named, forImageModel: chosen.directory)
             } else {
                 return .error(409, "\(chosen.displayName) has no copy of the text encoder to give up; \"video_model\" chooses which video model's it reads")
             }
@@ -920,6 +923,13 @@ extension GenerationViewModel {
             }
         }
         func source(_ model: H3ImageModel) -> String? { model.textEncoderSource(in: videoModelPaths) }
+        func readingText(_ model: H3ImageModel) -> String {
+            switch model.textEncoderReading(in: videoModelPaths) {
+            case .shared: return "shared"
+            case .needsChoice: return "needs_choice"
+            case .own, .missing: return "missing"
+            }
+        }
         func describe(_ model: H3ImageModel) -> [String: Any] {
             let setup = H3ImageModelSetup.of(model)
             return [
@@ -933,13 +943,13 @@ extension GenerationViewModel {
                 // Where the text encoder is: "own" (in the model's folder),
                 // "shared" (a video model's, read in place: its folder is
                 // "text_encoder_directory") or "missing".
-                "text_encoder": model.hasTextEncoder ? "own" : source(model) != nil ? "shared" : "missing",
+                "text_encoder": model.hasTextEncoder ? "own" : readingText(model),
                 "text_encoder_directory": model.hasTextEncoder
                     ? model.path(H3ImageModel.textEncoderFolder)
                     : source(model).map(SharedTextEncoder.folder(inVideoModel:)) ?? NSNull(),
                 // The video model chosen for it (its folder), which is
                 // read whenever its files are there; null when none was.
-                "text_encoder_video_model": SharedTextEncoder.recordedSource(forImageModel: model.directory) ?? NSNull(),
+                "text_encoder_video_model": SharedTextEncoder.record(forImageModel: model.directory)?.videoModel ?? NSNull(),
                 "repo": model.weightsRepo,
                 "revision": model.weightsRevision,
                 "license": model.licenseName,

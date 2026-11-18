@@ -28,7 +28,6 @@ app = os.path.join(work, "H3cAppDevCheck")
 disk_image = os.path.join(work, "other.dmg")
 volume = "/Volumes/H3ShareCheck"
 base = "http://127.0.0.1:8420"
-record_key = "h3c-app.imageModelTextEncoderSources"
 failures = []
 process = None
 
@@ -124,12 +123,12 @@ def finish(*_):
 atexit.register(finish)
 
 
-def video_model(folder, megabytes):
+def video_model(folder, megabytes, data=None):
     """A stand-in: FL2VA/text_encoder with one file of that many megabytes."""
     encoder = os.path.join(folder, "FL2VA", "text_encoder")
     os.makedirs(encoder)
     with open(os.path.join(encoder, "model.gguf"), "wb") as f:
-        f.write(os.urandom(megabytes << 20))
+        f.write(data if data is not None else os.urandom(megabytes << 20))
     return os.path.join(encoder)
 
 
@@ -144,6 +143,14 @@ def run_setup():
     return setup_state()
 
 
+def share(body=None):
+    """POST share-text-encoder, and the phase it ends in (the comparison runs in the background)."""
+    status, answer = api("/api/image-models/share-text-encoder", body, post=True)
+    if status == 200:
+        wait(lambda: not setup_state()["phase"].startswith("comparing"), 60)
+    return status, answer, setup_state()["phase"]
+
+
 def real(path):
     # The app spells its home as NSHomeDirectory does (/tmp for /private/tmp).
     return path and os.path.realpath(path)
@@ -154,6 +161,33 @@ def dependents(model_id):
     return [dict(item, path=real(item["path"]), next=real(item["next"]))
             for item in answer.get("text_encoder_dependents", [])]
 
+
+def dependent(next=None, same=False, choice=False):
+    return [{"name": "MiniMax H3 Image", "path": image, "next": next, "same_encoder": same, "needs_choice": choice}]
+
+
+def record():
+    path = os.path.join(image, "H3IMAGE_TEXT_ENCODER.json")
+    return json.load(open(path)) if os.path.exists(path) else None
+
+
+def write_own(data):
+    os.makedirs(own, exist_ok=True)
+    with open(os.path.join(own, "model.gguf"), "wb") as f:
+        f.write(data)
+
+
+def leave(data, listed_bytes):
+    """As a switch cut short leaves the folder: text_encoder.removing, named in the record."""
+    os.makedirs(leftover)
+    with open(os.path.join(leftover, "model.gguf"), "wb") as f:
+        f.write(data)
+    json.dump(dict(record(), removing={"model.gguf": listed_bytes}),
+              open(os.path.join(image, "H3IMAGE_TEXT_ENCODER.json"), "w"))
+
+
+own = os.path.join(image, "text_encoder")
+leftover = own + ".removing"
 
 forget_preferences()
 if os.path.exists(home):
@@ -194,69 +228,102 @@ start()
 # 1. The video model on the image model's volume: cloned, as before.
 near = os.path.join(work, "VideoNear")
 near_encoder = video_model(near, 5)
+near_data = open(os.path.join(near_encoder, "model.gguf"), "rb").read()
 status, answer = api("/api/models/add", {"path": near, "name": "Near"})
 near_id = answer.get("id")
 check(status == 200 and near_id, "a video model on the image model's volume is registered")
 state = run_setup()
-own = os.path.join(image, "text_encoder")
 check(state["phase"] == "done", "the setup finishes (%s)" % state["phase"])
 check(state["installed"] and state["text_encoder"] == "own" and real(state["text_encoder_directory"]) == own,
       "same volume: the text encoder is in the image model's folder")
 check(os.path.getsize(os.path.join(own, "model.gguf")) == 5 << 20, "it is the video model's file")
-check(state["text_encoder_video_model"] is None, "no video model is recorded for a model with its own")
+check(state["text_encoder_video_model"] is None and record() is None, "no video model is recorded for a model with its own")
 check(any(real(m["path"]) == image for m in api("/api/image-models")[1]["models"]), "the image model is listed")
 
 # 2. A clone takes no space: nothing to give up.
-status, answer = api("/api/image-models/share-text-encoder", post=True)
+status, answer, phase = share()
 check(status == 409, "a clone is not given up (%s)" % status)
 check(os.path.exists(os.path.join(own, "model.gguf")), "and stays")
 
-# 3. A real copy (as an install on another disk made before): given up.
-data = open(os.path.join(near_encoder, "model.gguf"), "rb").read()
+# 3. Real copies (as an install on another disk made before).
 os.remove(os.path.join(own, "model.gguf"))
-with open(os.path.join(own, "model.gguf"), "wb") as f:
-    f.write(data)
-status, answer = api("/api/image-models/share-text-encoder", post=True)
+write_own(near_data[:4 << 20])
+status, answer, phase = share()
+check(status == 409, "a copy of another size is not given up (%s)" % status)
+os.remove(os.path.join(own, "model.gguf"))
+write_own(near_data[:-1] + bytes([near_data[-1] ^ 1]))
+status, answer, phase = share()
+check(status == 200 and phase.startswith("failed") and "SHA-256" in phase,
+      "a copy of the same size whose contents differ is found out (%s %s)" % (status, phase))
+check(os.path.getsize(os.path.join(own, "model.gguf")) == 5 << 20 and not os.path.exists(leftover)
+      and setup_state()["text_encoder"] == "own" and record() is None, "and stays, with nothing recorded")
+os.remove(os.path.join(own, "model.gguf"))
+write_own(near_data)
+status, answer, phase = share()
 state = setup_state()
-check(status == 200, "a copy that takes space is given up (%s %s)" % (status, answer.get("error", "")))
-check(not os.path.exists(own) and not os.path.exists(own + ".removing"), "the copy is gone")
-check(os.path.exists(os.path.join(near_encoder, "model.gguf")), "the video model's file is still there")
+check(status == 200 and phase == "idle", "the same contents: the copy is given up (%s %s)" % (status, phase))
+check(not os.path.exists(own) and not os.path.exists(leftover), "the copy is gone")
+check(open(os.path.join(near_encoder, "model.gguf"), "rb").read() == near_data, "the video model's file is untouched")
 check(state["text_encoder"] == "shared" and state["text_encoder_directory"] == near_encoder
       and state["text_encoder_video_model"] == near and state["installed"],
       "the video model's is read in place, and recorded")
+check(record()["files"]["model.gguf"].get("sha256") == hashlib.sha256(near_data).hexdigest()
+      and "removing" not in record(), "the record in the model's folder holds the file's SHA-256")
 note = json.load(open(os.path.join(image, "H3IMAGE_PROVENANCE.json")))["note"]
-check("There is no text_encoder/ here" in note and near_encoder in note, "the record says so")
-check(dependents(near_id) == [{"name": "MiniMax H3 Image", "path": image, "next": None}],
-      "deleting the only video model would stop the image model: %s" % dependents(near_id))
+check("There is no text_encoder/ here" in note and near_encoder in note, "the record of the weights says so")
+check(dependents(near_id) == dependent(), "deleting the only video model would stop the image model: %s" % dependents(near_id))
 
-# 4. A second video model, on another volume.
+# 4. A second video model, with a different encoder, on another volume.
 attach()
 far = os.path.join(volume, "VideoFar")
 far_encoder = video_model(far, 6)
+far_data = open(os.path.join(far_encoder, "model.gguf"), "rb").read()
 status, answer = api("/api/models/add", {"path": far, "name": "Far"})
 far_id = answer.get("id")
-check(dependents(near_id) == [{"name": "MiniMax H3 Image", "path": image, "next": far}],
-      "with another video model, deleting the first moves the image model to it")
+check(dependents(near_id) == dependent(choice=True),
+      "another video model with a different encoder is not moved to silently: %s" % dependents(near_id))
 check(dependents(far_id) == [], "the other video model has no image model reading it")
-status, answer = api("/api/image-models/share-text-encoder", {"video_model": "/no/such/model"})
+status, answer, phase = share({"video_model": "/no/such/model"})
 check(status == 400, "an unregistered video model is refused (%s)" % status)
-status, answer = api("/api/image-models/share-text-encoder", {"video_model": far})
+status, answer, phase = share({"video_model": far})
 state = setup_state()
 check(status == 200 and state["text_encoder_directory"] == far_encoder and state["text_encoder_video_model"] == far,
       "another video model's can be chosen")
-check(dependents(far_id) == [{"name": "MiniMax H3 Image", "path": image, "next": near}],
-      "and is then the one the image model depends on")
 
-# 5. The chosen video model's disk goes and comes back.
+# 5. A video model holding the same encoder stands in while the chosen one's disk is away.
+twin = os.path.join(work, "VideoTwin")
+twin_encoder = video_model(twin, 6, far_data)
+status, answer = api("/api/models/add", {"path": twin, "name": "Twin"})
+twin_id = answer.get("id")
+check(dependents(far_id) == dependent(next=twin, same=True),
+      "deleting the chosen one moves the image model to the one with the same encoder: %s" % dependents(far_id))
 detach()
 state = setup_state()
-check(state["text_encoder"] == "shared" and state["text_encoder_directory"] == near_encoder,
-      "its disk away: the other video model's is read")
+check(state["text_encoder"] == "shared" and state["text_encoder_directory"] == twin_encoder,
+      "its disk away: the video model with the same encoder is read")
 check(state["text_encoder_video_model"] == far, "the choice is kept")
 attach()
 check(setup_state()["text_encoder_directory"] == far_encoder, "its disk back: the chosen one is read again")
 
-# 6. No video model with a text encoder.
+# 6. Only a different encoder left: not taken until it is chosen.
+status, answer = api("/api/models/remove", {"id": twin_id})
+check(status == 200, "the twin is taken off the list (%s %s)" % (status, answer.get("error", "")))
+detach()
+state = setup_state()
+check(state["text_encoder"] == "needs_choice" and state["text_encoder_directory"] is None and not state["installed"],
+      "its disk away, only a different encoder registered: none is read (%s)" % state["text_encoder"])
+status, answer = api("/api/generate", {"kind": "image", "prompt": "a red apple"})
+check(status == 409 and "自動では切り替えません" in answer.get("error", ""),
+      "generating says why (%s %s)" % (status, answer.get("error", "")))
+status, answer, phase = share({"video_model": near})
+state = setup_state()
+check(status == 200 and state["text_encoder"] == "shared" and state["text_encoder_directory"] == near_encoder,
+      "once chosen, the different one is read")
+attach()
+status, answer, phase = share({"video_model": far})
+check(setup_state()["text_encoder_directory"] == far_encoder, "and the first can be chosen back")
+
+# 7. No video model with a text encoder.
 api("/api/models/select", {"id": far_id})
 status, answer = api("/api/models/remove", {"id": near_id})
 check(status == 200, "the first video model is taken off the list (%s %s)" % (status, answer.get("error", "")))
@@ -265,12 +332,12 @@ state = setup_state()
 check(state["text_encoder"] == "missing" and state["text_encoder_directory"] is None and not state["installed"],
       "no text encoder to read: the model is not usable")
 status, answer = api("/api/generate", {"kind": "image", "prompt": "a red apple"})
-check(status == 409 and "テキストエンコーダ" in answer.get("error", ""),
+check(status == 409 and "テキストエンコーダが見つかりません" in answer.get("error", ""),
       "generating says why (%s %s)" % (status, answer.get("error", "")))
 attach()
 check(setup_state()["text_encoder"] == "shared" and setup_state()["installed"], "the disk back: usable again")
 
-# 7. A folder with no text_encoder/ of its own is an image model while a
+# 8. A folder with no text_encoder/ of its own is an image model while a
 # video model has one.
 bare = os.path.join(work, "Bare")
 os.makedirs(os.path.join(bare, "tokenizer"))
@@ -280,10 +347,37 @@ os.symlink(os.path.join(image, "tokenizer", "tokenizer.json"), os.path.join(bare
 status, answer = api("/api/image-models/add", {"path": bare})
 check(status == 200, "a folder without text_encoder/ is accepted (%s %s)" % (status, answer.get("error", "")))
 
-# 8. A new install whose video model is on another volume: no copy, the
+# 9. A switch cut short, the video model's encoder still to be read: the
+# rest of the copy goes when the app starts.
+stop()
+leave(os.urandom(1 << 20), 6 << 20)
+start()
+check(wait(lambda: not os.path.exists(leftover), 15), "what a switch cut short left is deleted at launch")
+check("removing" not in record() and setup_state()["text_encoder"] == "shared", "and the video model's is read")
+
+# 10. Cut short, and the video model gone since: a copy that is whole is put back.
+stop()
+leave(far_data, 6 << 20)
+detach()
+start()
+check(wait(lambda: os.path.exists(os.path.join(own, "model.gguf")), 15), "with nothing else to read, a whole copy is put back")
+check(open(os.path.join(own, "model.gguf"), "rb").read() == far_data and not os.path.exists(leftover)
+      and "removing" not in record() and setup_state()["text_encoder"] == "own", "as the model's text encoder")
+
+# 11. Cut short, the video model gone, the copy not whole: left alone.
+stop()
+shutil.rmtree(own)
+leave(far_data[:1 << 20], 6 << 20)
+start()
+time.sleep(3)
+check(os.path.getsize(os.path.join(leftover, "model.gguf")) == 1 << 20 and not os.path.exists(own)
+      and setup_state()["text_encoder"] == "missing", "a copy that is not whole is neither put back nor deleted")
+attach()
+
+# 12. A new install whose video model is on another volume: no copy, the
 # video model recorded. (The record of the choice is taken away first.)
 stop()
-subprocess.run(["defaults", "delete", "H3cAppDevCheck", record_key], check=True, capture_output=True)
+os.remove(os.path.join(image, "H3IMAGE_TEXT_ENCODER.json"))
 start()
 state = setup_state()
 check(state["text_encoder_video_model"] is None and state["text_encoder"] == "shared",
@@ -291,8 +385,10 @@ check(state["text_encoder_video_model"] is None and state["text_encoder"] == "sh
 state = run_setup()
 check(state["phase"] == "done" and state["installed"], "the setup finishes (%s)" % state["phase"])
 check(not os.path.exists(own), "another volume: no copy is made")
+check(not os.path.exists(leftover), "the copy left behind goes, now that the video model's can be read")
 check(state["text_encoder"] == "shared" and state["text_encoder_directory"] == far_encoder
-      and state["text_encoder_video_model"] == far, "the video model's is read in place, and recorded")
+      and state["text_encoder_video_model"] == far and record()["videoModel"] == far,
+      "the video model's is read in place, and recorded in the model's folder")
 
 print("%d failed" % len(failures) if failures else "all passed")
 sys.exit(1 if failures else 0)

@@ -24,6 +24,9 @@ struct H3cApp: App {
         _ = h3AppSupportDirectory
         // Untitled projects a quit or crash left empty (Projects.swift).
         ProjectStore.shared.sweepEmptyUntitledProjects()
+        // A copy of a text encoder that was being given up when the app
+        // last stopped (SharedTextEncoder): finished, or put back.
+        Task.detached(priority: .utility) { SharedTextEncoder.finishInterruptedSwitches() }
         _ = AppModels.shared
     }
 

@@ -254,9 +254,17 @@ struct ModelRemoveView: View {
             Toggle("モデルファイルも削除する", isOn: $deleteFiles)
             if deleteFiles {
                 ForEach(dependents) { dependent in
-                    if let next = dependent.next {
-                        Text("画像モデル「\(dependent.name)」は、このモデルのテキストエンコーダを読んでいます。削除すると「\(others.first { $0.path == next }?.name ?? (next as NSString).lastPathComponent)」のものを読むようになります（テキストエンコーダが違うと、同じシードでも画像が少し変わります）。")
+                    if let next = dependent.next, dependent.sameEncoder {
+                        Text("画像モデル「\(dependent.name)」は、このモデルのテキストエンコーダを読んでいます。削除すると、同じ内容の「\(others.first { $0.path == next }?.name ?? (next as NSString).lastPathComponent)」のものを読むようになります（つくる画像は変わりません）。")
                             .font(.caption).foregroundStyle(palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if let next = dependent.next {
+                        Text("画像モデル「\(dependent.name)」は、このモデルのテキストエンコーダを読んでいます。削除すると「\(others.first { $0.path == next }?.name ?? (next as NSString).lastPathComponent)」のものを読むようになります。中身が違うので、同じシードでも画像が変わります。")
+                            .font(.caption).foregroundStyle(palette.errorColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if dependent.needsChoice {
+                        Text("画像モデル「\(dependent.name)」は、このモデルのテキストエンコーダを読んでいます。ほかの動画モデルのものは中身が違うので、削除すると、使うものを選び直すまで、その画像モデルでは生成できなくなります（選び直すと、同じシードでも画像が変わります）。")
+                            .font(.caption).foregroundStyle(palette.errorColor)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         Text("画像モデル「\(dependent.name)」は、このモデルのテキストエンコーダを読んでいます。削除すると、ほかの動画モデルを導入するまで、その画像モデルでは生成できなくなります。")
