@@ -259,11 +259,11 @@ struct ModelRemoveView: View {
                             .font(.caption).foregroundStyle(palette.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     } else if let next = dependent.next {
-                        Text("画像モデル「\(dependent.name)」は、このモデルのテキストエンコーダを読んでいます。削除すると「\(others.first { $0.path == next }?.name ?? (next as NSString).lastPathComponent)」のものを読むようになります。中身が違うので、同じシードでも画像が変わります。")
+                        Text("画像モデル「\(dependent.name)」は、このモデルのテキストエンコーダを読んでいます。削除すると「\(others.first { $0.path == next }?.name ?? (next as NSString).lastPathComponent)」のものを読むようになります。中身が違えば、同じシードでも画像が変わります。")
                             .font(.caption).foregroundStyle(palette.errorColor)
                             .fixedSize(horizontal: false, vertical: true)
                     } else if dependent.needsChoice {
-                        Text("画像モデル「\(dependent.name)」は、このモデルのテキストエンコーダを読んでいます。ほかの動画モデルのものは中身が違うので、削除すると、使うものを選び直すまで、その画像モデルでは生成できなくなります（選び直すと、同じシードでも画像が変わります）。")
+                        Text("画像モデル「\(dependent.name)」は、このモデルのテキストエンコーダを読んでいます。ほかの動画モデルのものは、同じ内容と確かめられていないので、削除すると、使うものを選び直すまで、その画像モデルでは生成できなくなります（中身が違うものを選ぶと、同じシードでも画像が変わります）。")
                             .font(.caption).foregroundStyle(palette.errorColor)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {

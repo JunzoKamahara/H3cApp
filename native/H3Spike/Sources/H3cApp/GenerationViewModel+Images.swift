@@ -151,11 +151,20 @@ extension GenerationViewModel {
         if !FileManager.default.fileExists(atPath: model.path) {
             return String(localized: "画像モデル「\(model.name)」のフォルダが見つかりません")
         }
+        if let installed = H3ImageModel.installed(at: model.path) {
+            // The copy is deleted, or the choice recorded, when these end.
+            switch H3ImageModelSetup.of(installed).phase {
+            case .comparing, .reading:
+                return String(localized: "画像モデル「\(model.name)」のテキストエンコーダを照合しています。終わってから生成してください")
+            default:
+                break
+            }
+        }
         switch SharedTextEncoder.reading(forImageModel: model.path, videoModelPaths: videoModelPaths) {
         case .missing:
             return String(localized: "画像モデル「\(model.name)」が読む、動画モデルのテキストエンコーダが見つかりません。動画モデルを置いたディスクがつながっているか確かめるか、動画モデルを導入してください")
         case .needsChoice:
-            return String(localized: "画像モデル「\(model.name)」が読んでいた動画モデルのテキストエンコーダが見つかりません。ほかの動画モデルのものは中身が違い、同じシードでも画像が変わるので、自動では切り替えません。モデル管理の画像モデルの「管理…」で、使うものを選んでください")
+            return String(localized: "画像モデル「\(model.name)」が読んでいた動画モデルのテキストエンコーダが見つかりません。ほかの動画モデルのものは、同じ内容と確かめられていないので、自動では切り替えません。モデル管理の画像モデルの「管理…」で、使うものを選んでください")
         case .own, .shared:
             break
         }

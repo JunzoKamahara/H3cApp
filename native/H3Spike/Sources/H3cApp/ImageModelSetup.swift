@@ -524,6 +524,9 @@ final class H3ImageModelSetup: ObservableObject {
         /// 動画モデルと共用にする: the copy and the video model's text
         /// encoder are read through and compared before the copy goes.
         case comparing(done: Int64, total: Int64)
+        /// A video model's text encoder is read through for its SHA-256,
+        /// before it is recorded as the one the model reads.
+        case reading(done: Int64, total: Int64)
         case verifying(done: Int64, total: Int64)
         case failed(String)
         case done
@@ -535,6 +538,7 @@ final class H3ImageModelSetup: ObservableObject {
             case .downloading: return "downloading"
             case .sharing: return "copying the text encoder"
             case .comparing: return "comparing the text encoder"
+            case .reading: return "reading the text encoder"
             case .verifying: return "verifying"
             case .failed(let message): return "failed: \(message)"
             case .done: return "done"
@@ -543,12 +547,22 @@ final class H3ImageModelSetup: ObservableObject {
     }
 
     @Published private(set) var phase: Phase = .idle
+
+    /// A video model picked for its text encoder, read through and found
+    /// to differ from the one chosen before: recorded only on the user's
+    /// word (confirmChoice), since the pictures change with it.
+    struct PendingChoice: Equatable {
+        let videoModel: String
+        let files: [String: SharedTextEncoder.FileMark]
+    }
+
+    @Published private(set) var pendingChoice: PendingChoice?
     let downloader = ModelDownloader()
     private var task: Task<Void, Never>?
 
     var isBusy: Bool {
         switch phase {
-        case .listing, .downloading, .sharing, .comparing, .verifying: return true
+        case .listing, .downloading, .sharing, .comparing, .reading, .verifying: return true
         default: return false
         }
     }
@@ -571,10 +585,22 @@ final class H3ImageModelSetup: ObservableObject {
     /// 動画モデルと共用にする…: gives up the model's own copy of the text
     /// encoder for the video model's (`named`, or the one holding the same
     /// files), once the two have been read through and found the same.
-    /// Returns why it cannot start, or nil once it has.
+    /// Not while an image is generated in any window: the copy is what
+    /// that generation reads. Returns why it cannot start, or nil once it
+    /// has.
     @discardableResult
     func shareTextEncoder(videoModelPaths: [String], named: String? = nil) -> String? {
         guard !isBusy else { return String(localized: "準備の途中は、共用に切り替えられません。") }
+        guard !AppModels.shared.isGeneratingImageAnywhere else {
+            return SharedTextEncoder.SwitchError.generating.localizedDescription
+        }
+        // What an earlier switch left is settled first; a folder its
+        // record does not account for stays, and stops this one.
+        SharedTextEncoder.finishInterruptedSwitch(imageModel: model.directory, videoModelPaths: videoModelPaths)
+        let leaving = SharedTextEncoder.ownFolder(ofImageModel: model.directory) + ".removing"
+        guard !FileManager.default.fileExists(atPath: leaving) else {
+            return SharedTextEncoder.SwitchError.leftover(leaving).localizedDescription
+        }
         guard let offer = SharedTextEncoder.possibleSwitch(forImageModel: model.directory, videoModelPaths: videoModelPaths),
               named == nil || named == offer.videoModel else {
             return SharedTextEncoder.SwitchError.nothingToGiveUp.localizedDescription
@@ -593,6 +619,9 @@ final class H3ImageModelSetup: ObservableObject {
                 }
             }
             try Task.checkCancellation()
+            // A generation begun since reads the copy: it stays. (None
+            // begins from here on: the form refuses while this runs.)
+            guard !AppModels.shared.isGeneratingImageAnywhere else { throw SharedTextEncoder.SwitchError.generating }
             try await Task.detached(priority: .userInitiated) {
                 try SharedTextEncoder.switchToShared(imageModel: model.directory, videoModel: videoModel, files: files)
                 model.noteTextEncoderShared(from: SharedTextEncoder.folder(inVideoModel: videoModel))
@@ -610,6 +639,73 @@ final class H3ImageModelSetup: ObservableObject {
         imageModel: String, videoModel: String, progress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws -> [String: SharedTextEncoder.FileMark] {
         try SharedTextEncoder.compareContents(imageModel: imageModel, videoModel: videoModel, progress: progress)
+    }
+
+    /// The same for one folder: every file's SHA-256 (read through unless
+    /// known already).
+    private nonisolated static func readThrough(
+        _ folder: String, progress: @escaping @Sendable (Int64, Int64) -> Void
+    ) async throws -> [String: SharedTextEncoder.FileMark] {
+        let total = SharedTextEncoder.bytes(of: folder)
+        return try SharedTextEncoder.fullFingerprint(of: folder) { progress($0, total) }
+    }
+
+    /// The text encoder of `videoModel`, read through, with the phase
+    /// showing how far it is.
+    private func textEncoderFiles(ofVideoModel videoModel: String) async throws -> [String: SharedTextEncoder.FileMark] {
+        phase = .reading(done: 0, total: 0)
+        return try await Self.readThrough(SharedTextEncoder.folder(inVideoModel: videoModel)) { done, total in
+            Task { @MainActor in
+                if case .reading = self.phase { self.phase = .reading(done: done, total: total) }
+            }
+        }
+    }
+
+    /// ほかの動画モデルのものにする: makes `videoModel` the one whose text
+    /// encoder the model reads. Its files are read through first; when
+    /// they are not the ones chosen before, it is recorded only if
+    /// `confirmed` (the API's explicit request), and otherwise waits in
+    /// pendingChoice for the user's word. Returns why it cannot start.
+    @discardableResult
+    func chooseTextEncoder(videoModel: String, confirmed: Bool = false) -> String? {
+        guard !isBusy else { return String(localized: "準備の途中は、テキストエンコーダを変えられません。") }
+        guard !AppModels.shared.isGeneratingImageAnywhere else {
+            return String(localized: "画像を生成している間は、テキストエンコーダを変えられません。")
+        }
+        pendingChoice = nil
+        phase = .reading(done: 0, total: 0)
+        task = Task {
+            let model = self.model
+            do {
+                let files = try await textEncoderFiles(ofVideoModel: videoModel)
+                try Task.checkCancellation()
+                let record = SharedTextEncoder.record(forImageModel: model.directory)
+                if confirmed || record == nil || SharedTextEncoder.isSame(files, record?.files) {
+                    try SharedTextEncoder.choose(videoModel: videoModel, files: files, forImageModel: model.directory)
+                } else {
+                    pendingChoice = PendingChoice(videoModel: videoModel, files: files)
+                }
+                phase = .idle
+            } catch is CancellationError {
+                phase = .idle
+            } catch {
+                phase = .failed(error.localizedDescription)
+            }
+        }
+        return nil
+    }
+
+    /// The user's answer to pendingChoice.
+    func confirmChoice(_ accepted: Bool) {
+        guard let choice = pendingChoice else { return }
+        pendingChoice = nil
+        guard accepted else { return }
+        do {
+            try SharedTextEncoder.choose(videoModel: choice.videoModel, files: choice.files, forImageModel: model.directory)
+            phase = .idle
+        } catch {
+            phase = .failed(error.localizedDescription)
+        }
     }
 
     private func run(videoModelPaths: [String]) async {
@@ -663,8 +759,13 @@ final class H3ImageModelSetup: ObservableObject {
                 } else {
                     // One chosen before stays the choice, also while its
                     // disk is away and another holding the same is read.
+                    // A new choice is recorded with its files' SHA-256,
+                    // by which another video model can later be known to
+                    // hold the same encoder.
                     if !recorded {
-                        try SharedTextEncoder.choose(videoModel: source, forImageModel: model.directory)
+                        let files = try await textEncoderFiles(ofVideoModel: source)
+                        try Task.checkCancellation()
+                        try SharedTextEncoder.choose(videoModel: source, files: files, forImageModel: model.directory)
                     }
                     textEncoderNote = H3ImageModel.textEncoderNote(sharedFrom: folder)
                 }
@@ -794,13 +895,9 @@ struct H3ImageModelSetupView: View {
     @State private var textEncoderSwitch: SharedTextEncoder.Switch?
     @State private var confirmingSwitch = false
     @State private var switchError: String?
-    /// A video model picked for its text encoder, which is not the one
-    /// read now: asked about before it is taken.
-    @State private var pendingChoice: String?
     /// Counts the background looks at the folder, so the rows that read
     /// it are drawn again after each.
     @State private var looked = 0
-    @State private var confirmingChoice = false
 
     init(library: ModelLibrary, model: H3ImageModel = .h3, busy: Bool = false, close: @escaping () -> Void) {
         self.library = library
@@ -887,11 +984,13 @@ struct H3ImageModelSetupView: View {
         } message: { offer in
             Text("この画像モデルのフォルダにあるテキストエンコーダの複製（約\(gigabytes(offer.freedBytes))）と、動画モデル「\(videoModelName(offer.videoModel))」のものを全部読んで、内容（SHA-256）が同じことを確かめます。同じなら複製を削除し、以後は動画モデルのものを読みます。違えば何も変えません。照合には数分かかります。")
         }
-        .alert("テキストエンコーダを変える", isPresented: $confirmingChoice, presenting: pendingChoice) { path in
-            Button("変える", role: .destructive) { choose(path) }
-            Button("キャンセル", role: .cancel) {}
-        } message: { path in
-            Text("動画モデル「\(videoModelName(path))」のテキストエンコーダは、これまで読んでいたものと中身が違います。同じプロンプトとシードでも、これまでと違う画像になります。")
+        .alert("テキストエンコーダを変える", isPresented: Binding(
+            get: { setup.pendingChoice != nil }, set: { if !$0 { setup.confirmChoice(false) } }
+        ), presenting: setup.pendingChoice) { _ in
+            Button("変える", role: .destructive) { setup.confirmChoice(true) }
+            Button("キャンセル", role: .cancel) { setup.confirmChoice(false) }
+        } message: { choice in
+            Text("動画モデル「\(videoModelName(choice.videoModel))」のテキストエンコーダは、これまで読んでいたものと中身が違います（SHA-256が違います）。同じプロンプトとシードでも、これまでと違う画像になります。")
         }
         .task(id: version) {
             guard model.sharesTextEncoder else { return }
@@ -911,29 +1010,10 @@ struct H3ImageModelSetupView: View {
         library.models.first { $0.path == path }?.name ?? (path as NSString).lastPathComponent
     }
 
-    /// The menu's pick: taken at once when it holds the encoder read (or
-    /// chosen) so far, asked about when it holds another.
+    /// The menu's pick: its files are read through; it is taken at once
+    /// when they are the ones chosen before, and asked about when not.
     private func pick(_ path: String) {
-        let folder = SharedTextEncoder.folder(inVideoModel: path)
-        let present = model.textEncoderSource(in: videoModelPaths).flatMap {
-            SharedTextEncoder.fingerprint(of: SharedTextEncoder.folder(inVideoModel: $0))
-        } ?? SharedTextEncoder.record(forImageModel: model.directory)?.files
-        if present == nil || SharedTextEncoder.same(SharedTextEncoder.fingerprint(of: folder), present) {
-            choose(path)
-        } else {
-            pendingChoice = path
-            confirmingChoice = true
-        }
-    }
-
-    private func choose(_ path: String) {
-        do {
-            try SharedTextEncoder.choose(videoModel: path, forImageModel: model.directory)
-            switchError = nil
-        } catch {
-            switchError = error.localizedDescription
-        }
-        version += 1
+        switchError = setup.chooseTextEncoder(videoModel: path)
     }
 
     private var licenseNotice: some View {
@@ -1119,7 +1199,7 @@ struct H3ImageModelSetupView: View {
             }
             return String(localized: "動画モデル「\(videoModelName(source))」のものを読みます（複製しません）")
         case .needsChoice:
-            return String(localized: "選んであった動画モデル「\(videoModelName(record?.videoModel ?? ""))」のテキストエンコーダが見つかりません。ほかの動画モデルのものは中身が違い、同じシードでも画像が変わるので、自動では切り替えません。使うものを選んでください")
+            return String(localized: "選んであった動画モデル「\(videoModelName(record?.videoModel ?? ""))」のテキストエンコーダが見つかりません。ほかの動画モデルのものは、同じ内容と確かめられていないので、自動では切り替えません（中身が違うと、同じシードでも画像が変わります）。使うものを選んでください")
         case .missing, .own:
             if let record {
                 return String(localized: "選んであった動画モデル「\(videoModelName(record.videoModel))」のテキストエンコーダが見つかりません。そのディスクをつなぐか、動画モデルを導入してください")
@@ -1165,16 +1245,22 @@ struct H3ImageModelSetupView: View {
                 .controlSize(.small)
                 .fixedSize()
                 .disabled(setup.isBusy || busy)
-                .help("テキストエンコーダが違うと（量子化の違いなど）、同じシードでも画像が変わります。中身が違うものを選ぶと、変える前に確かめます")
+                .help("選んだ動画モデルのテキストエンコーダを全部読み、これまでのものと内容（SHA-256）が同じなら、そのまま切り替えます。違えば、同じシードでも画像が変わるので、変える前に確かめます")
             }
-            if let leftover = { _ = version; _ = setup.phase; _ = looked; return SharedTextEncoder.leftoverBytes(inImageModel: model.directory) }(),
+            if let leftover = { _ = version; _ = setup.phase; _ = looked; return SharedTextEncoder.leftover(inImageModel: model.directory) }(),
                !setup.isBusy {
-                HStack(spacing: H3Spacing.sm) {
-                    Text("削除しきれなかった複製（約\(gigabytes(leftover))）がフォルダに残っています").font(.caption)
-                        .foregroundStyle(palette.textSecondary)
-                    Button("片付ける") { version += 1 }
-                        .controlSize(.small)
-                        .help("動画モデルのテキストエンコーダを読める状態なら残りを削除し、読めるものがほかになく複製が欠けていなければ、複製を元に戻します")
+                if leftover.recognized {
+                    HStack(spacing: H3Spacing.sm) {
+                        Text("削除しきれなかった複製（約\(gigabytes(leftover.bytes))）がフォルダに残っています").font(.caption)
+                            .foregroundStyle(palette.textSecondary)
+                        Button("片付ける") { version += 1 }
+                            .controlSize(.small)
+                            .help("同じ内容と確かめてある動画モデルのテキストエンコーダを読める状態なら残りを削除し、読めるものがほかになく複製が欠けていなければ、複製を元に戻します")
+                    }
+                } else {
+                    Text("フォルダ「text_encoder.removing」（約\(gigabytes(leftover.bytes))）が残っていますが、切り替えの記録と一致しないので、アプリは削除も復元もしません。「Finderで表示」で中身を確かめて、不要なら削除してください")
+                        .font(.caption).foregroundStyle(palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -1209,6 +1295,12 @@ struct H3ImageModelSetupView: View {
             VStack(alignment: .leading, spacing: 4) {
                 ProgressView(value: Double(done), total: Double(max(total, 1)))
                 Text("複製と動画モデルのテキストエンコーダの内容を照合しています（\(gigabytes(done)) / \(gigabytes(total))）…")
+                    .font(.caption).foregroundStyle(palette.textSecondary).monospacedDigit()
+            }
+        case .reading(let done, let total):
+            VStack(alignment: .leading, spacing: 4) {
+                ProgressView(value: Double(done), total: Double(max(total, 1)))
+                Text("動画モデルのテキストエンコーダを全部読んで、内容（SHA-256）を記録しています（\(gigabytes(done)) / \(gigabytes(total))）…")
                     .font(.caption).foregroundStyle(palette.textSecondary).monospacedDigit()
             }
         case .verifying(let done, let total):

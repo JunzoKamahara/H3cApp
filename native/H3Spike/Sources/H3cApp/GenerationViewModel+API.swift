@@ -891,7 +891,7 @@ extension GenerationViewModel {
             guard chosen.sharesTextEncoder else {
                 return .error(400, "\(chosen.displayName) has a text encoder of its own kind, not a video model's")
             }
-            guard !setup.isBusy, !isGeneratingImage else {
+            guard !setup.isBusy, !AppModels.shared.isGeneratingImageAnywhere else {
                 return .error(409, "the image model is being set up or is generating")
             }
             let named = body["video_model"] as? String
@@ -906,10 +906,12 @@ extension GenerationViewModel {
                     return .error(409, reason)
                 }
             } else if let named {
-                do {
-                    try SharedTextEncoder.choose(videoModel: named, forImageModel: chosen.directory)
-                } catch {
-                    return .error(500, error.localizedDescription)
+                // Also in the background: its files are read through for
+                // their SHA-256 ("reading the text encoder"), then it is
+                // recorded - a request names it, so also when it differs
+                // from the one chosen before.
+                if let reason = setup.chooseTextEncoder(videoModel: named, confirmed: true) {
+                    return .error(409, reason)
                 }
             } else {
                 return .error(409, "\(chosen.displayName) has no copy of the text encoder to give up; \"video_model\" chooses which video model's it reads")

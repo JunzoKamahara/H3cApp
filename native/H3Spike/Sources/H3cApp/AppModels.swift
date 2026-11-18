@@ -57,6 +57,13 @@ final class AppModels {
         refreshAPIStatus()
     }
 
+    /// An image is being generated in some window, or for the API, or
+    /// by a model whose window closed and whose generation has not
+    /// stopped yet.
+    var isGeneratingImageAnywhere: Bool {
+        !GenerationViewModel.imageGenerators.isEmpty
+    }
+
     func isShown(_ model: GenerationViewModel) -> Bool {
         shown[ObjectIdentifier(model)]?.model != nil
     }

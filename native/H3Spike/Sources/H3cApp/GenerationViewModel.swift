@@ -1661,7 +1661,12 @@ final class GenerationViewModel: ObservableObject {
         return cancelled
     }
 
+    /// The models generating an image now: also one whose window has
+    /// closed, until its generation has stopped (AppModels.isGeneratingImageAnywhere).
+    static var imageGenerators: Set<ObjectIdentifier> = []
+
     func imageGenerationBegan(index: Int, total: Int) {
+        Self.imageGenerators.insert(ObjectIdentifier(self))
         isGenerating = true
         isGeneratingImage = true
         isCancelling = false
@@ -1743,6 +1748,7 @@ final class GenerationViewModel: ObservableObject {
     }
 
     func imageGenerationEnded() {
+        Self.imageGenerators.remove(ObjectIdentifier(self))
         isGenerating = false
         isGeneratingImage = false
         isCancelling = false

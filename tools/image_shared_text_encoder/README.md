@@ -12,15 +12,21 @@ checks:
 - a setup beside the video model (a clone), and a clone not being given up;
 - a real copy being given up only after its contents are compared with the
   video model's (a copy of another size, and one of the same size whose last
-  byte differs, stay);
+  byte differs, stay), and not while a `text_encoder.removing` that no switch
+  recorded is in the folder;
 - what deleting a video model would do to the image model;
-- choosing another video model's encoder;
-- the chosen video model's disk going away: a video model holding the same
-  encoder stands in, one holding a different encoder is not read until it is
-  chosen, and with none the model is not usable;
+- choosing another video model's encoder (its files are read through for
+  their SHA-256);
+- the chosen video model's disk going away: a video model whose files are
+  known to have the same SHA-256 stands in; one with the same files that was
+  never read through, one of the same size and first MiB with another tail,
+  and one that plainly differs are not read until chosen; with none the model
+  is not usable;
 - a folder without `text_encoder/` being accepted;
-- a switch cut short: the rest of the copy deleted at launch, a whole copy put
-  back when nothing else can be read, a copy that is not whole left alone;
+- a switch cut short: what the record of the switch names is deleted at launch
+  when the video model's encoder can be read, and put back when it is whole
+  and nothing else can be read; a copy that is not whole, a file of another
+  size than recorded, and a folder no record names are left alone;
 - a setup with the video model on another volume (no copy).
 
 Nothing is generated and no weights are loaded.

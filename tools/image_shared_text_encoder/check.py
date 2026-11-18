@@ -147,7 +147,7 @@ def share(body=None):
     """POST share-text-encoder, and the phase it ends in (the comparison runs in the background)."""
     status, answer = api("/api/image-models/share-text-encoder", body, post=True)
     if status == 200:
-        wait(lambda: not setup_state()["phase"].startswith("comparing"), 60)
+        wait(lambda: not setup_state()["phase"].startswith(("comparing", "reading")), 60)
     return status, answer, setup_state()["phase"]
 
 
@@ -177,13 +177,18 @@ def write_own(data):
         f.write(data)
 
 
-def leave(data, listed_bytes):
-    """As a switch cut short leaves the folder: text_encoder.removing, named in the record."""
+def leave(data, listed_bytes=None):
+    """As a switch cut short leaves the folder: text_encoder.removing, which the
+    record names with `listed_bytes` (None: the record names nothing)."""
     os.makedirs(leftover)
     with open(os.path.join(leftover, "model.gguf"), "wb") as f:
         f.write(data)
-    json.dump(dict(record(), removing={"model.gguf": listed_bytes}),
-              open(os.path.join(image, "H3IMAGE_TEXT_ENCODER.json"), "w"))
+    if record() is None:
+        return
+    kept = {key: value for key, value in record().items() if key != "removing"}
+    if listed_bytes is not None:
+        kept["removing"] = {"model.gguf": listed_bytes}
+    json.dump(kept, open(os.path.join(image, "H3IMAGE_TEXT_ENCODER.json"), "w"))
 
 
 own = os.path.join(image, "text_encoder")
@@ -251,6 +256,15 @@ write_own(near_data[:4 << 20])
 status, answer, phase = share()
 check(status == 409, "a copy of another size is not given up (%s)" % status)
 os.remove(os.path.join(own, "model.gguf"))
+write_own(near_data)
+leave(os.urandom(1 << 20))
+status, answer, phase = share()
+check(status == 409 and "text_encoder.removing" in answer.get("error", ""),
+      "a text_encoder.removing no switch recorded stops a switch (%s %s)" % (status, answer.get("error", "")))
+check(os.path.getsize(os.path.join(leftover, "model.gguf")) == 1 << 20 and os.path.exists(os.path.join(own, "model.gguf")),
+      "and is not deleted")
+shutil.rmtree(leftover)
+os.remove(os.path.join(own, "model.gguf"))
 write_own(near_data[:-1] + bytes([near_data[-1] ^ 1]))
 status, answer, phase = share()
 check(status == 200 and phase.startswith("failed") and "SHA-256" in phase,
@@ -287,41 +301,65 @@ status, answer, phase = share({"video_model": "/no/such/model"})
 check(status == 400, "an unregistered video model is refused (%s)" % status)
 status, answer, phase = share({"video_model": far})
 state = setup_state()
-check(status == 200 and state["text_encoder_directory"] == far_encoder and state["text_encoder_video_model"] == far,
-      "another video model's can be chosen")
+check(status == 200 and phase == "idle" and state["text_encoder_directory"] == far_encoder
+      and state["text_encoder_video_model"] == far, "another video model's can be chosen (%s %s)" % (status, phase))
+check(record()["files"]["model.gguf"].get("sha256") == hashlib.sha256(far_data).hexdigest(),
+      "and is recorded with its file's SHA-256")
 
-# 5. A video model holding the same encoder stands in while the chosen one's disk is away.
+# 5. A video model holding the same encoder stands in while the chosen
+# one's disk is away - once its files are known to be the same, whole.
 twin = os.path.join(work, "VideoTwin")
 twin_encoder = video_model(twin, 6, far_data)
 status, answer = api("/api/models/add", {"path": twin, "name": "Twin"})
 twin_id = answer.get("id")
+check(dependents(far_id) == dependent(choice=True),
+      "a video model with the same files, not read through yet, is not known to be the same: %s" % dependents(far_id))
+detach()
+check(setup_state()["text_encoder"] == "needs_choice", "and is not taken on its own (%s)" % setup_state()["text_encoder"])
+status, answer, phase = share({"video_model": twin})
+check(status == 200 and setup_state()["text_encoder_directory"] == twin_encoder, "it can be chosen (its files are read through)")
+attach()
+status, answer, phase = share({"video_model": far})
+check(setup_state()["text_encoder_directory"] == far_encoder, "and the first chosen back")
 check(dependents(far_id) == dependent(next=twin, same=True),
-      "deleting the chosen one moves the image model to the one with the same encoder: %s" % dependents(far_id))
+      "now deleting the chosen one moves the image model to the one known to be the same: %s" % dependents(far_id))
 detach()
 state = setup_state()
 check(state["text_encoder"] == "shared" and state["text_encoder_directory"] == twin_encoder,
-      "its disk away: the video model with the same encoder is read")
+      "its disk away: the video model known to hold the same encoder is read")
 check(state["text_encoder_video_model"] == far, "the choice is kept")
 attach()
 check(setup_state()["text_encoder_directory"] == far_encoder, "its disk back: the chosen one is read again")
 
-# 6. Only a different encoder left: not taken until it is chosen.
+# 6. The same size and the same first MiB, another tail: not the same
+# encoder, and not taken until it is chosen.
+tail = os.path.join(work, "VideoTail")
+tail_encoder = video_model(tail, 6, far_data[:-1] + bytes([far_data[-1] ^ 1]))
+status, answer = api("/api/models/add", {"path": tail, "name": "Tail"})
+tail_id = answer.get("id")
+status, answer, phase = share({"video_model": tail})
+check(status == 200 and setup_state()["text_encoder_directory"] == tail_encoder, "the one with another tail is read through and chosen")
+status, answer, phase = share({"video_model": far})
+check(setup_state()["text_encoder_directory"] == far_encoder, "and the first chosen back")
 status, answer = api("/api/models/remove", {"id": twin_id})
 check(status == 200, "the twin is taken off the list (%s %s)" % (status, answer.get("error", "")))
+check(dependents(far_id) == dependent(choice=True),
+      "deleting the chosen one does not move the image model to the one with another tail: %s" % dependents(far_id))
 detach()
 state = setup_state()
 check(state["text_encoder"] == "needs_choice" and state["text_encoder_directory"] is None and not state["installed"],
-      "its disk away, only a different encoder registered: none is read (%s)" % state["text_encoder"])
+      "its disk away: the same size and first MiB with another tail is not read (%s)" % state["text_encoder"])
 status, answer = api("/api/generate", {"kind": "image", "prompt": "a red apple"})
 check(status == 409 and "自動では切り替えません" in answer.get("error", ""),
       "generating says why (%s %s)" % (status, answer.get("error", "")))
 status, answer, phase = share({"video_model": near})
 state = setup_state()
 check(status == 200 and state["text_encoder"] == "shared" and state["text_encoder_directory"] == near_encoder,
-      "once chosen, the different one is read")
+      "once chosen, a different one is read")
 attach()
 status, answer, phase = share({"video_model": far})
 check(setup_state()["text_encoder_directory"] == far_encoder, "and the first can be chosen back")
+status, answer = api("/api/models/remove", {"id": tail_id})
 
 # 7. No video model with a text encoder.
 api("/api/models/select", {"id": far_id})
@@ -348,15 +386,32 @@ status, answer = api("/api/image-models/add", {"path": bare})
 check(status == 200, "a folder without text_encoder/ is accepted (%s %s)" % (status, answer.get("error", "")))
 
 # 9. A switch cut short, the video model's encoder still to be read: the
-# rest of the copy goes when the app starts.
+# rest of the copy - what the record names - goes when the app starts.
 stop()
-leave(os.urandom(1 << 20), 6 << 20)
+leave(far_data, 6 << 20)
 start()
 check(wait(lambda: not os.path.exists(leftover), 15), "what a switch cut short left is deleted at launch")
 check("removing" not in record() and setup_state()["text_encoder"] == "shared", "and the video model's is read")
 
-# 10. Cut short, and the video model gone since: a copy that is whole is put back.
+# 10. A text_encoder.removing that is not what the record names is never
+# deleted, also with an encoder to read.
 stop()
+leave(os.urandom(1 << 20), 6 << 20)
+start()
+time.sleep(3)
+check(os.path.getsize(os.path.join(leftover, "model.gguf")) == 1 << 20 and setup_state()["text_encoder"] == "shared",
+      "a file of another size than the record lists is left alone")
+stop()
+shutil.rmtree(leftover)
+leave(far_data)
+start()
+time.sleep(3)
+check(os.path.getsize(os.path.join(leftover, "model.gguf")) == 6 << 20 and setup_state()["text_encoder"] == "shared",
+      "a folder the record names nothing of is left alone")
+stop()
+shutil.rmtree(leftover)
+
+# 11. Cut short, and the video model gone since: a copy that is whole is put back.
 leave(far_data, 6 << 20)
 detach()
 start()
@@ -364,7 +419,7 @@ check(wait(lambda: os.path.exists(os.path.join(own, "model.gguf")), 15), "with n
 check(open(os.path.join(own, "model.gguf"), "rb").read() == far_data and not os.path.exists(leftover)
       and "removing" not in record() and setup_state()["text_encoder"] == "own", "as the model's text encoder")
 
-# 11. Cut short, the video model gone, the copy not whole: left alone.
+# 12. Cut short, the video model gone, the copy not whole: left alone.
 stop()
 shutil.rmtree(own)
 leave(far_data[:1 << 20], 6 << 20)
@@ -374,8 +429,9 @@ check(os.path.getsize(os.path.join(leftover, "model.gguf")) == 1 << 20 and not o
       and setup_state()["text_encoder"] == "missing", "a copy that is not whole is neither put back nor deleted")
 attach()
 
-# 12. A new install whose video model is on another volume: no copy, the
-# video model recorded. (The record of the choice is taken away first.)
+# 13. A new install whose video model is on another volume: no copy, the
+# video model recorded. (The record of the choice is taken away first, so
+# nothing accounts for the text_encoder.removing of 12 any more: it stays.)
 stop()
 os.remove(os.path.join(image, "H3IMAGE_TEXT_ENCODER.json"))
 start()
@@ -385,10 +441,13 @@ check(state["text_encoder_video_model"] is None and state["text_encoder"] == "sh
 state = run_setup()
 check(state["phase"] == "done" and state["installed"], "the setup finishes (%s)" % state["phase"])
 check(not os.path.exists(own), "another volume: no copy is made")
-check(not os.path.exists(leftover), "the copy left behind goes, now that the video model's can be read")
+check(os.path.getsize(os.path.join(leftover, "model.gguf")) == 1 << 20,
+      "a text_encoder.removing with no record of a switch is left alone, also with an encoder to read")
 check(state["text_encoder"] == "shared" and state["text_encoder_directory"] == far_encoder
       and state["text_encoder_video_model"] == far and record()["videoModel"] == far,
       "the video model's is read in place, and recorded in the model's folder")
+check(record()["files"]["model.gguf"].get("sha256") == hashlib.sha256(far_data).hexdigest(),
+      "with its file's SHA-256")
 
 print("%d failed" % len(failures) if failures else "all passed")
 sys.exit(1 if failures else 0)
