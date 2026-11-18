@@ -336,6 +336,53 @@ final class SharedTextEncoderTests: XCTestCase {
         XCTAssertNil(after.removingEncoder)
     }
 
+    /// What a switch left is settled on one thread while another encoder
+    /// is chosen on another: whichever comes first, the choice is what the
+    /// record says afterwards (the settling does not write the record it
+    /// read before the choice over it), and the leftover has gone.
+    func testAChoiceMadeWhileALeftoverIsSettledIsKept() async throws {
+        // Many small files: the settling takes long enough to be met halfway.
+        var files: [String: Data] = [:], others: [String: Data] = [:]
+        for index in 0 ..< 48 {
+            files["part-\(index).gguf"] = data(UInt8(index), 1024)
+            others["part-\(index).gguf"] = data(UInt8(200 - index), 1024)
+        }
+        let source = try videoModel("Source", files)
+        let other = try videoModel("Other", others)
+        let sourceMarks = try SharedTextEncoder.fullFingerprint(of: SharedTextEncoder.folder(inVideoModel: source))
+        let otherMarks = try SharedTextEncoder.fullFingerprint(of: SharedTextEncoder.folder(inVideoModel: other))
+        let manifest = files.mapValues { Int64($0.count) }
+
+        for round in 0 ..< 60 {
+            let image = root + "/Image-\(round)"
+            let leaving = SharedTextEncoder.ownFolder(ofImageModel: image) + ".removing"
+            try write(files, to: leaving)
+            try SharedTextEncoder.write(
+                SharedTextEncoder.Record(videoModel: source, files: sourceMarks, removing: manifest, removingEncoder: sourceMarks),
+                forImageModel: image)
+            // The choice begins a little later each round, up to about the
+            // time the settling takes.
+            let delay = UInt32(round % 20) * 150
+            let settling = Task.detached {
+                SharedTextEncoder.finishInterruptedSwitch(imageModel: image, videoModelPaths: [source, other])
+            }
+            let choosing = Task.detached {
+                usleep(delay)
+                try SharedTextEncoder.choose(videoModel: other, files: otherMarks, forImageModel: image)
+            }
+            let settled = await settling.value
+            try await choosing.value
+            let record = try XCTUnwrap(SharedTextEncoder.record(forImageModel: image))
+            XCTAssertEqual(settled, .removed, "round \(round)")
+            XCTAssertEqual(record.videoModel, other, "round \(round): the choice is not written over")
+            XCTAssertEqual(record.files, otherMarks, "round \(round)")
+            XCTAssertNil(record.removing, "round \(round)")
+            XCTAssertNil(record.removingEncoder, "round \(round)")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: leaving), "round \(round)")
+            if record.videoModel != other { break }
+        }
+    }
+
     // MARK: What is known of a file
 
     /// The SHA-256 found by reading a file through is that file's: another

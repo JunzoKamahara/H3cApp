@@ -57,8 +57,9 @@ encoder; a cancelled reading keeping the setup busy until it has stopped, and
 redrawing waiting as generating does; an install or a video model reached
 through a link; a copy changed after it was compared; a file put in place of
 one whose SHA-256 is known; what is left of a copy when another encoder has
-been chosen since; a video model's files staying while an image that reads
-them is generated. They use the app's models, so they are skipped unless
+been chosen since, and an encoder chosen on one thread while the leftover
+is settled on another; a video model's files staying while an image that
+reads them is generated. They use the app's models, so they are skipped unless
 `CFFIXED_USER_HOME` names a folder for them:
 
     CFFIXED_USER_HOME=<empty dir> swift test --package-path native/H3Spike \
