@@ -1,4 +1,5 @@
 #define ACCELERATE_NEW_LAPACK
+#include "h3_memory.h"
 #include "h3_options.h"
 #include "h3_text_encoder.h"
 #include "h3_quant.h"
@@ -257,13 +258,14 @@ static int read_weight_bf16(const h3_weight_store *store, const char *name,
             fail(error, error_size, "weight %s shape mismatch", name);
             return 0;
         }
-        uint16_t *bf16 = malloc((size_t)elements * sizeof(*bf16));
+        size_t bf16_bytes = (size_t)elements * sizeof(uint16_t);
+        uint16_t *bf16 = h3_memory_scratch(bf16_bytes);
         int ok = bf16 &&
             h3_weight_comfy_int8_read_bf16(store, header, tensor, bf16,
                                            (size_t)elements, error,
                                            error_size) &&
             h3_gpu_tensor_write_bf16(destination, bf16, (size_t)elements);
-        free(bf16);
+        h3_memory_scratch_free(bf16, bf16_bytes);
         if (!ok && error && error_size && !error[0])
             fail(error, error_size, "cannot expand %s", name);
         return ok;
@@ -296,18 +298,22 @@ static int read_weight_bf16(const h3_weight_store *store, const char *name,
     }
     if (quantized && elements <= SIZE_MAX) {
         /* A quantized text encoder (GGUF): expanded on this prefetch thread
-         * on the CPU, straight into the BF16 destination. */
+         * on the CPU, straight into the BF16 destination. The scratch is
+         * reused from layer to layer and returned when the encoder is done
+         * (h3_memory_scratch): malloc kept a layer's worth of it for every
+         * layer read ahead, through the denoise. */
         uint64_t bytes = h3_quant_bytes(quant, elements);
+        size_t bf16_bytes = (size_t)elements * sizeof(uint16_t);
         void *raw = bytes == tensor->data_end - tensor->data_begin ?
-            malloc((size_t)bytes) : NULL;
-        uint16_t *bf16 = raw ? malloc((size_t)elements * sizeof(*bf16)) : NULL;
+            h3_memory_scratch((size_t)bytes) : NULL;
+        uint16_t *bf16 = raw ? h3_memory_scratch(bf16_bytes) : NULL;
         int ok = bf16 &&
             h3_st_read_data(header, tensor, raw, (size_t)bytes, error,
                             error_size) &&
             h3_quant_dequantize_bf16(quant, raw, elements, bf16) &&
             h3_gpu_tensor_write_bf16(destination, bf16, (size_t)elements);
-        free(raw);
-        free(bf16);
+        h3_memory_scratch_free(raw, (size_t)bytes);
+        h3_memory_scratch_free(bf16, bf16_bytes);
         if (!ok && error && error_size && !error[0])
             fail(error, error_size, "cannot expand %s (%s)", name,
                  h3_quant_name(quant));
@@ -1159,6 +1165,7 @@ finished:
     }
     h3_gpu_free(gpu);
     h3_weight_store_free(store);
+    h3_memory_scratch_drain();
     return ok;
 
 early_cleanup:
@@ -1180,6 +1187,7 @@ early_cleanup:
     retire_deferred(&load);
     h3_gpu_free(gpu);
     h3_weight_store_free(store);
+    h3_memory_scratch_drain();
     return 0;
 }
 

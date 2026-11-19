@@ -195,6 +195,8 @@ static const h3_option_info options[] = {
      "Stream the MLP weights from the attention cache as well."},
     {"H3_INT8_VECTOR_QUANT", "dit-int8", "set",
      "The vector activation quantizer for every int8 input."},
+    {"H3_KEEP_FREED_MEMORY", "memory", "0|1",
+     "Diagnostic: 1 takes the text encoder's read and expansion buffers from malloc, which keeps them after they are freed, instead of returning them to the system."},
     {"H3_LORA_MPS", "lora", "set",
      "Apply LoRA factors through MPSGraph instead of the TensorOps kernel."},
     {"H3_LORA_NO_ADALN", "lora", "set",

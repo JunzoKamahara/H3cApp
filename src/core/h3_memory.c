@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <unistd.h>
 
@@ -90,4 +91,63 @@ void h3_memory_phase(const char *phase) {
         snprintf(phase_name, sizeof(phase_name), "%s", phase ? phase : "");
     }
     pthread_mutex_unlock(&phase_lock);
+}
+
+#define SCRATCH_KEPT 64
+
+static pthread_mutex_t scratch_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct {
+    void *block;
+    size_t bytes;
+} scratch_kept[SCRATCH_KEPT];
+static size_t scratch_kept_count;
+
+static int scratch_from_malloc(void) {
+    const char *keep = h3_option("H3_KEEP_FREED_MEMORY");
+    return keep && *keep && strcmp(keep, "0");
+}
+
+void *h3_memory_scratch(size_t bytes) {
+    if (!bytes) return NULL;
+    if (scratch_from_malloc()) return malloc(bytes);
+    void *scratch = NULL;
+    pthread_mutex_lock(&scratch_lock);
+    for (size_t index = 0; index < scratch_kept_count; index++) {
+        if (scratch_kept[index].bytes != bytes) continue;
+        scratch = scratch_kept[index].block;
+        scratch_kept[index] = scratch_kept[--scratch_kept_count];
+        break;
+    }
+    pthread_mutex_unlock(&scratch_lock);
+    if (scratch) return scratch;
+    scratch = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+                   MAP_ANON | MAP_PRIVATE, -1, 0);
+    return scratch == MAP_FAILED ? NULL : scratch;
+}
+
+void h3_memory_scratch_free(void *scratch, size_t bytes) {
+    if (!scratch) return;
+    if (scratch_from_malloc()) {
+        free(scratch);
+        return;
+    }
+    int kept = 0;
+    pthread_mutex_lock(&scratch_lock);
+    if (scratch_kept_count < SCRATCH_KEPT) {
+        scratch_kept[scratch_kept_count].block = scratch;
+        scratch_kept[scratch_kept_count++].bytes = bytes;
+        kept = 1;
+    }
+    pthread_mutex_unlock(&scratch_lock);
+    if (!kept) munmap(scratch, bytes);
+}
+
+void h3_memory_scratch_drain(void) {
+    pthread_mutex_lock(&scratch_lock);
+    while (scratch_kept_count) {
+        scratch_kept_count--;
+        munmap(scratch_kept[scratch_kept_count].block,
+               scratch_kept[scratch_kept_count].bytes);
+    }
+    pthread_mutex_unlock(&scratch_lock);
 }
