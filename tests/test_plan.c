@@ -49,6 +49,9 @@ int main(void) {
     check(plan.video_encoder_bytes == 0 && plan.vision_encoder_bytes == 0,
           "no references, no encoder stages");
     check(plan.dit_cost_ratio == 1.0, "no reference rows, ratio 1");
+    check(plan.video_decoder_bytes == 0 &&
+          strcmp(plan.peak_stage, "video decoder") != 0,
+          "nothing decoded to video (a still image), no video decoder stage");
     check(plan.peak_bytes >= plan.dit_bytes &&
           plan.peak_bytes >= plan.text_encoder_bytes, "peak is the largest");
     check(plan.text_fast_limit == H3_PLAN_TEXT_FAST_LIMIT &&

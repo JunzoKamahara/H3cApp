@@ -235,12 +235,16 @@ void h3_plan_compute(const h3_plan_input *input, h3_plan *plan) {
          input->video_decoder_int8 ? video_decoder_weights_int8 :
                                      video_decoder_weights_f32));
 
-    double decoder_load = input->video_decoder_int8 ?
-        video_decoder_load_int8 : video_decoder_load_f32;
-    plan->video_decoder_bytes = (uint64_t)fmax(decoder_load,
-        (input->video_decoder_int8 ? video_decoder_held_int8 :
-                                     video_decoder_held_f32) +
-            input->decoded_pixel_frames * decoded_frame_bytes);
+    /* Only where a video is decoded: a still image (h3_image.c) has its own
+     * decoder, and gives no frames here. */
+    double decoder_load = input->decoded_pixel_frames <= 0.0 ? 0.0 :
+        input->video_decoder_int8 ? video_decoder_load_int8 :
+                                    video_decoder_load_f32;
+    plan->video_decoder_bytes = input->decoded_pixel_frames <= 0.0 ? 0 :
+        (uint64_t)fmax(decoder_load,
+            (input->video_decoder_int8 ? video_decoder_held_int8 :
+                                         video_decoder_held_f32) +
+                input->decoded_pixel_frames * decoded_frame_bytes);
 
     stage(plan, plan->video_encoder_bytes, "video encoder");
     stage(plan, plan->vision_encoder_bytes, "vision encoder");

@@ -42,7 +42,8 @@ typedef struct {
     int video_decoder_int8;
     /* Pixels x frames of decoded video held while it decodes: the whole
      * video, or one chunk where the frames are handed on as they come (a
-     * decoder kept between generations, or one showing the denoise). */
+     * decoder kept between generations, or one showing the denoise). 0
+     * where no video is decoded (a still image): no decoder stage. */
     double decoded_pixel_frames;
     /* The decoder is loaded before the denoise and stays beside the DiT
      * (h3_params.preview_denoise). */
