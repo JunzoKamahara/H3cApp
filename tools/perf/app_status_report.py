@@ -96,11 +96,11 @@ skipped = [r for r in records if r.get("skipped")]
 refused = [r for r in records if r.get("refused")]
 failed = [r for r in records if not r["ok"] and not r.get("skipped") and not r.get("refused")]
 # Records from before the Mac and the app were written in them are this
-# Mac's and this checkout's.
+# Mac's, and the app is this checkout as it was when the run began (not as it
+# is now: a report is made again after later commits).
 runs = [r["run"] for r in records if r.get("run")]
-apps = distinct(run.get("app") for run in runs) if runs else "開発ビルド、コミット %s%s" % (
-    shell("git", "-C", repo, "rev-parse", "--short", "HEAD"),
-    "（未コミットの変更あり）" if shell("git", "-C", repo, "status", "--porcelain", "--untracked-files=no") else "")
+apps = distinct(run.get("app") for run in runs) if runs else "開発ビルド、コミット %s" % (
+    shell("git", "-C", repo, "log", "-1", "--format=%h", "--before=" + min(r["at"] for r in records)) or "?")
 macs = distinct("%s（%s）、メモリ %d GB、macOS %s" % (
     run["machine"]["chip"], run["machine"]["model"], run["machine"]["memory_gb"], run["machine"]["macos"])
     for run in runs) if runs else "%s、メモリ %d GB、macOS %s" % (
