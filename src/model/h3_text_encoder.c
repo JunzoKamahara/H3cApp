@@ -2,6 +2,7 @@
 #include "h3_options.h"
 #include "h3_text_encoder.h"
 #include "h3_quant.h"
+#include "h3_text_projection.h"
 
 #include "h3_weights.h"
 
@@ -18,6 +19,10 @@ enum {
     TEXT_RELEASED_LAYERS = 50,
     TEXT_MAX_LAYERS = 64,
     TEXT_VOCAB = 151936,
+    /* Qwen3-VL's own tokens end below this ID. H3's tokenizer adds its tags
+     * (<d>, </d>, ...) from here on: rows of the embedding a stock Qwen3-VL
+     * never trained. */
+    TEXT_STOCK_VOCAB = 151669,
     TEXT_HEAD_DIM = 128,
     TEXT_ROPE_HALF = TEXT_HEAD_DIM / 2,
     TEXT_DEFERRED_WEIGHTS = 1 + TEXT_MAX_LAYERS * 11,
@@ -575,9 +580,13 @@ void h3_text_embedding_free(h3_text_embedding *embedding) {
 
 /* The language model's sizes from its weights: H3's Qwen3-VL-32B (read to
  * its released 50 layers) or, with a text connector beside it,
- * P-H3-Image's Qwen3-VL-4B (all of its layers and its final norm). */
-static int read_text_shape(const h3_weight_store *store, text_shape *shape,
-                           char *error, size_t error_size) {
+ * P-H3-Image's Qwen3-VL-4B (all of its layers and its final norm). With a
+ * projection it is the small Qwen3-VL the projection was fitted on, read
+ * to the hidden state the projection takes; a text connector beside it is
+ * not used. */
+static int read_text_shape(const h3_weight_store *store,
+                           const h3_text_projection *projection,
+                           text_shape *shape, char *error, size_t error_size) {
     memset(shape, 0, sizeof(*shape));
     const h3_st_tensor *embed = h3_weight_find(
         store, "model.language_model.embed_tokens.weight", NULL);
@@ -608,9 +617,9 @@ static int read_text_shape(const h3_weight_store *store, text_shape *shape,
     shape->kv_heads = (uint32_t)(key->shape[0] / TEXT_HEAD_DIM);
     shape->query_dim = shape->query_heads * TEXT_HEAD_DIM;
     shape->kv_dim = shape->kv_heads * TEXT_HEAD_DIM;
-    shape->connector =
+    shape->connector = !projection &&
         h3_weight_find(store, "text_connector.proj.weight", NULL) != NULL;
-    if (!shape->connector) {
+    if (!shape->connector && !projection) {
         if (hidden != H3_TEXT_HIDDEN_SIZE) {
             fail(error, error_size, "the text encoder is %llu wide, not the "
                  "%u of H3's Qwen3-VL", (unsigned long long)hidden,
@@ -626,6 +635,24 @@ static int read_text_shape(const h3_weight_store *store, text_shape *shape,
         snprintf(name, sizeof(name),
                  "model.language_model.layers.%d.input_layernorm.weight", layers);
         if (!h3_weight_find(store, name, NULL)) break;
+    }
+    if (projection) {
+        if (hidden != projection->input_width) {
+            fail(error, error_size, "the text projection is for a Qwen3-VL "
+                 "%zu wide, this text encoder is %llu wide",
+                 projection->input_width, (unsigned long long)hidden);
+            return 0;
+        }
+        /* hidden_states[layers] is after the final norm: not a layer's
+         * input, and no projection reads it. */
+        if (projection->tap >= layers) {
+            fail(error, error_size, "the text projection reads hidden state "
+                 "%d, this text encoder has %d layers", projection->tap,
+                 layers);
+            return 0;
+        }
+        shape->layers = (uint32_t)projection->tap;
+        return 1;
     }
     if (layers != CONNECTOR_LAYERS ||
         !h3_weight_find(store, "model.language_model.norm.weight", NULL)) {
@@ -747,18 +774,27 @@ static int text_encode_bf16_impl(
                         const h3_text_vision_span *spans, size_t span_count,
                         const uint32_t *position_ids, const uint8_t *tags,
                         int layer_count,
+                        const h3_text_projection *projection,
                         h3_text_progress progress, void *progress_opaque,
                         h3_text_embedding *output,
                         char *error, size_t error_size) {
     if (output) memset(output, 0, sizeof(*output));
     if (!weight_directory || !shader_source_path || !token_ids || !token_count ||
-        !output || token_count > UINT32_MAX || layer_count < 1) {
+        !output || token_count > UINT32_MAX || layer_count < 1 ||
+        (projection && span_count)) {
         fail(error, error_size, "invalid Qwen text encoder arguments");
         return 0;
     }
     for (size_t index = 0; index < token_count; index++) {
         if (token_ids[index] >= TEXT_VOCAB) {
             fail(error, error_size, "Qwen token ID %u is outside the vocabulary",
+                 token_ids[index]);
+            return 0;
+        }
+        if (projection && token_ids[index] >= TEXT_STOCK_VOCAB) {
+            fail(error, error_size, "token ID %u is one of H3's own tags "
+                 "(such as <d>), which the Qwen3-VL behind a text projection "
+                 "never learned; this prompt needs H3's own text encoder",
                  token_ids[index]);
             return 0;
         }
@@ -785,7 +821,7 @@ static int text_encode_bf16_impl(
     if (!store) return 0;
     text_shape shape;
     const text_shape *S = &shape;
-    if (!read_text_shape(store, &shape, error, error_size)) {
+    if (!read_text_shape(store, projection, &shape, error, error_size)) {
         h3_weight_store_free(store);
         return 0;
     }
@@ -1026,7 +1062,29 @@ static int text_encode_bf16_impl(
         }
     }
 
-    if (connector) {
+    if (projection) {
+        uint16_t *last = malloc(hidden_count * sizeof(*last));
+        output->values = malloc(token_count * projection->output_width *
+                                sizeof(*output->values));
+        if (!last || !output->values ||
+            !h3_gpu_tensor_read_bf16(hidden, last, hidden_count)) {
+            free(last);
+            h3_text_embedding_free(output);
+            fail(error, error_size, "cannot read Qwen hidden state %d",
+                 layer_count);
+            goto cleanup;
+        }
+        int projected = h3_text_projection_apply(
+            projection, last, token_count, output->values, error, error_size);
+        free(last);
+        if (!projected || !h3_gpu_get_stats(gpu, &output->gpu_stats)) {
+            h3_text_embedding_free(output);
+            if (error && error_size && !error[0])
+                fail(error, error_size, "cannot read Qwen GPU statistics");
+            goto cleanup;
+        }
+        output->width = projection->output_width;
+    } else if (connector) {
         /* The last tap: after the final norm. */
         h3_gpu_tensor *final_norm = load_1d(
             &load, "model.language_model.norm.weight", S->hidden);
@@ -1133,8 +1191,29 @@ int h3_text_encode_bf16(const char *weight_directory,
                         char *error, size_t error_size) {
     return text_encode_bf16_impl(
         weight_directory, shader_source_path, token_ids, token_count,
-        NULL, 0, NULL, NULL, TEXT_MAX_LAYERS, progress, progress_opaque,
+        NULL, 0, NULL, NULL, TEXT_MAX_LAYERS, NULL, progress, progress_opaque,
         output, error, error_size);
+}
+
+int h3_text_encode_projected_bf16(const char *weight_directory,
+                                  const char *projection_path,
+                                  const char *shader_source_path,
+                                  const uint32_t *token_ids, size_t token_count,
+                                  h3_text_progress progress,
+                                  void *progress_opaque,
+                                  h3_text_embedding *output,
+                                  char *error, size_t error_size) {
+    h3_text_projection projection;
+    if (output) memset(output, 0, sizeof(*output));
+    if (!h3_text_projection_load(projection_path, &projection, error,
+                                 error_size))
+        return 0;
+    int ok = text_encode_bf16_impl(
+        weight_directory, shader_source_path, token_ids, token_count,
+        NULL, 0, NULL, NULL, TEXT_MAX_LAYERS, &projection, progress,
+        progress_opaque, output, error, error_size);
+    h3_text_projection_free(&projection);
+    return ok;
 }
 
 int h3_text_encode_multimodal_bf16(
@@ -1153,7 +1232,7 @@ int h3_text_encode_multimodal_bf16(
     }
     return text_encode_bf16_impl(
         weight_directory, shader_source_path, token_ids, token_count,
-        spans, span_count, position_ids, tags, TEXT_MAX_LAYERS,
+        spans, span_count, position_ids, tags, TEXT_MAX_LAYERS, NULL,
         progress, progress_opaque,
         output, error, error_size);
 }
@@ -1175,6 +1254,6 @@ int h3_text_encode_multimodal_layers_bf16(
     }
     return text_encode_bf16_impl(
         weight_directory, shader_source_path, token_ids, token_count,
-        spans, span_count, position_ids, tags, layer_count,
+        spans, span_count, position_ids, tags, layer_count, NULL,
         progress, progress_opaque, output, error, error_size);
 }

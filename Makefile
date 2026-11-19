@@ -20,7 +20,7 @@ LDLIBS := $(FRAMEWORKS) -licucore -lm $(MINOS_FLAG)
 # The generation engine (libh3.a) and the upscale module (libh3upscale.a:
 # SwiftVR, SeedVR2, the latent upscaler). The upscale module uses the
 # engine, never the other way round.
-LIB_C := h3.c h3_image.c h3_conditioning.c h3_params.c h3_references.c h3_plan_generation.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c \
+LIB_C := h3.c h3_image.c h3_conditioning.c h3_params.c h3_references.c h3_plan_generation.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c h3_text_projection.c \
 	h3_dit_schedule.c h3_dit.c h3_dit_weights.c h3_dit_setup.c h3_dit_block.c h3_dit_fbc_log.c h3_lora.c h3_hyperflow.c h3_model_family.c \
 	h3_video_vae.c h3_video_encoder.c h3_audio_vae.c h3_image_vae.c \
 	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c h3_adaln_curve.c \
@@ -307,6 +307,12 @@ $(BIN)/h3_image_dit_probe: $(OBJ)/image_dit_probe.o $(LIB_OBJ)
 $(BIN)/h3_image_text_embed: $(OBJ)/image_text_embed.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# The video text projection (H3_TEXT_PROJECTION): this engine's text rows of
+# a prompt from a small Qwen3-VL and a ClipProj projection (needs both; not
+# in `make test`).
+$(BIN)/h3_text_projection_embed: $(OBJ)/text_projection_embed.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 $(BIN)/h3_image_vae_check: $(OBJ)/image_vae_check.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
@@ -509,7 +515,7 @@ PROGRAMS := h3_options h3_model_family_tests build_attention_cache build_vsr_cac
 	h3_repro_check h3_real_audio_vae_test h3_real_audio_encoder_test h3_real_video_encoder_test \
 	h3_video_encoder_chunks_test h3_plan_tests h3_frame_latent_tests h3_image_reference_tests h3_refmod_tests h3_real_refmod_test \
 	h3_real_qwen_vision_test h3_real_multimodal_text_test h3_real_ref_video_text_test h3_real_prompt_test \
-	h3_real_dit_block_test h3_real_dit_schedule_test h3_real_dit_test h3_image_dit_probe h3_image_text_embed h3_image_vae_check h3_image_dit_check h3_image_cli h3_image_latent_reencode h3_image_reference_encode h3_semantic_dit_test \
+	h3_real_dit_block_test h3_real_dit_schedule_test h3_real_dit_test h3_image_dit_probe h3_image_text_embed h3_text_projection_embed h3_image_vae_check h3_image_dit_check h3_image_cli h3_image_latent_reencode h3_image_reference_encode h3_semantic_dit_test \
 	h3_dit_bench h3_dit_bench_864 h3_real_video_vae_test h3_real_vsr_test \
 	h3_vsr_bench h3_int8_bench h3_vsr_run h3_semantic_vae_test
 .PHONY: $(PROGRAMS)
