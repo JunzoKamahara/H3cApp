@@ -1414,6 +1414,42 @@ static h3_dit *load_dit(const char *weight_directory,
         (h3_option("H3_INT8_KEEP_BF16_MLP") ||
          h3_option("H3_BENCH_INT8_MLP_AB") ||
          h3_option("H3_INT8_MLP_STAGE"));
+    /* The MPSGraph MLP keeps FC1's output and the activation, three FFN
+     * widths a row, between its two products; in pieces it keeps them for
+     * a piece's rows only. The rows do not depend on each other, and the
+     * pieces gave the bytes one piece gives in every pair compared
+     * (docs/perf/DIFFUSERS_FFN_SPLIT.ja.md); between 2048 and 8192 rows the
+     * peak and the time did not depend on the size. */
+    int mlp_splits = dit->fused_mlp && !dit->int8_mlp && !dit->nax_mlp &&
+                     !dit->hyperflow;
+    uint32_t mlp_chunk_rows = 4096;
+    const char *mlp_chunk = h3_option("H3_DIT_MLP_CHUNK_ROWS");
+    if (mlp_chunk && *mlp_chunk) {
+        char *end = NULL;
+        unsigned long parsed = strtoul(mlp_chunk, &end, 10);
+        if (end == mlp_chunk || *end || (parsed && parsed < 32) ||
+            parsed > UINT32_MAX) {
+            h3_dit_fail(error, error_size, "H3_DIT_MLP_CHUNK_ROWS=%s is not 0 "
+                 "or a number of rows, 32 or more", mlp_chunk);
+            goto failed;
+        }
+        mlp_chunk_rows = (uint32_t)parsed;
+        if (parsed && !mlp_splits)
+            fprintf(stderr, "h3: H3_DIT_MLP_CHUNK_ROWS changes nothing here: "
+                    "it splits the fused BF16 MLP, and this run uses %s\n",
+                    dit->hyperflow ? "HyperFlow's factored linears" :
+                    dit->int8_mlp ? "the int8 MLP" :
+                    dit->nax_mlp ? "the TensorOps MLP" :
+                                   "the unfused MLP");
+    }
+    if (mlp_splits) {
+        dit->mlp_chunk_rows = mlp_chunk_rows;
+        uint32_t piece = h3_gpu_mlp_piece_rows(dit->sequence, mlp_chunk_rows);
+        if (h3_option("H3_PROFILE") || (mlp_chunk && *mlp_chunk))
+            fprintf(stderr, "h3: DiT MLP in pieces of %u rows (%u of %u)\n",
+                    piece, (dit->sequence + piece - 1) / piece,
+                    (unsigned)dit->sequence);
+    }
     h3_gpu_profile_set_label(dit->gpu, "H3 DiT");
     h3_dit_report(progress, progress_opaque, "refine text", 0, 1);
     if (!refine_text_reusing(dit, text, prep, weight_directory, loras,

@@ -10,6 +10,9 @@
 # Writes <name>.log, <name>.mp4 and <name>.json to $P0_OUT (default
 # ~/H3cApp-models/diffusers-p0, outside the synced ~/Documents). Extra
 # VAR=value arguments are exported for the run (H3_SDPA_MODE=chunked, ...).
+# P0_SSD=1 runs the app's "SSD streaming" mode instead (BF16 blocks read
+# from the model as they run, no int8 cache): the default where the GPU has
+# no tensor units (M1 to M4).
 # H3_MEMORY_LIMIT_GIB ends the process before the Mac runs out of memory.
 # The power source is recorded before and after: compare times only between
 # runs on AC power.
@@ -27,7 +30,13 @@ mkdir -p "$out"
 power() { echo "$(pmset -g batt | head -1 | tr -d "'"), low power mode $(pmset -g | awk '/lowpowermode/{print $2}')"; }
 power_before=$(power)
 
-export H3_ATTENTION_CACHE=$cache H3_INT8_STREAM_MLP=1 H3_QWEN_PREFETCH_DEPTH=1
+if [[ ${P0_SSD:-0} == 1 ]]; then
+    cache=
+    unset H3_ATTENTION_CACHE H3_INT8_STREAM_MLP
+    export H3SPIKE_SSD=1 H3_QWEN_PREFETCH_DEPTH=1
+else
+    export H3_ATTENTION_CACHE=$cache H3_INT8_STREAM_MLP=1 H3_QWEN_PREFETCH_DEPTH=1
+fi
 export H3_MEMORY_TRACE=1 H3_PROFILE=1 H3_DIT_ARENA_TRACE=1 H3_SDPA_LOG=1
 export H3_MEMORY_LIMIT_GIB=${H3_MEMORY_LIMIT_GIB:-22}
 export H3SPIKE_WIDTH=$width H3SPIKE_HEIGHT=$height H3SPIKE_FRAMES=$frames

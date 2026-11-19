@@ -205,10 +205,10 @@ void h3_gpu_sdpa_chunk_plan(h3_gpu *opaque, uint32_t sequence,
 
 /* A graph tensor over part of a buffer. MPSGraphTensorData itself has no
  * offset; an MPSNDArray over the buffer does (available since macOS 12.3). */
-static MPSGraphTensorData *h3_gpu_graph_view(const h3_gpu_tensor *tensor,
-                                             NSArray<NSNumber *> *shape,
-                                             MPSDataType data_type,
-                                             size_t byte_offset) {
+MPSGraphTensorData *h3_gpu_graph_view(const h3_gpu_tensor *tensor,
+                                      NSArray<NSNumber *> *shape,
+                                      MPSDataType data_type,
+                                      size_t byte_offset) {
     H3Tensor *object = TENSOR(tensor);
     if (!byte_offset)
         return [[MPSGraphTensorData alloc] initWithMTLBuffer:object.buffer

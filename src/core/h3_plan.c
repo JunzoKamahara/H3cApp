@@ -63,7 +63,14 @@ static const double vision_output_per_token = 4.0 * 5120 * 2;
  * and one) - 199.5 KiB (h3_dit.c allocate_activations). Measured under SSD
  * streaming: 3.70 GiB at 536 tokens, 7.54 at 21740, 10.45 at 35985 (190
  * KiB a token), and 6.62 at 14383 with three reference images; the int8
- * paths of the other modes need less a token. */
+ * paths of the other modes need less a token. Those were with the MLP in
+ * one piece and the text encoder's freed scratch still held by malloc.
+ * With the MLP in pieces of 4096 rows at most (the default since) and the
+ * scratch returned, 2 steps measured 5.01 GiB at 19293 tokens on the
+ * one-call attention path and 5.80 in pieces (about 142 and 174 KiB a
+ * token; docs/perf/DIFFUSERS_FFN_SPLIT.ja.md). The estimate is left where
+ * it was, above both: neither was measured on a 16 GB Mac or on an M1 to
+ * M4. */
 static const double dit_fixed = 4.0 * GIB;
 static const double dit_per_token =
     2.0 * (3 * 5376 + 6 * 7168 + 3 * 14336);

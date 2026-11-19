@@ -682,9 +682,9 @@ static int run_block(h3_dit *dit, unsigned index, int step,
             dit->mod_mlp, weight->fc1, weight->fc2, rows, HIDDEN, FFN,
             HIDDEN), "DiT NAX fused MLP");
     } else if (dit->fused_mlp) {
-        OP(h3_gpu_mlp_bf16(dit->gpu, mlp_output, dit->mod_mlp,
-            weight->fc1, weight->fc2, rows, HIDDEN, FFN, HIDDEN),
-           "DiT fused MLP");
+        OP(h3_gpu_mlp_rows_bf16(dit->gpu, mlp_output, dit->mod_mlp,
+            weight->fc1, weight->fc2, rows, HIDDEN, FFN, HIDDEN,
+            dit->mlp_chunk_rows), "DiT fused MLP");
     } else {
         OP(h3_gpu_linear_bf16(dit->gpu, dit->fc1, dit->mod_mlp, weight->fc1,
             NULL, rows, HIDDEN, FFN * 2), "DiT MLP input");

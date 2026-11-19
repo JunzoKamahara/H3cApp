@@ -22,6 +22,9 @@
  * The reference is plain f32 attention on the CPU from the same bf16 (or
  * f32) inputs; every GPU mode must match it within bf16 output rounding and
  * contain no NaN or Inf. Chunked and full are also compared with each other.
+ *
+ * The fused BF16 MLP in pieces of rows (h3_gpu_mlp_rows_bf16) is checked
+ * here too: it is the same kind of split, of the other half of a block.
  */
 #include <mach/mach.h>
 #include <math.h>
@@ -614,6 +617,150 @@ static void probe_gqa(h3_gpu *gpu, uint32_t S, uint32_t QH, uint32_t KH,
     h3_gpu_tensor_free(tv); h3_gpu_tensor_free(to);
 }
 
+/* The fused BF16 MLP a range of rows at a time (h3_gpu_mlp_rows_bf16)
+ * against the same MLP on all rows at once and against f32 on the CPU:
+ * fc2(silu(a) * b), a and b the halves of fc1(x). A row of zeros and a row
+ * a hundred times the others are among the inputs, and the rows after the
+ * last are not to be written. */
+static void run_mlp_rows(h3_gpu *gpu, uint32_t rows, uint32_t input_dim,
+                         uint32_t hidden_dim, uint32_t output_dim) {
+    enum { GUARD_ROWS = 3 };
+    size_t in_count = (size_t)rows * input_dim;
+    size_t out_count = (size_t)rows * output_dim;
+    size_t guarded = out_count + (size_t)GUARD_ROWS * output_dim;
+    size_t fc1_count = (size_t)hidden_dim * 2 * input_dim;
+    size_t fc2_count = (size_t)output_dim * hidden_dim;
+    uint16_t *xb = malloc(in_count * 2), *w1b = malloc(fc1_count * 2);
+    uint16_t *w2b = malloc(fc2_count * 2), *guard = malloc(guarded * 2);
+    float *x = malloc(in_count * sizeof(float));
+    float *w1 = malloc(fc1_count * sizeof(float));
+    float *w2 = malloc(fc2_count * sizeof(float));
+    float *ref = malloc(out_count * sizeof(float));
+    float *mid = malloc((size_t)hidden_dim * 2 * sizeof(float));
+    for (size_t i = 0; i < in_count; i++) {
+        size_t row = i / input_dim;
+        float value = row == 1 ? 0.0f :
+            rng_normal() * (row == rows - 2 ? 100.0f : 1.0f);
+        xb[i] = f32_to_bf16(value); x[i] = bf16_to_f32(xb[i]);
+    }
+    for (size_t i = 0; i < fc1_count; i++) {
+        w1b[i] = f32_to_bf16(rng_normal() / sqrtf((float)input_dim));
+        w1[i] = bf16_to_f32(w1b[i]);
+    }
+    for (size_t i = 0; i < fc2_count; i++) {
+        w2b[i] = f32_to_bf16(rng_normal() / sqrtf((float)hidden_dim));
+        w2[i] = bf16_to_f32(w2b[i]);
+    }
+    for (uint32_t r = 0; r < rows; r++) {
+        for (uint32_t h = 0; h < hidden_dim * 2; h++) {
+            double sum = 0.0;
+            for (uint32_t i = 0; i < input_dim; i++)
+                sum += (double)x[(size_t)r * input_dim + i] *
+                       w1[(size_t)h * input_dim + i];
+            mid[h] = (float)sum;
+        }
+        for (uint32_t h = 0; h < hidden_dim; h++)
+            mid[h] = mid[h] / (1.0f + expf(-mid[h])) * mid[hidden_dim + h];
+        for (uint32_t o = 0; o < output_dim; o++) {
+            double sum = 0.0;
+            for (uint32_t h = 0; h < hidden_dim; h++)
+                sum += (double)mid[h] * w2[(size_t)o * hidden_dim + h];
+            ref[(size_t)r * output_dim + o] = (float)sum;
+        }
+    }
+    for (size_t i = 0; i < guarded; i++) guard[i] = 0x4a4a;
+
+    h3_gpu_tensor *tx = h3_gpu_tensor_from_bf16(gpu, xb, in_count);
+    h3_gpu_tensor *t1 = h3_gpu_tensor_from_bf16(gpu, w1b, fc1_count);
+    h3_gpu_tensor *t2 = h3_gpu_tensor_from_bf16(gpu, w2b, fc2_count);
+    h3_gpu_tensor *whole = h3_gpu_tensor_new_bf16(gpu, out_count);
+    int ok = h3_gpu_begin(gpu) &&
+        h3_gpu_mlp_bf16(gpu, whole, tx, t1, t2, rows, input_dim, hidden_dim,
+                        output_dim) && h3_gpu_submit(gpu);
+    CHECK(ok, "MLP on all rows: %s", h3_gpu_error(gpu));
+    uint16_t *whole_raw = malloc(out_count * 2);
+    uint16_t *raw = malloc(guarded * 2);
+    float *whole_rows = malloc(out_count * sizeof(float));
+    float *piece_rows = malloc(out_count * sizeof(float));
+    if (ok && h3_gpu_tensor_read_bf16(whole, whole_raw, out_count)) {
+        double scale = 0.0;
+        for (size_t i = 0; i < out_count; i++) {
+            whole_rows[i] = bf16_to_f32(whole_raw[i]);
+            scale += fabs((double)ref[i]);
+        }
+        scale /= (double)out_count;
+        error_stats e = compare(whole_rows, ref, out_count);
+        printf("  MLP all rows            rows=%4u %u-%u-%u  mean |value| %.3f "
+               "max %.4f mean %.5f non-finite %zu\n", rows, input_dim,
+               hidden_dim, output_dim, scale, e.max_abs, e.mean_abs,
+               e.non_finite);
+        CHECK(e.non_finite == 0, "MLP on all rows: non-finite outputs");
+        CHECK(e.mean_abs <= 0.01 * scale,
+              "MLP on all rows: error vs reference too large (mean %.5f of "
+              "%.3f)", e.mean_abs, scale);
+        const uint32_t chunks[] = {0, 32, 64, 100, rows - 1, rows, rows + 1,
+                                   100000};
+        for (size_t c = 0; c < sizeof(chunks) / sizeof(*chunks); c++) {
+            uint32_t piece = h3_gpu_mlp_piece_rows(rows, chunks[c]);
+            CHECK(piece && piece <= rows &&
+                  (!chunks[c] || piece <= chunks[c] || chunks[c] >= rows),
+                  "pieces of %u rows for at most %u of %u", piece, chunks[c],
+                  rows);
+            h3_gpu_tensor *out = h3_gpu_tensor_from_bf16(gpu, guard, guarded);
+            h3_gpu_stats before; h3_gpu_get_stats(gpu, &before);
+            ok = h3_gpu_begin(gpu) &&
+                h3_gpu_mlp_rows_bf16(gpu, out, tx, t1, t2, rows, input_dim,
+                                     hidden_dim, output_dim, chunks[c]) &&
+                h3_gpu_submit(gpu) &&
+                h3_gpu_tensor_read_bf16(out, raw, guarded);
+            CHECK(ok, "MLP in pieces of %u rows: %s", piece,
+                  h3_gpu_error(gpu));
+            if (ok) {
+                h3_gpu_stats after; h3_gpu_get_stats(gpu, &after);
+                uint64_t pieces = (after.mps_linear_dispatches -
+                                   before.mps_linear_dispatches) / 2;
+                size_t differing = 0, guard_written = 0;
+                for (size_t i = 0; i < out_count; i++) {
+                    piece_rows[i] = bf16_to_f32(raw[i]);
+                    differing += raw[i] != whole_raw[i];
+                }
+                for (size_t i = out_count; i < guarded; i++)
+                    guard_written += raw[i] != 0x4a4a;
+                error_stats d = compare(piece_rows, whole_rows, out_count);
+                printf("  MLP at most %6u rows  pieces %2llu of %4u rows  "
+                       "values differing from all rows %zu (max %.5f)\n",
+                       chunks[c], (unsigned long long)pieces, piece,
+                       differing, d.max_abs);
+                CHECK(pieces == (rows + piece - 1) / piece,
+                      "%llu pieces of %u rows for %u rows",
+                      (unsigned long long)pieces, piece, rows);
+                CHECK(d.non_finite == 0 && d.max_abs <= 0.02 * scale,
+                      "MLP in pieces of %u rows differs from all rows at "
+                      "once (max %.5f)", piece, d.max_abs);
+                CHECK(guard_written == 0, "MLP in pieces of %u rows wrote %zu "
+                      "values after the last row", piece, guard_written);
+            }
+            h3_gpu_tensor_free(out);
+        }
+    } else if (ok) {
+        CHECK(0, "read MLP output: %s", h3_gpu_error(gpu));
+    }
+    /* Output on its own input is refused: a piece would read what an
+     * earlier one wrote. */
+    if (input_dim == output_dim) {
+        ok = h3_gpu_begin(gpu);
+        int refused = ok && !h3_gpu_mlp_rows_bf16(
+            gpu, tx, tx, t1, t2, rows, input_dim, hidden_dim, output_dim, 64);
+        if (ok) h3_gpu_submit(gpu);
+        CHECK(refused, "MLP by rows accepted its input as its output");
+    }
+    h3_gpu_tensor_free(tx); h3_gpu_tensor_free(t1); h3_gpu_tensor_free(t2);
+    h3_gpu_tensor_free(whole);
+    free(xb); free(w1b); free(w2b); free(guard); free(x); free(w1); free(w2);
+    free(ref); free(mid); free(whole_raw); free(raw); free(whole_rows);
+    free(piece_rows);
+}
+
 int main(int argc, char **argv) {
     char error[512];
     h3_gpu *gpu = h3_gpu_create("h3_shaders.metal", error, sizeof(error));
@@ -656,6 +803,16 @@ int main(int argc, char **argv) {
     run_gqa_exact(gpu, 1500, 64, 8, 128);
     run_gqa_exact(gpu, 333, 16, 2, 128);
     run_gqa_exact(gpu, 257, 12, 3, 64);
+    /* The fused MLP in pieces: a row count no piece size divides, and one
+     * with the DiT's own widths. */
+    CHECK(h3_gpu_mlp_piece_rows(9895, 2048) == 1979 &&
+          h3_gpu_mlp_piece_rows(9895, 0) == 9895 &&
+          h3_gpu_mlp_piece_rows(301, 300) == 151 &&
+          h3_gpu_mlp_piece_rows(301, 100) == 76 &&
+          h3_gpu_mlp_piece_rows(64, 64) == 64 &&
+          h3_gpu_mlp_piece_rows(65, 64) == 33, "MLP piece sizes");
+    run_mlp_rows(gpu, 301, 256, 384, 256);
+    run_mlp_rows(gpu, 150, 5376, 14336, 5376);
     h3_gpu_free(gpu);
     if (failures) { fprintf(stderr, "FAIL tests/test_sdpa.c: %d failures\n", failures); return 1; }
     printf("ok: dense SDPA modes (full, chunked, explicit) and causal GQA match the CPU reference\n");

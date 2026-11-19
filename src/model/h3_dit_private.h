@@ -227,6 +227,9 @@ struct h3_dit {
     h3_weight_store *weights;
     h3_dit_schedule *schedule;
     int fused_mlp;
+    /* H3_DIT_MLP_CHUNK_ROWS: the fused BF16 MLP (MPSGraph) runs on at most
+     * this many rows at a time; 0 for all of them in one graph. */
+    uint32_t mlp_chunk_rows;
     int nax_mlp;
     int int8_mlp;
     int int8_qkv;
