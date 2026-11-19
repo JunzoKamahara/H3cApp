@@ -99,6 +99,31 @@ static const double chunked_sdpa_scores = 1.0 * GIB;
  * chunks leaves a little behind until the encode ends. */
 static const double video_encoder_margin = 0.6 * GIB;
 
+/* The video VAE decoder stage, after the DiT has gone. Its 36 blocks stay
+ * loaded while it decodes 256-pixel tiles of 17 frames, so what it needs
+ * does not grow with the canvas: the weights (F32 9.7 GiB; as int8 where
+ * the GPU has tensor units, 2.7), one tile's activations, and the decoded
+ * frames so far (F32 RGB, 12 bytes a pixel) where the whole video is kept
+ * until it is written. Loading peaks above that for a moment, as the last
+ * blocks arrive (and, for int8, are quantized from F32).
+ *
+ * Measured on the 24 GB M5 (docs/perf/DIFFUSERS_FFN_SPLIT.ja.md, 13), int8: the
+ * load 3.2 to 4.9 GiB (5.1 after a resident DiT), and at 960x544 4.8 GiB
+ * for 243 frames and 5.3 to 5.4 for 362, which is 3.3 to 3.4 beside the
+ * frames. F32 (tensor units off, as on an M1 to M4): the load 11.1 to 11.8
+ * at 512x512, and at 960x544 10.7 to 11.1 for 124 frames, 11.4 for 243 and
+ * 12.1 for 362, which is 10.0 beside the frames. Not measured on an M1 to
+ * M4. */
+static const double video_decoder_load_int8 = 5.2 * GIB;
+static const double video_decoder_load_f32 = 12.0 * GIB;
+static const double video_decoder_held_int8 = 3.6 * GIB;
+static const double video_decoder_held_f32 = 10.4 * GIB;
+static const double decoded_frame_bytes = 3.0 * 4.0;
+/* Loaded before the denoise to show its steps (preview_denoise), its
+ * weights stay beside the DiT. Counted, not measured. */
+static const double video_decoder_weights_int8 = 2.7 * GIB;
+static const double video_decoder_weights_f32 = 9.7 * GIB;
+
 /* Verdicts against RAM: past `tight` macOS starts compressing and swapping
  * heavily; past `too_large` the run risks exhausting swap, which is what
  * restarted this Mac twice (kernel watchdog). */
@@ -205,12 +230,23 @@ void h3_plan_compute(const h3_plan_input *input, h3_plan *plan) {
         (double)input->dit_tokens *
             (input->dit_int8 ? dit_int8_per_token : dit_per_token) +
         (double)input->text_tokens * dit_per_text_token +
-        (input->full_sdpa ? 0.0 : chunked_sdpa_scores));
+        (input->full_sdpa ? 0.0 : chunked_sdpa_scores) +
+        (!input->video_decoder_with_dit ? 0.0 :
+         input->video_decoder_int8 ? video_decoder_weights_int8 :
+                                     video_decoder_weights_f32));
+
+    double decoder_load = input->video_decoder_int8 ?
+        video_decoder_load_int8 : video_decoder_load_f32;
+    plan->video_decoder_bytes = (uint64_t)fmax(decoder_load,
+        (input->video_decoder_int8 ? video_decoder_held_int8 :
+                                     video_decoder_held_f32) +
+            input->decoded_pixel_frames * decoded_frame_bytes);
 
     stage(plan, plan->video_encoder_bytes, "video encoder");
     stage(plan, plan->vision_encoder_bytes, "vision encoder");
     stage(plan, plan->text_encoder_bytes, "text encoder");
     stage(plan, plan->dit_bytes, "DiT");
+    stage(plan, plan->video_decoder_bytes, "video decoder");
 
     double ram = (double)input->memory_bytes;
     double peak = (double)plan->peak_bytes;
@@ -224,6 +260,16 @@ void h3_plan_compute(const h3_plan_input *input, h3_plan *plan) {
                  "or smaller reference video, or fewer reference images.",
                  input->text_tokens, input->vision_tokens,
                  H3_PLAN_TEXT_TOKEN_LIMIT);
+    } else if (ram > 0.0 && decoder_load > too_large_fraction * ram &&
+               plan->peak_bytes == plan->video_decoder_bytes) {
+        /* Nothing about the request changes what loading the decoder
+         * takes. */
+        plan->verdict = H3_PLAN_TOO_LARGE;
+        snprintf(message, size,
+                 "The video decoder would need about %.1f GiB, more than this "
+                 "Mac's %.0f GiB can hold without risking the whole system. "
+                 "It needs that much for a video of any size.",
+                 peak / GIB, ram / GIB);
     } else if (ram > 0.0 && peak > too_large_fraction * ram) {
         plan->verdict = H3_PLAN_TOO_LARGE;
         snprintf(message, size,

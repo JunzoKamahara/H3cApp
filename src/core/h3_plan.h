@@ -37,6 +37,16 @@ typedef struct {
      * neither SSD streaming nor a HyperFlow checkpoint): fewer and smaller
      * activation buffers per token. */
     int dit_int8;
+    /* The video VAE decoder's block linears run in int8 (a GPU with tensor
+     * units, H3_VAE_INT8 not 0); F32 elsewhere, four times the weights. */
+    int video_decoder_int8;
+    /* Pixels x frames of decoded video held while it decodes: the whole
+     * video, or one chunk where the frames are handed on as they come (a
+     * decoder kept between generations, or one showing the denoise). */
+    double decoded_pixel_frames;
+    /* The decoder is loaded before the denoise and stays beside the DiT
+     * (h3_params.preview_denoise). */
+    int video_decoder_with_dit;
 } h3_plan_input;
 
 /* Qwen's causal attention: its fast kernel keeps one F32 score row per

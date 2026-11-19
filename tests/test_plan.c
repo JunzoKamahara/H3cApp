@@ -27,7 +27,7 @@ static h3_plan run(uint64_t ram, size_t text, size_t vision, size_t dit,
                    size_t generated, size_t reference,
                    const h3_plan_visual *visuals, size_t visual_count) {
     h3_plan_input input = {ram, 1, 1, 1, 0, text, vision, dit, generated,
-                           reference, visuals, visual_count, 0};
+                           reference, visuals, visual_count, 0, 0, 0.0, 0};
     h3_plan plan;
     memset(&plan, 0x5a, sizeof(plan));
     h3_plan_compute(&input, &plan);
@@ -80,7 +80,7 @@ int main(void) {
          * 16000-token sequence fits 24 GB there too, and costs more than
          * the one call's mask. */
         h3_plan_input input = {ram24, 1, 0, 1, 0, 16000, 15900, 60000, 40000,
-                               20000, NULL, 0, 0};
+                               20000, NULL, 0, 0, 0, 0.0, 0};
         h3_plan chunked;
         h3_plan_compute(&input, &chunked);
         check(chunked.verdict != H3_PLAN_TOO_LARGE,
@@ -112,7 +112,7 @@ int main(void) {
          * estimate still covers the measured peaks (3.88 GiB at 9895
          * tokens and 20 steps, 4.87 GiB at 21735 tokens and 2 steps). */
         h3_plan_input input = {ram24, 0, 1, 1, 0, 30, 0, 9895, 9865, 0,
-                               NULL, 0, 0};
+                               NULL, 0, 0, 0, 0.0, 0};
         h3_plan bf16, int8;
         h3_plan_compute(&input, &bf16);
         input.dit_int8 = 1;
@@ -125,6 +125,64 @@ int main(void) {
         h3_plan_compute(&input, &int8);
         check((double)int8.dit_bytes > 4.87 * GIB,
               "the int8 estimate covers 21735 measured tokens");
+    }
+
+    {
+        /* The video VAE decoder, after the DiT: its weights and one tile
+         * whatever the canvas, and the decoded frames beside them. The
+         * estimates cover what was measured (int8 5.44 GiB and F32 12.11
+         * at 960x544 and 362 frames, F32 11.76 at 512x512 and 49). */
+        h3_plan_input input = {ram24, 1, 0, 1, 0, 9, 0, 4547, 4538, 0,
+                               NULL, 0, 0, 0, 512.0 * 512 * 39, 0};
+        h3_plan f32, int8, longer;
+        h3_plan_compute(&input, &f32);
+        check((double)f32.video_decoder_bytes > 11.76 * GIB,
+              "the F32 decoder's estimate covers a measured short video");
+        check(!strcmp(f32.peak_stage, "video decoder") &&
+              f32.peak_bytes == f32.video_decoder_bytes,
+              "a short video peaks in the F32 decoder");
+        check(f32.verdict == H3_PLAN_OK, "the F32 decoder fits 24 GB");
+        input.video_decoder_int8 = 1;
+        h3_plan_compute(&input, &int8);
+        check(int8.video_decoder_bytes < f32.video_decoder_bytes / 2,
+              "the int8 decoder needs less than half");
+        input.decoded_pixel_frames = 960.0 * 544 * 362;
+        h3_plan_compute(&input, &longer);
+        check(longer.video_decoder_bytes > int8.video_decoder_bytes &&
+              (double)longer.video_decoder_bytes > 5.44 * GIB,
+              "kept frames count, and cover 362 measured frames in int8");
+        input.video_decoder_int8 = 0;
+        h3_plan_compute(&input, &longer);
+        check((double)longer.video_decoder_bytes > 12.11 * GIB,
+              "the F32 estimate covers 362 measured frames");
+
+        /* Shown during the denoise, its weights are beside the DiT. */
+        input.decoded_pixel_frames = 512.0 * 512 * 22;
+        h3_plan without, with;
+        h3_plan_compute(&input, &without);
+        input.video_decoder_with_dit = 1;
+        h3_plan_compute(&input, &with);
+        check((double)(with.dit_bytes - without.dit_bytes) > 9.0 * GIB &&
+              !strcmp(with.peak_stage, "DiT"),
+              "a decoder showing the denoise is counted with the DiT");
+
+        /* 16 GB without tensor units holds it; 8 GB is refused for the
+         * decoder itself, and is not told to make the video smaller. */
+        input.video_decoder_with_dit = 0;
+        input.memory_bytes = 16ull << 30;
+        h3_plan_compute(&input, &f32);
+        check(f32.verdict == H3_PLAN_OK, "the F32 decoder fits 16 GB");
+        input.memory_bytes = 8ull << 30;
+        h3_plan_compute(&input, &f32);
+        check(f32.verdict == H3_PLAN_TOO_LARGE &&
+              strstr(f32.message, "video decoder") &&
+              strstr(f32.message, "any size") &&
+              !strstr(f32.message, "smaller"),
+              "8 GB is refused for the F32 decoder, whatever the video");
+        input.video_decoder_int8 = 1;
+        h3_plan_compute(&input, &int8);
+        check(int8.verdict != H3_PLAN_TOO_LARGE,
+              "8 GB is not refused for the int8 decoder");
     }
 
     /* A long reference video: chunked VAE encode, its pixels held. */

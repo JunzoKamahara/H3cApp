@@ -525,9 +525,11 @@ typedef struct {
     uint64_t vision_encoder_bytes;
     uint64_t text_encoder_bytes;
     uint64_t dit_bytes;
+    uint64_t video_decoder_bytes; /* the video VAE turning the latent to frames */
     uint64_t peak_bytes;          /* the largest of them */
     uint64_t memory_bytes;        /* this Mac's RAM */
-    char peak_stage[32];          /* "video encoder", "text encoder", ... */
+    char peak_stage[32];          /* "video encoder", "text encoder", "DiT",
+                                   * "video decoder", ... */
     /* English: what limits it and what to change; empty when it is OK. */
     char message[512];
 } h3_plan;

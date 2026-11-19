@@ -83,7 +83,8 @@ public struct H3GenerationPlan: Sendable, Equatable {
     public let referencePixelFrames: Double
     public let peakBytes: UInt64
     public let memoryBytes: UInt64
-    /// "video encoder", "vision encoder", "text encoder" or "DiT".
+    /// "video encoder", "vision encoder", "text encoder", "DiT" or
+    /// "video decoder".
     public let peakStage: String
     /// The engine's English explanation; empty when the verdict is ok.
     public let message: String

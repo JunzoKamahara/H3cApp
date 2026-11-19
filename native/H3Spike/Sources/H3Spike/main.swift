@@ -190,7 +190,8 @@ if ProcessInfo.processInfo.environment["H3SPIKE_PLAN"] == "1" {
         print("  reference video: \(plan.reference_video_frames) frames at \(plan.reference_video_width)x\(plan.reference_video_height), VAE chunk \(plan.reference_video_chunk_frames)")
     }
     for (name, bytes) in [("video encoder", plan.video_encoder_bytes), ("vision encoder", plan.vision_encoder_bytes),
-                          ("text encoder", plan.text_encoder_bytes), ("DiT", plan.dit_bytes)] {
+                          ("text encoder", plan.text_encoder_bytes), ("DiT", plan.dit_bytes),
+                          ("video decoder", plan.video_decoder_bytes)] {
         print("  " + name + String(format: ": %.1f GiB", Double(bytes) / gib))
     }
     print("  peak: " + String(format: "%.1f GiB", Double(plan.peak_bytes) / gib) + " in the \(fixedCString(plan.peak_stage)) of " + String(format: "%.0f GiB", Double(plan.memory_bytes) / gib))

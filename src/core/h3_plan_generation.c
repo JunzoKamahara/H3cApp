@@ -346,6 +346,21 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
             stat(params->loras[index].path, &status) == 0)
             lora_bytes += (uint64_t)((double)status.st_size * 1.3);
     }
+    /* As h3_video_vae.c picks its block linears (int8 where the GPU's
+     * tensor units are in use), and as h3_generate decodes: the whole video
+     * kept as F32 frames until it is written, or, with a decoder that is
+     * kept or shows the denoise, a 17-frame chunk and its 5-frame overlap
+     * at a time. */
+    const char *nax = h3_option("H3_NAX");
+    const char *vae_int8 = h3_option("H3_VAE_INT8");
+    int decoder_int8 = h3_device(ctx)->apple_gpu_family >= 10 &&
+        !(nax && !strcmp(nax, "0")) && !(vae_int8 && !strcmp(vae_int8, "0"));
+    int decoded_frames = temporal.frame_count;
+    if ((params->preview_denoise || h3_cache_target(ctx, H3_CACHE_DECODER)) &&
+        decoded_frames > 17 + 5)
+        decoded_frames = 17 + 5;
+    double decoded_pixel_frames = (double)H3_VAE_SPATIAL_RATIO * latent_h *
+        H3_VAE_SPATIAL_RATIO * latent_w * decoded_frames;
     h3_plan_input input = {
         h3_device(ctx)->physical_memory, params->ssd_streaming,
         h3_plan_full_sdpa(ctx), prefetch_depth, resident + lora_bytes,
@@ -356,7 +371,8 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
         h3_device(ctx)->apple_gpu_family >= 10 && !params->ssd_streaming &&
             !hyperflow_resident && !params->use_slower_bf16_mlp &&
             !params->use_slower_bf16_qkv &&
-            !params->use_slower_bf16_attention_output};
+            !params->use_slower_bf16_attention_output,
+        decoder_int8, decoded_pixel_frames, params->preview_denoise != 0};
     h3_plan_compute(&input, plan);
     ok = 1;
 
