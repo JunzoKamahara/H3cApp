@@ -411,6 +411,42 @@ static int dump_block_hidden(h3_dit *dit, const char *prefix, unsigned block,
                   "continue after block dump");
 }
 
+/* Writes the last step's target video rows after the final normalization
+ * and modulation, [video_rows, HIDDEN] BF16, to <prefix>.bf16, and their
+ * shape to <prefix>.json (H3_DUMP_FINAL_VIDEO). These are the rows the video
+ * head projects to VIDEO_PATCH: what a pixel head (DWD) would read instead.
+ * The caller's command buffer has been submitted when this returns. */
+static int dump_final_video(h3_dit *dit, const char *prefix, int step,
+                            char *error, size_t error_size) {
+    size_t count = (size_t)dit->video_rows * HIDDEN;
+    if (!h3_dit_gpu_op(dit, h3_gpu_submit(dit->gpu), error, error_size,
+                "submit before the final video dump")) return 0;
+    uint16_t *values = malloc(count * sizeof(*values));
+    char path[1024];
+    snprintf(path, sizeof(path), "%s.bf16", prefix);
+    FILE *file = values ? fopen(path, "wb") : NULL;
+    int ok = file &&
+        h3_gpu_tensor_read_bf16(dit->final_video_norm, values, count) &&
+        fwrite(values, sizeof(*values), count, file) == count;
+    if (file && fclose(file) != 0) ok = 0;
+    free(values);
+    if (ok) {
+        snprintf(path, sizeof(path), "%s.json", prefix);
+        file = fopen(path, "w");
+        ok = file && fprintf(file,
+            "{\"rows\": %u, \"hidden\": %d, \"latent_t\": %d, "
+            "\"token_h\": %d, \"token_w\": %d, \"step\": %d, "
+            "\"steps\": %d, \"video_sigma\": %.9g}\n",
+            dit->video_rows, HIDDEN, dit->latent_t, dit->latent_h / 2,
+            dit->latent_w / 2, step, dit->sigmas.steps,
+            (double)dit->sigmas.video[step]) > 0;
+        if (file && fclose(file) != 0) ok = 0;
+    }
+    if (!ok) h3_dit_fail(error, error_size,
+                         "cannot write the final video dump %s", path);
+    return ok;
+}
+
 static int run_block(h3_dit *dit, unsigned index, int step,
                      h3_dit_block *weight,
                      int attention_adaln_ready,
@@ -1177,6 +1213,23 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
         OP(h3_gpu_cast_f32_to_bf16(dit->gpu, dit->video_output_bf16,
             dit->video_output, dit->video_rows * VIDEO_PATCH),
            "final video output cast");
+    }
+    /* The last step's rows as the video head reads them. The fused head
+     * never stores them, so they are normalized once more here; what the
+     * step itself computed above is left as it is. */
+    const char *final_dump = h3_option("H3_DUMP_FINAL_VIDEO");
+    if (final_dump && *final_dump && dit->final_video_norm &&
+        step + 1 == dit->sigmas.steps) {
+        if (fused_final_head) OP(h3_gpu_adaln_bf16_offset(
+            dit->gpu, dit->final_video_norm, dit->hidden,
+            (size_t)dit->video_target_start * HIDDEN, dit->final_norm, final,
+            dit->final_video_maps[step], dit->video_rows, HIDDEN, FINAL_SLOTS,
+            0, 1, 1e-5f), "final video AdaLN for the dump");
+        if (!dump_final_video(dit, final_dump, step, error, error_size))
+            return 0;
+        if (!submit) OP(h3_gpu_begin(dit->gpu),
+                        "continue after the final video dump");
+        return 1;
     }
     if (submit) OP(h3_gpu_submit(dit->gpu), "submit DiT forward");
 #undef OP

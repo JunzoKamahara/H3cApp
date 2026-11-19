@@ -818,6 +818,17 @@ static int allocate_activations(h3_dit *dit, char *error, size_t error_size) {
             return 0;
         }
     }
+    /* H3_DUMP_FINAL_VIDEO: the fused head keeps no normalized rows. */
+    if (!dit->final_video_norm && h3_option("H3_DUMP_FINAL_VIDEO")) {
+        dit->final_video_norm = h3_gpu_tensor_new_bf16(
+            dit->gpu, video * HIDDEN);
+        if (!dit->final_video_norm) {
+            h3_dit_fail(error, error_size,
+                 "cannot allocate the final video rows to dump: %s",
+                 h3_gpu_error(dit->gpu));
+            return 0;
+        }
+    }
     if (!dit->bf16_final) {
         dit->final_audio_f32 = h3_gpu_tensor_new_f32(
             dit->gpu, audio * HIDDEN);
