@@ -8,6 +8,10 @@
 
 typedef struct h3_tokenizer h3_tokenizer;
 
+/* Reads tokenizer.json and, when the same folder has one,
+ * tokenizer_config.json: the special tokens a model lists there and
+ * tokenizer.json does not have (MiniMax-H3's <d>, </d> and five more) get
+ * the IDs transformers gives them. */
 h3_tokenizer *h3_tokenizer_load(const char *tokenizer_json,
                                 char *error, size_t error_size);
 void h3_tokenizer_free(h3_tokenizer *tokenizer);

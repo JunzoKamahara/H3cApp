@@ -389,9 +389,12 @@ test: h3_tests h3_sdpa_tests h3_seedvr2_tests h3_seedvr2_temporal_tests h3_lora_
 	else \
 		echo "skip: MLX toy-block fixtures are not installed"; \
 	fi
-	@if test -f MiniMax-H3/tokenizer/tokenizer.json; then \
+	@if test -f MiniMax-H3/FL2VA/tokenizer/tokenizer.json; then \
+		$(BIN)/h3_tokenizer_tests MiniMax-H3/FL2VA/tokenizer/tokenizer.json; \
+	elif test -f MiniMax-H3/tokenizer/tokenizer.json; then \
 		$(BIN)/h3_tokenizer_tests MiniMax-H3/tokenizer/tokenizer.json; \
 	else \
+		$(BIN)/h3_tokenizer_tests; \
 		echo "skip: released tokenizer is not installed"; \
 	fi
 	@if test -f misc/fixtures/h3_text_bf16.safetensors; then \

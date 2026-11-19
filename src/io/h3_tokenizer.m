@@ -286,6 +286,51 @@ static int h3_added_match(H3Tokenizer *tokenizer, NSString *text,
     return found;
 }
 
+/* The special tokens a model adds in tokenizer_config.json, beside
+ * tokenizer.json, without writing them into tokenizer.json: MiniMax-H3's
+ * <d>, </d> (spoken lines), <|cutoff|>, <|lyrics_start|>, <|lyrics_end|>,
+ * <|caption_start|> and <|caption_end|>. transformers gives each name that
+ * tokenizer.json does not have the next free ID, in the order listed
+ * (151669 to 151675 for H3), and matches it as it matches the others: in the
+ * text as written, nothing stripped around it. Returns those tokens in that
+ * order, without their IDs; none when there is no such file (an image
+ * model's folder has only tokenizer.json) or it lists nothing new. */
+static NSArray<NSDictionary *> *h3_config_tokens(NSString *tokenizer_json,
+                                                 NSDictionary *vocab,
+                                                 NSArray *added) {
+    NSString *path = [[tokenizer_json stringByDeletingLastPathComponent]
+        stringByAppendingPathComponent:@"tokenizer_config.json"];
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    if (!data) return @[];
+    NSDictionary *config = [NSJSONSerialization JSONObjectWithData:data
+                                                            options:0
+                                                              error:NULL];
+    if (![config isKindOfClass:NSDictionary.class]) return @[];
+    NSMutableSet<NSString *> *known = [NSMutableSet set];
+    for (NSDictionary *token in added) {
+        if ([token[@"content"] isKindOfClass:NSString.class])
+            [known addObject:token[@"content"]];
+    }
+    NSMutableArray<NSDictionary *> *tokens = [NSMutableArray array];
+    /* transformers 5 writes the same list as extra_special_tokens. */
+    for (NSString *field in @[@"additional_special_tokens",
+                              @"extra_special_tokens"]) {
+        NSArray *list = config[field];
+        if (![list isKindOfClass:NSArray.class]) continue;
+        for (id entry in list) {
+            /* A name, or (older transformers) the token with its policy. */
+            NSDictionary *token = [entry isKindOfClass:NSDictionary.class] ?
+                entry : @{@"content": entry};
+            NSString *name = token[@"content"];
+            if (![name isKindOfClass:NSString.class] || !name.length ||
+                vocab[name] || [known containsObject:name]) continue;
+            [known addObject:name];
+            [tokens addObject:token];
+        }
+    }
+    return tokens;
+}
+
 h3_tokenizer *h3_tokenizer_load(const char *path, char *error,
                                 size_t error_size) {
     @autoreleasepool {
@@ -331,6 +376,24 @@ h3_tokenizer *h3_tokenizer_load(const char *path, char *error,
         if (!added) added = @[];
         for (NSDictionary *token in added) {
             maximum_id = MAX(maximum_id, [token[@"id"] unsignedIntegerValue]);
+        }
+        NSArray<NSDictionary *> *config_tokens = h3_config_tokens(
+            [NSString stringWithUTF8String:path], tokenizer.vocab, added);
+        if (config_tokens.count) {
+            /* The next free ID is the number of tokens so far; that is
+             * only an ID nothing has when the IDs so far have no gaps. */
+            if (tokenizer.vocab.count + added.count != maximum_id + 1) {
+                h3_tok_error(error, error_size,
+                             @"unexpected tokenizer specification");
+                return NULL;
+            }
+            NSMutableArray *all = [added mutableCopy];
+            for (NSDictionary *token in config_tokens) {
+                NSMutableDictionary *numbered = [token mutableCopy];
+                numbered[@"id"] = @(++maximum_id);
+                [all addObject:numbered];
+            }
+            added = all;
         }
         NSMutableArray *inverse_vocab = [NSMutableArray arrayWithCapacity:maximum_id + 1];
         NSMutableArray *inverse_added = [NSMutableArray arrayWithCapacity:maximum_id + 1];
