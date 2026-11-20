@@ -1,4 +1,4 @@
-"""Writes the report of an app_status.py run: one table of what worked, how
+"""Writes the report of an app_status.sh run: one table of what worked, how
 long it took and how much memory it used, one of the memory by stage, the
 failures in full, and a contact sheet of a frame of every video.
 
@@ -107,9 +107,13 @@ macs = distinct("%s（%s）、メモリ %d GB、macOS %s" % (
     shell("sysctl", "-n", "machdep.cpu.brand_string"), int(shell("sysctl", "-n", "hw.memsize")) // 2 ** 30,
     shell("sw_vers", "-productVersion"))
 models = distinct(r.get("model") for r in records)
+# Records without the tool's name in them are from app_status.py, the Python
+# script that app_status.sh was written from (records of the same form).
+by_shell = any(run.get("tool") == "app_status.sh" for run in runs)
 lines += ["# H3cApp：アプリでの動画生成の状況", "",
-          "`tools/perf/app_status.py`が、アプリをローカルAPIから動かして取った記録である。"
-          "表は測った値だけで、読み取りは「所見」にまとめた。", "",
+          "`tools/perf/app_status.sh`%sが、アプリをローカルAPIから動かして取った記録である。"
+          "表は測った値だけで、読み取りは「所見」にまとめた。" % (
+              "" if by_shell else "の前の版（Pythonで書いた`app_status.py`。記録の形式は同じ）"), "",
           "| 項目 | 値 |", "|---|---|",
           "| 実行日時 | %s 〜 %s |" % (min(r["at"] for r in records), max(r["at"] for r in records)),
           "| アプリ | %s |" % apps,
