@@ -1342,6 +1342,12 @@ final class GenerationViewModel: ObservableObject {
         }
 
         var draft = currentDraft()
+        // What actually ran: the form keeps the images of the 作り方 not in
+        // use, for switching back, but the record of a video names only the
+        // ones that shaped it.
+        draft.firstFrame = effectiveFirstFrame
+        draft.lastFrame = effectiveLastFrame
+        draft.references = effectiveReferences.map { ProjectDraft.Reference($0) }
         if let projectURL = project?.url {
             draft.firstFrame = draft.firstFrame.map { ProjectFiles.stored($0, in: projectURL) }
             draft.lastFrame = draft.lastFrame.map { ProjectFiles.stored($0, in: projectURL) }
