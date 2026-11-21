@@ -338,7 +338,10 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
         hyperflow_resident ? hyperflow_resident :
         h3_device(ctx)->apple_gpu_family >= 10 ? 18ull << 30 : 37ull << 30;
     /* A LoRA's factors stay on the GPU beside the blocks they patch
-     * (h3_lora.h): 1.61 GiB measured for a 1.29 GiB file. */
+     * (h3_lora.h): 1.61 GiB measured for a 1.29 GiB file. A pi-H3 adapter
+     * is counted the same way though a quarter of its 2.04 GiB file is the
+     * pixel head, read after the DiT: beside the DiT it keeps its LoRA
+     * factors and 1.08 GiB of replaced projections, about 1 GiB less. */
     uint64_t lora_bytes = 0;
     for (size_t index = 0; index < params->lora_count; index++) {
         struct stat status;
@@ -361,6 +364,20 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
         decoded_frames = 17 + 5;
     double decoded_pixel_frames = (double)H3_VAE_SPATIAL_RATIO * latent_h *
         H3_VAE_SPATIAL_RATIO * latent_w * decoded_frames;
+    /* A pi-H3 adapter with its pixel head gives the frames itself, as
+     * h3_generate decides (H3_PI_H3_VAE=1 keeps the decoder): one token for
+     * each 16-pixel cell of each latent step. */
+    size_t pixel_head_tokens = 0;
+    const char *head_off = h3_option("H3_PI_H3_VAE");
+    for (size_t index = 0; index < params->lora_count; index++) {
+        h3_lora_info lora_info;
+        if (!(head_off && *head_off && strcmp(head_off, "0")) &&
+            params->loras[index].path &&
+            h3_lora_inspect(params->loras[index].path, &lora_info, detail,
+                            sizeof(detail)) &&
+            lora_info.pi_h3 == H3_PI_H3_PIXELS)
+            pixel_head_tokens = (size_t)temporal.video_t * latent_h * latent_w;
+    }
     h3_plan_input input = {
         h3_device(ctx)->physical_memory, params->ssd_streaming,
         h3_plan_full_sdpa(ctx), prefetch_depth, resident + lora_bytes,
@@ -372,7 +389,8 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
             !hyperflow_resident && !params->use_slower_bf16_mlp &&
             !params->use_slower_bf16_qkv &&
             !params->use_slower_bf16_attention_output,
-        decoder_int8, decoded_pixel_frames, params->preview_denoise != 0};
+        decoder_int8, decoded_pixel_frames, params->preview_denoise != 0,
+        pixel_head_tokens};
     h3_plan_compute(&input, plan);
     ok = 1;
 

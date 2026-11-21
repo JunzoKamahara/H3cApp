@@ -124,6 +124,17 @@ static const double decoded_frame_bytes = 3.0 * 4.0;
 static const double video_decoder_weights_int8 = 2.7 * GIB;
 static const double video_decoder_weights_f32 = 9.7 * GIB;
 
+/* A pi-H3 pixel head in the video decoder's place (h3_pixel_head.c): its
+ * own GPU context, one of its 8 layers' weights at a time, a few thousand
+ * rows of scratch, and for the whole clip at once its activations (F32
+ * hidden and BF16 Q, K and V rows of 2048, 20 KiB a token) and the DiT rows
+ * it reads (2.6 KiB); the frames leave as they come. Measured on the 24 GB
+ * M5 (plans/PI_H3_PLAN.ja.md, 8.3): 2.27 GiB at 384x384 and 56 frames (9792
+ * tokens), 3.55 at 832x480 and 124 (57720), 5.79 at 1344x768 and 124
+ * (149184). */
+static const double pixel_head_fixed = 2.2 * GIB;
+static const double pixel_head_per_token = 27.0 * 1024.0;
+
 /* Verdicts against RAM: past `tight` macOS starts compressing and swapping
  * heavily; past `too_large` the run risks exhausting swap, which is what
  * restarted this Mac twice (kernel watchdog). */
@@ -245,12 +256,20 @@ void h3_plan_compute(const h3_plan_input *input, h3_plan *plan) {
             (input->video_decoder_int8 ? video_decoder_held_int8 :
                                          video_decoder_held_f32) +
                 input->decoded_pixel_frames * decoded_frame_bytes);
+    /* The pixel head stands where the decoder would: nothing of the decoder
+     * is loaded after the DiT. */
+    if (input->pixel_head_tokens) {
+        decoder_load = 0.0;
+        plan->video_decoder_bytes = (uint64_t)(pixel_head_fixed +
+            (double)input->pixel_head_tokens * pixel_head_per_token);
+    }
 
     stage(plan, plan->video_encoder_bytes, "video encoder");
     stage(plan, plan->vision_encoder_bytes, "vision encoder");
     stage(plan, plan->text_encoder_bytes, "text encoder");
     stage(plan, plan->dit_bytes, "DiT");
-    stage(plan, plan->video_decoder_bytes, "video decoder");
+    stage(plan, plan->video_decoder_bytes,
+          input->pixel_head_tokens ? "pixel head" : "video decoder");
 
     double ram = (double)input->memory_bytes;
     double peak = (double)plan->peak_bytes;

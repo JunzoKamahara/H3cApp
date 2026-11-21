@@ -22,9 +22,9 @@
  *     -> RGB = value * std + mean, clamped
  *
  * The whole clip is one token grid: nothing is decoded in overlapping
- * chunks. Activations stay resident (about 12 KiB a token: 0.12 GiB at
- * 384 x 384, 56 frames, 1.8 GiB at 1344 x 768, 124 frames); the linears run
- * a few thousand rows at a time. */
+ * chunks. Activations stay resident (20 KiB a token of the head's grid:
+ * 0.19 GiB at 384 x 384, 56 frames, 2.8 GiB at 1344 x 768, 124 frames); the
+ * linears run a few thousand rows at a time. */
 
 #include "h3_video_vae.h"
 

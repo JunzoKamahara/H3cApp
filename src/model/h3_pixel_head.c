@@ -65,7 +65,6 @@ typedef struct {
     /* resident activations */
     h3_gpu_tensor *hidden;                 /* F32 [rows, DIM] */
     h3_gpu_tensor *query, *key, *value;    /* BF16 [rows, DIM] */
-    h3_gpu_tensor *attended;               /* BF16 [rows, DIM] */
     h3_gpu_tensor *rope_cos[2], *rope_sin[2];   /* F32 [rows, ROPE_HALF] */
     /* a chunk of rows */
     h3_gpu_tensor *x, *norm, *qkv, *qf, *kf, *vf, *branch_in, *branch;
@@ -364,7 +363,6 @@ static int allocate(head_context *head, char *error, size_t error_size) {
     head->query = h3_gpu_tensor_new_bf16(head->gpu, rows * DIM);
     head->key = h3_gpu_tensor_new_bf16(head->gpu, rows * DIM);
     head->value = h3_gpu_tensor_new_bf16(head->gpu, rows * DIM);
-    head->attended = h3_gpu_tensor_new_bf16(head->gpu, rows * DIM);
     head->x = h3_gpu_tensor_new_f32(head->gpu, (size_t)CHUNK * DIM);
     head->norm = h3_gpu_tensor_new_f32(head->gpu, (size_t)CHUNK * DIM);
     head->qkv = h3_gpu_tensor_new_f32(head->gpu, (size_t)CHUNK * 3 * DIM);
@@ -394,7 +392,7 @@ static int allocate(head_context *head, char *error, size_t error_size) {
     head->k_rows = h3_gpu_tensor_new_bf16(head->gpu, kv_rows * DIM);
     head->v_rows = h3_gpu_tensor_new_bf16(head->gpu, kv_rows * DIM);
     if (head->hidden && head->query && head->key && head->value &&
-        head->attended && head->x && head->norm && head->qkv && head->qf &&
+        head->x && head->norm && head->qkv && head->qf &&
         head->kf && head->vf && head->branch_in && head->branch && head->ff1 &&
         head->activated && head->half && head->cos && head->sin &&
         head->q_rows && head->a_rows && head->k_rows && head->v_rows)
@@ -519,7 +517,9 @@ static int attend(head_context *head, const attention_layout *layout,
             head->k_rows, head->v_rows, call->batch, call->q_len,
             call->kv_len, HEADS, HEAD_DIM, 1.0f / sqrtf((float)HEAD_DIM)),
            "attention");
-        OP(h3_gpu_scatter_rows_bf16(head->gpu, head->attended,
+        /* Every row is a query once a layer, so its attention takes its
+         * query's place. */
+        OP(h3_gpu_scatter_rows_bf16(head->gpu, head->query,
             head->a_rows, call->q_index, q_rows, DIM), "place attention");
     }
     return 1;
@@ -559,7 +559,7 @@ static int run_layer(head_context *head, int index, const head_block *block,
     for (uint32_t first = 0; first < head->rows; first += CHUNK) {
         uint32_t chunk = head->rows - first < CHUNK ? head->rows - first : CHUNK;
         size_t at = (size_t)first * DIM, count = (size_t)chunk * DIM;
-        OP(h3_gpu_copy_bf16(head->gpu, head->half, 0, head->attended, at,
+        OP(h3_gpu_copy_bf16(head->gpu, head->half, 0, head->query, at,
             count), "take attention");
         OP(h3_gpu_cast_bf16_to_f32(head->gpu, head->branch_in, head->half,
             (uint32_t)count), "attention to F32");
@@ -689,7 +689,6 @@ static int project(head_context *head, h3_video_chunk_callback callback,
 static void free_context(head_context *head) {
     free_tensor(&head->hidden); free_tensor(&head->query);
     free_tensor(&head->key); free_tensor(&head->value);
-    free_tensor(&head->attended);
     for (int shifted = 0; shifted < 2; shifted++) {
         free_tensor(&head->rope_cos[shifted]);
         free_tensor(&head->rope_sin[shifted]);
