@@ -125,15 +125,15 @@ static const double video_decoder_weights_int8 = 2.7 * GIB;
 static const double video_decoder_weights_f32 = 9.7 * GIB;
 
 /* A pi-H3 pixel head in the video decoder's place (h3_pixel_head.c): its
- * own GPU context, one of its 8 layers' weights at a time, a few thousand
- * rows of scratch, and for the whole clip at once its activations (F32
- * hidden and BF16 Q, K and V rows of 2048, 20 KiB a token) and the DiT rows
- * it reads (2.6 KiB); the frames leave as they come. Measured on the 24 GB
- * M5 (plans/PI_H3_PLAN.ja.md, 8.3): 2.27 GiB at 384x384 and 56 frames (9792
- * tokens), 3.55 at 832x480 and 124 (57720), 5.79 at 1344x768 and 124
- * (149184). */
-static const double pixel_head_fixed = 2.2 * GIB;
-static const double pixel_head_per_token = 27.0 * 1024.0;
+ * own GPU context, one of its 8 layers' weights at a time, 512 rows of
+ * scratch, and for the whole clip at once its activations (BF16 hidden, Q,
+ * K and V rows of 2048, 16 KiB a token) and the DiT rows it reads (2.6
+ * KiB); the frames leave as they come. Measured on the 24 GB M5
+ * (plans/PI_H3_PLAN.ja.md, 8.7): 1.49 GiB at 384x384 and 56 frames (9792
+ * tokens), 2.14 at 832x480 and 124 (57720), 4.04 at 1344x768 and 124
+ * (149184, the head alone). */
+static const double pixel_head_fixed = 1.5 * GIB;
+static const double pixel_head_per_token = 19.0 * 1024.0;
 
 /* Verdicts against RAM: past `tight` macOS starts compressing and swapping
  * heavily; past `too_large` the run risks exhausting swap, which is what

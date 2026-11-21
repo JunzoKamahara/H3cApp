@@ -67,7 +67,7 @@ typedef struct {
     uint32_t rows;         /* tokens, then GLOBALS per native block */
     uint32_t blocks;
     /* resident activations */
-    h3_gpu_tensor *hidden;                 /* F32 [rows, DIM] */
+    h3_gpu_tensor *hidden;                 /* BF16 [rows, DIM] */
     h3_gpu_tensor *query, *key, *value;    /* BF16 [rows, DIM] */
     h3_gpu_tensor *rope_cos[2], *rope_sin[2];   /* F32 [rows, ROPE_HALF] */
     /* a chunk of rows */
@@ -97,6 +97,28 @@ static int gpu_op(head_context *head, int ok, char *error, size_t error_size,
 #define OP(call, label) do {                                                   \
     if (!gpu_op(head, (call), error, error_size, label)) return 0;             \
 } while (0)
+
+/* Round to nearest, ties to even, as the GPU's cast does. */
+static uint16_t to_bf16(float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    if ((bits & 0x7f800000u) != 0x7f800000u)
+        bits += 0x7fffu + ((bits >> 16) & 1u);
+    return (uint16_t)(bits >> 16);
+}
+
+/* A chunk of the hidden rows as F32 in head->x, and back. */
+static int take_rows(head_context *head, size_t at, size_t count) {
+    return h3_gpu_copy_bf16(head->gpu, head->half, 0, head->hidden, at, count) &&
+           h3_gpu_cast_bf16_to_f32(head->gpu, head->x, head->half,
+                                   (uint32_t)count);
+}
+
+static int keep_rows(head_context *head, size_t at, size_t count) {
+    return h3_gpu_cast_f32_to_bf16(head->gpu, head->half, head->x,
+                                   (uint32_t)count) &&
+           h3_gpu_copy_bf16(head->gpu, head->hidden, at, head->half, 0, count);
+}
 
 static void free_tensor(h3_gpu_tensor **tensor) {
     h3_gpu_tensor_free(*tensor);
@@ -416,6 +438,7 @@ static int expand_features(head_context *head, const uint16_t *rows,
     uint32_t expanded = EXPAND * EXPAND * DIM;
     float *scale = malloc(FEATURE * sizeof(float));
     float *host = malloc((size_t)CHUNK * expanded * sizeof(float));
+    uint16_t row16[GLOBALS * DIM];
     h3_gpu_tensor *weight = NULL, *bias = NULL, *mod_scale = NULL;
     h3_gpu_tensor *mod_shift = NULL, *in16 = NULL, *in32 = NULL, *out = NULL;
     h3_gpu_tensor *features = NULL, *registers = NULL;
@@ -473,10 +496,11 @@ static int expand_features(head_context *head, const uint16_t *rows,
                 for (uint32_t ex = 0; ok && ex < EXPAND; ex++) {
                     size_t token = ((size_t)t * head->H + y * EXPAND + ey) *
                                    head->W + x * EXPAND + ex;
-                    ok = h3_gpu_tensor_write_f32_range(
-                        head->hidden, token * DIM,
-                        host + ((size_t)i * EXPAND * EXPAND + ey * EXPAND + ex) * DIM,
-                        DIM);
+                    const float *source = host +
+                        ((size_t)i * EXPAND * EXPAND + ey * EXPAND + ex) * DIM;
+                    for (int d = 0; d < DIM; d++) row16[d] = to_bf16(source[d]);
+                    ok = h3_gpu_tensor_write_bf16_range(
+                        head->hidden, token * DIM, row16, DIM);
                 }
         }
         if (!ok) fail(error, error_size, "pixel head: cannot place the "
@@ -487,11 +511,13 @@ static int expand_features(head_context *head, const uint16_t *rows,
         float *globals = calloc((size_t)GLOBALS * DIM, sizeof(float));
         ok = globals && h3_gpu_tensor_read_f32_range(registers, 0, globals,
                                                      (size_t)REGISTERS * DIM);
+        for (int d = 0; ok && d < GLOBALS * DIM; d++)
+            row16[d] = to_bf16(globals[d]);
         for (uint32_t block = 0; ok && block < head->blocks; block++)
-            ok = h3_gpu_tensor_write_f32_range(
+            ok = h3_gpu_tensor_write_bf16_range(
                 head->hidden,
                 ((size_t)head->tokens + (size_t)block * GLOBALS) * DIM,
-                globals, (size_t)GLOBALS * DIM);
+                row16, (size_t)GLOBALS * DIM);
         free(globals);
         if (!ok) fail(error, error_size, "pixel head: cannot set the global "
                       "tokens");
@@ -537,8 +563,7 @@ static int run_layer(head_context *head, int index, const head_block *block,
     for (uint32_t first = 0; first < head->rows; first += CHUNK) {
         uint32_t chunk = head->rows - first < CHUNK ? head->rows - first : CHUNK;
         size_t at = (size_t)first * DIM, count = (size_t)chunk * DIM;
-        OP(h3_gpu_copy_f32(head->gpu, head->x, 0, head->hidden, at, count),
-           "take rows");
+        OP(take_rows(head, at, count), "take rows");
         OP(h3_gpu_rms_norm_f32(head->gpu, head->norm, head->x, block->norm1,
             chunk, DIM, 1e-5f), "attention norm");
         OP(h3_gpu_linear_f32(head->gpu, head->qkv, head->norm, block->qkv_w,
@@ -570,8 +595,7 @@ static int run_layer(head_context *head, int index, const head_block *block,
             (uint32_t)count), "attention to F32");
         OP(h3_gpu_linear_f32(head->gpu, head->branch, head->branch_in,
             block->out_w, block->out_b, chunk, DIM, DIM), "attention output");
-        OP(h3_gpu_copy_f32(head->gpu, head->x, 0, head->hidden, at, count),
-           "take rows");
+        OP(take_rows(head, at, count), "take rows");
         OP(h3_gpu_scale_add_f32(head->gpu, head->x, head->x, head->branch,
             block->scale1, chunk, DIM), "attention residual");
         OP(h3_gpu_rms_norm_f32(head->gpu, head->norm, head->x, block->norm2,
@@ -584,8 +608,7 @@ static int run_layer(head_context *head, int index, const head_block *block,
             block->w2, block->w2_b, chunk, FFN, DIM), "MLP output");
         OP(h3_gpu_scale_add_f32(head->gpu, head->x, head->x, head->branch,
             block->scale2, chunk, DIM), "MLP residual");
-        OP(h3_gpu_copy_f32(head->gpu, head->hidden, at, head->x, 0, count),
-           "keep rows");
+        OP(keep_rows(head, at, count), "keep rows");
     }
     OP(h3_gpu_submit(head->gpu), "finish a layer");
     return 1;
@@ -635,8 +658,7 @@ static int project(head_context *head, h3_video_chunk_callback callback,
             uint32_t chunk = per_step - first < CHUNK ? per_step - first : CHUNK;
             size_t at = ((size_t)step * per_step + first) * DIM;
             ok = h3_gpu_begin(head->gpu) &&
-                 h3_gpu_copy_f32(head->gpu, head->x, 0, head->hidden, at,
-                                 (size_t)chunk * DIM) &&
+                 take_rows(head, at, (size_t)chunk * DIM) &&
                  h3_gpu_layer_norm_f32(head->gpu, head->norm, head->x, norm_w,
                                        norm_b, chunk, DIM, 1e-5f) &&
                  h3_gpu_linear_f32(head->gpu, projected, head->norm,
@@ -754,7 +776,7 @@ int h3_pixel_head_decode(const char *adapter_path,
              h3_gpu_error(head->gpu));
         goto done;
     }
-    head->hidden = h3_gpu_tensor_new_f32(head->gpu, (size_t)head->rows * DIM);
+    head->hidden = h3_gpu_tensor_new_bf16(head->gpu, (size_t)head->rows * DIM);
     if (!head->hidden) {
         fail(error, error_size, "pixel head: cannot allocate its rows: %s",
              h3_gpu_error(head->gpu));

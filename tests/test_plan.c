@@ -190,7 +190,7 @@ int main(void) {
 
     {
         /* A pi-H3 pixel head stands where the decoder would: its estimate
-         * grows with the clip and covers what was measured (2.27, 3.55 and 5.79 GiB),
+         * grows with the clip and covers what was measured (1.49, 2.14 and 4.04 GiB),
          * and it is the stage named. */
         h3_plan_input input = {ram24, 0, 1, 1, 0, 23, 0, 2657, 2634, 0,
                                NULL, 0, 1, 1, 384.0 * 384 * 22, 0, 0};
@@ -199,19 +199,22 @@ int main(void) {
         input.pixel_head_tokens = 17 * 24 * 24;
         h3_plan_compute(&input, &head);
         check(head.video_decoder_bytes < decoder.video_decoder_bytes &&
-              (double)head.video_decoder_bytes > 2.27 * GIB,
+              (double)head.video_decoder_bytes > 1.49 * GIB,
               "a short clip's pixel head needs less than the int8 decoder");
         check(head.dit_bytes == decoder.dit_bytes,
               "the pixel head changes nothing of the DiT's estimate");
         input.pixel_head_tokens = 37 * 30 * 52;
         h3_plan_compute(&input, &head);
-        check((double)head.video_decoder_bytes > 3.55 * GIB,
+        check((double)head.video_decoder_bytes > 2.14 * GIB,
               "the pixel head's estimate covers 832x480 and 124 frames");
         input.pixel_head_tokens = 37 * 48 * 84;
         h3_plan_compute(&input, &head);
-        check((double)head.video_decoder_bytes > 5.79 * GIB,
+        check((double)head.video_decoder_bytes > 4.04 * GIB &&
+              (double)head.video_decoder_bytes < 4.5 * GIB,
               "the pixel head's estimate covers 1344x768 and 124 frames");
-        input.memory_bytes = 4ull << 30;
+        /* Four times that clip on a Mac the DiT's stage still fits. */
+        input.pixel_head_tokens *= 4;
+        input.memory_bytes = 8ull << 30;
         h3_plan_compute(&input, &head);
         check(head.verdict == H3_PLAN_TOO_LARGE &&
               !strstr(head.message, "any size") &&

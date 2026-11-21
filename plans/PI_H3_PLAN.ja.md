@@ -196,13 +196,13 @@ tools/pixel_head/batch.sh          # 24 本、約 25 分、~/H3cApp-models/pi-h3
 
 ### 8.1 使い方（CLI）
 
-ComfyUI 版の 1 ファイル（`pi_h3_{2,4}step_dwd_adapter_int8_convrot.safetensors`）を **LoRA として渡す**。ステップ数は 2 か 4（ファイルに合わせる。ファイル自身は 2 か 4 かを記録していない）。土台は曲線形式（pruned、ランク 8）の H3。
+アダプタを **LoRA として渡す**。画素ヘッドつき（DWD）は ComfyUI 版の 1 ファイル（`pi_h3_{2,4}step_dwd_adapter_int8_convrot.safetensors`）、画素ヘッドなしは diffusers 形式のフォルダの中のファイル（`pi_h3_{2,4}step_adapter/diffusion_pytorch_model.safetensors`、0.47 GiB。8.7）。ステップ数は 2 か 4（ファイルに合わせる。ファイル自身は 2 か 4 かを記録していない）。土台は曲線形式（pruned、ランク 8）の H3。
 
 ```
 H3SPIKE_LORA=…/pi_h3_4step_dwd_adapter_int8_convrot.safetensors H3SPIKE_STEPS=4 build/bin/h3_generate_cli …
 ```
 
-- `h3_lora_inspect` が `pi_h3`（`H3_PI_H3_LATENT` / `H3_PI_H3_PIXELS`）を返す。diffusers の名前の版（`pi_h3_*_adapter/`）はエラーにして、ComfyUI 版を使うよう案内する。**非 DWD 版は diffusers の名前でしか配られていないので、今は読めない**（DWD 版を `H3_PI_H3_VAE=1` で使えば、標準 VAE での復号になる）。
+- `h3_lora_inspect` が `pi_h3`（`H3_PI_H3_LATENT` / `H3_PI_H3_PIXELS`）を返す。画素ヘッドなしの版は diffusers の名前でしか配られていないので、その名前のまま読む（`H3_PI_H3_LATENT`、標準 VAE で復号）。画素ヘッドつきの diffusers 形式（`pi_h3_*_dwd_adapter/`、3.5 GiB）はエラーにして、ComfyUI 版を使うよう案内する。
 - `H3_PI_H3_VAE=1`: 画素ヘッドを使わず、最後の Euler ステップの潜在を標準 VAE で復号する（比較用）。
 
 ### 8.2 実装
@@ -213,12 +213,12 @@ H3SPIKE_LORA=…/pi_h3_4step_dwd_adapter_int8_convrot.safetensors H3SPIKE_STEPS=
 | 上書きストア | `h3_weight_store_open_file`、`dit->overlay`、`h3_dit_store_of` | アダプタを 1 ファイルの重みストアとして開き、名前で読む箇所（最終層、常駐ブロック）はアダプタにあればそちらを読む |
 | AdaLN | `h3_dit_schedule_precompute_curve` の `overlay` | 曲線の射影の重み・バイアスをアダプタのものに替える。スケジュールのキャッシュは使わない |
 | LoRA | 既存の `h3_lora.c` のまま | ランク 64、ブロック 0〜45（DWD 版） |
-| ブロック 46〜49 | `h3_dit_prepare_overlay_blocks`、`h3_dit_block.c` | int8 キャッシュの経路では、差し替える OUT/FC1/FC2（12 行列）を BF16 に戻してからエンジンの行ごと int8 に量子化し、常駐させる（計 1.08 GiB）。常駐経路は名前で読むのでそのまま。SSD ストリーミングは未対応（エラー） |
+| ブロック 46〜49 | `h3_dit_prepare_overlay_blocks`、`h3_dit_block.c` | int8 キャッシュの経路では、差し替える OUT/FC1/FC2（12 行列）を BF16 に戻してからエンジンの行ごと int8 に量子化し、常駐させる（計 1.08 GiB）。常駐経路は名前で読むのでそのまま。SSD ストリーミングは、差し替える行列をアダプタのファイルから流す（8.7） |
 | 画素ヘッドの入力 | `prepare_pixel_modulation`、`h3_dit_pixel_head_input` | ヘッド専用の AdaLN（最後のステップの時刻）と、最終ブロックの出力の映像行 |
-| 画素ヘッド | `src/model/h3_pixel_head.c` | 7.4 のとおり。活性は常駐（F32 の隠れ状態と BF16 の Q・K・V、1 トークン 20 KiB。注意の結果は Q の場所に書き戻す）、線形層は 4096 行ずつ、注意は同じ大きさの窓をまとめて呼ぶ。重みは 1 層ずつ F32 で読む |
+| 画素ヘッド | `src/model/h3_pixel_head.c` | 7.4 のとおり。活性は常駐（BF16 の隠れ状態・Q・K・V、1 トークン 16 KiB。注意の結果は Q の場所に書き戻す）、線形層は 512 行ずつ、注意は同じ大きさの窓をキー 4096 行ぶんずつまとめて呼ぶ。重みは 1 層ずつ F32 で読む（8.7 で軽くした。8.3 の数値は軽くする前） |
 | 生成の流れ | `h3.c` | 画素ヘッドがあれば映像 VAE のデコーダを読み込まず、ヘッドのフレームを同じ出力経路（リサイズ・エンコード・`on_frame`）に流す |
 | カーネル | `h3_gpu_gather_rows_bf16`・`h3_gpu_scatter_rows_bf16`（新規）、`h3_gpu_sdpa_batched_kv_bf16`（宣言を `h3_gpu.h` へ） | 窓ごとの行の収集と書き戻し |
-| メモリの見積もり | `h3_plan.c`、`h3_plan_generation.c` | 画素ヘッドを使う生成では、映像デコーダの段の代わりに「pixel head」の段（2.2 GiB + ヘッドの 1 トークン 27 KiB）。`h3_plan.video_decoder_bytes` に入り、`peak_stage` は "pixel head" |
+| メモリの見積もり | `h3_plan.c`、`h3_plan_generation.c` | 画素ヘッドを使う生成では、映像デコーダの段の代わりに「pixel head」の段（1.5 GiB + ヘッドの 1 トークン 19 KiB。8.7 より前は 2.2 GiB + 27 KiB）。アダプタは DiT のそばに残る分だけを数える。`h3_plan.video_decoder_bytes` に入り、`peak_stage` は "pixel head" |
 | 参照実装 | `tools/pi_h3/pixel_head_ref.py` | 画素ヘッドの numpy 版（ComfyUI の int8・ConvRot も戻す） |
 | 検証ツール | `tests/pixel_head_probe.c`（`build/bin/h3_pixel_head_probe`） | 書き出した行だけで GPU のヘッドを動かす |
 
