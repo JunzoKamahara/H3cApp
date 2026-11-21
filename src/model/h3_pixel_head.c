@@ -31,8 +31,12 @@ enum {
     EXPAND = 2,         /* a DiT token is EXPAND x EXPAND of the head's */
     CHANNELS = 3,
     PATCH_FRAMES = 4,
-    CHUNK = 4096,       /* rows per pass of the linears */
-    ATTENTION_ROWS = 24576   /* key rows gathered per attention call */
+    /* Rows per pass of the linears and key rows gathered per attention
+     * call. Both only size working buffers: with 4096 and 24576 the frames
+     * were the same and as quick, and the head took 0.7 GiB (384 x 384, 56
+     * frames) to 1.2 GiB (1344 x 768, 124 frames) more. */
+    CHUNK = 512,
+    ATTENTION_ROWS = 4096
 };
 
 static const float rgb_mean[CHANNELS] = {-0.03f, -0.088f, -0.188f};
@@ -357,9 +361,10 @@ static int build_rope(head_context *head, int shifted) {
 
 /* --- the computation ------------------------------------------------------ */
 
+/* What the layers work in, beside the hidden rows: made once the feature
+ * stage has given its own buffers back, so the two are never held at once. */
 static int allocate(head_context *head, char *error, size_t error_size) {
     size_t rows = head->rows;
-    head->hidden = h3_gpu_tensor_new_f32(head->gpu, rows * DIM);
     head->query = h3_gpu_tensor_new_bf16(head->gpu, rows * DIM);
     head->key = h3_gpu_tensor_new_bf16(head->gpu, rows * DIM);
     head->value = h3_gpu_tensor_new_bf16(head->gpu, rows * DIM);
@@ -391,7 +396,7 @@ static int allocate(head_context *head, char *error, size_t error_size) {
     head->a_rows = h3_gpu_tensor_new_bf16(head->gpu, q_rows * DIM);
     head->k_rows = h3_gpu_tensor_new_bf16(head->gpu, kv_rows * DIM);
     head->v_rows = h3_gpu_tensor_new_bf16(head->gpu, kv_rows * DIM);
-    if (head->hidden && head->query && head->key && head->value &&
+    if (head->query && head->key && head->value &&
         head->x && head->norm && head->qkv && head->qf &&
         head->kf && head->vf && head->branch_in && head->branch && head->ff1 &&
         head->activated && head->half && head->cos && head->sin &&
@@ -749,8 +754,14 @@ int h3_pixel_head_decode(const char *adapter_path,
              h3_gpu_error(head->gpu));
         goto done;
     }
-    if (!allocate(head, error, error_size) ||
-        !expand_features(head, rows, modulation, error, error_size)) goto done;
+    head->hidden = h3_gpu_tensor_new_f32(head->gpu, (size_t)head->rows * DIM);
+    if (!head->hidden) {
+        fail(error, error_size, "pixel head: cannot allocate its rows: %s",
+             h3_gpu_error(head->gpu));
+        goto done;
+    }
+    if (!expand_features(head, rows, modulation, error, error_size) ||
+        !allocate(head, error, error_size)) goto done;
     if (progress) progress(0, LAYERS, progress_opaque);
     for (int index = 0; index < LAYERS; index++) {
         head_block block;
