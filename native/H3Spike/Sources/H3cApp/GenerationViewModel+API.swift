@@ -15,7 +15,11 @@ import H3Engine
 /// shared with the UI, so a request while one is already running gets 409.
 /// GET /api/status polls progress. GET /api/result/video streams the
 /// current result until the next generate() call deletes it.
-let h3APIPort: UInt16 = 8420
+///
+/// H3_API_PORT is for a copy under test that runs next to the installed app
+/// (tools/perf/app_status.sh --port).
+let h3APIPort: UInt16 = ProcessInfo.processInfo.environment["H3_API_PORT"]
+    .flatMap { UInt16($0) }.flatMap { $0 >= 1024 ? $0 : nil } ?? 8420
 
 /// Where the running server's API token is kept (mode 0600, see APIToken):
 /// every request must send it as `Authorization: Bearer <token>`.

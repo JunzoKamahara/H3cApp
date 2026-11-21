@@ -5,7 +5,8 @@ import Foundation
 import H3Engine
 
 let secondsRange = 1 ... 15
-let stepsRange = 3 ... 40
+// From 2: the engine takes 2 and up, and a pi-H3 2-step adapter samples in 2.
+let stepsRange = 2 ... 40
 // h3.c rejects anything outside [1, 3] ("denoise reuse must be in [1, 3]");
 // gui/server.py's looser 1-6 check just let the engine reject 4+ later.
 let reuseRange = 1 ... 3
