@@ -1,6 +1,7 @@
 /* h3_frame_latent_load (h3_params.first_frame_latent): which files it takes
- * as a frame's own latent, and which it leaves to the VAE encoder. No GPU,
- * no weights. */
+ * as a frame's own latent, and which it leaves to the VAE encoder; and that
+ * the conditioning cache's key follows H3_TEXT_PROJECTION. No GPU, no
+ * weights. */
 #include "h3_private.h"
 
 #include <math.h>
@@ -76,6 +77,33 @@ int main(void) {
     unlink(path);
     CHECK(!h3_frame_latent_load(path, H, W, loaded, reason, sizeof(reason)));
     rmdir(directory);
+
+    /* Text rows from a projection (H3_TEXT_PROJECTION) are other rows than
+     * the text encoder's, and than another projection's or another small
+     * model's: none of them may be answered from the others' cache. */
+    h3_params params = {0};
+    unsetenv("H3_TEXT_PROJECTION");
+    unsetenv("H3_TEXT_PROJECTION_ENCODER");
+    char *own = h3_conditioning_key("a prompt", &params, 512, 512, 0);
+    setenv("H3_TEXT_PROJECTION", "/nowhere/a.safetensors", 1);
+    setenv("H3_TEXT_PROJECTION_ENCODER", "/nowhere/4b", 1);
+    char *projected = h3_conditioning_key("a prompt", &params, 512, 512, 0);
+    setenv("H3_TEXT_PROJECTION", "/nowhere/b.safetensors", 1);
+    char *other_file = h3_conditioning_key("a prompt", &params, 512, 512, 0);
+    setenv("H3_TEXT_PROJECTION_ENCODER", "/nowhere/4b-int8", 1);
+    char *other_model = h3_conditioning_key("a prompt", &params, 512, 512, 0);
+    unsetenv("H3_TEXT_PROJECTION");
+    unsetenv("H3_TEXT_PROJECTION_ENCODER");
+    char *own_again = h3_conditioning_key("a prompt", &params, 512, 512, 0);
+    CHECK(own && projected && other_file && other_model && own_again);
+    if (own && projected && other_file && other_model && own_again) {
+        CHECK(strcmp(own, projected) != 0);
+        CHECK(strcmp(projected, other_file) != 0);
+        CHECK(strcmp(other_file, other_model) != 0);
+        CHECK(strcmp(own, own_again) == 0);
+    }
+    free(own); free(projected); free(other_file); free(other_model);
+    free(own_again);
 
     if (failures) {
         fprintf(stderr, "%d of %d frame latent checks failed\n", failures, checks);

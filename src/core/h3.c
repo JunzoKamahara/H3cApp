@@ -572,6 +572,34 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             goto cleanup;
         }
     }
+    /* H3_TEXT_PROJECTION (diagnostic): the text rows from a small Qwen3-VL
+     * and a ClipProj projection instead of H3's own text encoder. Only
+     * where the prompt is all the text encoder reads, and never a prompt
+     * with H3's dialogue tags, which that Qwen3-VL never learned. */
+    const char *text_projection = h3_option("H3_TEXT_PROJECTION");
+    const char *text_projection_encoder =
+        h3_option("H3_TEXT_PROJECTION_ENCODER");
+    if (text_projection && !text_projection[0]) text_projection = NULL;
+    if (text_projection) {
+        const char *problem = NULL;
+        if (!text_projection_encoder || !text_projection_encoder[0])
+            problem = "needs H3_TEXT_PROJECTION_ENCODER, the folder of the "
+                      "Qwen3-VL the projection was fitted on";
+        else if (ref2va || params->first_frame || params->last_frame ||
+                 params->first_frame_latent || params->last_frame_latent ||
+                 params->reference_count || params->forced_audio_path ||
+                 params->continue_latent_path || params->initial_latent_path)
+            problem = "supports text-to-video only: no first or last frame, "
+                      "no references, no given audio and no earlier clip or "
+                      "latent to start from";
+        else if (strstr(prompt, "<d>") || strstr(prompt, "</d>"))
+            problem = "does not carry H3's dialogue tags (<d>...</d>): "
+                      "remove the tags or use H3's own text encoder";
+        if (problem) {
+            h3_set_error(ctx, "H3_TEXT_PROJECTION %s", problem);
+            goto cleanup;
+        }
+    }
     char plan_error[512];
     if (!h3_continuation_plan(params, latent_h, latent_w, temporal,
                               &continuation, plan_error, sizeof(plan_error)) ||
@@ -1227,7 +1255,14 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         }
         h3_progress_emit(&progress, "text encoder", 0, 50);
         void *text_pool = h3_autorelease_push();
-        int text_ok = h3_text_encode_bf16(
+        if (text_projection)
+            fprintf(stderr, "h3: text rows from the projection %s on %s\n",
+                    text_projection, text_projection_encoder);
+        int text_ok = text_projection ? h3_text_encode_projected_bf16(
+                text_projection_encoder, text_projection, "h3_shaders.metal",
+                ids, token_count, h3_text_progress_bridge, &progress, &text,
+                detail, sizeof(detail)) :
+            h3_text_encode_bf16(
                 text_path, "h3_shaders.metal", ids, token_count,
                 h3_text_progress_bridge, &progress, &text,
                 detail, sizeof(detail));

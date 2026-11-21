@@ -40,6 +40,19 @@ int h3_text_encode_bf16(const char *weight_directory,
                         h3_text_embedding *output,
                         char *error, size_t error_size);
 
+/* The same text rows from a small Qwen3-VL and a ClipProj projection
+ * (h3_text_projection.h) instead of H3's own text encoder: the layers of
+ * `weight_directory` up to the hidden state the projection reads, then the
+ * projection. Text only; a token ID of H3's own tags is refused. */
+int h3_text_encode_projected_bf16(const char *weight_directory,
+                                  const char *projection_path,
+                                  const char *shader_source_path,
+                                  const uint32_t *token_ids, size_t token_count,
+                                  h3_text_progress progress,
+                                  void *progress_opaque,
+                                  h3_text_embedding *output,
+                                  char *error, size_t error_size);
+
 /* Run the same 50 decoder layers with Qwen3-VL presentation spans. The base
  * token embedding at every span is replaced by vision embeddings; deepstack
  * rows are added after language layers 0, 1, and 2. position_ids is axis-major

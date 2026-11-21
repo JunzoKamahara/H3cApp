@@ -339,37 +339,29 @@ static H3MLP *h3_gpu_mlp_graph(H3GPU *gpu, uint32_t rows,
     }
 }
 
-int h3_gpu_mlp_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
-                    const h3_gpu_tensor *input,
-                    const h3_gpu_tensor *fc1_weight,
-                    const h3_gpu_tensor *fc2_weight, uint32_t rows,
-                    uint32_t input_dim, uint32_t hidden_dim,
-                    uint32_t output_dim) {
-    H3GPU *gpu = GPU(opaque);
-    if (!h3_gpu_require_bf16(gpu, input, (size_t)rows * input_dim,
-                             @"MLP input") ||
-        !h3_gpu_require_bf16(gpu, fc1_weight,
-                             (size_t)hidden_dim * 2 * input_dim,
-                             @"MLP fc1 weight") ||
-        !h3_gpu_require_bf16(gpu, fc2_weight,
-                             (size_t)output_dim * hidden_dim,
-                             @"MLP fc2 weight") ||
-        !h3_gpu_require_bf16(gpu, output, (size_t)rows * output_dim,
-                             @"MLP output") ||
-        !h3_gpu_require_command(gpu)) return 0;
+/* The fused MLP on `rows` rows from `row_offset` of input and output. */
+static int h3_gpu_mlp_encode(H3GPU *gpu, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *input,
+                             const h3_gpu_tensor *fc1_weight,
+                             const h3_gpu_tensor *fc2_weight,
+                             uint32_t row_offset, uint32_t rows,
+                             uint32_t input_dim, uint32_t hidden_dim,
+                             uint32_t output_dim) {
     H3MLP *mlp = h3_gpu_mlp_graph(gpu, rows, input_dim, hidden_dim,
                                   output_dim);
     if (!mlp) return 0;
     @autoreleasepool {
         MPSCommandBuffer *command = h3_gpu_mps_command(gpu);
-        MPSGraphTensorData *inputData = h3_gpu_graph_data(
-            input, mlp.inputShape, MPSDataTypeBFloat16, 0);
+        MPSGraphTensorData *inputData = h3_gpu_graph_view(
+            input, mlp.inputShape, MPSDataTypeBFloat16,
+            (size_t)row_offset * input_dim * sizeof(uint16_t));
         MPSGraphTensorData *fc1Data = h3_gpu_graph_data(
             fc1_weight, mlp.fc1Shape, MPSDataTypeBFloat16, 1);
         MPSGraphTensorData *fc2Data = h3_gpu_graph_data(
             fc2_weight, mlp.fc2Shape, MPSDataTypeBFloat16, 1);
-        MPSGraphTensorData *outputData = h3_gpu_graph_data(
-            output, mlp.outputShape, MPSDataTypeBFloat16, 0);
+        MPSGraphTensorData *outputData = h3_gpu_graph_view(
+            output, mlp.outputShape, MPSDataTypeBFloat16,
+            (size_t)row_offset * output_dim * sizeof(uint16_t));
         NSDictionary *feeds = @{mlp.input: inputData,
                                 mlp.fc1Weight: fc1Data,
                                 mlp.fc2Weight: fc2Data};
@@ -387,6 +379,68 @@ int h3_gpu_mlp_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
     h3_gpu_stats stats = gpu.stats;
     stats.mps_linear_dispatches += 2;
     gpu.stats = stats;
+    return 1;
+}
+
+static int h3_gpu_mlp_require(H3GPU *gpu, h3_gpu_tensor *output,
+                              const h3_gpu_tensor *input,
+                              const h3_gpu_tensor *fc1_weight,
+                              const h3_gpu_tensor *fc2_weight, uint32_t rows,
+                              uint32_t input_dim, uint32_t hidden_dim,
+                              uint32_t output_dim) {
+    return h3_gpu_require_bf16(gpu, input, (size_t)rows * input_dim,
+                               @"MLP input") &&
+        h3_gpu_require_bf16(gpu, fc1_weight,
+                            (size_t)hidden_dim * 2 * input_dim,
+                            @"MLP fc1 weight") &&
+        h3_gpu_require_bf16(gpu, fc2_weight, (size_t)output_dim * hidden_dim,
+                            @"MLP fc2 weight") &&
+        h3_gpu_require_bf16(gpu, output, (size_t)rows * output_dim,
+                            @"MLP output") &&
+        h3_gpu_require_command(gpu);
+}
+
+int h3_gpu_mlp_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
+                    const h3_gpu_tensor *input,
+                    const h3_gpu_tensor *fc1_weight,
+                    const h3_gpu_tensor *fc2_weight, uint32_t rows,
+                    uint32_t input_dim, uint32_t hidden_dim,
+                    uint32_t output_dim) {
+    H3GPU *gpu = GPU(opaque);
+    return h3_gpu_mlp_require(gpu, output, input, fc1_weight, fc2_weight,
+                              rows, input_dim, hidden_dim, output_dim) &&
+        h3_gpu_mlp_encode(gpu, output, input, fc1_weight, fc2_weight, 0,
+                          rows, input_dim, hidden_dim, output_dim);
+}
+
+uint32_t h3_gpu_mlp_piece_rows(uint32_t rows, uint32_t chunk_rows) {
+    if (!chunk_rows || rows <= chunk_rows) return rows;
+    uint32_t pieces = rows / chunk_rows + (rows % chunk_rows != 0);
+    return rows / pieces + (rows % pieces != 0);
+}
+
+int h3_gpu_mlp_rows_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
+                         const h3_gpu_tensor *input,
+                         const h3_gpu_tensor *fc1_weight,
+                         const h3_gpu_tensor *fc2_weight, uint32_t rows,
+                         uint32_t input_dim, uint32_t hidden_dim,
+                         uint32_t output_dim, uint32_t chunk_rows) {
+    H3GPU *gpu = GPU(opaque);
+    if (!rows || output == input) {
+        h3_gpu_set_error(gpu, @"MLP by rows needs rows and an output apart "
+                         "from its input");
+        return 0;
+    }
+    if (!h3_gpu_mlp_require(gpu, output, input, fc1_weight, fc2_weight,
+                            rows, input_dim, hidden_dim, output_dim))
+        return 0;
+    uint32_t piece = h3_gpu_mlp_piece_rows(rows, chunk_rows);
+    for (uint32_t offset = 0; offset < rows; offset += piece) {
+        uint32_t count = MIN(piece, rows - offset);
+        if (!h3_gpu_mlp_encode(gpu, output, input, fc1_weight, fc2_weight,
+                               offset, count, input_dim, hidden_dim,
+                               output_dim)) return 0;
+    }
     return 1;
 }
 

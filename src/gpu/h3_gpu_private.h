@@ -192,6 +192,11 @@ MPSGraphTensorData *h3_gpu_graph_data(const h3_gpu_tensor *tensor,
                                              NSArray<NSNumber *> *shape,
                                              MPSDataType data_type,
                                              int stable);
+/* A graph tensor over part of a buffer (h3_gpu_attention.m). */
+MPSGraphTensorData *h3_gpu_graph_view(const h3_gpu_tensor *tensor,
+                                      NSArray<NSNumber *> *shape,
+                                      MPSDataType data_type,
+                                      size_t byte_offset);
 MPSCommandBuffer *h3_gpu_mps_command(H3GPU *gpu);
 int h3_gpu_linear_mps(H3GPU *gpu, h3_gpu_tensor *output,
                              const h3_gpu_tensor *input,

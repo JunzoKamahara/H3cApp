@@ -724,6 +724,36 @@ static int allocate_activations(h3_dit *dit, char *error, size_t error_size) {
         !h3_option("H3_DISABLE_FUSED_PATCH_CAST") && !h3_option("H3_SCALAR_PATCH");
     dit->fused_patch_pack = dit->fused_patch_projection &&
         !h3_option("H3_DISABLE_FUSED_PATCH_PACK");
+    /* The int8 MLP's activation lives in the qkv buffer instead of a buffer
+     * of its own (FFN values a row): a buffer the GPU writes any part of
+     * is resident in full, and by the time FC1 writes the activation
+     * nothing else in qkv is live. The attention heads there went through
+     * the output projection; the MLP's input (mod_mlp, when it is not
+     * quantized by the kernel before) is quantized into int8_activation by
+     * a pass that ends before FC1's starts. Not with the BF16 MLP kernels,
+     * which read mod_mlp while they write the activation, nor with
+     * HyperFlow's factored linears, which hold raw Q in qkv and raw K in
+     * the activation at once. The kernels and their shapes do not change;
+     * H3_DISABLE_DIT_ACTIVATED_IN_QKV gives the activation its own buffer
+     * again.
+     *
+     * When the QKV projection is int8 too it writes query, key and value
+     * directly, so qkv is sized for the activation (FFN a row instead of
+     * 3 * INNER). Token reduction keeps its full-grid snapshot behind what
+     * the reduced rows use there, and qkv grows if that does not fit. */
+    dit->activated_in_qkv = dit->activation_aliases && dit->int8_mlp &&
+        !dit->keep_bf16_mlp && !dit->hyperflow &&
+        !h3_option("H3_DISABLE_INT8_MLP") &&
+        !h3_option("H3_DISABLE_DIT_ACTIVATED_IN_QKV");
+    int qkv_for_activation = dit->activated_in_qkv && dit->int8_qkv &&
+        !dit->keep_bf16_qkv && !h3_option("H3_DISABLE_INT8_QKV");
+    size_t qkv_row = qkv_for_activation ? FFN : INNER * 3;
+    size_t qkv_elements = sequence * qkv_row;
+    if (qkv_for_activation && dit->token_reduction) {
+        size_t snapshot_end = (size_t)dit->reduced_sequence * qkv_row +
+                              sequence * HIDDEN;
+        if (snapshot_end > qkv_elements) qkv_elements = snapshot_end;
+    }
 #define BF(field, elements) (dit->field = h3_gpu_tensor_new_bf16(dit->gpu, (elements)))
 #define F32(field, elements) (dit->field = h3_gpu_tensor_new_f32(dit->gpu, (elements)))
     h3_gpu_tensor *all[] = {
@@ -731,7 +761,7 @@ static int allocate_activations(h3_dit *dit, char *error, size_t error_size) {
         F32(audio_input, audio_total * AUDIO_CHANNELS),
         BF(hidden, sequence * HIDDEN),
         BF(mod_attention, sequence * HIDDEN),
-        BF(qkv, sequence * INNER * 3),
+        BF(qkv, qkv_elements),
         BF(query, sequence * INNER),
         BF(key, sequence * INNER),
         BF(value, sequence * INNER),
@@ -851,7 +881,8 @@ static int allocate_activations(h3_dit *dit, char *error, size_t error_size) {
     }
     if (!dit->fused_mlp || dit->nax_mlp || dit->int8_mlp ||
         dit->lowrank_tmp) {
-        dit->activated = h3_gpu_tensor_new_bf16(dit->gpu, sequence * FFN);
+        dit->activated = dit->activated_in_qkv ? dit->qkv :
+            h3_gpu_tensor_new_bf16(dit->gpu, sequence * FFN);
         if ((!dit->fused_mlp && !dit->fc1) || !dit->activated) {
             h3_dit_fail(error, error_size,
                  "cannot allocate diagnostic DiT MLP tensors: %s",
@@ -874,8 +905,8 @@ static int allocate_activations(h3_dit *dit, char *error, size_t error_size) {
     }
     if (dit->token_reduction) {
         size_t full_elements = sequence * HIDDEN;
-        size_t qkv_capacity = sequence * INNER * 3;
-        size_t qkv_used = (size_t)dit->reduced_sequence * INNER * 3;
+        size_t qkv_capacity = qkv_elements;
+        size_t qkv_used = (size_t)dit->reduced_sequence * qkv_row;
         size_t baseline_elements =
             (size_t)dit->token_baseline_rows * HIDDEN;
         size_t attention_capacity = sequence * HIDDEN;
@@ -1383,6 +1414,42 @@ static h3_dit *load_dit(const char *weight_directory,
         (h3_option("H3_INT8_KEEP_BF16_MLP") ||
          h3_option("H3_BENCH_INT8_MLP_AB") ||
          h3_option("H3_INT8_MLP_STAGE"));
+    /* The MPSGraph MLP keeps FC1's output and the activation, three FFN
+     * widths a row, between its two products; in pieces it keeps them for
+     * a piece's rows only. The rows do not depend on each other, and the
+     * pieces gave the bytes one piece gives in every pair compared
+     * (docs/perf/DIFFUSERS_FFN_SPLIT.ja.md); between 2048 and 8192 rows the
+     * peak and the time did not depend on the size. */
+    int mlp_splits = dit->fused_mlp && !dit->int8_mlp && !dit->nax_mlp &&
+                     !dit->hyperflow;
+    uint32_t mlp_chunk_rows = 4096;
+    const char *mlp_chunk = h3_option("H3_DIT_MLP_CHUNK_ROWS");
+    if (mlp_chunk && *mlp_chunk) {
+        char *end = NULL;
+        unsigned long parsed = strtoul(mlp_chunk, &end, 10);
+        if (end == mlp_chunk || *end || (parsed && parsed < 32) ||
+            parsed > UINT32_MAX) {
+            h3_dit_fail(error, error_size, "H3_DIT_MLP_CHUNK_ROWS=%s is not 0 "
+                 "or a number of rows, 32 or more", mlp_chunk);
+            goto failed;
+        }
+        mlp_chunk_rows = (uint32_t)parsed;
+        if (parsed && !mlp_splits)
+            fprintf(stderr, "h3: H3_DIT_MLP_CHUNK_ROWS changes nothing here: "
+                    "it splits the fused BF16 MLP, and this run uses %s\n",
+                    dit->hyperflow ? "HyperFlow's factored linears" :
+                    dit->int8_mlp ? "the int8 MLP" :
+                    dit->nax_mlp ? "the TensorOps MLP" :
+                                   "the unfused MLP");
+    }
+    if (mlp_splits) {
+        dit->mlp_chunk_rows = mlp_chunk_rows;
+        uint32_t piece = h3_gpu_mlp_piece_rows(dit->sequence, mlp_chunk_rows);
+        if (h3_option("H3_PROFILE") || (mlp_chunk && *mlp_chunk))
+            fprintf(stderr, "h3: DiT MLP in pieces of %u rows (%u of %u)\n",
+                    piece, (dit->sequence + piece - 1) / piece,
+                    (unsigned)dit->sequence);
+    }
     h3_gpu_profile_set_label(dit->gpu, "H3 DiT");
     h3_dit_report(progress, progress_opaque, "refine text", 0, 1);
     if (!refine_text_reusing(dit, text, prep, weight_directory, loras,

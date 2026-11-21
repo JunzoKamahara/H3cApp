@@ -682,9 +682,9 @@ static int run_block(h3_dit *dit, unsigned index, int step,
             dit->mod_mlp, weight->fc1, weight->fc2, rows, HIDDEN, FFN,
             HIDDEN), "DiT NAX fused MLP");
     } else if (dit->fused_mlp) {
-        OP(h3_gpu_mlp_bf16(dit->gpu, mlp_output, dit->mod_mlp,
-            weight->fc1, weight->fc2, rows, HIDDEN, FFN, HIDDEN),
-           "DiT fused MLP");
+        OP(h3_gpu_mlp_rows_bf16(dit->gpu, mlp_output, dit->mod_mlp,
+            weight->fc1, weight->fc2, rows, HIDDEN, FFN, HIDDEN,
+            dit->mlp_chunk_rows), "DiT fused MLP");
     } else {
         OP(h3_gpu_linear_bf16(dit->gpu, dit->fc1, dit->mod_mlp, weight->fc1,
             NULL, rows, HIDDEN, FFN * 2), "DiT MLP input");
@@ -726,6 +726,43 @@ static int run_block(h3_dit *dit, unsigned index, int step,
     }
 #undef OP
     return 1;
+}
+
+/* H3_DIT_CORE_REUSE_STEPS: 1 if the list names this step, 0 if it does
+ * not, -1 if it is not step numbers separated by commas. */
+/* Whether a core reuse that computes the core as many times as the fixed
+ * interval would, but at steps placed on a curve, computes it at `step`:
+ * the j-th of the M computed steps is (steps - 1) * (j / (M - 1))^exponent,
+ * rounded, and at least one after the one before. An exponent above 1
+ * computes the early steps closer together and reuses more of the late
+ * ones; the first and last steps are computed either way. */
+static int core_reuse_curve_computes(int steps, unsigned interval,
+                                     double exponent, int step) {
+    int computed = (steps - 1) / (int)interval + 1 +
+        ((steps - 1) % (int)interval != 0);
+    if (computed < 2) return 1;
+    int previous = -1;
+    for (int index = 0; index < computed; index++) {
+        int at = (int)floor((steps - 1) *
+            pow((double)index / (computed - 1), exponent) + 0.5);
+        if (at <= previous) at = previous + 1;
+        if (at == step) return 1;
+        if (at > step) return 0;
+        previous = at;
+    }
+    return 0;
+}
+
+static int core_reuse_listed(const char *list, int step) {
+    int listed = 0;
+    for (const char *cursor = list; *cursor;) {
+        char *end = NULL;
+        long value = strtol(cursor, &end, 10);
+        if (end == cursor || value < 0 || (*end && *end != ',')) return -1;
+        if (value == step) listed = 1;
+        cursor = *end ? end + 1 : end;
+    }
+    return listed;
 }
 
 int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
@@ -844,6 +881,39 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
         !dit->core_residual_ready ||
         dit->core_forward_count % dit->core_reuse_interval == 0 ||
         step == h3_dit_schedule_steps(dit->schedule) - 1;
+    /* Experiment: reuse the core at exactly the listed steps instead of
+     * all but every Nth. The first step and the last are computed either
+     * way, as above. */
+    const char *reuse_steps = h3_option("H3_DIT_CORE_REUSE_STEPS");
+    if (reuse_steps && *reuse_steps) {
+        int listed = core_reuse_listed(reuse_steps, step);
+        if (listed < 0 || dit->core_reuse_interval == 1) {
+            h3_dit_fail(error, error_size, "H3_DIT_CORE_REUSE_STEPS takes "
+                 "step numbers separated by commas, with core reuse on");
+            return 0;
+        }
+        evaluate_core = !dit->core_residual_ready || !listed ||
+            step == h3_dit_schedule_steps(dit->schedule) - 1;
+    }
+    /* Experiment: the same number of core computations as the interval
+     * gives, placed on a curve (core_reuse_curve_computes). */
+    const char *reuse_curve = h3_option("H3_DIT_CORE_REUSE_CURVE");
+    if (reuse_curve && *reuse_curve) {
+        char *end = NULL;
+        double exponent = strtod(reuse_curve, &end);
+        if (end == reuse_curve || *end || !(exponent >= 0.25) ||
+            exponent > 4.0 || dit->core_reuse_interval == 1 ||
+            (reuse_steps && *reuse_steps)) {
+            h3_dit_fail(error, error_size, "H3_DIT_CORE_REUSE_CURVE takes "
+                 "an exponent from 0.25 to 4, with core reuse on and "
+                 "without H3_DIT_CORE_REUSE_STEPS");
+            return 0;
+        }
+        evaluate_core = !dit->core_residual_ready ||
+            core_reuse_curve_computes(h3_dit_schedule_steps(dit->schedule),
+                                      dit->core_reuse_interval, exponent,
+                                      step);
+    }
     int use_token_reduction = evaluate_core && dit->token_reduction &&
         !h3_option("H3_DISABLE_TOKEN_REDUCTION");
     unsigned token_reduction_end =
@@ -854,6 +924,8 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
     if (evaluate_core && dit->core_reuse_interval > 1)
         OP(h3_gpu_copy_bf16(dit->gpu, dit->core_input, 0, dit->hidden, 0,
                             hidden_elements), "save DiT core input");
+    if (evaluate_core &&
+        !h3_dit_fbc_log_capture(dit, step, 0, error, error_size)) return 0;
     if (evaluate_core) {
         unsigned command_blocks = disable_command_split
             ? 0 : h3_dit_command_block_interval(dit);
@@ -1082,7 +1154,12 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
                 OP(h3_gpu_begin(dit->gpu),
                    "continue after attention-streamed DiT block");
             }
+            if (completed_blocks == 1 &&
+                !h3_dit_fbc_log_capture(dit, step, 1, error, error_size))
+                return 0;
         }
+        if (!h3_dit_fbc_log_capture(dit, step, 2, error, error_size))
+            return 0;
         if (use_token_reduction &&
             token_reduction_end == H3_DIT_BLOCKS &&
             !leave_token_reduction(dit, error, error_size)) return 0;

@@ -133,6 +133,12 @@ int h3_gpu_tensor_stream_file_f32(h3_gpu_tensor *tensor, const char *path,
                                   char *error, size_t error_size);
 void h3_gpu_tensor_free(h3_gpu_tensor *tensor);
 size_t h3_gpu_tensor_elements(const h3_gpu_tensor *tensor);
+/* Diagnostics (H3_DIT_ARENA_TRACE): the tensor's allocation in bytes, and how
+ * much of it has been touched - pages that are in RAM or were paged out or
+ * compressed. A page never written costs no memory, so the two differ for a
+ * buffer only part of which is used. An alias reports its own window. */
+size_t h3_gpu_tensor_bytes(const h3_gpu_tensor *tensor);
+size_t h3_gpu_tensor_touched_bytes(const h3_gpu_tensor *tensor);
 h3_gpu_dtype h3_gpu_tensor_dtype(const h3_gpu_tensor *tensor);
 int h3_gpu_tensor_read_f32(const h3_gpu_tensor *tensor, float *values,
                            size_t elements);
@@ -477,6 +483,20 @@ int h3_gpu_mlp_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
                     const h3_gpu_tensor *fc2_weight, uint32_t rows,
                     uint32_t input_dim, uint32_t hidden_dim,
                     uint32_t output_dim);
+/* h3_gpu_mlp_bf16 a range of rows at a time, so that what MPSGraph keeps
+ * between FC1 and FC2 (three hidden_dim-wide BF16 values a row) is as many
+ * rows as a piece has instead of all of them. Every row is computed from
+ * its own input row alone, by the same graph; the pieces are of equal size
+ * (the last may be shorter), the fewest that are at most chunk_rows each:
+ * h3_gpu_mlp_piece_rows. chunk_rows 0, or at least rows, is one piece.
+ * Output and input must be different buffers. */
+int h3_gpu_mlp_rows_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                         const h3_gpu_tensor *input,
+                         const h3_gpu_tensor *fc1_weight,
+                         const h3_gpu_tensor *fc2_weight, uint32_t rows,
+                         uint32_t input_dim, uint32_t hidden_dim,
+                         uint32_t output_dim, uint32_t chunk_rows);
+uint32_t h3_gpu_mlp_piece_rows(uint32_t rows, uint32_t chunk_rows);
 /* Experimental M5 Metal 4 paired FC1/SwiGLU plus direct FC2 path. Available
  * only when the context was created with H3_NAX=mlp. */
 int h3_gpu_mlp_nax_bf16(h3_gpu *gpu, h3_gpu_tensor *output,

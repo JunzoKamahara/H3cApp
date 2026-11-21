@@ -3,7 +3,9 @@
 #include "h3_dit.h"
 #include "h3_lora.h"
 #include "h3_metal.h"
+#include "h3_quant.h"
 #include "h3_safetensors.h"
+#include "h3_text_projection.h"
 #include "h3_weights.h"
 
 #include <fcntl.h>
@@ -732,6 +734,164 @@ static void test_adaln_curve(void) {
     CHECK(unlink(path) == 0);
 }
 
+enum { PROJECTION_IN = 3, PROJECTION_OUT = 5120 };
+
+/* What a projection file under test gets wrong, if anything. */
+typedef struct {
+    const char *metadata;
+    int half;        /* F16 instead of F32 */
+    int transposed;  /* W as [output, input] */
+    int residual;    /* an mlp.* tensor beside the matrix */
+    int no_sink;
+    float input_std0;
+} projection_case;
+
+static void write_values(int descriptor, const float *values, size_t count,
+                         int half) {
+    for (size_t index = 0; index < count; index++) {
+        uint16_t narrow = h3_float_to_half(values[index]);
+        if (half) write_all(descriptor, &narrow, sizeof(narrow));
+        else write_all(descriptor, &values[index], sizeof(float));
+    }
+}
+
+/* A ClipProj file from 3 to 5120 values, every value exact in F16 and in
+ * BF16: W[i][j] = (i + 1) * (j % 7 - 3) / 4. */
+static void write_projection_file(const char *path, const projection_case *file) {
+    static float weight[PROJECTION_IN * PROJECTION_OUT];
+    static float output_mean[PROJECTION_OUT], output_std[PROJECTION_OUT];
+    static float sink[PROJECTION_OUT];
+    float input_mean[PROJECTION_IN] = {1.0f, -2.0f, 0.5f};
+    float input_std[PROJECTION_IN] = {file->input_std0, 0.5f, 4.0f};
+    for (int row = 0; row < PROJECTION_IN; row++)
+        for (int column = 0; column < PROJECTION_OUT; column++)
+            weight[row * PROJECTION_OUT + column] =
+                (float)(row + 1) * (float)(column % 7 - 3) * 0.25f;
+    for (int column = 0; column < PROJECTION_OUT; column++) {
+        output_mean[column] = (float)(column % 5) * 0.5f;
+        output_std[column] = (float)(1 + column % 3);
+        sink[column] = (float)(100 + column % 11);
+    }
+    size_t width = file->half ? 2 : 4;
+    const char *dtype = file->half ? "F16" : "F32";
+    size_t offset = 0;
+    char header_json[1024];
+    int length = snprintf(header_json, sizeof(header_json),
+                          "{\"__metadata__\":{%s}", file->metadata);
+#define TENSOR(name, shape, count) do { \
+        length += snprintf(header_json + length, \
+            sizeof(header_json) - (size_t)length, \
+            ",\"%s\":{\"dtype\":\"%s\",\"shape\":[%s]," \
+            "\"data_offsets\":[%zu,%zu]}", name, dtype, shape, offset, \
+            offset + (size_t)(count) * width); \
+        offset += (size_t)(count) * width; \
+    } while (0)
+    TENSOR("W", file->transposed ? "5120,3" : "3,5120",
+           PROJECTION_IN * PROJECTION_OUT);
+    TENSOR("mean_in", "3", PROJECTION_IN);
+    TENSOR("std_in", "3", PROJECTION_IN);
+    TENSOR("mean_out", "5120", PROJECTION_OUT);
+    TENSOR("std_out", "5120", PROJECTION_OUT);
+    if (!file->no_sink) TENSOR("sink_out", "5120", PROJECTION_OUT);
+    if (file->residual) TENSOR("mlp.0.bias", "3", PROJECTION_IN);
+#undef TENSOR
+    length += snprintf(header_json + length,
+                       sizeof(header_json) - (size_t)length, "}");
+    int descriptor = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    CHECK(descriptor >= 0 && length > 0 &&
+          (size_t)length < sizeof(header_json));
+    uint64_t size = (uint64_t)length;
+    unsigned char prefix[8];
+    for (unsigned index = 0; index < 8; index++)
+        prefix[index] = (unsigned char)(size >> (8 * index));
+    write_all(descriptor, prefix, sizeof(prefix));
+    write_all(descriptor, header_json, (size_t)length);
+    write_values(descriptor, weight, PROJECTION_IN * PROJECTION_OUT, file->half);
+    write_values(descriptor, input_mean, PROJECTION_IN, file->half);
+    write_values(descriptor, input_std, PROJECTION_IN, file->half);
+    write_values(descriptor, output_mean, PROJECTION_OUT, file->half);
+    write_values(descriptor, output_std, PROJECTION_OUT, file->half);
+    if (!file->no_sink)
+        write_values(descriptor, sink, PROJECTION_OUT, file->half);
+    if (file->residual)
+        write_values(descriptor, input_mean, PROJECTION_IN, file->half);
+    CHECK(close(descriptor) == 0);
+}
+
+static uint16_t exact_bf16(float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    CHECK((bits & 0xffffu) == 0);
+    return (uint16_t)(bits >> 16);
+}
+
+static void test_text_projection(void) {
+    char path[] = "/tmp/h3_text_projection_XXXXXX";
+    int descriptor = mkstemp(path);
+    CHECK(descriptor >= 0);
+    CHECK(close(descriptor) == 0);
+    char error[256];
+    h3_text_projection projection;
+    /* The second row standardizes to (1, 2, 2): `hidden @ W` is then
+     * 11 * (column % 7 - 3) / 4, which W read as [output, input] or
+     * indexed the other way round would not give. */
+    const uint16_t hidden[2 * PROJECTION_IN] = {
+        exact_bf16(9.0f), exact_bf16(9.0f), exact_bf16(9.0f),
+        exact_bf16(3.0f), exact_bf16(-1.0f), exact_bf16(8.5f)};
+    uint16_t *rows = malloc(2 * PROJECTION_OUT * sizeof(*rows));
+    CHECK(rows != NULL);
+    for (int half = 0; half < 2; half++) {
+        projection_case good = {"\"tap\":\"24\",\"d_in\":\"3\"", half, 0, 0,
+                                0, 2.0f};
+        write_projection_file(path, &good);
+        CHECK(h3_text_projection_load(path, &projection, error, sizeof(error)));
+        CHECK(projection.tap == 24 && projection.input_width == PROJECTION_IN &&
+              projection.output_width == PROJECTION_OUT);
+        CHECK(h3_text_projection_apply(&projection, hidden, 2, rows, error,
+                                       sizeof(error)));
+        for (int column = 0; column < PROJECTION_OUT; column++) {
+            float projected = 2.75f * (float)(column % 7 - 3) *
+                              (float)(1 + column % 3) +
+                              (float)(column % 5) * 0.5f;
+            /* The first row of a sequence is the measured sink. */
+            CHECK(rows[column] == exact_bf16((float)(100 + column % 11)));
+            CHECK(rows[PROJECTION_OUT + column] == exact_bf16(projected));
+        }
+        CHECK(!h3_text_projection_apply(&projection, hidden, 0, rows, error,
+                                        sizeof(error)));
+        h3_text_projection_free(&projection);
+    }
+    free(rows);
+    /* No tap, or one that is not a hidden state's number: refused, never
+     * given a default. */
+    const char *taps[] = {"\"d_in\":\"3\"", "\"tap\":\"\"", "\"tap\":\"0\"",
+                          "\"tap\":\"-1\"", "\"tap\":\"24x\"",
+                          "\"tap\":\"65\""};
+    for (size_t index = 0; index < sizeof(taps) / sizeof(*taps); index++) {
+        projection_case file = {taps[index], 0, 0, 0, 0, 2.0f};
+        write_projection_file(path, &file);
+        CHECK(!h3_text_projection_load(path, &projection, error, sizeof(error)));
+        CHECK(strstr(error, "tap") != NULL && projection.weight == NULL);
+    }
+    projection_case residual = {"\"tap\":\"24\"", 1, 0, 1, 0, 2.0f};
+    write_projection_file(path, &residual);
+    CHECK(!h3_text_projection_load(path, &projection, error, sizeof(error)));
+    CHECK(strstr(error, "residual") != NULL);
+    projection_case transposed = {"\"tap\":\"24\"", 0, 1, 0, 0, 2.0f};
+    write_projection_file(path, &transposed);
+    CHECK(!h3_text_projection_load(path, &projection, error, sizeof(error)));
+    CHECK(strstr(error, "[5120, 3]") != NULL);
+    projection_case no_sink = {"\"tap\":\"24\"", 0, 0, 0, 1, 2.0f};
+    write_projection_file(path, &no_sink);
+    CHECK(!h3_text_projection_load(path, &projection, error, sizeof(error)));
+    CHECK(strstr(error, "sink_out") != NULL);
+    projection_case flat = {"\"tap\":\"24\"", 0, 0, 0, 0, 0.0f};
+    write_projection_file(path, &flat);
+    CHECK(!h3_text_projection_load(path, &projection, error, sizeof(error)));
+    CHECK(strstr(error, "std_in") != NULL);
+    CHECK(unlink(path) == 0);
+}
+
 int main(void) {
     test_temporal_and_canvas();
     test_schedule();
@@ -744,6 +904,7 @@ int main(void) {
     test_safetensors();
     test_weight_fingerprint();
     test_adaln_curve();
+    test_text_projection();
     test_rng_and_solver();
     test_rgb_resize();
     test_dit_row_conversions();

@@ -379,6 +379,14 @@ char *h3_conditioning_key(const char *prompt, const h3_params *params,
     h3_key key = {0};
     if (!h3_key_append(&key, "mode=%d|prompt=%zu:%s", ref2va,
                        strlen(prompt), prompt)) goto failed;
+    /* Text rows from a projection are other rows than the text encoder's. */
+    const char *projection = h3_option("H3_TEXT_PROJECTION");
+    const char *projection_encoder = h3_option("H3_TEXT_PROJECTION_ENCODER");
+    if (projection && projection[0] &&
+        (!h3_key_file(&key, "text-projection", projection) ||
+         !h3_key_append(&key, "|text-projection-encoder=%s",
+                        projection_encoder ? projection_encoder : "")))
+        goto failed;
     if (!ref2va && !params->first_frame && !params->last_frame &&
         !params->continue_latent_path) return key.text;
     if (!h3_key_append(&key, "|render=%dx%d|frames=%d|image-size=%d",
