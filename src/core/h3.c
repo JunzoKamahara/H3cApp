@@ -1724,7 +1724,10 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                 h3_set_error(ctx, "%s", detail);
                 goto cleanup;
             }
-            h3_progress_emit(&progress, "encode", 0, total_frames);
+            /* The pixel head gives its first frame only after its 8
+             * layers: "encode" starts counting then. */
+            if (!pixel_rows)
+                h3_progress_emit(&progress, "encode", 0, total_frames);
         }
         h3_stream_encode_ctx stream = {
             writer, params->on_frame, params->callback_opaque, &progress,

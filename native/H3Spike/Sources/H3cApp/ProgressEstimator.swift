@@ -18,6 +18,10 @@ import H3Engine
 //                                            512x512. Decode time scales with
 //                                            frames x pixels either way, so
 //                                            it's modelled by time.
+//   pixel head 0..8                       -> decode, in the video VAE's
+//                                            place with a pi-H3 adapter: its
+//                                            8 layers, then frames as they
+//                                            are written (encode 1/N ...).
 //   [all frames delivered at once]
 //   encode 0/N ... N/N                    -> encode
 //
@@ -43,7 +47,7 @@ enum JobStage: Int, Comparable {
         switch phase {
         case "denoise", "denoise enqueue":
             return .denoise
-        case "audio VAE", "video VAE load":
+        case "audio VAE", "video VAE load", "pixel head":
             return .decode
         case "encode":
             return .encode

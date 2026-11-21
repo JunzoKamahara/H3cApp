@@ -242,6 +242,8 @@
 "追加…" = "Add…";
 "%lld/50ブロック" = "%lld/50 blocks";
 "未対応%lld件は無視" = "%lld unsupported ignored";
+"pi-H3（画素ヘッドで映像化、2 または 4 ステップ）" = "pi-H3 (frames from its pixel head, 2 or 4 steps)";
+"pi-H3（2 または 4 ステップ）" = "pi-H3 (2 or 4 steps)";
 "MiniMax-H3用として読み込めません: %@" = "Can't be loaded for MiniMax-H3: %@";
 "ファイルが見つかりません" = "File not found";
 "ステップ" = "Steps";

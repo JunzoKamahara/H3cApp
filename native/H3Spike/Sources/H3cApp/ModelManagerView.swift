@@ -490,7 +490,14 @@ struct ModelManagerView: View {
             var parts = [info.format,
                          String(localized: "\(info.blocks)/50ブロック") + (info.refinerBlocks > 0 ? "+refiner" : ""),
                          info.rankMin == info.rankMax ? "rank \(info.rankMax)" : "rank \(info.rankMin)–\(info.rankMax)"]
-            if info.unsupported > 0 { parts.append(String(localized: "未対応\(info.unsupported)件は無視")) }
+            // A pi-H3 adapter's other tensors are its own AdaLN, final
+            // layer, replaced blocks and pixel head, which the engine uses.
+            switch info.piH3 {
+            case .pixels: parts.append(String(localized: "pi-H3（画素ヘッドで映像化、2 または 4 ステップ）"))
+            case .latent: parts.append(String(localized: "pi-H3（2 または 4 ステップ）"))
+            case .none:
+                if info.unsupported > 0 { parts.append(String(localized: "未対応\(info.unsupported)件は無視")) }
+            }
             text = parts.joined(separator: summarySeparator)
         case .failure(let error)?:
             text = FileManager.default.fileExists(atPath: entry.path)

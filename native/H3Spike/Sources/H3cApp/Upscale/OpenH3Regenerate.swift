@@ -223,7 +223,7 @@ extension GenerationViewModel {
             case "denoise", "denoise enqueue":
                 sawDenoise = true
                 share = 0.10 + 0.75 * Double(completed) / Double(max(total, 1))
-            case "audio VAE", "video VAE load": share = 0.85 + 0.10 * Double(completed) / Double(max(total, 1))
+            case "audio VAE", "video VAE load", "pixel head": share = 0.85 + 0.10 * Double(completed) / Double(max(total, 1))
             case "encode": share = 0.95 + 0.05 * Double(completed) / Double(max(total, 1))
             default: share = sawDenoise ? nil : 0.05 + 0.05 * Double(completed) / Double(max(total, 1))
             }
