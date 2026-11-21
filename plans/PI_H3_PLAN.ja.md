@@ -191,3 +191,46 @@ tools/pixel_head/batch.sh          # 24 本、約 25 分、~/H3cApp-models/pi-h3
 - 画素ヘッドは映像 VAE デコーダの層の 8/36 にあたる計算。「デコーダが無くなる」のではなく、「36 層が 8 層になり、塊の重ね合わせが無くなる」。
 - エンジンに既にあるもので足りる部分: 曲線形式の AdaLN、LoRA（ComfyUI・diffusers の名前）、ComfyUI の int8（ConvRot）重みの読み込み、任意の映像 σ、映像 VAE の層の計算。
 - 新しく要る部分: (a) pi-H3 の時刻表、(b) AdaLN の重み・最終層の差し替え、(c) ブロック 46〜49 の重みの差し替え、(d) 専用の正規化と画素ヘッド（窓の作り方が VAE と違う）、(e) 映像 VAE のデコーダを使わない生成の流れ。
+
+## 8. エンジンへの適用（2026-11-21〜、ブランチ `pi-h3-prep`、main f54a9f8 = v0.11.0 の上）
+
+### 8.1 使い方（CLI）
+
+ComfyUI 版の 1 ファイル（`pi_h3_{2,4}step_dwd_adapter_int8_convrot.safetensors`）を **LoRA として渡す**。ステップ数は 2 か 4（ファイルに合わせる。ファイル自身は 2 か 4 かを記録していない）。土台は曲線形式（pruned、ランク 8）の H3。
+
+```
+H3SPIKE_LORA=…/pi_h3_4step_dwd_adapter_int8_convrot.safetensors H3SPIKE_STEPS=4 build/bin/h3_generate_cli …
+```
+
+- `h3_lora_inspect` が `pi_h3`（`H3_PI_H3_LATENT` / `H3_PI_H3_PIXELS`）を返す。diffusers の名前の版（`pi_h3_*_adapter/`）はエラーにして、ComfyUI 版を使うよう案内する。**非 DWD 版は diffusers の名前でしか配られていないので、今は読めない**（DWD 版を `H3_PI_H3_VAE=1` で使えば、標準 VAE での復号になる）。
+- `H3_PI_H3_VAE=1`: 画素ヘッドを使わず、最後の Euler ステップの潜在を標準 VAE で復号する（比較用）。
+
+### 8.2 実装
+
+| 部分 | 場所 | 内容 |
+|---|---|---|
+| 時刻表 | `h3_pi_h3_schedule_build`（`h3_host.c`）、`h3.c` | LoRA の中に pi-H3 があれば、この時刻表にする（2・4 ステップ以外はエラー） |
+| 上書きストア | `h3_weight_store_open_file`、`dit->overlay`、`h3_dit_store_of` | アダプタを 1 ファイルの重みストアとして開き、名前で読む箇所（最終層、常駐ブロック）はアダプタにあればそちらを読む |
+| AdaLN | `h3_dit_schedule_precompute_curve` の `overlay` | 曲線の射影の重み・バイアスをアダプタのものに替える。スケジュールのキャッシュは使わない |
+| LoRA | 既存の `h3_lora.c` のまま | ランク 64、ブロック 0〜45（DWD 版） |
+| ブロック 46〜49 | `h3_dit_prepare_overlay_blocks`、`h3_dit_block.c` | int8 キャッシュの経路では、差し替える OUT/FC1/FC2（12 行列）を BF16 に戻してからエンジンの行ごと int8 に量子化し、常駐させる（計 1.08 GiB）。常駐経路は名前で読むのでそのまま。SSD ストリーミングは未対応（エラー） |
+| 画素ヘッドの入力 | `prepare_pixel_modulation`、`h3_dit_pixel_head_input` | ヘッド専用の AdaLN（最後のステップの時刻）と、最終ブロックの出力の映像行 |
+| 画素ヘッド | `src/model/h3_pixel_head.c` | 7.4 のとおり。活性は常駐、線形層は 4096 行ずつ、注意は同じ大きさの窓をまとめて呼ぶ。重みは 1 層ずつ F32 で読む |
+| 生成の流れ | `h3.c` | 画素ヘッドがあれば映像 VAE のデコーダを読み込まず、ヘッドのフレームを同じ出力経路（リサイズ・エンコード・`on_frame`）に流す |
+| カーネル | `h3_gpu_gather_rows_bf16`・`h3_gpu_scatter_rows_bf16`（新規）、`h3_gpu_sdpa_batched_kv_bf16`（宣言を `h3_gpu.h` へ） | 窓ごとの行の収集と書き戻し |
+| 参照実装 | `tools/pi_h3/pixel_head_ref.py` | 画素ヘッドの numpy 版（ComfyUI の int8・ConvRot も戻す） |
+| 検証ツール | `tests/pixel_head_probe.c`（`build/bin/h3_pixel_head_probe`） | 書き出した行だけで GPU のヘッドを動かす |
+
+### 8.3 確かめたこと（2026-11-21、384×384・56 フレーム・4 ステップ、シード 42、キツネのプロンプト）
+
+- **蒸留の部分**: 4 ステップの DWD アダプタ + 標準 VAE の復号で、破綻のない映像が出る（`~/H3cApp-models/pi-h3/runs/a4_vae.mp4`）。LoRA・AdaLN・最終層・ブロック 46〜49・時刻表が効いている。
+- **画素ヘッドの理解**: エンジンが書き出した最終ブロックの映像行から、numpy の参照実装が**標準 VAE の復号とほぼ同じ映像**を出す（`a4_compare.png`。同じ生成の VAE 復号との PSNR 31.4 dB。VAE 側は Euler をもう 1 ステップ進めた潜在なので、完全には一致しない）。正規化・展開の並び・窓・RoPE・射影・色の解釈は合っている。
+- **GPU の画素ヘッド（`h3_pixel_head.c`）はまだ動かしていない**。ビルドは通る。別セッションが GPU を使っているため、終了を待っている。
+
+### 8.4 残り
+
+1. GPU のヘッドを参照実装と突き合わせる（`h3_pixel_head_probe`）。そのあと生成を通して、時間・メモリ・画質を標準 VAE と比べる（2 ステップ版も）。
+2. メモリの見積もり（`h3_plan.c`）に画素ヘッドの段を入れる（今は映像 VAE デコーダの段のまま）。差し替えブロックの常駐 1.08 GiB も数える。
+3. ヘッドの線形層の int8 化（今は F32。VAE は int8 が既定）、長い動画での活性の大きさ（1 トークン約 12 KiB）。
+4. アプリ（Swift）: pi-H3 のアダプタを LoRA 一覧で認識し、ステップ数と時刻表を合わせる表示。`on_progress` の新しい段名 "pixel head"。
+5. 条件付きの生成（先頭・末尾のフレーム、参照）、クリップの継続、ライブプレビューとの組み合わせの確認。

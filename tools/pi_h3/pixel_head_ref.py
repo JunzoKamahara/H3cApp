@@ -19,8 +19,9 @@ reference decoder), not the paper's appendix: the released head is the last
 
   pixel_head_ref.py <adapter.safetensors> <checkpoint.gguf> <dump prefix> <out prefix>
 
-<adapter> is the F16 diffusers file (pi_h3_*_dwd_adapter/diffusion_pytorch_model
-.safetensors): its dwd_* tensors are plain. <checkpoint.gguf> gives the AdaLN
+<adapter> is either layout of the adapter: the dwd_* tensors have the same
+names in both, plain F16 in the diffusers file and ComfyUI int8 for the
+linears of the single-file version. <checkpoint.gguf> gives the AdaLN
 curve table. <dump prefix> is what H3_DUMP_FINAL_VIDEO wrote (.hidden.bf16,
 .json). Writes <out prefix>.rgb (RGB24 frames) and, with --features, the
 tensors between the stages as .npy for the engine to be compared with."""
@@ -52,13 +53,34 @@ class Safetensors:
         self.header.pop("__metadata__", None)
         self.base = 8 + size
 
-    def __call__(self, name):
+    def raw(self, name):
         entry = self.header[name]
         begin, end = entry["data_offsets"]
         self.file.seek(self.base + begin)
-        dtype = {"F16": np.float16, "F32": np.float32}[entry["dtype"]]
-        values = np.frombuffer(self.file.read(end - begin), dtype)
-        return values.astype(np.float32).reshape(entry["shape"])
+        dtype = {"F16": np.float16, "F32": np.float32, "I8": np.int8,
+                 "U8": np.uint8}[entry["dtype"]]
+        return np.frombuffer(self.file.read(end - begin), dtype).reshape(entry["shape"])
+
+    def __call__(self, name):
+        values = self.raw(name)
+        if values.dtype != np.int8:
+            return values.astype(np.float32)
+        # A ComfyUI int8 linear (the engine's h3_comfy_int8_dequantize_row):
+        # the integers, rotated back within groups of columns (ConvRot: H4
+        # on each base-4 digit of the column index), times the row's scale.
+        stem = name[:-len("weight")]
+        quant = json.loads(bytes(self.raw(stem + "comfy_quant")).decode())
+        values = values.astype(np.float32)
+        rows, columns = values.shape
+        group = quant.get("convrot_groupsize", 0) if quant.get("convrot") else 0
+        stride = 1
+        while stride < group:
+            v = values.reshape(rows, columns // (4 * stride), 4, stride)
+            a, b, c, d = v[:, :, 0], v[:, :, 1], v[:, :, 2], v[:, :, 3]
+            t = 0.5 * (a + b + c + d)
+            values = np.stack([t - d, t - c, t - b, t - a], axis=2).reshape(rows, columns)
+            stride *= 4
+        return values * self.raw(stem + "weight_scale").astype(np.float32).reshape(-1, 1)
 
 
 def gguf_tensor(path, wanted):
@@ -152,11 +174,11 @@ def rotate(x, cos, sin):
 
 def attend(q, k, v):
     """q [nq, heads, 64], k and v [nk, heads, 64] -> [nq, heads, 64]."""
-    scores = np.einsum("qhd,khd->hqk", q, k) / math.sqrt(HEAD_DIM)
+    scores = q.transpose(1, 0, 2) @ k.transpose(1, 2, 0) / math.sqrt(HEAD_DIM)
     scores -= scores.max(axis=-1, keepdims=True)
     weights = np.exp(scores)
     weights /= weights.sum(axis=-1, keepdims=True)
-    return np.einsum("hqk,khd->qhd", weights, v)
+    return (weights @ v.transpose(1, 0, 2)).transpose(1, 0, 2)
 
 
 def windows(T, H, W, shifted):
@@ -222,6 +244,7 @@ def head(weights, table, hidden, shape, sigma, keep=None):
     modulation = weights("dwd_norm_out.linear.weight") @ silu(coordinates) + weights("dwd_norm_out.linear.bias")
     scale, shift = modulation[:hidden.shape[1]], modulation[hidden.shape[1]:]
     features = layer_norm(hidden) * (1.0 + scale) + shift
+    keep["modulation"] = modulation
     keep["features"] = features
     x = features @ weights("dwd_pixel_refiner.feature_expand.weight").T + \
         weights("dwd_pixel_refiner.feature_expand.bias")
@@ -274,6 +297,8 @@ def main():
     if "--features" in sys.argv:
         for name, values in keep.items():
             np.save(f"{out}.{name}.npy", values.astype(np.float32))
+        # the head's AdaLN as tests/pixel_head_probe.c reads it
+        keep["modulation"].astype(np.float32).tofile(out + ".modulation.f32")
 
 
 if __name__ == "__main__":

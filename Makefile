@@ -123,6 +123,11 @@ $(BIN)/build_adaln_curve: $(OBJ)/h3_build_adaln_curve.o $(CORE_OBJ)
 $(BIN)/h3_adaln_curve_check: $(OBJ)/adaln_curve_check.o $(LIB_OBJ)
 	$(CC) -o $@ $^ $(LDLIBS)
 
+# pi-H3's pixel head on rows a generation dumped (tests/pixel_head_probe.c;
+# needs the adapter, not in `make test`).
+$(BIN)/h3_pixel_head_probe: $(OBJ)/pixel_head_probe.o $(LIB_OBJ)
+	$(CC) -o $@ $^ $(LDLIBS)
+
 # Tensor-by-tensor comparison of a quantized re-publication (GGUF) against
 # the released weights (needs both; not in `make test`).
 $(BIN)/h3_weight_compare: $(OBJ)/weight_compare.o $(LIB_OBJ)
