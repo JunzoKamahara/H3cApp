@@ -1396,6 +1396,25 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     if (family->log_name)
         fprintf(stderr, "h3: %s %d-step schedule\n", family->log_name,
                 params->steps);
+    /* A pi-H3 adapter among the LoRAs brings its own time grid. */
+    int pi_h3 = 0;
+    for (size_t index = 0; index < params->lora_count && !pi_h3; index++) {
+        h3_lora_info lora_info;
+        char ignored[256];
+        if (h3_lora_inspect(params->loras[index].path, &lora_info, ignored,
+                            sizeof(ignored)))
+            pi_h3 = lora_info.pi_h3;
+    }
+    if (pi_h3) {
+        if (!h3_pi_h3_schedule_build(params->steps, &sigmas)) {
+            h3_set_error(ctx, "a pi-H3 adapter samples in 2 or 4 steps, "
+                         "not %d", params->steps);
+            goto cleanup;
+        }
+        fprintf(stderr, "h3: pi-H3 %d-step schedule, video sigmas from "
+                "%.4f to %.4f\n", params->steps, (double)sigmas.video[0],
+                (double)sigmas.video[params->steps - 1]);
+    }
     if (params->video_sigmas) {
         for (int step = 0; step <= sigmas.steps; step++)
             sigmas.video[step] = params->video_sigmas[step];

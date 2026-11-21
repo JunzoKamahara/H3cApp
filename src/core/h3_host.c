@@ -200,6 +200,29 @@ int h3_serving_schedule_build_shifted(int evaluations, float audio_shift,
     return 1;
 }
 
+int h3_pi_h3_schedule_build(int steps, h3_sigma_schedule *schedule) {
+    if (!schedule || (steps != 2 && steps != 4)) return 0;
+    memset(schedule, 0, sizeof(*schedule));
+    schedule->steps = steps;
+    const double max_raw = steps == 2 ? 0.93 : 0.96;
+    const double final_scale = 0.6;
+    const double last = max_raw * final_scale / ((double)steps - 1.0 + final_scale);
+    const double video_shift = (double)H3_VIDEO_SIGMA_SHIFT;
+    const double audio_shift = (double)H3_AUDIO_SIGMA_SHIFT;
+    for (int index = 0; index < steps; index++) {
+        /* numpy.linspace in float32, as the scheduler computes it */
+        float raw = (float)(max_raw + (last - max_raw) * (double)index /
+                            (double)(steps - 1));
+        schedule->video[index] = (float)(video_shift * raw /
+                                         (1.0 + (video_shift - 1.0) * raw));
+        schedule->audio[index] = (float)(audio_shift * raw /
+                                         (1.0 + (audio_shift - 1.0) * raw));
+    }
+    schedule->video[steps] = 0.0f;
+    schedule->audio[steps] = 0.0f;
+    return 1;
+}
+
 /* The base grids of HyperFlow H3 Flash's schedule.py (Apache-2.0). */
 static const float hyperflow_grid4[] = {
     1.0f, 0.681872f, 0.205019f, 0.036496f, 0.0f

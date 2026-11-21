@@ -431,6 +431,19 @@ static int dump_final_video(h3_dit *dit, const char *prefix, int step,
     if (file && fclose(file) != 0) ok = 0;
     free(values);
     if (ok) {
+        /* The same rows before the final layer's AdaLN - the last block's
+         * output, which pi-H3's pixel head normalizes on its own. */
+        size_t all = (size_t)dit->sequence * HIDDEN;
+        values = malloc(all * sizeof(*values));
+        snprintf(path, sizeof(path), "%s.hidden.bf16", prefix);
+        file = values ? fopen(path, "wb") : NULL;
+        ok = file && h3_gpu_tensor_read_bf16(dit->hidden, values, all) &&
+            fwrite(values + (size_t)dit->video_target_start * HIDDEN,
+                   sizeof(*values), count, file) == count;
+        if (file && fclose(file) != 0) ok = 0;
+        free(values);
+    }
+    if (ok) {
         snprintf(path, sizeof(path), "%s.json", prefix);
         file = fopen(path, "w");
         ok = file && fprintf(file,
@@ -1092,6 +1105,24 @@ int h3_dit_encode_forward(h3_dit *dit, int step, int begin, int submit,
                     streamed_weight.out_scales = stored->scales[H3_COMFY_OUT];
                     streamed_weight.fc1_scales = stored->scales[H3_COMFY_FC1];
                     streamed_weight.fc2_scales = stored->scales[H3_COMFY_FC2];
+                }
+                if (dit->overlay_int8) {
+                    /* pi-H3: the adapter's projections in place of the
+                     * cache's (h3_dit_prepare_overlay_blocks). */
+                    h3_gpu_tensor **values = dit->overlay_int8[block];
+                    h3_gpu_tensor **scales = dit->overlay_scales[block];
+                    if (values[H3_COMFY_OUT]) {
+                        streamed_weight.out_int8 = values[H3_COMFY_OUT];
+                        streamed_weight.out_scales = scales[H3_COMFY_OUT];
+                    }
+                    if (dit->mlp_stream && values[H3_COMFY_FC1]) {
+                        streamed_weight.fc1_int8 = values[H3_COMFY_FC1];
+                        streamed_weight.fc1_scales = scales[H3_COMFY_FC1];
+                    }
+                    if (dit->mlp_stream && values[H3_COMFY_FC2]) {
+                        streamed_weight.fc2_int8 = values[H3_COMFY_FC2];
+                        streamed_weight.fc2_scales = scales[H3_COMFY_FC2];
+                    }
                 }
                 weight = &streamed_weight;
                 if (!patch_streamed_int8(dit, block, weight, error,

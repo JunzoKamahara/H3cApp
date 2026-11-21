@@ -81,18 +81,25 @@ void h3_dit_free_tensor(h3_gpu_tensor **tensor) {
     *tensor = NULL;
 }
 
+/* The store a named weight comes from: the pi-H3 adapter's when it has a
+ * tensor of that name, the checkpoint's otherwise. */
+const h3_weight_store *h3_dit_store_of(const h3_dit *dit, const char *name) {
+    return dit->overlay && h3_weight_find(dit->overlay, name, NULL) ?
+        dit->overlay : dit->weights;
+}
+
 h3_gpu_tensor *h3_dit_bf1(h3_dit *dit, const char *name, uint64_t width,
                           char *error, size_t error_size) {
     uint64_t shape[] = {width};
-    return h3_weight_load_bf16(dit->weights, dit->gpu, name, 1, shape,
-                               error, error_size);
+    return h3_weight_load_bf16(h3_dit_store_of(dit, name), dit->gpu, name, 1,
+                               shape, error, error_size);
 }
 
 h3_gpu_tensor *h3_dit_bf2(h3_dit *dit, const char *name, uint64_t rows,
                           uint64_t columns, char *error, size_t error_size) {
     uint64_t shape[] = {rows, columns};
-    return h3_weight_load_bf16(dit->weights, dit->gpu, name, 2, shape,
-                               error, error_size);
+    return h3_weight_load_bf16(h3_dit_store_of(dit, name), dit->gpu, name, 2,
+                               shape, error, error_size);
 }
 
 /* h3_dit_bf2() for one of the four LoRA-able projections: the LoRA delta is added
@@ -122,15 +129,15 @@ h3_gpu_tensor *h3_dit_bf2_patched(h3_dit *dit, const char *name,
 h3_gpu_tensor *h3_dit_f1(h3_dit *dit, const char *name, uint64_t width,
                          char *error, size_t error_size) {
     uint64_t shape[] = {width};
-    return h3_weight_load_f32(dit->weights, dit->gpu, name, 1, shape,
-                              error, error_size);
+    return h3_weight_load_f32(h3_dit_store_of(dit, name), dit->gpu, name, 1,
+                              shape, error, error_size);
 }
 
 h3_gpu_tensor *h3_dit_f2(h3_dit *dit, const char *name, uint64_t rows,
                          uint64_t columns, char *error, size_t error_size) {
     uint64_t shape[] = {rows, columns};
-    return h3_weight_load_f32(dit->weights, dit->gpu, name, 2, shape,
-                              error, error_size);
+    return h3_weight_load_f32(h3_dit_store_of(dit, name), dit->gpu, name, 2,
+                              shape, error, error_size);
 }
 
 int h3_dit_copy_layout(h3_dit *dit, const h3_layout *layout,
@@ -1294,6 +1301,7 @@ void h3_dit_free(h3_dit *dit) {
     h3_dit_fbc_log_free(dit->fbc_log);
     dit->fbc_log = NULL;
     h3_lora_set_free(dit->loras);
+    h3_dit_free_overlay(dit);
     int steps = h3_dit_schedule_steps(dit->schedule);
     if (dit->row_maps) for (int step = 0; step < steps; step++)
         h3_gpu_tensor_free(dit->row_maps[step]);

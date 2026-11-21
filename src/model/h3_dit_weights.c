@@ -920,6 +920,79 @@ int h3_dit_prepare_comfy_block(h3_dit *dit, unsigned layer, char *error,
     return 1;
 }
 
+/* --- pi-H3: replaced projections for the int8 slots ---------------------- */
+
+void h3_dit_free_overlay(h3_dit *dit) {
+    for (unsigned block = 0; dit->overlay_int8 && block < H3_DIT_BLOCKS; block++)
+        for (unsigned linear = 0; linear < H3_COMFY_LINEARS; linear++) {
+            h3_dit_free_tensor(&dit->overlay_int8[block][linear]);
+            h3_dit_free_tensor(&dit->overlay_scales[block][linear]);
+        }
+    free(dit->overlay_int8);
+    free(dit->overlay_scales);
+    dit->overlay_int8 = dit->overlay_scales = NULL;
+    h3_weight_store_free(dit->overlay);
+    dit->overlay = NULL;
+}
+
+/* A resident block loads its projections by name, which already takes the
+ * adapter's (h3_dit_store_of). The int8 slots are filled from the attention
+ * cache instead, so each projection the adapter replaces is restored to
+ * BF16 here (its ComfyUI int8 form included) and quantized the way the
+ * cache's are, once, and stays resident: 0.27 GiB per replaced block. */
+int h3_dit_prepare_overlay_blocks(h3_dit *dit, char *error, size_t error_size) {
+    unsigned replaced = 0;
+    for (unsigned block = 0; block < H3_DIT_BLOCKS; block++)
+        for (unsigned linear = H3_COMFY_OUT; linear < H3_COMFY_LINEARS; linear++) {
+            char name[96];
+            snprintf(name, sizeof(name), "blocks.%u.%s", block,
+                     comfy_linears[linear].name);
+            if (!h3_weight_find(dit->overlay, name, NULL)) continue;
+            if (dit->ssd_streaming || dit->comfy_direct) {
+                h3_dit_fail(error, error_size, "a pi-H3 adapter that "
+                     "replaces block projections (%s) runs resident or with "
+                     "the int8 attention cache, not with SSD streaming", name);
+                return 0;
+            }
+            if (!(linear == H3_COMFY_OUT ? dit->attention_stream
+                                         : dit->mlp_stream)) continue;
+            if (!dit->overlay_int8) {
+                dit->overlay_int8 = calloc(H3_DIT_BLOCKS, sizeof(*dit->overlay_int8));
+                dit->overlay_scales = calloc(H3_DIT_BLOCKS, sizeof(*dit->overlay_scales));
+                if (!dit->overlay_int8 || !dit->overlay_scales) {
+                    h3_dit_fail(error, error_size, "out of memory for the "
+                         "pi-H3 adapter's projections");
+                    return 0;
+                }
+            }
+            uint32_t rows = comfy_linears[linear].rows;
+            uint32_t columns = comfy_linears[linear].columns;
+            h3_gpu_tensor *plain = h3_dit_bf2(dit, name, rows, columns, error,
+                                              error_size);
+            if (!plain) return 0;
+            h3_gpu_tensor *values = h3_gpu_tensor_new_i8(
+                dit->gpu, (size_t)rows * columns);
+            h3_gpu_tensor *scales = h3_gpu_tensor_new_f32(dit->gpu, rows);
+            dit->overlay_int8[block][linear] = values;
+            dit->overlay_scales[block][linear] = scales;
+            int ok = values && scales && h3_gpu_begin(dit->gpu) &&
+                     h3_gpu_quantize_weight_int8(dit->gpu, values, scales,
+                                                 plain, rows, columns) &&
+                     h3_gpu_submit(dit->gpu);
+            h3_gpu_tensor_free(plain);
+            if (!ok) {
+                h3_dit_fail(error, error_size, "cannot quantize %s: %s", name,
+                     h3_gpu_error(dit->gpu));
+                return 0;
+            }
+            replaced++;
+        }
+    if (replaced)
+        fprintf(stderr, "h3: pi-H3 adapter: %u replaced projections kept "
+                "resident in int8\n", replaced);
+    return 1;
+}
+
 /* One reader thread's share of a block: a piece of one matrix. A single
  * pread per matrix only reaches queue depth 1 (see h3_dit_read_stream_
  * layer); pieces of about 38 MiB each keep ten requests outstanding. */

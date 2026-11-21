@@ -62,6 +62,9 @@ static void free_paths(char **paths, size_t count) {
     free(paths);
 }
 
+static h3_weight_store *open_paths(char **paths, size_t count,
+                                   char *error, size_t error_size);
+
 h3_weight_store *h3_weight_store_open(const char *directory,
                                       char *error, size_t error_size) {
     if (!directory || !*directory) {
@@ -109,6 +112,28 @@ h3_weight_store *h3_weight_store_open(const char *directory,
         return NULL;
     }
     qsort(paths, count, sizeof(*paths), compare_paths);
+    return open_paths(paths, count, error, error_size);
+}
+
+h3_weight_store *h3_weight_store_open_file(const char *path,
+                                           char *error, size_t error_size) {
+    if (!path || !*path) {
+        fail(error, error_size, "a weight file is required");
+        return NULL;
+    }
+    char **paths = malloc(sizeof(*paths));
+    if (paths) paths[0] = strdup(path);
+    if (!paths || !paths[0]) {
+        fail(error, error_size, "out of memory opening %s", path);
+        free(paths);
+        return NULL;
+    }
+    return open_paths(paths, 1, error, error_size);
+}
+
+/* Takes ownership of paths. */
+static h3_weight_store *open_paths(char **paths, size_t count,
+                                   char *error, size_t error_size) {
     h3_weight_store *store = calloc(1, sizeof(*store));
     if (!store) {
         fail(error, error_size, "out of memory creating weight store");

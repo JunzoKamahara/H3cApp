@@ -92,7 +92,21 @@ typedef struct {
      * Sharp's "curve branches": factors on the 8-dim curve input of a
      * curve-form checkpoint). Applied only with such a checkpoint. */
     int adaln_blocks;
+    /* A pi-H3 adapter (Lakonik/pi-H3, its single-file ComfyUI layout): the
+     * LoRA factors of a 2- or 4-step student plus tensors that replace the
+     * checkpoint's own - the AdaLN curve projections, the final layer and,
+     * with the pixel head, the last blocks' projections. 0: not one,
+     * H3_PI_H3_LATENT: the video VAE decodes its latents,
+     * H3_PI_H3_PIXELS: it carries the DWD pixel head. It needs a
+     * curve-form (rank 8) checkpoint and samples on its own time grid
+     * (h3_pi_h3_schedule_build) in 2 or 4 steps. */
+    int pi_h3;
 } h3_lora_info;
+
+enum {
+    H3_PI_H3_LATENT = 1,
+    H3_PI_H3_PIXELS = 2
+};
 
 typedef struct {
     int width;

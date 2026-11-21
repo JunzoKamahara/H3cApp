@@ -150,7 +150,7 @@ static const h3_option_info options[] = {
     {"H3_DUMP_BLOCK_HIDDEN", "dump", "<prefix>",
      "Write the hidden state after every block of step 0 (tests/test_hyperflow_real.c)."},
     {"H3_DUMP_FINAL_VIDEO", "dump", "<prefix>",
-     "Write the last step's video rows as the video head reads them, [rows, 5376] BF16, and their shape (tools/pixel_head)."},
+     "Write the last step's video rows as the video head reads them (<prefix>.bf16) and before the final AdaLN (<prefix>.hidden.bf16), [rows, 5376] BF16, and their shape (tools/pixel_head, tools/pi_h3)."},
     {"H3_ENCODER_FAST", "vae", "1",
      "Video encoder: 2D convolutions everywhere (diagnostic)."},
     {"H3_ENCODER_PROFILE", "vae", "1",

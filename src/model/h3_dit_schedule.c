@@ -403,16 +403,28 @@ static h3_gpu_tensor *project_rows(h3_gpu *gpu, const char *prefix,
  * weight [outputs, rank]^T plus bias, in F32, then rounded to the BF16 the
  * dense path produces. */
 static h3_gpu_tensor *curve_projection(const h3_adaln_curve *curve,
+                                       const h3_weight_store *overlay,
                                        h3_gpu *gpu, const char *prefix,
                                        const h3_gpu_tensor *coordinates,
                                        uint32_t rows, uint32_t outputs,
                                        const float *delta,
                                        char *error, size_t error_size) {
     uint32_t rank = h3_adaln_curve_rank(curve);
-    h3_gpu_tensor *weight = h3_adaln_curve_load_weight(
-        curve, gpu, prefix, outputs, error, error_size);
-    h3_gpu_tensor *bias = weight ? h3_adaln_curve_load_bias(
-        curve, gpu, prefix, outputs, error, error_size) : NULL;
+    char weight_name[128], bias_name[128];
+    snprintf(weight_name, sizeof(weight_name), "%s.weight", prefix);
+    snprintf(bias_name, sizeof(bias_name), "%s.bias", prefix);
+    uint64_t weight_shape[] = {outputs, rank}, bias_shape[] = {outputs};
+    h3_gpu_tensor *weight = overlay && h3_weight_find(overlay, weight_name, NULL) ?
+        h3_weight_load_f32(overlay, gpu, weight_name, 2, weight_shape, error,
+                           error_size) :
+        h3_adaln_curve_load_weight(curve, gpu, prefix, outputs, error,
+                                   error_size);
+    h3_gpu_tensor *bias = !weight ? NULL :
+        overlay && h3_weight_find(overlay, bias_name, NULL) ?
+        h3_weight_load_f32(overlay, gpu, bias_name, 1, bias_shape, error,
+                           error_size) :
+        h3_adaln_curve_load_bias(curve, gpu, prefix, outputs, error,
+                                 error_size);
     return project_rows(gpu, prefix, weight, bias, coordinates, rows, rank,
                         outputs, delta, error, error_size);
 }
@@ -469,7 +481,7 @@ failed:
 }
 
 h3_dit_schedule *h3_dit_schedule_precompute_curve(
-    const h3_lora_set *loras,
+    const h3_lora_set *loras, const h3_weight_store *overlay,
     const h3_adaln_curve *curve, h3_gpu *gpu,
     const h3_sigma_schedule *sigmas, int visual_condition,
     int audio_condition,
@@ -519,14 +531,14 @@ h3_dit_schedule *h3_dit_schedule_precompute_curve(
             goto failed;
         }
         schedule->blocks[block] = curve_projection(
-            curve, gpu, prefix, coordinate_tensor, schedule->time_rows,
+            curve, overlay, gpu, prefix, coordinate_tensor, schedule->time_rows,
             BLOCK_OUTPUT, delta, error, error_size);
         if (!schedule->blocks[block]) goto failed;
         if (progress) progress((int)block + 1, (int)H3_DIT_BLOCKS,
                                progress_opaque);
     }
     schedule->final = curve_projection(
-        curve, gpu, "final_layer.adaln_proj.linear", coordinate_tensor,
+        curve, overlay, gpu, "final_layer.adaln_proj.linear", coordinate_tensor,
         schedule->time_rows, FINAL_OUTPUT, NULL, error, error_size);
     if (!schedule->final) goto failed;
     free(times);

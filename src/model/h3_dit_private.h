@@ -321,6 +321,18 @@ struct h3_dit {
      * once as they load; streamed ones (SSD BF16 slots, int8 attention
      * cache slots) every time a block is streamed in. NULL without LoRA. */
     h3_lora_set *loras;
+    /* A pi-H3 adapter among the LoRAs (h3_lora_info.pi_h3): its file as a
+     * weight store whose tensors replace the checkpoint's of the same name
+     * - the AdaLN curve projections, the final layer, the last blocks'
+     * OUT/FC1/FC2 - wherever a weight is loaded by name (h3_dit_bf1 ...).
+     * The int8 attention cache does not load by name: there the replaced
+     * projections are quantized once into overlay_int8 / overlay_scales
+     * ([block][H3_COMFY_OUT..FC2], NULL where the adapter has none) and
+     * stand in for the slot's as the block is run. NULL without one. */
+    h3_weight_store *overlay;
+    int overlay_pixels;   /* it carries the pixel head */
+    h3_gpu_tensor *(*overlay_int8)[H3_COMFY_LINEARS];
+    h3_gpu_tensor *(*overlay_scales)[H3_COMFY_LINEARS];
     /* h3_params.cancel_requested, via h3_dit_set_cancel. */
     const volatile int *cancel_requested;
     /* h3_dit_set_latent_preview; evaluations counted since it was set */
@@ -515,6 +527,10 @@ int h3_dit_comfy_direct_available(h3_dit *dit);
 int h3_dit_prepare_comfy_block(h3_dit *dit, unsigned layer, char *error,
                                size_t error_size);
 void h3_dit_free_comfy_blocks(h3_dit *dit);
+/* pi-H3 (dit->overlay): the adapter's OUT/FC1/FC2 for the int8 slots. */
+int h3_dit_prepare_overlay_blocks(h3_dit *dit, char *error, size_t error_size);
+void h3_dit_free_overlay(h3_dit *dit);
+const h3_weight_store *h3_dit_store_of(const h3_dit *dit, const char *name);
 void *h3_dit_read_attention_layer_thread(void *opaque);
 int h3_dit_quantize_block_mlp(h3_dit *dit, h3_dit_block *block,
                               char *error, size_t error_size);

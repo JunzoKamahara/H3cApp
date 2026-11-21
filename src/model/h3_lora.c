@@ -406,7 +406,26 @@ int h3_lora_inspect(const char *path, h3_lora_info *info, char *error,
     for (int block = 0; block < H3_LORA_DIT_BLOCKS; block++)
         if (adapter->adaln[block].a >= 0 && adapter->adaln[block].b >= 0)
             info->adaln_blocks++;
+    /* pi-H3: whole tensors under the checkpoint's own names. The diffusers
+     * layout of the same adapter (norm_out.*, proj_out.*) is not read. */
+    int replaces_final = 0, pixel_head = 0, diffusers_final = 0;
+    for (size_t index = 0; index < adapter->header.tensor_count; index++) {
+        const char *name = adapter->header.tensors[index].name;
+        if (!strcmp(name, "final_layer.adaln_proj.linear.weight")) replaces_final = 1;
+        if (!strcmp(name, "dwd_pixel_refiner.feature_expand.weight")) pixel_head = 1;
+        if (!strcmp(name, "norm_out.linear.weight")) diffusers_final = 1;
+    }
+    if (replaces_final)
+        info->pi_h3 = pixel_head ? H3_PI_H3_PIXELS : H3_PI_H3_LATENT;
     free_adapter(adapter);
+    if (diffusers_final && !replaces_final) {
+        free(adapter);
+        fail(error, error_size,
+             "%s is a pi-H3 adapter in the diffusers layout; use its "
+             "single-file ComfyUI version (pi_h3_*_int8_convrot.safetensors)",
+             path);
+        return 0;
+    }
     free(adapter);
     if (!info->projections) {
         fail(error, error_size,

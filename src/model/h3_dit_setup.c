@@ -1268,6 +1268,27 @@ static h3_dit *load_dit(const char *weight_directory,
                                       error_size);
         if (!dit->loras) goto failed;
     }
+    /* A pi-H3 adapter also replaces whole tensors of the checkpoint. */
+    for (size_t index = 0; index < lora_count; index++) {
+        h3_lora_info lora_info;
+        char ignored[256];
+        if (!h3_lora_inspect(loras[index].path, &lora_info, ignored,
+                             sizeof(ignored)) || !lora_info.pi_h3) continue;
+        if (dit->overlay || dit->hyperflow || still) {
+            h3_dit_fail(error, error_size, dit->overlay ?
+                 "only one pi-H3 adapter can be applied at a time" :
+                 "a pi-H3 adapter applies to MiniMax H3 video checkpoints only");
+            goto failed;
+        }
+        dit->overlay = h3_weight_store_open_file(loras[index].path, error,
+                                                 error_size);
+        if (!dit->overlay) goto failed;
+        dit->overlay_pixels = lora_info.pi_h3 == H3_PI_H3_PIXELS;
+        fprintf(stderr, "h3: pi-H3 adapter%s: its AdaLN, final layer and "
+                "replaced projections are taken from %s\n",
+                dit->overlay_pixels ? " with the pixel head" : "",
+                loras[index].path);
+    }
     dit->nax_mlp = dit->fused_mlp && h3_gpu_has_nax_mlp(dit->gpu);
     dit->int8_mlp = !dit->ssd_streaming && dit->fused_mlp &&
                     !use_slower_bf16_mlp &&
@@ -1403,6 +1424,8 @@ static h3_dit *load_dit(const char *weight_directory,
         dit->mlp_stream = 1;
         fprintf(stderr, "h3: int8 blocks streamed as stored (inputs rotated)\n");
     }
+    if (dit->overlay &&
+        !h3_dit_prepare_overlay_blocks(dit, error, error_size)) goto failed;
     dit->use_slower_row_major_attention_output =
         use_slower_row_major_attention_output;
     dit->use_slower_unfused_int8_inputs =
@@ -1500,7 +1523,13 @@ static h3_dit *load_dit(const char *weight_directory,
     }
     /* LoRA AdaLN curve branches change the schedule, so it is neither
      * taken from nor stored in the prepared cache then. */
-    int adaln_patched = h3_lora_set_has_adaln(dit->loras);
+    int adaln_patched = h3_lora_set_has_adaln(dit->loras) || dit->overlay;
+    if (dit->overlay && (!curve || h3_adaln_curve_rank(curve) != 8)) {
+        h3_dit_fail(error, error_size, "a pi-H3 adapter needs a curve-form "
+             "(\"pruned\", rank 8) MiniMax H3 checkpoint");
+        h3_adaln_curve_free(curve);
+        goto failed;
+    }
     if (adaln_patched && !curve)
         fprintf(stderr, "h3: warning: a LoRA's AdaLN curve branches need a "
                         "curve-form checkpoint; ignored\n");
@@ -1528,7 +1557,8 @@ static h3_dit *load_dit(const char *weight_directory,
                     curve_path, h3_adaln_curve_rank(curve),
                     h3_adaln_curve_grid(curve));
             dit->schedule = h3_dit_schedule_precompute_curve(
-                dit->loras, curve, dit->gpu, sigmas, visual_condition,
+                dit->loras, dit->overlay, curve, dit->gpu, sigmas,
+                visual_condition,
                 audio_condition,
                 schedule_report, &schedule_state, error, error_size);
         } else {
