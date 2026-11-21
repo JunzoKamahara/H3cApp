@@ -1427,6 +1427,17 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                 "%.4f to %.4f\n", params->steps, (double)sigmas.video[0],
                 (double)sigmas.video[params->steps - 1]);
     }
+    /* Its few steps are each evaluated whole: with token reduction the
+     * picture breaks (doubled subjects, seams), and the pixel head reads
+     * the last evaluation itself. */
+    int token_reduction = params->token_reduction;
+    int core_reuse = params->core_reuse, denoise_reuse = params->denoise_reuse;
+    if (pi_h3 && (token_reduction || core_reuse != 1 || denoise_reuse != 1)) {
+        fprintf(stderr, "h3: a pi-H3 adapter evaluates every step whole: "
+                "token reduction and step reuse are off\n");
+        token_reduction = 0;
+        core_reuse = denoise_reuse = 1;
+    }
     if (params->video_sigmas) {
         for (int step = 0; step <= sigmas.steps; step++)
             sigmas.video[step] = params->video_sigmas[step];
@@ -1459,8 +1470,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     } else if (conditioned) {
         dit = h3_dit_load_conditioned(
             dit_path, "h3_shaders.metal", &text, &layout, &sigmas,
-            (unsigned)params->dit_layers, (unsigned)params->core_reuse,
-            params->token_reduction,
+            (unsigned)params->dit_layers, (unsigned)core_reuse,
+            token_reduction,
             params->ssd_streaming,
             spatial_rope_scale,
             params->use_slower_bf16_mlp,
@@ -1481,8 +1492,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     } else {
         dit = h3_dit_load_t2va(
             dit_path, "h3_shaders.metal", &text, &layout, &sigmas,
-            (unsigned)params->dit_layers, (unsigned)params->core_reuse,
-            params->token_reduction,
+            (unsigned)params->dit_layers, (unsigned)core_reuse,
+            token_reduction,
             params->ssd_streaming,
             spatial_rope_scale,
             params->use_slower_bf16_mlp,
@@ -1601,7 +1612,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                                   ? h3_deliver_latent_preview : NULL,
                               (void *)params);
     int denoised = h3_dit_denoise_euler_preview(
-            dit, video, audio, params->denoise_reuse,
+            dit, video, audio, denoise_reuse,
             h3_dit_progress_bridge, &progress,
             preview_decoder ? h3_deliver_denoise_preview : NULL,
             preview_decoder ? &live_preview : NULL,
