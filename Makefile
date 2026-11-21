@@ -22,7 +22,7 @@ LDLIBS := $(FRAMEWORKS) -licucore -lm $(MINOS_FLAG)
 # engine, never the other way round.
 LIB_C := h3.c h3_image.c h3_conditioning.c h3_params.c h3_references.c h3_plan_generation.c h3_host.c h3_safetensors.c h3_weights.c h3_text_encoder.c h3_text_projection.c \
 	h3_dit_schedule.c h3_dit.c h3_dit_weights.c h3_dit_setup.c h3_dit_block.c h3_dit_fbc_log.c h3_lora.c h3_hyperflow.c h3_model_family.c \
-	h3_video_vae.c h3_video_encoder.c h3_audio_vae.c h3_image_vae.c \
+	h3_video_vae.c h3_video_encoder.c h3_audio_vae.c h3_image_vae.c h3_pixel_head.c \
 	h3_vision_encoder.c h3_multimodal.c h3_attention_cache.c h3_adaln_curve.c \
 	h3_quant.c h3_gguf.c h3_lora_extract.c h3_memory.c h3_plan.c h3_refmod.c h3_options.c
 LIB_M := h3_metal.m h3_gpu.m h3_gpu_attention.m h3_gpu_conv.m h3_gpu_linear.m h3_gpu_blocks.m h3_tokenizer.m h3_av_writer.m h3_av_reader.m

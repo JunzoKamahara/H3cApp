@@ -1135,6 +1135,53 @@ static void schedule_report(int completed, int total, void *opaque) {
     h3_dit_report(state->callback, state->opaque, "precompute AdaLN", completed, total);
 }
 
+/* pi-H3's pixel head normalizes the last block's output itself, with an
+ * AdaLN of its own (dwd_norm_out): [scale, shift] = W silu(c) + b, c being
+ * the curve's coordinates at the last step's video time - SiLU on the
+ * coordinates and scale before shift, unlike the final layer's. */
+static int prepare_pixel_modulation(h3_dit *dit, const h3_adaln_curve *curve,
+                                    const h3_sigma_schedule *sigmas,
+                                    char *error, size_t error_size) {
+    enum { OUTPUTS = 2 * HIDDEN, RANK = 8 };
+    float time = 1.0f - sigmas->video[sigmas->steps - 1];
+    float coordinates[RANK];
+    h3_adaln_curve_coordinates(curve, &time, 1, coordinates);
+    for (int index = 0; index < RANK; index++)
+        coordinates[index] /= 1.0f + expf(-coordinates[index]);
+    uint64_t weight_shape[] = {OUTPUTS, RANK}, bias_shape[] = {OUTPUTS};
+    h3_gpu_tensor *weight = h3_weight_load_f32(
+        dit->overlay, dit->gpu, "dwd_norm_out.linear.weight", 2, weight_shape,
+        error, error_size);
+    h3_gpu_tensor *bias = weight ? h3_weight_load_f32(
+        dit->overlay, dit->gpu, "dwd_norm_out.linear.bias", 1, bias_shape,
+        error, error_size) : NULL;
+    float *values = malloc((size_t)OUTPUTS * RANK * sizeof(*values));
+    float *result = malloc((size_t)OUTPUTS * sizeof(*result));
+    int ok = weight && bias && values && result &&
+             h3_gpu_tensor_read_f32(weight, values, (size_t)OUTPUTS * RANK) &&
+             h3_gpu_tensor_read_f32(bias, result, OUTPUTS);
+    if (ok) {
+        for (int output = 0; output < OUTPUTS; output++) {
+            double sum = result[output];
+            for (int index = 0; index < RANK; index++)
+                sum += (double)values[output * RANK + index] *
+                       (double)coordinates[index];
+            result[output] = (float)sum;
+        }
+        free(dit->pixel_modulation);
+        dit->pixel_modulation = result;
+        result = NULL;
+    } else if (error && error_size && !error[0]) {
+        h3_dit_fail(error, error_size, "cannot read the pixel head's AdaLN: %s",
+                    h3_gpu_error(dit->gpu));
+    }
+    h3_gpu_tensor_free(weight);
+    h3_gpu_tensor_free(bias);
+    free(values);
+    free(result);
+    return ok;
+}
+
 static h3_dit *load_dit(const char *weight_directory,
                         const char *shader_source_path,
                         const h3_text_embedding *text,
@@ -1582,6 +1629,11 @@ static h3_dit *load_dit(const char *weight_directory,
                         (double)h3_dit_prep_bytes(prep, 1) / (1024.0 * 1024.0));
             }
         }
+    }
+    if (dit->schedule && dit->overlay_pixels &&
+        !prepare_pixel_modulation(dit, curve, sigmas, error, error_size)) {
+        h3_adaln_curve_free(curve);
+        goto failed;
     }
     h3_adaln_curve_free(curve);
     /* H3_ADALN_ULP_NOISE=<fraction> (diagnostic): a rounding-sized random

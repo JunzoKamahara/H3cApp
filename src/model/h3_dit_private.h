@@ -331,6 +331,9 @@ struct h3_dit {
      * stand in for the slot's as the block is run. NULL without one. */
     h3_weight_store *overlay;
     int overlay_pixels;   /* it carries the pixel head */
+    /* The pixel head's own AdaLN at the last step's video time: F32
+     * [2 * HIDDEN], scale then shift (prepare_pixel_modulation). */
+    float *pixel_modulation;
     h3_gpu_tensor *(*overlay_int8)[H3_COMFY_LINEARS];
     h3_gpu_tensor *(*overlay_scales)[H3_COMFY_LINEARS];
     /* h3_params.cancel_requested, via h3_dit_set_cancel. */

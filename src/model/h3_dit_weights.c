@@ -931,6 +931,8 @@ void h3_dit_free_overlay(h3_dit *dit) {
     free(dit->overlay_int8);
     free(dit->overlay_scales);
     dit->overlay_int8 = dit->overlay_scales = NULL;
+    free(dit->pixel_modulation);
+    dit->pixel_modulation = NULL;
     h3_weight_store_free(dit->overlay);
     dit->overlay = NULL;
 }

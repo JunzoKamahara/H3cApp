@@ -202,6 +202,15 @@ int h3_dit_reuse_schedule(int steps, int reuse_interval, uint8_t *selected,
  * with a layout of one latent frame and no audio steps (h3_layout_spec:
  * latent_t 1, audio_t 0) and a sigma schedule of exactly its own steps. */
 int h3_dit_is_image_model(const h3_dit *dit);
+/* pi-H3 with the pixel head (h3_pixel_head.h). has: this DiT was loaded
+ * with such an adapter. input, after the last step has been evaluated: the
+ * last block's output for the generated video rows as a new BF16
+ * [latent_t * token_h * token_w, 5376] buffer (the caller frees it) and the
+ * head's AdaLN, F32 [2 * 5376]. */
+int h3_dit_has_pixel_head(const h3_dit *dit);
+int h3_dit_pixel_head_input(h3_dit *dit, uint16_t **rows,
+                            float *modulation, int *latent_t, int *token_h,
+                            int *token_w, char *error, size_t error_size);
 
 /* One raw data-ward velocity evaluation of a still-image checkpoint at
  * `step`: latent and velocity are channel-major F32 [24, H, W]. The

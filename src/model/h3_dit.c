@@ -1226,6 +1226,42 @@ int h3_dit_set_forced_audio(h3_dit *dit, const float *clean_latent,
     return 1;
 }
 
+int h3_dit_has_pixel_head(const h3_dit *dit) {
+    return dit && dit->overlay_pixels && dit->pixel_modulation;
+}
+
+int h3_dit_pixel_head_input(h3_dit *dit, uint16_t **rows,
+                            float *modulation, int *latent_t, int *token_h,
+                            int *token_w, char *error, size_t error_size) {
+    if (!h3_dit_has_pixel_head(dit) || !rows || !modulation) {
+        h3_dit_fail(error, error_size, "this DiT has no pixel head adapter");
+        return 0;
+    }
+    if (dit->token_reduction_active) {
+        h3_dit_fail(error, error_size, "the pixel head needs every video row "
+                    "(token reduction is on)");
+        return 0;
+    }
+    size_t all = (size_t)dit->sequence * HIDDEN;
+    size_t count = (size_t)dit->video_rows * HIDDEN;
+    uint16_t *values = malloc(all * sizeof(*values));
+    if (!values || !h3_gpu_tensor_read_bf16(dit->hidden, values, all)) {
+        free(values);
+        h3_dit_fail(error, error_size, "cannot read the last block's rows: %s",
+                    values ? h3_gpu_error(dit->gpu) : "out of memory");
+        return 0;
+    }
+    memmove(values, values + (size_t)dit->video_target_start * HIDDEN,
+            count * sizeof(*values));
+    uint16_t *kept = realloc(values, count * sizeof(*values));
+    *rows = kept ? kept : values;
+    memcpy(modulation, dit->pixel_modulation, 2 * HIDDEN * sizeof(float));
+    if (latent_t) *latent_t = dit->latent_t;
+    if (token_h) *token_h = dit->latent_h / 2;
+    if (token_w) *token_w = dit->latent_w / 2;
+    return 1;
+}
+
 void h3_dit_release_backend_scratch(h3_dit *dit) {
     if (dit && !h3_gpu_ccv_release_scratch(dit->gpu))
         fprintf(stderr, "h3: warning: ccv scratch kept, GPU work pending\n");

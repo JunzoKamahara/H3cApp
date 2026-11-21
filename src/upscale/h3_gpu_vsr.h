@@ -63,25 +63,8 @@ int h3_gpu_vsr_unpatchify_sub_f32(h3_gpu *gpu, h3_gpu_tensor *z_hq,
                                   const h3_gpu_tensor *z_lq, const h3_gpu_tensor *v,
                                   const h3_gpu_tensor *bias, uint32_t frames,
                                   uint32_t height, uint32_t width, uint32_t channels);
-/* SDPA over a batch of equal windows ([batch, sequence, heads, head_dim]
- * row-major BF16), and cross-attention with kv_sequence keys/values. */
-int h3_gpu_sdpa_batched_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
-                             const h3_gpu_tensor *query, const h3_gpu_tensor *key,
-                             const h3_gpu_tensor *value, uint32_t batch,
-                             uint32_t sequence, uint32_t heads,
-                             uint32_t head_dim, float scale);
-/* Batched SDPA with separate query and key/value lengths: q [batch,
- * sequence, heads, head_dim], k/v [batch, kv_sequence, heads, head_dim]. */
-int h3_gpu_sdpa_batched_kv_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
-                                const h3_gpu_tensor *query, const h3_gpu_tensor *key,
-                                const h3_gpu_tensor *value, uint32_t batch,
-                                uint32_t sequence, uint32_t kv_sequence, uint32_t heads,
-                                uint32_t head_dim, float scale);
-int h3_gpu_sdpa_cross_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
-                           const h3_gpu_tensor *query, const h3_gpu_tensor *key,
-                           const h3_gpu_tensor *value, uint32_t sequence,
-                           uint32_t kv_sequence, uint32_t heads,
-                           uint32_t head_dim, float scale);
+/* The batched and cross SDPA (h3_gpu_sdpa_batched_bf16 ...) are the
+ * engine's: h3_gpu.h. */
 
 int h3_gpu_vsr_pad_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                        const h3_gpu_tensor *input, const h3_gpu_tensor *previous,

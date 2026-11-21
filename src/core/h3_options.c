@@ -223,6 +223,8 @@ static const h3_option_info options[] = {
      "Print why the TensorOps shader compile failed."},
     {"H3_NAX_SPLIT_ROWS", "dit-nax", "0|1",
      "TensorOps linear: force or forbid splitting long row counts."},
+    {"H3_PI_H3_VAE", "vae", "1",
+     "pi-H3 with the pixel head: decode the denoised latent with the video VAE instead of taking the frames from the head (comparison)."},
     {"H3_PREFLIGHT", "generation", "0",
      "Skip the memory check that refuses a generation before loading anything."},
     {"H3_PROFILE", "profile", "0|1",
