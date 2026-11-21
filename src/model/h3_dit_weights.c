@@ -222,14 +222,17 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
                                uint64_t columns, uint64_t row_begin,
                                uint64_t row_count, unsigned field,
                                char *error, size_t error_size) {
+    /* A projection a pi-H3 adapter replaces streams from the adapter's file
+     * (its ComfyUI int8 form), the others from the checkpoint. */
+    const h3_weight_store *store = h3_dit_store_of(dit, name);
     const h3_st_header *header = NULL;
-    const h3_st_tensor *tensor = h3_weight_find(dit->weights, name, &header);
+    const h3_st_tensor *tensor = h3_weight_find(store, name, &header);
     if (!tensor) {
         h3_dit_fail(error, error_size, "required streaming weight is absent: %s",
              name);
         return 0;
     }
-    if (h3_weight_is_comfy_int8(dit->weights, tensor)) {
+    if (h3_weight_is_comfy_int8(store, tensor)) {
         /* The int8 payload streams as it is - half a BF16 weight's bytes -
          * and expand_streamed restores it on the GPU. Each row carries its
          * own scale and rotation, so a row range (one SwiGLU half of FC1)
@@ -245,7 +248,7 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
             return 0;
         }
         h3_dit_free_tensor(&source->comfy_scales);
-        if (!h3_weight_comfy_int8_scales(dit->weights, dit->gpu, tensor,
+        if (!h3_weight_comfy_int8_scales(store, dit->gpu, tensor,
                                          row_begin, row_count, &group,
                                          &source->comfy_scales,
                                          error, error_size))
@@ -257,7 +260,7 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
             return 0;
         }
         if (row_count == rows)
-            h3_weight_qkv_reorder(dit->weights, name, tensor, &inner,
+            h3_weight_qkv_reorder(store, name, tensor, &inner,
                                   &head_dim);
         source->path = header->path;
         source->file_offset = tensor->file_offset + row_begin * columns;
@@ -278,7 +281,7 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
                     quant != H3_QUANT_F32 && quant != H3_QUANT_BF16;
     uint32_t qkv_inner = 0, qkv_head_dim = 0;
     int whole = row_begin == 0 && row_count == rows;
-    if (whole && h3_weight_qkv_reorder(dit->weights, name, tensor,
+    if (whole && h3_weight_qkv_reorder(store, name, tensor,
                                        &qkv_inner, &qkv_head_dim) &&
         !quantized && tensor->dtype == H3_DTYPE_BF16) {
         /* A BF16 [Q; K; V] weight streams through the staging buffer too,
@@ -938,7 +941,8 @@ void h3_dit_free_overlay(h3_dit *dit) {
 }
 
 /* A resident block loads its projections by name, which already takes the
- * adapter's (h3_dit_store_of). The int8 slots are filled from the attention
+ * adapter's (h3_dit_store_of), and so does an SSD-streamed one
+ * (prepare_stream_rows). The int8 slots are filled from the attention
  * cache instead, so each projection the adapter replaces is restored to
  * BF16 here (its ComfyUI int8 form included) and quantized the way the
  * cache's are, once, and stays resident: 0.27 GiB per replaced block. */
@@ -950,10 +954,10 @@ int h3_dit_prepare_overlay_blocks(h3_dit *dit, char *error, size_t error_size) {
             snprintf(name, sizeof(name), "blocks.%u.%s", block,
                      comfy_linears[linear].name);
             if (!h3_weight_find(dit->overlay, name, NULL)) continue;
-            if (dit->ssd_streaming || dit->comfy_direct) {
+            if (dit->comfy_direct) {
                 h3_dit_fail(error, error_size, "a pi-H3 adapter that "
-                     "replaces block projections (%s) runs resident or with "
-                     "the int8 attention cache, not with SSD streaming", name);
+                     "replaces block projections (%s) does not run with int8 "
+                     "blocks streamed as stored", name);
                 return 0;
             }
             if (!(linear == H3_COMFY_OUT ? dit->attention_stream

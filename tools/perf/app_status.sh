@@ -142,8 +142,15 @@ JOBS=$(jq -c . <<'EOF'
  {"name": "pi_h3_2step_large", "label": "pi-H3（2ステップ）、横長・大（960×544）、5秒",
   "change": {"loras": ["$LORA:pi_h3_2step_dwd"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache",
              "size_profile": "landscape-large"}, "how": {}},
+ {"name": "pi_h3_vae_4step", "label": "pi-H3（4ステップ、画素ヘッドなしの版、VAEで復号）、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_adapter"], "steps": 4, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_vae_2step", "label": "pi-H3（2ステップ、画素ヘッドなしの版、VAEで復号）、3秒",
+  "change": {"loras": ["$LORA:pi_h3_2step_adapter"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
  {"name": "pi_h3_ssd", "label": "pi-H3（4ステップ）、SSD streaming、3秒",
   "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "ssdStreaming", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_steps_refused", "label": "pi-H3（4ステップ版）に8ステップを指定（始める前に断られる）",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 8, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3},
+  "how": {"declined": "pi-H3"}},
  {"name": "hyperflow", "label": "HyperFlow H3 Flash（別のモデル、6ステップ、reuse 1）、3秒",
   "change": {"steps": 6, "reuse": 1, "seconds": 3}, "how": {"hyperflow": true}},
  {"name": "preview", "label": "途中の様子を表示、3秒", "change": {"seconds": 3}, "how": {"preview": true}},
@@ -310,12 +317,15 @@ set_up() {
     [[ -n $loras_data ]] || loras_data=$(print -n '[]' | base64)
     # --lora: an entry as the app writes one for a file it is given, with the
     # step count its name says ("4step").
-    local lora steps
+    local lora steps listed
     for lora in $extra_loras; do
         [[ -f $lora ]] || die "no such LoRA file: $lora"
-        steps=$(sed -nE 's/.*[^0-9]([0-9]{1,2})[-_ ]?steps?.*/\1/p' <<<"${(L)lora:t}")
+        # diffusers' fixed file name: listed by its folder, as the app does.
+        listed=${lora:t}
+        [[ ${(L)listed} == diffusion_pytorch_model.* ]] && listed=${lora:h:t}
+        steps=$(sed -nE 's/.*[^0-9]([0-9]{1,2})[-_ ]?steps?.*/\1/p' <<<"${(L)listed}")
         loras_data=$(base64 -d <<<"$loras_data" |
-            jq -c --arg id "$(uuidgen)" --arg name "${lora:t}" --arg path "$lora" --arg steps "$steps" \
+            jq -c --arg id "$(uuidgen)" --arg name "$listed" --arg path "$lora" --arg steps "$steps" \
                '[.[] | select(.path != $path)] + [{id: $id, name: $name, path: $path, scaleText: "",
                   recommendedSteps: (if $steps == "" then null else ($steps | tonumber) end),
                   enabled: false, sampler: "auto", audioShiftText: "", formerPaths: []}]' | base64) ||
@@ -801,8 +811,16 @@ run_job() {
     put request "$(jq -c 'del(.prompt)' <<<"$request")"
     put http $(( 10#$code ))
     local error= error_message= videos='[]'
+    # "declined": the app is to say no before anything starts, in words that
+    # hold this text.
+    local declined=$(jq -r '.declined // empty' <<<"$how")
     if [[ $code != 202 ]]; then
         error=${$(jq -c . <<<"$body" 2>/dev/null || jq -Rsc '{error: .}' <<<"$body"):0:400}
+        if [[ -n $declined && $code == 409 && $body == *"$declined"* ]]; then
+            puts declined "$(jq -r '.error // empty' <<<"$body" 2>/dev/null)"
+            error=
+            put ok true
+        fi
     else
         local -a order spent
         local last_phase= phase busy available
@@ -909,6 +927,7 @@ run_job() {
         if [[ $how == *'"cancel":true'* ]]; then
             (( cancelled )) && [[ $videos == '[]' && -z $error ]] && put ok true
         else
+            [[ -n $declined && -z $error ]] && error="the app began a generation it was to decline"
             [[ $(jq '(length > 0) and (.[0].unreadable | not)' <<<"$videos") == true && -z $error && -z $error_message ]] &&
                 put ok true
         fi
@@ -970,6 +989,7 @@ while (( number < total )); do
     fi
     print -r -- "$record" >> "$results_path"
     jq -r 'if .skipped then "    skipped: \(.skipped)"
+           elif .declined then "    \(if .ok then "ok" else "FAILED" end), declined: \(.declined)"
            else "    \(if .ok then "ok" elif .refused then "REFUSED" else "FAILED" end) \(.wall_seconds) s, peak \(.footprint_peak_gib) GiB \(.error // .error_message // "")"
            end' <<<"$record"
 done

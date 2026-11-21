@@ -35,6 +35,8 @@ def result_text(record):
         return "スキップ"
     if record.get("refused"):
         return "断られた"
+    if record["ok"] and record.get("declined"):
+        return "始める前に断った"
     if record["ok"]:
         return "中止できた" if record["name"] == "cancel" else "成功"
     return "**失敗**"
@@ -70,7 +72,7 @@ def time_text(value):
 
 
 STAGE_NAMES = {"text encoder": "テキストエンコーダ", "denoise enqueue": "デノイズ", "denoise": "デノイズ",
-               "video VAE load": "動画VAE", "encode": "書き出し", "load transformer core": "DiTの読み込み",
+               "video VAE load": "動画VAE", "pixel head": "画素ヘッド", "encode": "書き出し", "load transformer core": "DiTの読み込み",
                "refine text": "テキストの精製", "precompute AdaLN": "AdaLNの準備", "audio VAE": "音声VAE",
                "video encoder": "動画VAEエンコーダ", "vision encoder": "画像エンコーダ", "DiT": "DiT",
                "video decoder": "動画デコーダ", "（採取）": "採取値"}

@@ -101,6 +101,13 @@ typedef struct {
      * curve-form (rank 8) checkpoint and samples on its own time grid
      * (h3_pi_h3_schedule_build) in 2 or 4 steps. */
     int pi_h3;
+    /* Of such a file's bytes, the two parts that are not LoRA factors kept
+     * beside the blocks: the pixel head's weights (dwd_*, read after the
+     * DiT) and the whole block projections it replaces (which take the
+     * checkpoint's place - resident with the int8 attention cache, streamed
+     * with SSD streaming). 0 for a plain LoRA. */
+    uint64_t pixel_head_bytes;
+    uint64_t replaced_bytes;
 } h3_lora_info;
 
 enum {

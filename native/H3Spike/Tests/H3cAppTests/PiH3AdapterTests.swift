@@ -11,6 +11,37 @@ final class PiH3AdapterTests: XCTestCase {
         XCTAssertEqual(JobStage.stage(forPhase: "video VAE load"), .decode)
     }
 
+    func testStepCountsAreRefusedUpFront() {
+        XCTAssertNil(PiH3Rules.problem(adapterName: "a", steps: 2))
+        XCTAssertNil(PiH3Rules.problem(adapterName: "a", steps: 4))
+        for steps in [3, 5, 8, 20] {
+            let problem = PiH3Rules.problem(adapterName: "pi_h3_4step", steps: steps)
+            XCTAssertNotNil(problem, "\(steps) steps")
+            XCTAssertTrue(problem?.contains("pi_h3_4step") ?? false)
+        }
+        // The app's own range reaches the adapter's smallest count.
+        XCTAssertTrue(stepsRange.contains(2))
+    }
+
+    func testDiffusersFileIsListedByItsFolder() {
+        let diffusers = "/models/pi_h3_2step_adapter/diffusion_pytorch_model.safetensors"
+        XCTAssertEqual(LoRAEntry.listedName(forFileAt: diffusers), "pi_h3_2step_adapter")
+        XCTAssertEqual(LoRAEntry.detectedSteps(fromFileName: LoRAEntry.listedName(forFileAt: diffusers)), 2)
+        let single = "/models/pi_h3_4step_dwd_adapter_int8_convrot.safetensors"
+        XCTAssertEqual(LoRAEntry.listedName(forFileAt: single), "pi_h3_4step_dwd_adapter_int8_convrot.safetensors")
+    }
+
+    /// The adapter without the pixel head comes only in the diffusers
+    /// layout; H3_PI_H3_LATENT_ADAPTER names its file.
+    func testDiffusersAdapterIsRecognised() throws {
+        let path = ProcessInfo.processInfo.environment["H3_PI_H3_LATENT_ADAPTER"]
+        try XCTSkipIf(path == nil, "set H3_PI_H3_LATENT_ADAPTER to pi_h3_*_adapter/diffusion_pytorch_model.safetensors")
+        let info = try H3LoRAInfo.inspect(path: path!)
+        XCTAssertEqual(info.piH3, .latent)
+        XCTAssertEqual(info.rankMax, 64)
+        XCTAssertEqual(info.blocks, 50)
+    }
+
     func testAdapterIsRecognised() throws {
         let path = ProcessInfo.processInfo.environment["H3_PI_H3_ADAPTER"]
         try XCTSkipIf(path == nil, "set H3_PI_H3_ADAPTER to pi_h3_*_dwd_adapter_int8_convrot.safetensors")

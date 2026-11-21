@@ -118,15 +118,18 @@ struct TimingCalibration: Codable {
     // Fast mode (ccv attention) likewise keeps separate history.
     // So does a reduced layer count.
     // HyperFlow H3 Flash (fewer blocks, factored linears) has its own too.
+    // And a pi-H3 adapter with its pixel head: its "decode" is the head's 8
+    // layers on the whole clip, 3 to 4 times quicker than the video VAE.
     private static func defaultsKey(_ mode: ComputeMode, _ speed: SpeedMode,
                                     _ fastAttention: Bool, _ ditLayers: Int,
-                                    _ family: H3ModelFamily) -> String {
+                                    _ family: H3ModelFamily, _ pixelHead: Bool) -> String {
         let base = mode == .attentionCache ? "h3c-app.timingCalibration.v2"
                                            : "h3c-app.timingCalibration.v2.\(mode.rawValue)"
         var key = speed == .quality ? base : base + ".speed.\(speed.rawValue)"
         if fastAttention { key += ".fastAttention" }
         if ditLayers != 50 { key += ".layers\(ditLayers)" }
         if family == .hyperflow { key += ".hyperflow" }
+        if pixelHead { key += ".pixelHead" }
         return key
     }
     private static let keep = 12
@@ -140,8 +143,22 @@ struct TimingCalibration: Codable {
     /// HyperFlow's seeds are its 2026-11-09 M5 runs: 14.5 s per step at
     /// 512x512 x 73 frames and 28.0 s at 672x384 x 121 resident (int8), 39.0 s
     /// at 672x384 x 121 streamed.
-    static func initial(for mode: ComputeMode, family: H3ModelFamily = .h3) -> TimingCalibration {
+    /// The pixel head's decode seeds are its 2026-11-22 M5 runs (audio VAE
+    /// and head together): 5.0 s at 384x384 x 56, 10.4 s at 512x512 x 73,
+    /// 22.9 s at 832x480 x 124, 29.5 s at 960x544 x 124 and 52.8 s at
+    /// 1344x768 x 124.
+    static func initial(for mode: ComputeMode, family: H3ModelFamily = .h3,
+                        pixelHead: Bool = false) -> TimingCalibration {
         var value = TimingCalibration()
+        if pixelHead {
+            value.decode = [
+                TimingSample(units: 56.0 * 384 * 384, seconds: 5.0),
+                TimingSample(units: 73.0 * 512 * 512, seconds: 10.4),
+                TimingSample(units: 124.0 * 832 * 480, seconds: 22.9),
+                TimingSample(units: 124.0 * 960 * 544, seconds: 29.5),
+                TimingSample(units: 124.0 * 1344 * 768, seconds: 52.8),
+            ]
+        }
         if family == .hyperflow {
             value.denoisePerStep = mode == .ssdStreaming
                 ? [TimingSample(units: 121.0 * 672 * 384, seconds: 39.0)]
@@ -160,18 +177,20 @@ struct TimingCalibration: Codable {
 
     static func load(for mode: ComputeMode, speed: SpeedMode = .quality,
                      fastAttention: Bool = false, ditLayers: Int = 50,
-                     family: H3ModelFamily = .h3) -> TimingCalibration {
-        guard let data = UserDefaults.standard.data(forKey: defaultsKey(mode, speed, fastAttention, ditLayers, family)),
+                     family: H3ModelFamily = .h3, pixelHead: Bool = false) -> TimingCalibration {
+        guard let data = UserDefaults.standard.data(
+                  forKey: defaultsKey(mode, speed, fastAttention, ditLayers, family, pixelHead)),
               let value = try? JSONDecoder().decode(TimingCalibration.self, from: data) else {
-            return initial(for: mode, family: family)
+            return initial(for: mode, family: family, pixelHead: pixelHead)
         }
         return value
     }
 
     func save(for mode: ComputeMode, speed: SpeedMode = .quality, fastAttention: Bool = false,
-              ditLayers: Int = 50, family: H3ModelFamily = .h3) {
+              ditLayers: Int = 50, family: H3ModelFamily = .h3, pixelHead: Bool = false) {
         if let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: Self.defaultsKey(mode, speed, fastAttention, ditLayers, family))
+            UserDefaults.standard.set(data, forKey: Self.defaultsKey(mode, speed, fastAttention, ditLayers,
+                                                                     family, pixelHead))
         }
     }
 

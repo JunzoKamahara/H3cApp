@@ -164,6 +164,17 @@ struct LoRAEntry: Identifiable, Codable, Equatable {
         return value
     }
 
+    /// The name a LoRA file is listed under: its file name, or - for a file
+    /// with diffusers' fixed name (diffusion_pytorch_model.safetensors, one
+    /// to a folder, as Lakonik/pi-H3's pi_h3_4step_adapter) - its folder's,
+    /// which is what tells such files apart and carries the step count.
+    static func listedName(forFileAt path: String) -> String {
+        let fileName = (path as NSString).lastPathComponent
+        guard fileName.lowercased().hasPrefix("diffusion_pytorch_model.") else { return fileName }
+        let folder = ((path as NSString).deletingLastPathComponent as NSString).lastPathComponent
+        return folder.isEmpty || folder == "/" ? fileName : folder
+    }
+
     /// "…_turbo_4step_…" / "8-step" style names, as the lightx2v and
     /// FastVideo distillations are published.
     static func detectedSteps(fromFileName name: String) -> Int? {
@@ -451,9 +462,9 @@ final class ModelLibrary: ObservableObject {
     // MARK: LoRA
 
     func addLoRA(path: String, name: String? = nil) {
-        let fileName = (path as NSString).lastPathComponent
-        let entry = LoRAEntry(name: name ?? fileName, path: path,
-                              recommendedSteps: LoRAEntry.detectedSteps(fromFileName: fileName))
+        let listed = LoRAEntry.listedName(forFileAt: path)
+        let entry = LoRAEntry(name: name ?? listed, path: path,
+                              recommendedSteps: LoRAEntry.detectedSteps(fromFileName: listed))
         loras.append(entry)
         persistLoRAs()
         requestLoRAInfo(path: path)

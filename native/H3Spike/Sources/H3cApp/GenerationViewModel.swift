@@ -196,12 +196,35 @@ final class GenerationViewModel: ObservableObject {
     }
     /// On, and the decoder is there.
     var denoisePreviewActive: Bool { preferences.showDenoisePreview && DenoisePreviewWeights.isPresent }
+    /// A pi-H3 adapter among the LoRAs that are on, told from its file's
+    /// header (read in the background: nil until that is in). The engine
+    /// evaluates each of its 2 or 4 steps whole - no core reuse, token
+    /// reduction (which breaks the pixel head's picture) or denoiser reuse.
+    /// The form keeps its own settings, sends none of these, says so and
+    /// records what ran; a step count the adapter has no schedule for is
+    /// refused up front (PiH3Rules).
+    var piH3Adapter: LoRAEntry? {
+        guard modelFamily.can(.lora) else { return nil }
+        return library.enabledLoRAs.first { entry in
+            guard let info = try? library.loraInfo(for: entry)?.get() else { return false }
+            return info.piH3 != .none
+        }
+    }
+    var usesPiH3: Bool { piH3Adapter != nil }
+    /// The adapter's pixel head makes the frames (no video VAE decode).
+    var usesPixelHead: Bool {
+        guard let adapter = piH3Adapter, let info = try? library.loraInfo(for: adapter)?.get() else { return false }
+        return info.piH3 == .pixels
+    }
+    /// Whether the speed presets and the denoiser reuse apply to the next
+    /// generation: not for HyperFlow, and not with a pi-H3 adapter.
+    var stepReuseApplies: Bool { modelFamily.can(.stepReuse) && !usesPiH3 }
     /// Reuse actually sent to the engine: the 高速/最速 presets rely on core
     /// reuse, which the engine won't combine with denoiser reuse, and were
     /// measured at reuse 1 - so they run at 1 whatever denoiseReuse holds.
     /// The re-noise step rule evaluates every step, so it runs at 1 too.
     var effectiveDenoiseReuse: Int {
-        guard modelFamily.can(.stepReuse) else { return 1 }
+        guard stepReuseApplies else { return 1 }
         return speedMode == .quality && !samplingSettings.renoise ? denoiseReuse.clamped(to: reuseRange) : 1
     }
 
@@ -279,7 +302,7 @@ final class GenerationViewModel: ObservableObject {
         guard modelFamily.can(.stepReuse) else { return settings } // all blocks, every step
         // The layer count is its own advanced setting, not part of a preset.
         settings.ditLayers = Int32(ditLayers.clamped(to: ditLayersRange))
-        guard speedMode != .quality else { return settings }
+        guard speedMode != .quality, !usesPiH3 else { return settings }
         settings.coreReuse = Int32(max(1, min(4, steps.clamped(to: stepsRange) / 5)))
         settings.tokenReduction = speedMode == .fastest
         return settings
@@ -458,10 +481,10 @@ final class GenerationViewModel: ObservableObject {
     var draftEstimatedSeconds: Double? {
         if isChained { return chainEstimatedSeconds }
         let frames = Int(h3AlignedFrameCount(seconds: Double(seconds.clamped(to: secondsRange))))
-        let calibration = TimingCalibration.load(for: effectiveComputeMode, speed: modelFamily.can(.stepReuse) ? speedMode : .quality,
+        let calibration = TimingCalibration.load(for: effectiveComputeMode, speed: stepReuseApplies ? speedMode : .quality,
                                                  fastAttention: useFastAttention,
                                                  ditLayers: modelFamily.can(.layerSkip) ? ditLayers.clamped(to: ditLayersRange) : defaultDitLayers,
-                                                 family: modelFamily)
+                                                 family: modelFamily, pixelHead: usesPixelHead)
         let shape = progressShape(sizeProfile: sizeProfile, frames: frames,
                                   steps: effectiveSteps, reuse: effectiveDenoiseReuse,
                                   plan: currentGenerationPlan)
@@ -1110,6 +1133,10 @@ final class GenerationViewModel: ObservableObject {
                 return String(localized: "追加モデル「\(lora.name)」はMiniMax-H3用として読み込めません。モデル管理で確認してください")
             }
         }
+        if let adapter = piH3Adapter,
+           let problem = PiH3Rules.problem(adapterName: adapter.name, steps: effectiveSteps) {
+            return problem
+        }
         if effectiveComputeMode == .attentionCache {
             if !supportsInt8Cache {
                 return String(localized: "このGPUではint8キャッシュを使えません。詳細設定の「計算方式」でSSDストリーミングを選んでください")
@@ -1141,10 +1168,16 @@ final class GenerationViewModel: ObservableObject {
         if hasAdvancedChanges {
             // Clamped like the engine params, so this shows what will run.
             parts.append("Steps \(steps.clamped(to: stepsRange))")
-            if speedMode == .quality && denoiseReuse != defaultReuse { parts.append("reuse \(denoiseReuse)") }
+            // A pi-H3 adapter runs every step whole, whatever speed and
+            // reuse the form holds.
+            if usesPiH3 {
+                if defaultReuse != 1 { parts.append("reuse 1") }
+            } else if speedMode == .quality && denoiseReuse != defaultReuse {
+                parts.append("reuse \(denoiseReuse)")
+            }
             if ditLayers != defaultDitLayers { parts.append(String(localized: "層 \(ditLayers)")) }
             if computeMode != defaultComputeMode { parts.append(computeMode.summaryLabel) }
-            if speedMode != .quality { parts.append(speedMode.summaryLabel) }
+            if speedMode != .quality && !usesPiH3 { parts.append(speedMode.summaryLabel) }
             if fastAttention { parts.append(String(localized: "高速モード（試験的）")) }
             if seedFixed { parts.append(String(localized: "シード固定")) }
             let loras = library.enabledLoRAs
@@ -1165,6 +1198,8 @@ final class GenerationViewModel: ObservableObject {
         var params: H3GenerationParams
         /// The model family that runs it (from the draft it records).
         var family: H3ModelFamily { H3ModelFamily(rawValue: draft.modelFamily ?? "") ?? .h3 }
+        /// A pi-H3 adapter's pixel head makes the frames (its own timing history).
+        var pixelHead = false
         var prompt: String
         var creationMethod: CreationMethod
         var imageInputMode: ImageInputMode?
@@ -1260,7 +1295,8 @@ final class GenerationViewModel: ObservableObject {
             let now = Date()
             let calibration = TimingCalibration.load(for: request.computeMode, speed: request.speedMode,
                                                      fastAttention: request.params.fastAttention,
-                                                     ditLayers: request.ditLayers, family: request.family)
+                                                     ditLayers: request.ditLayers, family: request.family,
+                  pixelHead: request.pixelHead)
             planned = ProgressEstimator(shape: request.shape, calibration: calibration, start: now)
                 .snapshot(now: now).remaining.map { Array(repeating: $0, count: total) }
         }
@@ -1369,6 +1405,12 @@ final class GenerationViewModel: ObservableObject {
             draft.computeMode = computeMode.rawValue
             draft.loras = []
         }
+        if usesPiH3 {
+            // What actually ran: every step whole. The form keeps its own
+            // speed and reuse for when the adapter is off again.
+            draft.denoiseReuse = 1
+            draft.speedMode = SpeedMode.quality.rawValue
+        }
         // Kept in the project for when the length is chained again, but not
         // in the record of a video they didn't shape.
         if !isChained {
@@ -1386,6 +1428,7 @@ final class GenerationViewModel: ObservableObject {
 
         return GenerationRequest(
             params: params,
+            pixelHead: usesPixelHead,
             prompt: prompt,
             creationMethod: creationMethod,
             imageInputMode: creationMethod == .image ? imageInputMode : nil,
@@ -1393,11 +1436,11 @@ final class GenerationViewModel: ObservableObject {
             requestedSeconds: requestedSeconds,
             requestedFrames: requestedFrames,
             steps: effectiveSteps,
-            denoiseReuse: modelFamily.can(.stepReuse) ? denoiseReuse.clamped(to: reuseRange) : 1,
+            denoiseReuse: stepReuseApplies ? denoiseReuse.clamped(to: reuseRange) : 1,
             effectiveDenoiseReuse: effectiveDenoiseReuse,
             ditLayers: modelFamily.can(.layerSkip) ? ditLayers.clamped(to: ditLayersRange) : defaultDitLayers,
             computeMode: computeMode,
-            speedMode: modelFamily.can(.stepReuse) ? speedMode : .quality,
+            speedMode: stepReuseApplies ? speedMode : .quality,
             loras: loras,
             sampling: sampling,
             referenceNames: referenceNames(draft),
@@ -1440,7 +1483,8 @@ final class GenerationViewModel: ObservableObject {
             shape: request.shape,
             calibration: TimingCalibration.load(for: request.computeMode, speed: request.speedMode,
                                                 fastAttention: request.params.fastAttention,
-                                                ditLayers: request.ditLayers, family: request.family),
+                                                ditLayers: request.ditLayers, family: request.family,
+                  pixelHead: request.pixelHead),
             start: Date())
         publishTiming()
         startElapsedTimer()
@@ -1525,7 +1569,8 @@ final class GenerationViewModel: ObservableObject {
             // with it off.
             .save(for: request.computeMode, speed: request.speedMode,
                   fastAttention: result.ccvAttentionCalls > 0,
-                  ditLayers: request.ditLayers, family: request.family)
+                  ditLayers: request.ditLayers, family: request.family,
+                  pixelHead: request.pixelHead)
         let completedAt = Date()
         let generationSeconds = completedAt.timeIntervalSince(startedAt)
         var url = URL(fileURLWithPath: result.outputPath)
