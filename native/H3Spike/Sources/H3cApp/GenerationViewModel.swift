@@ -1176,7 +1176,19 @@ final class GenerationViewModel: ObservableObject {
         } else if isChained {
             parts.append(String(localized: "\(currentChainPlan.count)本をつなぐ（1本\(chainClipLength.label)）"))
         }
-        if hasAdvancedChanges {
+        if hasAdvancedChanges && isHyperFlow {
+            // What HyperFlow runs: its own steps and compute mode, without
+            // the speed, reuse, layer or LoRA settings (the form keeps them
+            // for a plain H3 model). LoRAs left on are said to be unused,
+            // not named as if they applied.
+            parts.append("Steps \(effectiveSteps)")
+            if effectiveComputeMode != defaultComputeMode { parts.append(effectiveComputeMode.summaryLabel) }
+            if fastAttention { parts.append(String(localized: "高速モード（試験的）")) }
+            if seedFixed { parts.append(String(localized: "シード固定")) }
+            if !library.enabledLoRAs.isEmpty {
+                parts.append(String(localized: "追加モデル（LoRA）はHyperFlowでは使いません"))
+            }
+        } else if hasAdvancedChanges {
             // Clamped like the engine params, so this shows what will run.
             parts.append("Steps \(steps.clamped(to: stepsRange))")
             // A pi-H3 adapter runs every step whole, whatever speed and

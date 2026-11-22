@@ -18,6 +18,9 @@ struct ModelManagerView: View {
     var onActiveModelChange: (UUID?) -> Void
     /// A generation is running (the model in use can't be removed then).
     var isGenerating = false
+    /// The active model takes no LoRA (HyperFlow H3 Flash): the LoRA list
+    /// says so above its checks, which stay for a plain H3 model.
+    var lorasUnused = false
     /// The section to open at ("loras", ...); nil: the H3 models.
     var startingSection: String? = nil
 
@@ -342,6 +345,15 @@ struct ModelManagerView: View {
 
     private var lorasSection: some View {
         VStack(spacing: 0) {
+            if lorasUnused && !library.loras.isEmpty {
+                Text("いまのモデル（HyperFlow H3 Flash）は追加モデル（LoRA）を使いません。チェックは残り、通常のMiniMax-H3モデルに切り替えると使われます。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, H3Spacing.md)
+                    .padding(.vertical, H3Spacing.sm)
+            }
             if library.loras.isEmpty {
                 emptyState(String(localized: "登録されたLoRAはありません。"))
             } else {

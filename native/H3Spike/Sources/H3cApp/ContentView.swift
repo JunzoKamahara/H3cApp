@@ -28,6 +28,7 @@ struct ContentView: View {
         ModelManagerView(library: viewModel.library, tutorial: viewModel.tutorial,
                          onActiveModelChange: { id in viewModel.switchModel(to: id) },
                          isGenerating: viewModel.isGenerating,
+                         lorasUnused: !viewModel.modelFamily.can(.lora),
                          startingSection: modelManagerSection)
     }
 

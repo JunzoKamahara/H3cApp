@@ -198,6 +198,8 @@
 "層 %lld" = "Layers %lld";
 "シード固定" = "Fixed seed";
 "追加モデル: %@" = "Add-on models: %@";
+"追加モデル（LoRA）はHyperFlowでは使いません" = "No add-on models (LoRA) with HyperFlow";
+"いまのモデル（HyperFlow H3 Flash）は追加モデル（LoRA）を使いません。チェックは残り、通常のMiniMax-H3モデルに切り替えると使われます。" = "The current model (HyperFlow H3 Flash) takes no add-on models (LoRA). The checks stay and are used when you switch to a plain MiniMax-H3 model.";
 "キャッシュの作成に失敗しました。（詳細: %@）" = "Couldn't build the cache. (Details: %@)";
 "できあがりました" = "Done";
 "生成を中止しました" = "Generation canceled";
