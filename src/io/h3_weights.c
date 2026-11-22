@@ -407,15 +407,30 @@ static int alias_name(const char *name, int n, char *out, size_t size) {
         }
     }
     /* A pi-H3 adapter in the diffusers layout (Lakonik/pi-H3's
-     * pi_h3_*_adapter folders): the AdaLN projections and the final layer
-     * it replaces, under diffusers' names. The values are the same; whole
-     * block projections are not aliased (ff.net.0.proj is [value; gate]). */
+     * pi_h3_*_adapter folders): the AdaLN projections, the final layer and
+     * the whole block projections it replaces, under diffusers' names. The
+     * values are the same, in the same order - but for ff.net.0.proj, which
+     * is [value; gate] where mlp.fc1 is [gate; value]: every read of it
+     * swaps the halves (h3_weight_halves_swapped). */
     if (n == 0) {
         int block = -1, used = 0;
-        if (sscanf(name, "blocks.%d.%n", &block, &used) == 1 && used > 0 &&
-            !strncmp(name + used, "adaln_proj.", 11)) {
-            snprintf(out, size, "transformer_blocks.%d.%s", block, name + used);
-            return 1;
+        if (sscanf(name, "blocks.%d.%n", &block, &used) == 1 && used > 0) {
+            static const struct { const char *engine, *diffusers; } linear[] = {
+                {"attn.out_proj.weight", "attn.to_out.0.weight"},
+                {"mlp.fc1.weight", "ff.net.0.proj.weight"},
+                {"mlp.fc2.weight", "ff.net.2.weight"},
+            };
+            if (!strncmp(name + used, "adaln_proj.", 11)) {
+                snprintf(out, size, "transformer_blocks.%d.%s", block,
+                         name + used);
+                return 1;
+            }
+            for (size_t i = 0; i < sizeof(linear) / sizeof(*linear); i++)
+                if (!strcmp(name + used, linear[i].engine)) {
+                    snprintf(out, size, "transformer_blocks.%d.%s", block,
+                             linear[i].diffusers);
+                    return 1;
+                }
         }
         static const struct { const char *engine, *diffusers; } final[] = {
             {"final_layer.adaln_proj.linear.", "norm_out.linear."},
@@ -454,6 +469,19 @@ const h3_st_tensor *h3_weight_store_tensor(const h3_weight_store *store,
     return NULL;
 }
 
+/* Whether `tensor`, found for the engine's `name`, is diffusers'
+ * ff.net.0.proj standing for mlp.fc1 (alias_name): the same rows with the
+ * two halves in the other order. */
+int h3_weight_halves_swapped(const char *name, const h3_st_tensor *tensor) {
+    static const char engine[] = "mlp.fc1.weight";
+    static const char diffusers[] = "ff.net.0.proj.weight";
+    if (!name || !tensor) return 0;
+    size_t name_length = strlen(name), have = strlen(tensor->name);
+    return name_length >= sizeof(engine) - 1 && have >= sizeof(diffusers) - 1 &&
+        !strcmp(name + name_length - (sizeof(engine) - 1), engine) &&
+        !strcmp(tensor->name + have - (sizeof(diffusers) - 1), diffusers);
+}
+
 const h3_st_tensor *h3_weight_find(const h3_weight_store *store,
                                    const char *name,
                                    const h3_st_header **header) {
@@ -475,8 +503,8 @@ static h3_gpu_tensor *expand_tensor(h3_gpu *gpu, const h3_st_header *header,
                                     const h3_st_tensor *tensor,
                                     h3_quant_type quant, size_t elements,
                                     h3_dtype dtype, uint32_t qkv_inner,
-                                    uint32_t qkv_head_dim, char *error,
-                                    size_t error_size) {
+                                    uint32_t qkv_head_dim, int swap_halves,
+                                    char *error, size_t error_size) {
     uint32_t columns = tensor->ndim == 2 ? (uint32_t)tensor->shape[1] : 0;
     uint32_t block_elements = h3_quant_block_elements(quant);
     uint32_t block_bytes = h3_quant_block_bytes(quant);
@@ -489,6 +517,14 @@ static h3_gpu_tensor *expand_tensor(h3_gpu *gpu, const h3_st_header *header,
         return NULL;
     }
     char detail[256] = "";
+    /* The two halves of the rows change places as the payload is read: the
+     * second half of the file first. Only for a payload of whole values. */
+    size_t half = (size_t)bytes / 2;
+    if (swap_halves && (block_elements != 1 || (bytes & 1) || half % block_bytes)) {
+        fail(error, error_size, "weight %s: its halves cannot be swapped as %s",
+             tensor->name, h3_quant_name(quant));
+        return NULL;
+    }
     if (h3_gpu_command_open(gpu)) {
         void *raw = malloc((size_t)bytes);
         float *values = malloc(elements * sizeof(*values));
@@ -496,8 +532,18 @@ static h3_gpu_tensor *expand_tensor(h3_gpu *gpu, const h3_st_header *header,
             malloc(elements * sizeof(*bf16)) : NULL;
         int ok = raw && values && (dtype != H3_DTYPE_BF16 || bf16) &&
             h3_st_read_data(header, tensor, raw, (size_t)bytes, detail,
-                            sizeof(detail)) &&
-            h3_quant_dequantize(quant, raw, elements, values);
+                            sizeof(detail));
+        if (ok && swap_halves) {
+            void *spare = malloc(half);
+            ok = spare != NULL;
+            if (ok) {
+                memcpy(spare, raw, half);
+                memcpy(raw, (char *)raw + half, half);
+                memcpy((char *)raw + half, spare, half);
+            }
+            free(spare);
+        }
+        ok = ok && h3_quant_dequantize(quant, raw, elements, values);
         if (ok && qkv_inner) {
             /* Same reorder as the GPU path: [Q; K; V] -> per-head [q; k; v]. */
             float *ordered = malloc(elements * sizeof(*ordered));
@@ -535,9 +581,16 @@ static h3_gpu_tensor *expand_tensor(h3_gpu *gpu, const h3_st_header *header,
     h3_gpu_tensor *raw = h3_gpu_tensor_new_i8(gpu, (size_t)bytes);
     h3_gpu_tensor *result = dtype == H3_DTYPE_BF16 ?
         h3_gpu_tensor_new_bf16(gpu, elements) : h3_gpu_tensor_new_f32(gpu, elements);
+    const size_t run_places[2] = {0, half}, run_bytes[2] = {half, half};
+    const uint64_t run_offsets[2] = {tensor->file_offset + half,
+                                     tensor->file_offset};
     int ok = raw && result &&
-        h3_gpu_tensor_read_file_i8(raw, header->path, tensor->file_offset,
-                                   (size_t)bytes, detail, sizeof(detail)) &&
+        (swap_halves ?
+            h3_gpu_tensor_stream_file_runs_i8(raw, header->path, 2, run_places,
+                                              run_offsets, run_bytes, detail,
+                                              sizeof(detail)) :
+            h3_gpu_tensor_read_file_i8(raw, header->path, tensor->file_offset,
+                                       (size_t)bytes, detail, sizeof(detail))) &&
         h3_gpu_begin(gpu) &&
         h3_gpu_dequantize(gpu, result, raw, (uint32_t)quant, (uint32_t)blocks,
                           block_elements, block_bytes, columns, qkv_inner,
@@ -929,6 +982,14 @@ static h3_gpu_tensor *load_tensor(const h3_weight_store *store, h3_gpu *gpu,
     if (quant == H3_QUANT_NONE && tensor->dtype == H3_DTYPE_F16 && dtype != H3_DTYPE_F16)
         quant = H3_QUANT_F16;
     int expand = tensor->dtype != dtype && quant != H3_QUANT_NONE;
+    /* diffusers' ff.net.0.proj read as mlp.fc1: through the expansion, which
+     * swaps the halves as it reads (a plain BF16/F32 tensor as a copy). */
+    int swap_halves = h3_weight_halves_swapped(name, tensor);
+    if (swap_halves && !expand && tensor->dtype == dtype &&
+        (dtype == H3_DTYPE_BF16 || dtype == H3_DTYPE_F32)) {
+        quant = dtype == H3_DTYPE_BF16 ? H3_QUANT_BF16 : H3_QUANT_F32;
+        expand = 1;
+    }
     uint32_t qkv_inner = 0, qkv_head_dim = 0;
     if (h3_weight_qkv_reorder(store, name, tensor, &qkv_inner, &qkv_head_dim) &&
         (expand || tensor->dtype == dtype)) {
@@ -973,10 +1034,15 @@ static h3_gpu_tensor *load_tensor(const h3_weight_store *store, h3_gpu *gpu,
         fail(error, error_size, "weight %s is too large for this process", name);
         return NULL;
     }
+    if (swap_halves && !expand) {
+        fail(error, error_size, "weight %s: its halves cannot be swapped as %s",
+             name, h3_dtype_name(tensor->dtype));
+        return NULL;
+    }
     if (expand)
         return expand_tensor(gpu, header, tensor, quant, (size_t)elements,
-                             dtype, qkv_inner, qkv_head_dim, error,
-                             error_size);
+                             dtype, qkv_inner, qkv_head_dim, swap_halves,
+                             error, error_size);
     h3_gpu_tensor *result = dtype == H3_DTYPE_BF16 ?
         h3_gpu_tensor_load_bf16(gpu, header->path, tensor->file_offset,
                                 (size_t)elements) :

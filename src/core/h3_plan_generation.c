@@ -375,7 +375,7 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
             uint64_t apart = lora_info.pixel_head_bytes +
                              lora_info.replaced_bytes;
             factors = apart < factors ? factors - apart : 0;
-            if (cached) lora_bytes += lora_info.replaced_bytes;
+            if (cached) lora_bytes += lora_info.replaced_values;
             if (lora_info.pi_h3 == H3_PI_H3_PIXELS &&
                 !(head_off && *head_off && strcmp(head_off, "0")))
                 pixel_head_tokens =

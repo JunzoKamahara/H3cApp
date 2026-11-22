@@ -61,6 +61,27 @@ final class PiH3AdapterTests: XCTestCase {
         XCTAssertEqual(info.blocks, 50)
     }
 
+    /// The adapter with the pixel head in the diffusers layout (the files in
+    /// the pi_h3_*_dwd_adapter folders); H3_PI_H3_DIFFUSERS_DWD_ADAPTER names one.
+    func testDiffusersAdapterWithThePixelHeadIsRecognised() throws {
+        let path = ProcessInfo.processInfo.environment["H3_PI_H3_DIFFUSERS_DWD_ADAPTER"]
+        try XCTSkipIf(path == nil, "set H3_PI_H3_DIFFUSERS_DWD_ADAPTER to pi_h3_*_dwd_adapter/diffusion_pytorch_model.safetensors")
+        let info = try H3LoRAInfo.inspect(path: path!)
+        XCTAssertEqual(info.piH3, .pixels)
+        XCTAssertEqual(info.rankMax, 64)
+        XCTAssertEqual(info.blocks, 46)
+        XCTAssertTrue([2, 4].contains(LoRAEntry.detectedSteps(
+            fromFileName: LoRAEntry.listedName(forFileAt: path!)) ?? 0))
+    }
+
+    func testAReasonNamesTheFileNotItsWholePath() {
+        let path = "/Users/someone/models/pi-h3/weights/some_folder/diffusion_pytorch_model.safetensors"
+        let reason = "\(path) has no LoRA factors for any MiniMax-H3 block projection"
+        XCTAssertEqual(ModelManagerView.loraFailureReason(reason, path: path),
+                       "diffusion_pytorch_model.safetensors has no LoRA factors for any MiniMax-H3 block projection")
+        XCTAssertEqual(ModelManagerView.loraFailureReason("out of memory", path: path), "out of memory")
+    }
+
     func testAdapterIsRecognised() throws {
         let path = ProcessInfo.processInfo.environment["H3_PI_H3_ADAPTER"]
         try XCTSkipIf(path == nil, "set H3_PI_H3_ADAPTER to pi_h3_*_dwd_adapter_int8_convrot.safetensors")

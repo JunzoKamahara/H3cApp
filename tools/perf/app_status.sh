@@ -151,6 +151,10 @@ JOBS=$(jq -c . <<'EOF'
   "change": {"loras": ["$LORA:pi_h3_4step_adapter"], "steps": 4, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
  {"name": "pi_h3_vae_2step", "label": "pi-H3（2ステップ、画素ヘッドなしの版、VAEで復号）、3秒",
   "change": {"loras": ["$LORA:pi_h3_2step_adapter"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_dwd_diffusers", "label": "pi-H3（4ステップ、画素ヘッドつきのdiffusers形式）、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd_adapter"], "steps": 4, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_dwd_diffusers_ssd", "label": "pi-H3（4ステップ、画素ヘッドつきのdiffusers形式）、SSD streaming、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd_adapter"], "steps": 4, "reuse": 1, "compute_mode": "ssdStreaming", "seconds": 3}, "how": {}},
  {"name": "pi_h3_ssd", "label": "pi-H3（4ステップ）、SSD streaming、3秒",
   "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "ssdStreaming", "seconds": 3}, "how": {}},
  {"name": "pi_h3_resident", "label": "pi-H3（4ステップ）、常駐、3秒",
@@ -701,7 +705,8 @@ fill() {
             '$LORA:'*)
                 part=${name#*:}
                 api /api/loras
-                value=$(jq -r --arg p "$part" '[.[] | select(.name | contains($p)) | .name][0] // empty' <<<"$body" 2>/dev/null)
+                # The LoRA of that name, or the first whose name holds it.
+                value=$(jq -r --arg p "$part" '([.[] | select(.name == $p)] + [.[] | select(.name | contains($p))])[0].name // empty' <<<"$body" 2>/dev/null)
                 if [[ -z $value ]]; then
                     skip_reason="LoRA（名前に${part}を含むもの）が、アプリに登録されていない"
                     return 3

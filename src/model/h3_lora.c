@@ -406,11 +406,10 @@ int h3_lora_inspect(const char *path, h3_lora_info *info, char *error,
     for (int block = 0; block < H3_LORA_DIT_BLOCKS; block++)
         if (adapter->adaln[block].a >= 0 && adapter->adaln[block].b >= 0)
             info->adaln_blocks++;
-    /* pi-H3: whole tensors under the checkpoint's own names, or, for the
-     * adapter without the pixel head, under diffusers' (norm_out.*,
-     * proj_out.*: h3_weights.c knows them). The diffusers layout of the one
-     * with the pixel head is not read: its whole block projections are
-     * stored in diffusers' row order. */
+    /* pi-H3: whole tensors under the checkpoint's own names (the single-file
+     * ComfyUI layout) or under diffusers' (norm_out.*, proj_out.*,
+     * transformer_blocks.N.ff.net.0.proj.weight, ...: h3_weights.c knows
+     * them, and reads FC1's halves in the engine's order). */
     int replaces_final = 0, pixel_head = 0, diffusers_final = 0;
     for (size_t index = 0; index < adapter->header.tensor_count; index++) {
         const char *name = adapter->header.tensors[index].name;
@@ -423,27 +422,27 @@ int h3_lora_inspect(const char *path, h3_lora_info *info, char *error,
         int end = 0;
         if (!strncmp(name, "dwd_", 4)) {
             info->pixel_head_bytes += bytes;
-        } else if (sscanf(name, "blocks.%u.%n", &block, &end) == 1 && end &&
-                   (!strcmp(name + end, "attn.qkv_proj.weight") ||
-                    !strcmp(name + end, "attn.out_proj.weight") ||
-                    !strcmp(name + end, "mlp.fc1.weight") ||
-                    !strcmp(name + end, "mlp.fc2.weight"))) {
+        } else if ((sscanf(name, "blocks.%u.%n", &block, &end) == 1 && end &&
+                    (!strcmp(name + end, "attn.qkv_proj.weight") ||
+                     !strcmp(name + end, "attn.out_proj.weight") ||
+                     !strcmp(name + end, "mlp.fc1.weight") ||
+                     !strcmp(name + end, "mlp.fc2.weight"))) ||
+                   ((end = 0, sscanf(name, "transformer_blocks.%u.%n", &block,
+                                     &end) == 1) && end &&
+                    (!strcmp(name + end, "attn.to_out.0.weight") ||
+                     !strcmp(name + end, "ff.net.0.proj.weight") ||
+                     !strcmp(name + end, "ff.net.2.weight")))) {
+            const h3_st_tensor *tensor = &adapter->header.tensors[index];
+            uint64_t values = 1;
+            for (int dimension = 0; dimension < tensor->ndim; dimension++)
+                values *= tensor->shape[dimension];
             info->replaced_bytes += bytes;
+            info->replaced_values += values;
         }
     }
-    if (replaces_final)
+    if (replaces_final || diffusers_final)
         info->pi_h3 = pixel_head ? H3_PI_H3_PIXELS : H3_PI_H3_LATENT;
-    else if (diffusers_final && !pixel_head)
-        info->pi_h3 = H3_PI_H3_LATENT;
     free_adapter(adapter);
-    if (diffusers_final && !replaces_final && pixel_head) {
-        free(adapter);
-        fail(error, error_size,
-             "%s is a pi-H3 adapter with the pixel head in the diffusers "
-             "layout; use its single-file ComfyUI version "
-             "(pi_h3_*_dwd_adapter_int8_convrot.safetensors)", path);
-        return 0;
-    }
     free(adapter);
     if (!info->projections) {
         fail(error, error_size,

@@ -108,6 +108,10 @@ typedef struct {
      * with SSD streaming). 0 for a plain LoRA. */
     uint64_t pixel_head_bytes;
     uint64_t replaced_bytes;
+    /* The values of those projections: their bytes once resident in int8,
+     * whatever the file stores them as (int8, or F16 in the diffusers
+     * layout). */
+    uint64_t replaced_values;
 } h3_lora_info;
 
 enum {

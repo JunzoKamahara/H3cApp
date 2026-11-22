@@ -273,15 +273,32 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
         source->qkv_head_dim = head_dim;
         source->comfy_group = group;
         source->comfy_rows = (uint32_t)row_count;
+        source->swap_halves = 0;
         dit->stream_quantized = 1;
         return 1;
     }
     h3_dit_free_tensor(&source->comfy_scales);
     h3_quant_type quant = (h3_quant_type)tensor->quant;
+    /* An F16 safetensors tensor (a pi-H3 adapter in the diffusers layout)
+     * expands as a GGUF F16 one does. */
+    if (quant == H3_QUANT_NONE && tensor->dtype == H3_DTYPE_F16)
+        quant = H3_QUANT_F16;
     int quantized = tensor->dtype != H3_DTYPE_BF16 && quant != H3_QUANT_NONE &&
                     quant != H3_QUANT_F32 && quant != H3_QUANT_BF16;
     uint32_t qkv_inner = 0, qkv_head_dim = 0;
     int whole = row_begin == 0 && row_count == rows;
+    /* diffusers' ff.net.0.proj for mlp.fc1: through the staging buffer, read
+     * second half first. */
+    int swap_halves = h3_weight_halves_swapped(name, tensor);
+    if (swap_halves && (!whole || (rows & 1))) {
+        h3_dit_fail(error, error_size, "streaming weight %s cannot be read "
+             "in halves", name);
+        return 0;
+    }
+    if (swap_halves && !quantized && tensor->dtype == H3_DTYPE_BF16) {
+        quant = H3_QUANT_BF16;
+        quantized = 1;
+    }
     if (whole && h3_weight_qkv_reorder(store, name, tensor,
                                        &qkv_inner, &qkv_head_dim) &&
         !quantized && tensor->dtype == H3_DTYPE_BF16) {
@@ -313,6 +330,12 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
     source->bytes = bytes;
     source->qkv_inner = qkv_inner;
     source->qkv_head_dim = qkv_head_dim;
+    source->swap_halves = swap_halves;
+    if (swap_halves && (!quantized || (bytes & 1))) {
+        h3_dit_fail(error, error_size, "streaming weight %s cannot be read "
+             "in halves", name);
+        return 0;
+    }
     if (quantized) dit->stream_quantized = 1;
     return 1;
 }
@@ -534,9 +557,18 @@ static void *read_stream_matrix_thread(void *opaque) {
     h3_dit_matrix_job *job = opaque;
     job->error[0] = '\0';
     if (job->source->quant) {
-        if (!job->target || !h3_gpu_tensor_stream_file_prefix_i8(
-                job->target, job->source->path, job->source->file_offset,
-                (size_t)job->source->bytes, job->error, sizeof(job->error))) {
+        size_t half = (size_t)job->source->bytes / 2;
+        const size_t places[2] = {0, half}, counts[2] = {half, half};
+        const uint64_t offsets[2] = {job->source->file_offset + half,
+                                     job->source->file_offset};
+        if (!job->target || !(job->source->swap_halves ?
+                h3_gpu_tensor_stream_file_runs_i8(
+                    job->target, job->source->path, 2, places, offsets,
+                    counts, job->error, sizeof(job->error)) :
+                h3_gpu_tensor_stream_file_prefix_i8(
+                    job->target, job->source->path, job->source->file_offset,
+                    (size_t)job->source->bytes, job->error,
+                    sizeof(job->error)))) {
             if (!job->error[0])
                 snprintf(job->error, sizeof(job->error),
                          "invalid quantized streaming destination");

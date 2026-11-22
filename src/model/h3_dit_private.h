@@ -131,6 +131,9 @@ typedef struct {
     h3_gpu_tensor *comfy_scales;
     uint32_t comfy_group;
     uint32_t comfy_rows;
+    /* The file has the two halves of the rows in the other order
+     * (h3_weight_halves_swapped): the staging is read second half first. */
+    int swap_halves;
 } h3_dit_stream_source;
 
 /* A source->quant beyond h3_quant_type's values. */

@@ -505,14 +505,27 @@ struct ModelManagerView: View {
             text = parts.joined(separator: summarySeparator)
         case .failure(let error)?:
             text = FileManager.default.fileExists(atPath: entry.path)
-                ? String(localized: "MiniMax-H3用として読み込めません: \(error.localizedDescription)")
+                ? String(localized: "MiniMax-H3用として読み込めません: \(Self.loraFailureReason(error.localizedDescription, path: entry.path))")
                 : String(localized: "ファイルが見つかりません")
             isError = true
         }
+        // A reason is shown whole (and in the tooltip): cut at two lines it
+        // lost the part that says what to do.
         return Text(text)
             .font(.caption2)
             .foregroundStyle(isError ? palette.errorColor : palette.textSecondary)
-            .lineLimit(2)
+            .lineLimit(isError ? 6 : 2)
+            .fixedSize(horizontal: false, vertical: true)
+            .help(isError ? text : "")
+    }
+
+    /// The engine's reason for not reading a LoRA file, with the file's whole
+    /// path - which the engine names it by, and which the row shows just
+    /// above - replaced by its name, so that the reason itself is what is read.
+    static func loraFailureReason(_ reason: String, path: String) -> String {
+        let name = (path as NSString).lastPathComponent
+        guard !path.isEmpty, !name.isEmpty else { return reason }
+        return reason.replacingOccurrences(of: path, with: name)
     }
 
     /// The step rule and audio shift this LoRA runs with, set by hand for
