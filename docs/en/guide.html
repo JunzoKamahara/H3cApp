@@ -332,18 +332,18 @@
       </ul>
 
       <h3 id="lora-pi-h3">pi-H3 (2 or 4 steps)</h3>
-      <p><a href="https://huggingface.co/Lakonik/pi-H3">pi-H3</a> is an add-on model that lets MiniMax H3 generate in 2 or 4 steps. You register and use it the same way as a LoRA. It comes in two kinds.</p>
+      <p><a href="https://huggingface.co/Lakonik/pi-H3">pi-H3</a> is an add-on model that lets MiniMax H3 generate in 2 or 4 steps. You register and use it the same way as a LoRA (from v0.12.0). It comes in two kinds. The <a href="pi-h3.html">pi-H3 page</a> has the details, a comparison and troubleshooting.</p>
       <ul>
         <li><strong>With the pixel head</strong>: <code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code> and <code>pi_h3_2step_dwd_adapter_int8_convrot.safetensors</code> (2.2 GB each). The “pixel head” inside the add-on model produces the frames in place of the video VAE, so turning the result into video is faster.</li>
         <li><strong>Without the pixel head</strong>: <code>diffusion_pytorch_model.safetensors</code> in the <code>pi_h3_4step_adapter</code> and <code>pi_h3_2step_adapter</code> folders (0.5 GB each). The video VAE decodes the video. The Model Manager lists the file under its folder's name.</li>
       </ul>
       <div class="table-wrap">
         <table>
-          <caption>Time to generate 512×512 for 3 seconds (M5 with 24 GB, int8 cache, one run each in the app)</caption>
+          <caption>Time to generate 512×512 for 3 seconds (M5 with 24 GB, int8 cache, one run each in the app; the standard 20 steps took 206 s)</caption>
           <thead><tr><th scope="col">Add-on model</th><th scope="col">4 steps</th><th scope="col">2 steps</th></tr></thead>
           <tbody>
-            <tr><th scope="row">With the pixel head</th><td class="num">84 s</td><td class="num">41 s</td></tr>
-            <tr><th scope="row">Without the pixel head</th><td class="num">109 s</td><td class="num">77 s</td></tr>
+            <tr><th scope="row">With the pixel head</th><td class="num">68 s</td><td class="num">37 s</td></tr>
+            <tr><th scope="row">Without the pixel head</th><td class="num">100 s</td><td class="num">71 s</td></tr>
           </tbody>
         </table>
       </div>

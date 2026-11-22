@@ -333,18 +333,18 @@
       </ul>
 
       <h3 id="lora-pi-h3">pi-H3（2・4ステップ）</h3>
-      <p><a href="https://huggingface.co/Lakonik/pi-H3">pi-H3</a>は、MiniMax H3を2ステップまたは4ステップで生成できるようにする追加モデルです。LoRAと同じ手順で登録して使います。2種類あります。</p>
+      <p><a href="https://huggingface.co/Lakonik/pi-H3">pi-H3</a>は、MiniMax H3を2ステップまたは4ステップで生成できるようにする追加モデルです（v0.12.0から）。LoRAと同じ手順で登録して使います。2種類あります。くわしい使い方、見比べ、困ったときは<a href="pi-h3.html">pi-H3のページ</a>にあります。</p>
       <ul>
         <li><strong>画素ヘッドつき</strong>：<code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code> と <code>pi_h3_2step_dwd_adapter_int8_convrot.safetensors</code>（各2.2GB）。映像VAEの代わりに、追加モデルに入っている「画素ヘッド」が映像を出すので、映像への変換が速くなります。</li>
         <li><strong>画素ヘッドなし</strong>：<code>pi_h3_4step_adapter</code> と <code>pi_h3_2step_adapter</code> の各フォルダにある <code>diffusion_pytorch_model.safetensors</code>（各0.5GB）。映像は映像VAEで復号します。モデル管理の一覧には、フォルダの名前で表示されます。</li>
       </ul>
       <div class="table-wrap">
         <table>
-          <caption>512×512・3秒の生成時間（M5・24GB、int8キャッシュ、アプリで各1回計測）</caption>
+          <caption>512×512・3秒の生成時間（M5・24GB、int8キャッシュ、アプリで各1回計測。通常の20ステップは206秒）</caption>
           <thead><tr><th scope="col">追加モデル</th><th scope="col">4ステップ</th><th scope="col">2ステップ</th></tr></thead>
           <tbody>
-            <tr><th scope="row">画素ヘッドつき</th><td class="num">84秒</td><td class="num">41秒</td></tr>
-            <tr><th scope="row">画素ヘッドなし</th><td class="num">109秒</td><td class="num">77秒</td></tr>
+            <tr><th scope="row">画素ヘッドつき</th><td class="num">68秒</td><td class="num">37秒</td></tr>
+            <tr><th scope="row">画素ヘッドなし</th><td class="num">100秒</td><td class="num">71秒</td></tr>
           </tbody>
         </table>
       </div>

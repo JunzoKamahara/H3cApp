@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en" data-alt-href="../pi-h3.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="../assets/js/lang.js"></script>
+  <title>pi-H3 (an add-on model that generates in 2 or 4 steps) — H3cApp</title>
+  <meta name="description" content="How to use pi-H3 in H3cApp: an add-on model that lets MiniMax H3 generate in 2 or 4 steps, with or without its pixel head. The files to get, how to register it, what changes while it is on, time and memory, which one to choose, troubleshooting.">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/pi-h3.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/pi-h3.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/pi-h3.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/pi-h3.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:locale:alternate" content="ja_JP">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="pi-H3 (an add-on model that generates in 2 or 4 steps) — H3cApp">
+  <meta property="og:description" content="How to use the add-on model that lets MiniMax H3 generate in 2 or 4 steps.">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/en/pi-h3.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="../assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="../assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="../assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="../assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="Site">
+        <ul>
+          <li><a href="./#examples">Examples</a></li>
+          <li><a href="./#requirements">Requirements</a></li>
+          <li><a href="getting-started.html">Getting started</a></li>
+          <li><a href="guide.html" aria-current="page">Guide</a></li>
+          <li><a href="image.html">Images</a></li>
+          <li><a href="gguf.html">GGUF</a></li>
+          <li><a href="faq.html">Troubleshooting</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="../pi-h3.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>pi-H3 (an add-on model that generates in 2 or 4 steps)</h1>
+      <p class="lead">pi-H3 is an add-on model that lets MiniMax H3 generate in <strong>2 or 4 steps</strong>. You register it the same way as a LoRA and turn it on. H3cApp supports it from v0.12.0. Compared with the standard 20 steps, generation takes about a fifth of the time at 4 steps and about a tenth at 2 steps.</p>
+      <nav class="toc" aria-label="On this page">
+        <p>On this page</p>
+        <ol>
+          <li><a href="#what">What pi-H3 is</a></li>
+          <li><a href="#compare">Compare the results</a></li>
+          <li><a href="#numbers">Time and memory</a></li>
+          <li><a href="#need">What you need</a></li>
+          <li><a href="#use">How to use it</a></li>
+          <li><a href="#rules">What changes while it is on</a></li>
+          <li><a href="#choose">Which one to choose</a></li>
+          <li><a href="#with">With other features</a></li>
+          <li><a href="#trouble">Troubleshooting</a></li>
+          <li><a href="#api">Using it from the API</a></li>
+          <li><a href="#checked">What was checked</a></li>
+          <li><a href="#license">Weights and license</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="what" aria-labelledby="what-title">
+      <h2 id="what-title">What pi-H3 is</h2>
+      <p><a href="https://huggingface.co/Lakonik/pi-H3">pi-H3</a> is an add-on model (an adapter) for MiniMax H3 published by Hansheng Chen and colleagues. It is distilled to generate in few steps and comes for 2 steps and for 4 steps.</p>
+      <p>MiniMax H3 normally makes a video in this order.</p>
+      <ol>
+        <li>It reads the text (the text encoder).</li>
+        <li>It refines the makings of the video and the sound from noise, a little at a time (the DiT). By default it repeats this 20 times.</li>
+        <li>It turns those makings into video frames and sound (the VAE).</li>
+      </ol>
+      <p>pi-H3 shortens the second and the third.</p>
+      <ul>
+        <li><strong>It repeats the second 2 or 4 times.</strong> Most of the generation time is spent there, so this is where most of the gain comes from.</li>
+        <li><strong>It replaces the video part of the third with the add-on model's “pixel head”</strong> (in the kind with the pixel head). The pixel head produces the frames with 8 layers where the video VAE has 36, so turning the result into video is faster. The sound is converted as before.</li>
+      </ul>
+      <p>There is also a kind without the pixel head, which leaves the third to the video VAE. Both are used the same way.</p>
+    </section>
+
+    <section class="section compare-section" id="compare" aria-labelledby="compare-title">
+      <h2 id="compare-title">Compare the results</h2>
+      <p><strong>All video and audio on this page is AI-generated</strong> (with H3cApp, using MiniMax H3 and pi-H3). Three prompts were generated once each with six methods. Choose which two to put side by side.</p>
+      <noscript><p>This comparison needs JavaScript.</p></noscript>
+      <div id="compare-panel" data-base="../assets/pi-h3/" hidden>
+        <div class="compare-choices">
+          <label>Clip
+            <select id="compare-clip">
+              <option value="cat" data-note="Cat and yarn: look at the fur, the yarn and the reflection on the floor. All four pi-H3 clips keep the shape of the cat and of the ball of yarn. At the same step count, the pixel head and the video VAE give almost the same scene; 2 steps and 4 steps give different scenes.">Cat and yarn</option>
+              <option value="guitar" data-note="Guitar player: look at the windows of the building, the hands and the strings. All four pi-H3 clips keep the shape of the person and of the guitar.">Guitar player</option>
+              <option value="talk" data-note="Talking: look at the face, the hair and the collar. None of the four pi-H3 clips breaks the face. Switch to “Video” to see the mouth move.">Talking</option>
+            </select>
+          </label>
+          <label>Left
+            <select id="compare-left">
+              <option value="r20">Standard, 20 steps</option>
+              <option value="t4">Turbo LoRA, 4 steps</option>
+              <option value="p4" selected>pi-H3, 4 steps (pixel head)</option>
+              <option value="p2">pi-H3, 2 steps (pixel head)</option>
+              <option value="v4">pi-H3, 4 steps (video VAE)</option>
+              <option value="v2">pi-H3, 2 steps (video VAE)</option>
+            </select>
+          </label>
+          <label>Right
+            <select id="compare-right">
+              <option value="r20">Standard, 20 steps</option>
+              <option value="t4">Turbo LoRA, 4 steps</option>
+              <option value="p4">pi-H3, 4 steps (pixel head)</option>
+              <option value="p2" selected>pi-H3, 2 steps (pixel head)</option>
+              <option value="v4">pi-H3, 4 steps (video VAE)</option>
+              <option value="v2">pi-H3, 2 steps (video VAE)</option>
+            </select>
+          </label>
+        </div>
+        <div class="compare-buttons">
+          <button type="button" data-mode="still" aria-pressed="true">Still</button>
+          <button type="button" data-mode="video" aria-pressed="false">Video</button>
+          <span class="compare-video-controls" id="compare-video-controls" hidden>
+            <button type="button" id="compare-play">Pause</button>
+            <button type="button" data-speed="1" aria-pressed="true">Normal speed</button>
+            <button type="button" data-speed="0.25" aria-pressed="false">Quarter speed</button>
+          </span>
+        </div>
+        <div class="compare-panes">
+          <figure data-pane="left"><img src="../assets/pi-h3/cat/p4.jpg" width="672" height="384" alt=""><video width="672" height="384" muted playsinline preload="auto" hidden></video><figcaption></figcaption></figure>
+          <figure data-pane="right"><img src="../assets/pi-h3/cat/p2.jpg" width="672" height="384" alt=""><video width="672" height="384" muted playsinline preload="auto" hidden></video><figcaption></figcaption></figure>
+        </div>
+        <p class="compare-note" id="compare-note" aria-live="polite"></p>
+      </div>
+      <p>Different methods can give different scenes even from the same seed. What to look at here is not the detail of one scene but how well-formed a video each method gives.</p>
+      <details>
+        <summary>The prompts</summary>
+        <ul>
+          <li><strong>Cat and yarn</strong>: A small orange cat plays with a ball of yarn on a wooden floor in soft afternoon light. Static camera, gentle movement. Soft room ambience, no speech.</li>
+          <li><strong>Guitar player</strong>: A street musician plays an acoustic guitar in a quiet stone plaza at dusk, warm lights in the windows behind him. Slow push-in camera. Gentle guitar melody, distant footsteps, no speech.</li>
+          <li><strong>Talking</strong>: A young woman with short black hair, wearing a navy blazer, stands in a bright university hallway and speaks directly to the camera with a friendly smile, saying: "Welcome to our campus. Let me show you around." Medium close-up, static camera. Clear voice, quiet indoor ambience, no music.</li>
+        </ul>
+      </details>
+      <p class="small muted">Every clip is a video generated by AI in H3cApp from text alone (672×384, 5 seconds, seed 42, M5 with 24 GB). The four pi-H3 clips were generated on November 22, 2026; the standard 20 steps and the Turbo LoRA were generated from the same prompts and seed on November 9, 2026. They are compressed again for this page, so fine texture is lower than in the original videos.</p>
+    </section>
+
+    <section class="section" id="sound" aria-labelledby="sound-title">
+      <h2 id="sound-title">With sound</h2>
+      <p>pi-H3 makes the video and the sound together too. Below is a video as AI generated it with pi-H3 at 4 steps (pixel head), with its sound (press play to hear it).</p>
+      <div class="examples examples-wide">
+        <figure class="example">
+          <div class="media">
+            <video controls playsinline preload="none" width="672" height="384" poster="../assets/pi-h3/cat/p4.jpg" aria-label="pi-H3, 4 steps (pixel head): a cat playing with a ball of yarn on a wooden floor">
+              <source src="../assets/pi-h3/cat/p4-sound.mp4" type="video/mp4">
+              <a href="../assets/pi-h3/cat/p4-sound.mp4">Open the video file</a>
+            </video>
+          </div>
+          <figcaption>
+            <p class="spec">pi-H3, 4 steps (pixel head) · landscape, medium (672×384) · 5 seconds · with sound</p>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="numbers" aria-labelledby="numbers-title">
+      <h2 id="numbers-title">Time and memory</h2>
+      <div class="table-wrap">
+        <table>
+          <caption>Generation time, averaged over the three prompts (672×384, 5 seconds, M5 with 24 GB, int8 cache, measured in the app). The standard 20 steps and the Turbo LoRA were measured on November 9, 2026.</caption>
+          <thead><tr><th scope="col">Method</th><th scope="col">Generation time</th><th scope="col">Of which, into video</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Standard, 20 steps</th><td>10 min 45 s</td><td>—</td></tr>
+            <tr><th scope="row">Turbo LoRA, 4 steps</th><td>3 min 02 s</td><td>—</td></tr>
+            <tr><th scope="row">pi-H3, 4 steps (pixel head)</th><td>2 min 18 s</td><td>4 s</td></tr>
+            <tr><th scope="row">pi-H3, 2 steps (pixel head)</th><td>1 min 08 s</td><td>4 s</td></tr>
+            <tr><th scope="row">pi-H3, 4 steps (video VAE)</th><td>3 min 05 s</td><td>59 s</td></tr>
+            <tr><th scope="row">pi-H3, 2 steps (video VAE)</th><td>2 min 04 s</td><td>59 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul>
+        <li><strong>Time</strong>: with the pixel head, 4 steps took 44 s less than the Turbo LoRA at the same 4 steps. The difference is the conversion into video: about 59 s in the video VAE, about 4 s in the pixel head. Without the pixel head, 4 steps take about as long as the Turbo LoRA. At 512×512 for 3 seconds, the standard 20 steps took 206 s, 4 steps with the pixel head 68 s, and 2 steps 37 s. The first generation after starting the app takes about 15 s longer.</li>
+        <li><strong>Into video</strong>: the pixel head turned 512×512 for 3 seconds (73 frames) into video in about 3 s. The video VAE took about 38 s for the same. At 960×544 for 5 seconds (124 frames) the pixel head took 7.7 s.</li>
+        <li><strong>Memory</strong>: at 832×480 for 5 seconds and 4 steps, the kind with the pixel head peaked at 4.7 GiB while denoising and 2.2 GiB in the pixel head. The kind without it peaked at 3.7 GiB while denoising and 4.3 GiB in the video VAE. For both, reading the text (about 4.9 GiB) was the largest stage (measured with the engine alone).</li>
+        <li><strong>A large size</strong>: 1344×768 for 5 seconds at 4 steps (with the pixel head) took about 18 minutes; the largest stage was the denoising, at 7.3 GiB.</li>
+      </ul>
+      <p class="small muted">The prompts differ from one another. The numbers are a guide. No image-quality metrics (MUSIQ and the like) were measured.</p>
+    </section>
+
+    <section class="section section-narrow" id="need" aria-labelledby="need-title">
+      <h2 id="need-title">What you need</h2>
+      <h3>1. H3cApp v0.12.0 or later</h3>
+      <p>v0.11.0 and earlier do not support pi-H3.</p>
+
+      <h3>2. A MiniMax H3 model whose AdaLN is in the “curve” form</h3>
+      <p>pi-H3 is applied on top of a MiniMax H3 model whose AdaLN is in the “curve” form (ComfyUI's pruned format). It was checked with a model imported from unsloth's <code>minimax_h3_fl2va_pruned-Q4_K.gguf</code> (<a href="gguf.html">Using GGUF models</a>).</p>
+      <p class="small muted">It was not checked with a model whose AdaLN is in the “dense” form (the official weights, for one). With a model that does not fit, an error is shown when the generation starts (<a href="#trouble">Troubleshooting</a>).</p>
+
+      <h3>3. The pi-H3 files</h3>
+      <p>H3cApp does not download pi-H3. Download what you will use from <a href="https://huggingface.co/Lakonik/pi-H3/tree/main">Lakonik/pi-H3 on Hugging Face</a>. There are four; one is enough.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Kind</th><th scope="col">Steps</th><th scope="col">File to download</th><th scope="col">Size</th></tr></thead>
+          <tbody>
+            <tr><th scope="row" rowspan="2">With the pixel head</th><td class="num">4</td><td><code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code></td><td class="num">2.2 GB</td></tr>
+            <tr><td class="num">2</td><td><code>pi_h3_2step_dwd_adapter_int8_convrot.safetensors</code></td><td class="num">2.2 GB</td></tr>
+            <tr><th scope="row" rowspan="2">Without the pixel head</th><td class="num">4</td><td><code>diffusion_pytorch_model.safetensors</code> in the <code>pi_h3_4step_adapter</code> folder</td><td class="num">0.5 GB</td></tr>
+            <tr><td class="num">2</td><td><code>diffusion_pytorch_model.safetensors</code> in the <code>pi_h3_2step_adapter</code> folder</td><td class="num">0.5 GB</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul>
+        <li><strong>With the pixel head, use the file whose name ends in <code>_int8_convrot.safetensors</code>.</strong> H3cApp cannot read the files inside the <code>pi_h3_4step_dwd_adapter</code> and <code>pi_h3_2step_dwd_adapter</code> folders (3.8 GB each). If you choose one, it tells you to use the single-file version.</li>
+        <li><strong>Without the pixel head, download the folder, or save the file so that its folder's name can be told.</strong> Both files are named <code>diffusion_pytorch_model.safetensors</code>, so H3cApp tells them apart by the folder's name (<code>pi_h3_4step_adapter</code>) and reads the step count from it.</li>
+        <li>The publishers recommend the kind with the pixel head.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="use" aria-labelledby="use-title">
+      <h2 id="use-title">How to use it</h2>
+      <div class="note"><p><strong>Available from v0.12.0.</strong></p></div>
+      <figure class="shot">
+        <img src="../assets/images/app-pi-h3-lora-en.jpg" width="1100" height="906" loading="lazy" alt="The “LoRA” tab of the Model Manager. The pi-H3 add-on models are listed, and the 4-step one with the pixel head is checked. Its row reads “native · 46/50 blocks · rank 64 · pi-H3 (frames from its pixel head)” and its “Steps” field holds 4.">
+        <figcaption>pi-H3 registered in the “LoRA” tab of the Model Manager (the real v0.12.0 window). The kind with the pixel head reads “pi-H3 (frames from its pixel head)”; the kind without it reads “pi-H3 (decoded by the video VAE)”. The “Steps” field is the step count read from the file name.</figcaption>
+      </figure>
+      <ol class="steps">
+        <li>
+          <strong>Open “<span class="ui">Model Manager</span>” from the toolbar and choose the “<span class="ui">LoRA</span>” tab.</strong>
+        </li>
+        <li>
+          <strong>Choose the file you downloaded with “<span class="ui">Add…</span>”.</strong> For the kind without the pixel head, choose <code>diffusion_pytorch_model.safetensors</code> inside the folder. If the file is in Downloads or Documents, the app asks whether to move it into its LoRA folder. Moved, a file without the pixel head is named after the folder it came from, such as <code>pi_h3_4step_adapter.safetensors</code>.
+        </li>
+        <li>
+          <strong>Check the row.</strong> If it reads “pi-H3 (frames from its pixel head)” or “pi-H3 (decoded by the video VAE)”, the file was read as pi-H3. Check too that the “<span class="ui">Steps</span>” field holds 4 or 2. If it is empty, type the number that file is for (4 or 2).
+        </li>
+        <li>
+          <strong>Turn on the one you will use.</strong> Use the row's checkbox, or “<span class="ui">Add-on models (LoRA)</span>” in “<span class="ui">Advanced Settings</span>”. “<span class="ui">Steps</span>” switches to the number that file is for (4 or 2). Leave “<span class="ui">Strength</span>” blank (1).
+        </li>
+        <li>
+          <strong>Generate as usual.</strong> The prompt, the size and the length are chosen as before. Progress is shown as “Denoising 2/4 steps” and then “Decoding to video”.
+        </li>
+        <li>
+          <strong>To go back to the standard generation, turn it off.</strong> The steps go back to what they were, and the speed and the other settings are used again.
+        </li>
+      </ol>
+    </section>
+
+    <section class="section section-narrow" id="rules" aria-labelledby="rules-title">
+      <h2 id="rules-title">What changes while it is on</h2>
+      <figure class="shot">
+        <img src="../assets/images/app-pi-h3-advanced-en.jpg" width="1100" height="1302" loading="lazy" alt="“Advanced Settings” with pi-H3 on. Steps is 4, and below it: “A pi-H3 add-on model generates in 2 or 4 steps.” The “Speed” choice cannot be pressed and reads “While a pi-H3 add-on model is on, every step is computed in full”. “Denoiser reuse” cannot be pressed either.">
+        <figcaption>“Advanced Settings” with pi-H3 on (the real v0.12.0 window). “Speed” and “Denoiser reuse” cannot be chosen, and the reason is shown.</figcaption>
+      </figure>
+      <ul>
+        <li><strong>The step count is the one the file is for, and no other.</strong> 4 for a 4-step file, 2 for a 2-step file. With another number, a line above the generate button reads “The add-on model “…” (pi-H3) is for 4 steps. Set “Steps” in Advanced Settings to 4”, and nothing is generated.</li>
+        <li><strong>“Speed” is not used.</strong> Even with “Fast” or “Fastest” chosen, every step is computed in full. pi-H3 has too few steps to reuse results between them. The token reduction “Fastest” uses was also found to break the pixel head's picture.</li>
+        <li><strong>“Denoiser reuse” runs at 1.</strong></li>
+        <li><strong>The settings are not lost.</strong> What you chose for “Speed” and “Denoiser reuse” is kept and used again once pi-H3 is off.</li>
+        <li><strong>A video's record holds what ran.</strong> “Settings Used…” and the video's record (<code>.json</code>) say “Standard (best quality)” and “reuse 1”.</li>
+        <li><strong>The time estimate</strong> is worked out separately, from generations that used the pixel head.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="choose" aria-labelledby="choose-title">
+      <h2 id="choose-title">Which one to choose</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">What you want</th><th scope="col">Choose</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">To try it first</th><td>With the pixel head, 4 steps</td></tr>
+            <tr><th scope="row">The shortest time</th><td>With the pixel head, 2 steps. Detail is softer than with 4 steps.</td></tr>
+            <tr><th scope="row">A small download</th><td>Without the pixel head (0.5 GB). The video VAE still converts the video, which takes that much longer.</td></tr>
+            <tr><th scope="row">The same video VAE as the standard generation</th><td>Without the pixel head, 4 steps</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul>
+        <li><strong>It is mostly the step count that decides the scene.</strong> From the same prompt and seed, the kinds with and without the pixel head gave almost the same scene at the same step count. The 2-step and the 4-step files give different scenes.</li>
+        <li><strong>Detail with the pixel head</strong> is slightly softer, seen at full size, than when the video VAE finishes the video.</li>
+        <li><strong>Turn on only one.</strong> With two pi-H3 files on at once, an error is shown when the generation starts. Stacking it with a Turbo LoRA or another few-step LoRA was not checked.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="with" aria-labelledby="with-title">
+      <h2 id="with-title">With other features</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Feature</th><th scope="col">With pi-H3</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">From text</th><td>Works.</td></tr>
+            <tr><th scope="row">First/last image</th><td>Works. The video begins and ends with the images you chose.</td></tr>
+            <tr><th scope="row">Reference images, videos and audio</th><td>Run with one reference picture; the picture was not broken. The publishers name text, a first frame and a last frame as what the adapters support.</td></tr>
+            <tr><th scope="row">Continue This Video</th><td>Works. The part carried over (the last 22 frames) is drawn again by the pixel head, so it is not exactly the picture of the original video.</td></tr>
+            <tr><th scope="row">Showing the progress picture</th><td>Works.</td></tr>
+            <tr><th scope="row">Compute mode</th><td>“Fast (int8 cache)”, “Low memory (SSD streaming)” and “Resident” all worked. At 512×512 for 3 seconds and 4 steps (with the pixel head) they took 68 s, 107 s and 290 s in that order. Resident used up to 21.4 GiB of memory (on the M5 with 24 GB).</td></tr>
+            <tr><th scope="row">Speed (Fast, Fastest), Denoiser reuse</th><td>Not used (<a href="#rules">What changes while it is on</a>).</td></tr>
+            <tr><th scope="row">Fast mode (experimental), changing the layer count</th><td>Run once each with the engine alone; the picture was not broken. Not checked in the app.</td></tr>
+            <tr><th scope="row">Upscale 2x</th><td>Not checked.</td></tr>
+            <tr><th scope="row">HyperFlow H3 Flash, still images</th><td>Not available. pi-H3 is for video with the standard MiniMax H3.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="trouble" aria-labelledby="trouble-title">
+      <h2 id="trouble-title">Troubleshooting</h2>
+      <dl>
+        <dt>“The add-on model “…” (pi-H3) is for 4 steps” is shown and nothing is generated</dt>
+        <dd>Set “Steps” in “Advanced Settings” to the number shown. If a 2-step file is said to be for 4 steps, change the “Steps” field of its row in the “Model Manager” to 2.</dd>
+        <dt>“The add-on model “…” (pi-H3) generates in 2 or 4 steps” is shown</dt>
+        <dd>This is shown when the step count could not be read from the file name. Set “Steps” to 2 or 4. If you type the number the file is for into the “Steps” field in the “Model Manager”, the steps switch by themselves from then on.</dd>
+        <dt>Right after starting: “a pi-H3 adapter needs a curve-form ("pruned", rank 8) MiniMax H3 checkpoint”</dt>
+        <dd>The AdaLN of the MiniMax H3 model in use is not in the “curve” form. Switch to a model imported from a pruned GGUF (<a href="#need">What you need</a>).</dd>
+        <dt>It cannot be registered: “…is a pi-H3 adapter with the pixel head in the diffusers layout; use its single-file ComfyUI version”</dt>
+        <dd>You chose the file inside the <code>pi_h3_4step_dwd_adapter</code> folder. Use <code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code>.</dd>
+        <dt>“only one pi-H3 adapter can be applied at a time”</dt>
+        <dd>Two pi-H3 files are on. Leave one on.</dd>
+        <dt>It is listed as “diffusion_pytorch_model.safetensors” or “LoRA”, with no step count</dt>
+        <dd>The file is somewhere its folder's name does not say what it is. Type 4 or 2 into the “Steps” field, or put the file into a folder named <code>pi_h3_4step_adapter</code> and register it again.</dd>
+        <dt>With the pixel head at 2 steps, the picture is soft</dt>
+        <dd>Switch to the 4-step file, or try the kind without the pixel head.</dd>
+      </dl>
+    </section>
+
+    <section class="section section-narrow" id="api" aria-labelledby="api-title">
+      <h2 id="api-title">Using it from the API</h2>
+      <p>With the app's API (<code>POST /api/generate</code>), put the name from the list into <code>loras</code> and the step count the file is for into <code>steps</code>. <code>GET /api/loras</code> gives the names.</p>
+      <pre><code>{
+  "prompt": "A cat playing with a ball of yarn.",
+  "size_profile": "square-medium",
+  "seconds": 3,
+  "loras": ["pi_h3_4step_dwd_adapter_int8_convrot.safetensors"],
+  "steps": 4
+}</code></pre>
+      <ul>
+        <li>Without <code>steps</code>, the step count the file is for is used.</li>
+        <li>A step count the file is not for is answered <code>409</code> with the reason, before the generation starts.</li>
+        <li><code>speed_mode</code> and <code>reuse</code> are not used. The video's record says <code>quality</code> and reuse 1.</li>
+      </ul>
+      <p class="small">The whole API is described in <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/docs/API.md">the API reference</a>.</p>
+    </section>
+
+    <section class="section section-narrow" id="checked" aria-labelledby="checked-title">
+      <h2 id="checked-title">What was checked</h2>
+      <ul>
+        <li><strong>The Mac</strong>: one M5 with 24 GB. Nothing was run on an M1 to M4. On a Mac other than an M5 the pixel head computes in F32, not int8 (that path was run on the M5; it is 46 dB from the int8 result).</li>
+        <li><strong>What was checked</strong>: generating with each of the four files, a first image, first and last images, a reference picture, a continuation, the progress picture, the three compute modes, 960×544 and 1344×768 for 5 seconds, and that a step count that does not fit is refused before the generation. The videos were looked at as sheets of frames.</li>
+        <li><strong>The pixel head's computation</strong>: against a separate implementation (numpy) written from the publishers' description, it is within 1 of 255 in F32 and at 46 dB with the int8 the M5 uses.</li>
+        <li><strong>Not checked</strong>: a model whose AdaLN is in the “dense” form, a Mac with 16 GB or less, upscaling 2x, listening to the sound against the other methods, image-quality metrics.</li>
+        <li><strong>Records</strong>: the name of the add-on model that was on is kept in the video's record and in the project.</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="license-title">
+      <h2 id="license-title">Weights and license</h2>
+      <ul>
+        <li>The pi-H3 weights are published by Hansheng Chen and colleagues on <a href="https://huggingface.co/Lakonik/pi-H3">Hugging Face</a>. They are explained in <a href="https://hanshengchen.com/blog/pi-h3/">the publishers' blog</a> and in the paper “<a href="https://arxiv.org/abs/2611.22287">Decoding Without a Decoder</a>”.</li>
+        <li>The publishers state that pi-H3 is a Model Derivative of MiniMax H3 and that the MiniMax H3 Community License applies. It is not an official MiniMax model (Powered by MiniMax H3).</li>
+        <li>H3cApp does not include the weights. Before downloading, read the publishers' license and notices. Which terms apply to your use is for you to judge.</li>
+        <li>H3cApp's support for pi-H3 was written independently, from reading the published weights, description and code. The publishers' code was not run.</li>
+      </ul>
+      <p>See <a href="faq.html#license">License</a> for more. Add-on models in general are covered in <a href="guide.html#lora">Using add-on models (LoRA)</a>.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">Report a problem (Issues)</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.md">README</a></li>
+        <li><a href="faq.html#license">License</a></li>
+        <li><a href="../pi-h3.html?lang=ja" hreflang="ja" lang="ja">日本語</a></li>
+      </ul>
+      <p>H3cApp by Junzo Kamahara, Faculty of Data Science, Osaka Seikei University</p>
+      <p class="small muted">H3cApp is a macOS app based on <a href="https://github.com/antirez/h3.c">h3.c</a> by Salvatore Sanfilippo (antirez) (MIT License). Videos are generated with <a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>, a video generation model by MiniMax, which comes under its own license, the MiniMax H3 Community License.</p>
+    </div>
+  </footer>
+  <script src="../assets/js/compare.js" defer></script>
+  <script src="../assets/js/main.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="ja" data-alt-href="en/pi-h3.html">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="assets/js/lang.js"></script>
+  <title>pi-H3（2・4ステップで生成する追加モデル） — H3cApp</title>
+  <meta name="description" content="H3cAppでpi-H3を使う方法。MiniMax H3を2ステップまたは4ステップで生成する追加モデルで、画素ヘッドつきと画素ヘッドなしの2種類があります。用意するファイル、登録の手順、オンの間に変わる設定、時間とメモリ、選び方、困ったとき。">
+  <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/pi-h3.html">
+  <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/pi-h3.html">
+  <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/pi-h3.html">
+  <link rel="alternate" hreflang="x-default" href="https://junzokamahara.github.io/H3cApp/pi-h3.html">
+  <meta property="og:type" content="article">
+  <meta property="og:locale" content="ja_JP">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:site_name" content="H3cApp">
+  <meta property="og:title" content="pi-H3（2・4ステップで生成する追加モデル） — H3cApp">
+  <meta property="og:description" content="MiniMax H3を2ステップまたは4ステップで生成する追加モデルの使い方。">
+  <meta property="og:url" content="https://junzokamahara.github.io/H3cApp/pi-h3.html">
+  <meta property="og:image" content="https://junzokamahara.github.io/H3cApp/assets/images/og-image.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/images/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/images/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へ移動</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./"><img src="assets/images/favicon-64.png" alt="" width="32" height="32">H3cApp</a>
+      <nav class="site-nav" aria-label="サイト内">
+        <ul>
+          <li><a href="./#examples">生成例</a></li>
+          <li><a href="./#requirements">動作条件</a></li>
+          <li><a href="getting-started.html">はじめ方</a></li>
+          <li><a href="guide.html" aria-current="page">使い方</a></li>
+          <li><a href="image.html">静止画</a></li>
+          <li><a href="gguf.html">GGUF</a></li>
+          <li><a href="faq.html">困ったとき</a></li>
+          <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+          <li class="lang-switch"><a href="en/pi-h3.html?lang=en" hreflang="en" lang="en">English</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="page-head">
+      <h1>pi-H3（2・4ステップで生成する追加モデル）</h1>
+      <p class="lead">pi-H3は、MiniMax H3を<strong>2ステップまたは4ステップ</strong>で生成できるようにする追加モデルです。LoRAと同じ手順で登録して、オンにするだけで使えます。H3cAppはv0.12.0から対応しています。通常の20ステップに比べて、生成時間は4ステップで約5分の1、2ステップで約10分の1になります。</p>
+      <nav class="toc" aria-label="このページの目次">
+        <p>このページの内容</p>
+        <ol>
+          <li><a href="#what">pi-H3とは</a></li>
+          <li><a href="#compare">仕上がりを見比べる</a></li>
+          <li><a href="#numbers">時間とメモリ</a></li>
+          <li><a href="#need">用意するもの</a></li>
+          <li><a href="#use">使い方</a></li>
+          <li><a href="#rules">オンの間に変わること</a></li>
+          <li><a href="#choose">どれを選ぶか</a></li>
+          <li><a href="#with">ほかの機能との組み合わせ</a></li>
+          <li><a href="#trouble">困ったとき</a></li>
+          <li><a href="#api">APIから使う</a></li>
+          <li><a href="#checked">確かめた範囲</a></li>
+          <li><a href="#license">重みとライセンス</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section class="section section-narrow" id="what" aria-labelledby="what-title">
+      <h2 id="what-title">pi-H3とは</h2>
+      <p><a href="https://huggingface.co/Lakonik/pi-H3">pi-H3</a>は、Hansheng Chen氏らが公開しているMiniMax H3用の追加モデル（アダプタ）です。少ないステップで生成できるように蒸留したもので、2ステップ用と4ステップ用があります。</p>
+      <p>MiniMax H3は、ふつう次の順で動画をつくります。</p>
+      <ol>
+        <li>文章を読み取る（テキストエンコーダ）。</li>
+        <li>ノイズから映像と音声のもとを少しずつ仕上げる（DiT）。既定では20回くり返します。</li>
+        <li>できた「もと」を、映像のフレームと音声に変換する（VAE）。</li>
+      </ol>
+      <p>pi-H3は、このうち2と3を短くします。</p>
+      <ul>
+        <li><strong>2のくり返しを2回か4回にします。</strong>生成時間の大部分はここなので、効果が大きくなります。</li>
+        <li><strong>3の映像の変換を、追加モデルの「画素ヘッド」に置き換えます</strong>（画素ヘッドつきの版）。映像VAEの36層のかわりに8層で映像を出すので、変換が速くなります。音声の変換は変わりません。</li>
+      </ul>
+      <p>画素ヘッドを使わず、3は映像VAEのままにする版もあります。どちらも同じ手順で使えます。</p>
+    </section>
+
+    <section class="section compare-section" id="compare" aria-labelledby="compare-title">
+      <h2 id="compare-title">仕上がりを見比べる</h2>
+      <p><strong>このページの映像と音声は、すべてAIで生成したものです</strong>（H3cAppで、MiniMax H3とpi-H3を使用）。3つのプロンプトを、6つの方法でそれぞれ1回ずつ生成しました。左右に並べる方法を選べます。</p>
+      <noscript><p>この比較にはJavaScriptが必要です。</p></noscript>
+      <div id="compare-panel" data-base="assets/pi-h3/" hidden>
+        <div class="compare-choices">
+          <label>映像
+            <select id="compare-clip">
+              <option value="cat" data-note="猫と毛糸玉：見るところは毛並み、毛糸、床の映り込みです。pi-H3の4本は、どれも猫と毛糸玉の形が保たれています。同じステップ数どうしなら、画素ヘッドと映像VAEでほぼ同じ場面になります。2ステップと4ステップでは別の場面になります。">猫と毛糸玉</option>
+              <option value="guitar" data-note="ギターを弾く人：見るところは建物の窓、手、ギターの弦です。pi-H3の4本は、どれも人物とギターの形が保たれています。">ギターを弾く人</option>
+              <option value="talk" data-note="話す人：見るところは顔、髪、襟元です。pi-H3の4本は、どれも顔が崩れていません。口の動きは「動画」に切り替えると見られます。">話す人</option>
+            </select>
+          </label>
+          <label>左の方法
+            <select id="compare-left">
+              <option value="r20">通常 20ステップ</option>
+              <option value="t4">Turbo LoRA 4ステップ</option>
+              <option value="p4" selected>pi-H3 4ステップ（画素ヘッド）</option>
+              <option value="p2">pi-H3 2ステップ（画素ヘッド）</option>
+              <option value="v4">pi-H3 4ステップ（映像VAE）</option>
+              <option value="v2">pi-H3 2ステップ（映像VAE）</option>
+            </select>
+          </label>
+          <label>右の方法
+            <select id="compare-right">
+              <option value="r20">通常 20ステップ</option>
+              <option value="t4">Turbo LoRA 4ステップ</option>
+              <option value="p4">pi-H3 4ステップ（画素ヘッド）</option>
+              <option value="p2" selected>pi-H3 2ステップ（画素ヘッド）</option>
+              <option value="v4">pi-H3 4ステップ（映像VAE）</option>
+              <option value="v2">pi-H3 2ステップ（映像VAE）</option>
+            </select>
+          </label>
+        </div>
+        <div class="compare-buttons">
+          <button type="button" data-mode="still" aria-pressed="true">静止画</button>
+          <button type="button" data-mode="video" aria-pressed="false">動画</button>
+          <span class="compare-video-controls" id="compare-video-controls" hidden>
+            <button type="button" id="compare-play">一時停止</button>
+            <button type="button" data-speed="1" aria-pressed="true">等速</button>
+            <button type="button" data-speed="0.25" aria-pressed="false">4分の1の速さ</button>
+          </span>
+        </div>
+        <div class="compare-panes">
+          <figure data-pane="left"><img src="assets/pi-h3/cat/p4.jpg" width="672" height="384" alt=""><video width="672" height="384" muted playsinline preload="auto" hidden></video><figcaption></figcaption></figure>
+          <figure data-pane="right"><img src="assets/pi-h3/cat/p2.jpg" width="672" height="384" alt=""><video width="672" height="384" muted playsinline preload="auto" hidden></video><figcaption></figcaption></figure>
+        </div>
+        <p class="compare-note" id="compare-note" aria-live="polite"></p>
+      </div>
+      <p>方法が違うと、同じシードでも別の場面になることがあります。ここで見るのは「同じ場面の細部」ではなく、それぞれの方法がどのくらい整った映像を出すかです。</p>
+      <details>
+        <summary>使ったプロンプト</summary>
+        <ul>
+          <li><strong>猫と毛糸玉</strong>：<span lang="en">A small orange cat plays with a ball of yarn on a wooden floor in soft afternoon light. Static camera, gentle movement. Soft room ambience, no speech.</span></li>
+          <li><strong>ギターを弾く人</strong>：<span lang="en">A street musician plays an acoustic guitar in a quiet stone plaza at dusk, warm lights in the windows behind him. Slow push-in camera. Gentle guitar melody, distant footsteps, no speech.</span></li>
+          <li><strong>話す人</strong>：<span lang="en">A young woman with short black hair, wearing a navy blazer, stands in a bright university hallway and speaks directly to the camera with a friendly smile, saying: "Welcome to our campus. Let me show you around." Medium close-up, static camera. Clear voice, quiet indoor ambience, no music.</span></li>
+        </ul>
+      </details>
+      <p class="small muted">どのクリップも、H3cAppで文章だけからAIで生成した動画です（672×384・5秒、シード42、M5・24GB）。pi-H3の4本は2026年11月22日に、通常の20ステップとTurbo LoRAは同じプロンプトとシードで2026年11月9日に生成したものです。ページ用に圧縮し直しているので、細かい質感は元の動画より落ちています。</p>
+    </section>
+
+    <section class="section" id="sound" aria-labelledby="sound-title">
+      <h2 id="sound-title">音声付きで見る</h2>
+      <p>pi-H3でも、映像と音声を一緒につくります。下はpi-H3の4ステップ（画素ヘッド）でAIが生成した動画そのものです（音声付き、再生ボタンを押すと音も流れます）。</p>
+      <div class="examples examples-wide">
+        <figure class="example">
+          <div class="media">
+            <video controls playsinline preload="none" width="672" height="384" poster="assets/pi-h3/cat/p4.jpg" aria-label="pi-H3 4ステップ（画素ヘッド）：木の床で毛糸玉と遊ぶ猫">
+              <source src="assets/pi-h3/cat/p4-sound.mp4" type="video/mp4">
+              <a href="assets/pi-h3/cat/p4-sound.mp4">動画ファイルを開く</a>
+            </video>
+          </div>
+          <figcaption>
+            <p class="spec">pi-H3 4ステップ（画素ヘッド）・横長・中（672×384）・5秒・音声あり</p>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="numbers" aria-labelledby="numbers-title">
+      <h2 id="numbers-title">時間とメモリ</h2>
+      <div class="table-wrap">
+        <table>
+          <caption>生成時間。3つのプロンプトの平均（672×384・5秒、M5・24GB、int8キャッシュ、アプリでの実測）。通常の20ステップとTurbo LoRAは2026年11月9日の計測です。</caption>
+          <thead><tr><th scope="col">方法</th><th scope="col">生成時間</th><th scope="col">うち映像への変換</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">通常 20ステップ</th><td>10分45秒</td><td>—</td></tr>
+            <tr><th scope="row">Turbo LoRA 4ステップ</th><td>3分02秒</td><td>—</td></tr>
+            <tr><th scope="row">pi-H3 4ステップ（画素ヘッド）</th><td>2分18秒</td><td>4秒</td></tr>
+            <tr><th scope="row">pi-H3 2ステップ（画素ヘッド）</th><td>1分08秒</td><td>4秒</td></tr>
+            <tr><th scope="row">pi-H3 4ステップ（映像VAE）</th><td>3分05秒</td><td>59秒</td></tr>
+            <tr><th scope="row">pi-H3 2ステップ（映像VAE）</th><td>2分04秒</td><td>59秒</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul>
+        <li><strong>時間</strong>：画素ヘッドつきの4ステップは、同じ4ステップのTurbo LoRAより44秒短くなりました。差は映像への変換で、映像VAEの約59秒が画素ヘッドでは約4秒になります。画素ヘッドなしの4ステップは、Turbo LoRAとほぼ同じ時間です。512×512・3秒では、通常の20ステップが206秒、画素ヘッドつきの4ステップが68秒、2ステップが37秒でした。アプリを起動して最初の生成は、15秒ほど長くなります。</li>
+        <li><strong>映像への変換</strong>：画素ヘッドは、512×512・3秒（73フレーム）を約3秒で映像にしました。映像VAEは同じ条件で約38秒です。960×544・5秒（124フレーム）では画素ヘッドが7.7秒でした。</li>
+        <li><strong>メモリ</strong>：832×480・5秒・4ステップでは、画素ヘッドつきの版が、ノイズ除去の段階で4.7GiB、画素ヘッドの段階で2.2GiBでした。画素ヘッドなしの版は、ノイズ除去の段階で3.7GiB、映像VAEの段階で4.3GiBです。どちらも、文章を読み取る段階（約4.9GiB）が全体の最大でした（エンジン単体での計測）。</li>
+        <li><strong>大きいサイズ</strong>：1344×768・5秒・4ステップ（画素ヘッドつき）は約18分で、最大はノイズ除去の段階の7.3GiBでした。</li>
+      </ul>
+      <p class="small muted">プロンプトごとの差があります。数値は目安です。画質の数値（MUSIQなど）は測っていません。</p>
+    </section>
+
+    <section class="section section-narrow" id="need" aria-labelledby="need-title">
+      <h2 id="need-title">用意するもの</h2>
+      <h3>1. H3cApp v0.12.0以降</h3>
+      <p>v0.11.0以前は、pi-H3に対応していません。</p>
+
+      <h3>2. AdaLNが「曲線形」のMiniMax H3モデル</h3>
+      <p>pi-H3は、AdaLNが「曲線形」（ComfyUIのpruned形式）のMiniMax H3モデルに重ねて使います。動作を確かめたのは、unslothの <code>minimax_h3_fl2va_pruned-Q4_K.gguf</code> を取り込んだモデルです（<a href="gguf.html">GGUFのモデルを使う</a>）。</p>
+      <p class="small muted">AdaLNが「密な形」のモデル（公式の重みなど）では確かめていません。合わないモデルでは、生成の開始時にエラーが表示されます（<a href="#trouble">困ったとき</a>）。</p>
+
+      <h3>3. pi-H3のファイル</h3>
+      <p>H3cAppはpi-H3をダウンロードしません。<a href="https://huggingface.co/Lakonik/pi-H3/tree/main">Hugging FaceのLakonik/pi-H3</a>から、使うものを自分でダウンロードします。全部で4つあり、1つだけでも使えます。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">種類</th><th scope="col">ステップ数</th><th scope="col">ダウンロードするファイル</th><th scope="col">大きさ</th></tr></thead>
+          <tbody>
+            <tr><th scope="row" rowspan="2">画素ヘッドつき</th><td class="num">4</td><td><code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code></td><td class="num">2.2GB</td></tr>
+            <tr><td class="num">2</td><td><code>pi_h3_2step_dwd_adapter_int8_convrot.safetensors</code></td><td class="num">2.2GB</td></tr>
+            <tr><th scope="row" rowspan="2">画素ヘッドなし</th><td class="num">4</td><td><code>pi_h3_4step_adapter</code> フォルダの <code>diffusion_pytorch_model.safetensors</code></td><td class="num">0.5GB</td></tr>
+            <tr><td class="num">2</td><td><code>pi_h3_2step_adapter</code> フォルダの <code>diffusion_pytorch_model.safetensors</code></td><td class="num">0.5GB</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul>
+        <li><strong>画素ヘッドつきは、名前の最後が <code>_int8_convrot.safetensors</code> のファイルを使います。</strong><code>pi_h3_4step_dwd_adapter</code> フォルダと <code>pi_h3_2step_dwd_adapter</code> フォルダの中のファイル（各3.8GB）は、H3cAppでは読み込めません。選ぶと、単一ファイルの版を使うように案内が出ます。</li>
+        <li><strong>画素ヘッドなしは、フォルダごとダウンロードするか、フォルダの名前が分かるように保存します。</strong>ファイルの名前が2つとも <code>diffusion_pytorch_model.safetensors</code> なので、H3cAppはフォルダの名前（<code>pi_h3_4step_adapter</code>）で見分けて、ステップ数もそこから読み取ります。</li>
+        <li>配布元は、画素ヘッドつきの版をすすめています。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="use" aria-labelledby="use-title">
+      <h2 id="use-title">使い方</h2>
+      <div class="note"><p><strong>v0.12.0から使えます。</strong></p></div>
+      <figure class="shot">
+        <img src="assets/images/app-pi-h3-lora.jpg" width="1100" height="906" loading="lazy" alt="「モデル管理」の「LoRA」タブ。pi-H3の追加モデルが並び、4ステップ用の画素ヘッドつきの版にチェックが入っている。行には「native・46/50ブロック・rank 64・pi-H3（画素ヘッドで映像化）」と表示され、「ステップ」欄に4が入っている。">
+        <figcaption>「モデル管理」の「LoRA」タブに、pi-H3を登録した例（v0.12.0の実画面）。画素ヘッドつきの版は「pi-H3（画素ヘッドで映像化）」、画素ヘッドなしの版は「pi-H3（映像VAEで復号）」と表示されます。「ステップ」欄は、ファイル名から読み取ったステップ数です。</figcaption>
+      </figure>
+      <ol class="steps">
+        <li>
+          <strong>ツールバーの「<span class="ui">モデル管理</span>」を開き、「<span class="ui">LoRA</span>」タブを選びます。</strong>
+        </li>
+        <li>
+          <strong>「<span class="ui">追加…</span>」で、ダウンロードしたファイルを選びます。</strong>画素ヘッドなしの版は、フォルダの中の <code>diffusion_pytorch_model.safetensors</code> を選びます。「ダウンロード」や「書類」のフォルダにあるファイルを選ぶと、LoRAフォルダへ移すかどうかを聞かれます。移した場合、画素ヘッドなしの版は <code>pi_h3_4step_adapter.safetensors</code> のように、元のフォルダの名前になります。
+        </li>
+        <li>
+          <strong>行の表示を確かめます。</strong>「pi-H3（画素ヘッドで映像化）」または「pi-H3（映像VAEで復号）」と出ていれば、pi-H3として読み込めています。「<span class="ui">ステップ</span>」欄に4か2が入っていることも確かめます。入っていなければ、そのファイル用の数（4か2）を入力します。
+        </li>
+        <li>
+          <strong>使う1つをオンにします。</strong>行のチェックボックスか、「<span class="ui">詳細設定</span>」の「<span class="ui">追加モデル（LoRA）</span>」でオンにします。「<span class="ui">生成ステップ数</span>」が、そのファイル用の数（4か2）に切り替わります。「<span class="ui">強さ</span>」は空欄（1）のままにします。
+        </li>
+        <li>
+          <strong>いつもどおり生成します。</strong>プロンプト、サイズ、長さの決め方は変わりません。進み具合は「ノイズ除去 2/4 ステップ」「映像への変換」のように表示されます。
+        </li>
+        <li>
+          <strong>通常の生成に戻すときは、オフにします。</strong>ステップ数は元の値に戻り、速度などの設定も元どおり使われます。
+        </li>
+      </ol>
+    </section>
+
+    <section class="section section-narrow" id="rules" aria-labelledby="rules-title">
+      <h2 id="rules-title">オンの間に変わること</h2>
+      <figure class="shot">
+        <img src="assets/images/app-pi-h3-advanced.jpg" width="1100" height="1302" loading="lazy" alt="pi-H3をオンにしたときの「詳細設定」。生成ステップ数は4で、その下に「pi-H3の追加モデルは、2または4ステップで生成します。」とある。「速度」の選択は押せなくなっていて、「pi-H3の追加モデルがオンの間は、毎ステップを省略なしで計算します」と書かれている。「ノイズ除去の再利用」も押せなくなっている。">
+        <figcaption>pi-H3をオンにしたときの「詳細設定」（v0.12.0の実画面）。「速度」と「ノイズ除去の再利用」は選べなくなり、理由が表示されます。</figcaption>
+      </figure>
+      <ul>
+        <li><strong>ステップ数は、そのファイル用の数だけです。</strong>4ステップ用なら4、2ステップ用なら2です。ほかの数にすると、生成ボタンの上に「追加モデル「…」（pi-H3）は4ステップ用です。詳細設定の「生成ステップ数」を4にしてください」と表示され、生成は始まりません。</li>
+        <li><strong>「速度」は使われません。</strong>「高速」「最速」を選んでいても、毎ステップを省略なしで計算します。pi-H3はステップが少ないので、ステップ間の使い回しができません。「最速」が使うトークンの省略は、画素ヘッドの絵を崩すことも確かめています。</li>
+        <li><strong>「ノイズ除去の再利用」は1になります。</strong></li>
+        <li><strong>設定値は消えません。</strong>「速度」と「ノイズ除去の再利用」で選んでいた値は残り、pi-H3をオフにすると元どおり使われます。</li>
+        <li><strong>動画の記録には、実際に動いた値が残ります。</strong>「使用した設定…」と動画の記録（<code>.json</code>）には、「標準」「reuse 1」と入ります。</li>
+        <li><strong>所要時間の見積もり</strong>は、画素ヘッドを使う生成の実績から別に計算します。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="choose" aria-labelledby="choose-title">
+      <h2 id="choose-title">どれを選ぶか</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">やりたいこと</th><th scope="col">選ぶもの</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">まず試したい</th><td>画素ヘッドつきの4ステップ</td></tr>
+            <tr><th scope="row">いちばん短い時間でつくりたい</th><td>画素ヘッドつきの2ステップ。4ステップより細部が甘くなります。</td></tr>
+            <tr><th scope="row">ダウンロードを小さくしたい</th><td>画素ヘッドなし（0.5GB）。映像の変換は映像VAEのままなので、そのぶん時間がかかります。</td></tr>
+            <tr><th scope="row">通常の生成と同じ映像VAEで仕上げたい</th><td>画素ヘッドなしの4ステップ</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul>
+        <li><strong>場面を決めるのは、主にステップ数です。</strong>同じプロンプトとシードなら、同じステップ数の画素ヘッドつきと画素ヘッドなしは、ほぼ同じ場面になりました。2ステップ用と4ステップ用では、別の場面になります。</li>
+        <li><strong>画素ヘッドつきの版の細部</strong>は、映像VAEで仕上げた場合より、等倍で見るとわずかに柔らかくなります。</li>
+        <li><strong>1つだけオンにします。</strong>2つのpi-H3を同時にオンにすると、生成の開始時にエラーになります。Turbo LoRAなど、ほかの少ないステップ用のLoRAとの重ね合わせは確かめていません。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="with" aria-labelledby="with-title">
+      <h2 id="with-title">ほかの機能との組み合わせ</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">機能</th><th scope="col">pi-H3と一緒に</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">文章から</th><td>使えます。</td></tr>
+            <tr><th scope="row">最初・最後の画像</th><td>使えます。できた動画の最初と最後が、選んだ画像になります。</td></tr>
+            <tr><th scope="row">参照画像・動画・音声</th><td>参照画像1枚で動かして、絵は崩れませんでした。配布元が対応としているのは、文章・最初の画像・最後の画像です。</td></tr>
+            <tr><th scope="row">この動画の続きを作る</th><td>使えます。引き継ぐ部分（最後の22コマ）も画素ヘッドが描き直すので、元の動画とまったく同じ絵にはなりません。</td></tr>
+            <tr><th scope="row">途中の様子を表示</th><td>使えます。</td></tr>
+            <tr><th scope="row">計算方式</th><td>「高速（int8キャッシュ）」「省メモリ（SSDストリーミング）」「常駐」のどれでも動きました。512×512・3秒・4ステップ（画素ヘッドつき）で、順に68秒、107秒、290秒です。常駐は、メモリを最大21.4GiB使いました（24GBのM5）。</td></tr>
+            <tr><th scope="row">速度（高速・最速）、ノイズ除去の再利用</th><td>使われません（<a href="#rules">オンの間に変わること</a>）。</td></tr>
+            <tr><th scope="row">高速モード（試験的）、層数の変更</th><td>エンジン単体で1回ずつ動かして、絵は崩れませんでした。アプリでは確かめていません。</td></tr>
+            <tr><th scope="row">2倍に拡大</th><td>確かめていません。</td></tr>
+            <tr><th scope="row">HyperFlow H3 Flash、静止画</th><td>使えません。pi-H3は通常のMiniMax H3の動画用です。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section section-narrow" id="trouble" aria-labelledby="trouble-title">
+      <h2 id="trouble-title">困ったとき</h2>
+      <dl>
+        <dt>「追加モデル「…」（pi-H3）は4ステップ用です」と出て生成できない</dt>
+        <dd>「詳細設定」の「生成ステップ数」を、表示された数にします。2ステップ用のファイルなのに4ステップ用と出る場合は、「モデル管理」のその行の「ステップ」欄を2に直します。</dd>
+        <dt>「追加モデル「…」（pi-H3）は2または4ステップで生成します」と出る</dt>
+        <dd>ファイル名からステップ数が読み取れなかったときの表示です。「生成ステップ数」を2か4にします。「モデル管理」の「ステップ」欄にそのファイル用の数を入れておくと、次からは自動で切り替わります。</dd>
+        <dt>生成の開始直後に「a pi-H3 adapter needs a curve-form ("pruned", rank 8) MiniMax H3 checkpoint」と出る</dt>
+        <dd>使用中のMiniMax H3モデルのAdaLNが「曲線形」ではありません。prunedのGGUFから取り込んだモデルに切り替えます（<a href="#need">用意するもの</a>）。</dd>
+        <dt>「…is a pi-H3 adapter with the pixel head in the diffusers layout; use its single-file ComfyUI version」と出て登録できない</dt>
+        <dd><code>pi_h3_4step_dwd_adapter</code> フォルダの中のファイルを選んでいます。<code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code> を使います。</dd>
+        <dt>「only one pi-H3 adapter can be applied at a time」と出る</dt>
+        <dd>pi-H3を2つオンにしています。1つだけにします。</dd>
+        <dt>一覧に「diffusion_pytorch_model.safetensors」や「LoRA」という名前で出て、ステップ数が入らない</dt>
+        <dd>画素ヘッドなしの版が、フォルダの名前から中身が分からない場所に置かれています。「ステップ」欄に4か2を入力するか、ファイルを <code>pi_h3_4step_adapter</code> という名前のフォルダに入れて登録し直します。</dd>
+        <dt>画素ヘッドつきの2ステップで、絵が甘い</dt>
+        <dd>4ステップ用に切り替えるか、画素ヘッドなしの版を試します。</dd>
+      </dl>
+    </section>
+
+    <section class="section section-narrow" id="api" aria-labelledby="api-title">
+      <h2 id="api-title">APIから使う</h2>
+      <p>アプリのAPI（<code>POST /api/generate</code>）では、<code>loras</code> に一覧の名前を、<code>steps</code> にそのファイル用のステップ数を入れます。名前は <code>GET /api/loras</code> で分かります。</p>
+      <pre><code>{
+  "prompt": "A cat playing with a ball of yarn.",
+  "size_profile": "square-medium",
+  "seconds": 3,
+  "loras": ["pi_h3_4step_dwd_adapter_int8_convrot.safetensors"],
+  "steps": 4
+}</code></pre>
+      <ul>
+        <li><code>steps</code> を省くと、そのファイル用のステップ数になります。</li>
+        <li>そのファイル用でないステップ数には、生成を始める前に理由付きの <code>409</code> を返します。</li>
+        <li><code>speed_mode</code> と <code>reuse</code> は使われません。動画の記録には <code>quality</code> とreuse 1が残ります。</li>
+      </ul>
+      <p class="small">APIの全体は<a href="https://github.com/JunzoKamahara/H3cApp/blob/main/docs/API.ja.md">APIの説明</a>にあります。</p>
+    </section>
+
+    <section class="section section-narrow" id="checked" aria-labelledby="checked-title">
+      <h2 id="checked-title">確かめた範囲</h2>
+      <ul>
+        <li><strong>確かめたMac</strong>：M5・24GBの1台です。M1〜M4では動かしていません。M5以外では、画素ヘッドの計算がint8ではなくF32になります（M5でその経路に切り替えて動かしました。int8の結果との差は46dBです）。</li>
+        <li><strong>確かめたこと</strong>：4つのファイルそれぞれでの生成、最初の画像、最初と最後の画像、参照画像、続き、途中の様子の表示、3つの計算方式、960×544・5秒と1344×768・5秒、ステップ数が合わないときに生成の前に断ること。できた動画は、コマを並べて目で確かめました。</li>
+        <li><strong>画素ヘッドの計算</strong>：配布元の説明をもとに別に書いた実装（numpy）と比べて、F32では255段階のうち最大1の差、M5が使うint8では46dBでした。</li>
+        <li><strong>確かめていないこと</strong>：AdaLNが「密な形」のモデル、メモリ16GB以下のMac、2倍の拡大、音声の聞き比べ、画質の数値での比較。</li>
+        <li><strong>記録</strong>：オンにした追加モデルの名前は、動画の記録とプロジェクトに残ります。</li>
+      </ul>
+    </section>
+
+    <section class="section section-narrow" id="license" aria-labelledby="license-title">
+      <h2 id="license-title">重みとライセンス</h2>
+      <ul>
+        <li>pi-H3の重みは、Hansheng Chen氏らが<a href="https://huggingface.co/Lakonik/pi-H3">Hugging Face</a>で公開しています。解説は<a href="https://hanshengchen.com/blog/pi-h3/">配布元のブログ</a>と論文「<a href="https://arxiv.org/abs/2611.22287">Decoding Without a Decoder</a>」にあります。</li>
+        <li>配布元は、pi-H3をMiniMax H3の派生モデル（Model Derivative）とし、MiniMax H3 Community Licenseが適用されるとしています。MiniMaxの公式のモデルではありません（Powered by MiniMax H3）。</li>
+        <li>H3cAppには重みを含めていません。ダウンロードの前に、配布元のライセンスと注意書きを確認してください。どの条件が自分の利用に当てはまるかは、利用者が判断してください。</li>
+        <li>H3cAppのpi-H3対応は、公開されている重み・説明・コードを読んで、独自に書いたものです。配布元のコードは実行していません。</li>
+      </ul>
+      <p>詳しくは<a href="faq.html#license">ライセンス</a>をご覧ください。追加モデル全般の使い方は<a href="guide.html#lora">追加モデル（LoRA）を使う</a>にあります。</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <ul class="footer-links">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp">GitHub</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/issues">不具合の報告（Issues）</a></li>
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/blob/main/README.ja.md">README</a></li>
+        <li><a href="faq.html#license">ライセンス</a></li>
+        <li><a href="en/pi-h3.html?lang=en" hreflang="en" lang="en">English</a></li>
+      </ul>
+      <p>H3cApp：大阪成蹊大学データサイエンス学部 鎌原淳三／Junzo Kamahara</p>
+      <p class="small muted">H3cAppは、Salvatore Sanfilippo氏（antirez）による<a href="https://github.com/antirez/h3.c">h3.c</a>をもとにしたmacOSアプリです（MIT License）。動画の生成にはMiniMaxの動画生成モデル<a href="https://huggingface.co/MiniMaxAI/MiniMax-H3">MiniMax H3</a>を使っています。モデルにはMiniMax H3独自のライセンス（MiniMax H3 Community License）が適用されます。</p>
+    </div>
+  </footer>
+  <script src="assets/js/compare.js" defer></script>
+  <script src="assets/js/main.js" defer></script>
+</body>
+</html>

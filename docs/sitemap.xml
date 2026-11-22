@@ -2,19 +2,19 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/</loc>
-    <lastmod>2026-11-21</lastmod>
+    <lastmod>2026-11-22</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/"/>
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/getting-started.html</loc>
-    <lastmod>2026-11-21</lastmod>
+    <lastmod>2026-11-22</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/getting-started.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/getting-started.html"/>
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/guide.html</loc>
-    <lastmod>2026-11-16</lastmod>
+    <lastmod>2026-11-22</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/guide.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/guide.html"/>
   </url>
@@ -26,19 +26,19 @@
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/en/</loc>
-    <lastmod>2026-11-21</lastmod>
+    <lastmod>2026-11-22</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/"/>
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/en/getting-started.html</loc>
-    <lastmod>2026-11-21</lastmod>
+    <lastmod>2026-11-22</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/getting-started.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/getting-started.html"/>
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/en/guide.html</loc>
-    <lastmod>2026-11-16</lastmod>
+    <lastmod>2026-11-22</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/guide.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/guide.html"/>
   </url>
@@ -50,13 +50,13 @@
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/settings.html</loc>
-    <lastmod>2026-10-21</lastmod>
+    <lastmod>2026-11-22</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/settings.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/settings.html"/>
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/en/settings.html</loc>
-    <lastmod>2026-10-21</lastmod>
+    <lastmod>2026-11-22</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/settings.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/settings.html"/>
   </url>
@@ -122,19 +122,31 @@
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/updates.html</loc>
-    <lastmod>2026-11-21</lastmod>
+    <lastmod>2026-11-22</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/updates.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/updates.html"/>
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/en/updates.html</loc>
-    <lastmod>2026-11-21</lastmod>
+    <lastmod>2026-11-22</lastmod>
     <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/updates.html"/>
     <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/updates.html"/>
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/joined-example.html</loc>
     <lastmod>2026-10-17</lastmod>
+  </url>
+  <url>
+    <loc>https://junzokamahara.github.io/H3cApp/pi-h3.html</loc>
+    <lastmod>2026-11-22</lastmod>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/pi-h3.html"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/pi-h3.html"/>
+  </url>
+  <url>
+    <loc>https://junzokamahara.github.io/H3cApp/en/pi-h3.html</loc>
+    <lastmod>2026-11-22</lastmod>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/pi-h3.html"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/pi-h3.html"/>
   </url>
   <url>
     <loc>https://junzokamahara.github.io/H3cApp/hyperflow.html</loc>
