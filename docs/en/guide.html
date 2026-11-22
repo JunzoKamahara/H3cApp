@@ -331,6 +331,31 @@
         <li>Turn on only one Turbo LoRA. Stacking several makes the effect too strong.</li>
       </ul>
 
+      <h3 id="lora-pi-h3">pi-H3 (2 or 4 steps)</h3>
+      <p><a href="https://huggingface.co/Lakonik/pi-H3">pi-H3</a> is an add-on model that lets MiniMax H3 generate in 2 or 4 steps. You register and use it the same way as a LoRA. It comes in two kinds.</p>
+      <ul>
+        <li><strong>With the pixel head</strong>: <code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code> and <code>pi_h3_2step_dwd_adapter_int8_convrot.safetensors</code> (2.2 GB each). The “pixel head” inside the add-on model produces the frames in place of the video VAE, so turning the result into video is faster.</li>
+        <li><strong>Without the pixel head</strong>: <code>diffusion_pytorch_model.safetensors</code> in the <code>pi_h3_4step_adapter</code> and <code>pi_h3_2step_adapter</code> folders (0.5 GB each). The video VAE decodes the video. The Model Manager lists the file under its folder's name.</li>
+      </ul>
+      <div class="table-wrap">
+        <table>
+          <caption>Time to generate 512×512 for 3 seconds (M5 with 24 GB, int8 cache, one run each in the app)</caption>
+          <thead><tr><th scope="col">Add-on model</th><th scope="col">4 steps</th><th scope="col">2 steps</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">With the pixel head</th><td class="num">84 s</td><td class="num">41 s</td></tr>
+            <tr><th scope="row">Without the pixel head</th><td class="num">109 s</td><td class="num">77 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul>
+        <li>Turning it on sets the steps to the number the add-on model is for (4 or 2). With any other step count, the app shows the reason before starting and does not generate.</li>
+        <li>While it is on, “<span class="ui">Speed</span>” and “<span class="ui">Denoiser reuse</span>” are not used: every step is computed in full. Their settings are kept and used again once it is off.</li>
+        <li>It needs a MiniMax H3 model whose AdaLN is in the “curve” (pruned) form. It was checked with a model imported from GGUF (<a href="gguf.html">Using GGUF models</a>). With a model that does not fit, an error is shown when the generation starts.</li>
+        <li>It can be combined with “<span class="ui">First/last image</span>”, “<span class="ui">Reference images, videos and audio</span>” and “<span class="ui">Continue This Video</span>”. It was checked with the int8 cache and with SSD streaming.</li>
+        <li>With the pixel head, 2 steps give softer detail than 4 steps.</li>
+        <li>Turn on only one.</li>
+      </ul>
+
       <h3 id="lora-sampling">Step rule and audio shift</h3>
       <p>Some few-step LoRAs are trained with a particular way of stepping. In the Model Manager, each LoRA has two settings for this. Normally you can leave them on “Auto” and blank.</p>
       <ul>

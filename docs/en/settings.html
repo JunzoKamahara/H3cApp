@@ -84,7 +84,7 @@
           <thead><tr><th scope="col">Item</th><th scope="col">Default</th><th scope="col">Values</th><th scope="col">Main effect</th></tr></thead>
           <tbody>
             <tr><th scope="row"><a href="#size">Size</a></th><td>Preset (square, medium)</td><td>Preset / custom size</td><td>Bigger is slower</td></tr>
-            <tr><th scope="row"><a href="#steps">Steps</a></th><td class="num">20</td><td class="num">3–40</td><td>More is slower; fewer lowers quality</td></tr>
+            <tr><th scope="row"><a href="#steps">Steps</a></th><td class="num">20</td><td class="num">2–40</td><td>More is slower; fewer lowers quality</td></tr>
             <tr><th scope="row"><a href="#compute">Compute mode</a></th><td>Fast (int8 cache) on M5-class Macs, otherwise Low memory (SSD streaming)</td><td>3 modes</td><td>Speed, and the memory and disk needed</td></tr>
             <tr><th scope="row"><a href="#speed">Speed</a></th><td>Standard (best quality)</td><td>Standard (best quality) / Fast / Fastest</td><td>Faster, but the result changes</td></tr>
             <tr><th scope="row"><a href="#speed">Fast mode (experimental)</a></th><td>Off</td><td>On / off (shown only where supported)</td><td>Faster, more so for long videos</td></tr>
@@ -112,11 +112,12 @@
 
     <section class="section section-narrow" id="steps" aria-labelledby="steps-title">
       <h2 id="steps-title">Steps</h2>
-      <p>How many times the video is refined, starting from noise. The default is 20; you can pick 3–40.</p>
+      <p>How many times the video is refined, starting from noise. The default is 20; you can pick 2–40.</p>
       <ul>
         <li>Most of the generation time goes into these steps, so more steps take correspondingly longer.</li>
         <li>Fewer steps are faster but lower the quality of detail and motion.</li>
         <li>Turning on a Turbo LoRA switches to that LoRA's step count (4 or 8) automatically (see <a href="guide.html#lora">Using add-on models</a>).</li>
+        <li>Turning on a pi-H3 add-on model switches to the step count it is for (2 or 4), and no other step count generates. While it is on, “Speed” and “Denoiser reuse” are not used (see <a href="guide.html#lora-pi-h3">pi-H3</a>).</li>
       </ul>
     </section>
 

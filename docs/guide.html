@@ -332,6 +332,31 @@
         <li>Turbo LoRAは1つだけオンにしてください。複数重ねると効果が強くなりすぎます。</li>
       </ul>
 
+      <h3 id="lora-pi-h3">pi-H3（2・4ステップ）</h3>
+      <p><a href="https://huggingface.co/Lakonik/pi-H3">pi-H3</a>は、MiniMax H3を2ステップまたは4ステップで生成できるようにする追加モデルです。LoRAと同じ手順で登録して使います。2種類あります。</p>
+      <ul>
+        <li><strong>画素ヘッドつき</strong>：<code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code> と <code>pi_h3_2step_dwd_adapter_int8_convrot.safetensors</code>（各2.2GB）。映像VAEの代わりに、追加モデルに入っている「画素ヘッド」が映像を出すので、映像への変換が速くなります。</li>
+        <li><strong>画素ヘッドなし</strong>：<code>pi_h3_4step_adapter</code> と <code>pi_h3_2step_adapter</code> の各フォルダにある <code>diffusion_pytorch_model.safetensors</code>（各0.5GB）。映像は映像VAEで復号します。モデル管理の一覧には、フォルダの名前で表示されます。</li>
+      </ul>
+      <div class="table-wrap">
+        <table>
+          <caption>512×512・3秒の生成時間（M5・24GB、int8キャッシュ、アプリで各1回計測）</caption>
+          <thead><tr><th scope="col">追加モデル</th><th scope="col">4ステップ</th><th scope="col">2ステップ</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">画素ヘッドつき</th><td class="num">84秒</td><td class="num">41秒</td></tr>
+            <tr><th scope="row">画素ヘッドなし</th><td class="num">109秒</td><td class="num">77秒</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul>
+        <li>オンにすると、ステップ数がその追加モデル用の数（4か2）に切り替わります。違うステップ数では、生成を始める前に理由が表示され、生成できません。</li>
+        <li>オンの間は、「<span class="ui">速度</span>」と「<span class="ui">ノイズ除去の再利用</span>」は使われません（毎ステップを省略なしで計算します）。設定値は残り、オフにすると元どおり使われます。</li>
+        <li>AdaLNが「曲線形」（pruned）のMiniMax H3モデルが必要です。確認したのは、GGUFから取り込んだモデルです（<a href="gguf.html">GGUFのモデルを使う</a>）。合わないモデルでは、生成の開始時にエラーが表示されます。</li>
+        <li>「<span class="ui">最初・最後の画像</span>」「<span class="ui">参照画像・動画・音声</span>」「<span class="ui">この動画の続きを作る</span>」と組み合わせられます。計算方式は、int8キャッシュとSSDストリーミングで確認しました。</li>
+        <li>画素ヘッドつきの2ステップは、4ステップより細部が甘くなります。</li>
+        <li>1つだけオンにしてください。</li>
+      </ul>
+
       <h3 id="lora-sampling">ステップの進め方と音声シフト</h3>
       <p>少ないステップ向けのLoRAには、学習したときの「ステップの進め方」が決まっているものがあります。モデル管理では、LoRAごとに次の2つを設定できます。ふだんは「自動」と空欄のままで構いません。</p>
       <ul>

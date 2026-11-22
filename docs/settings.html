@@ -85,7 +85,7 @@
           <thead><tr><th scope="col">項目</th><th scope="col">既定</th><th scope="col">選べる値</th><th scope="col">主な影響</th></tr></thead>
           <tbody>
             <tr><th scope="row"><a href="#size">サイズ</a></th><td>プリセット（正方形・中）</td><td>プリセット／カスタムサイズ</td><td>大きいほど遅い</td></tr>
-            <tr><th scope="row"><a href="#steps">生成ステップ数</a></th><td class="num">20</td><td class="num">3〜40</td><td>多いほど遅く、少ないと品質が落ちる</td></tr>
+            <tr><th scope="row"><a href="#steps">生成ステップ数</a></th><td class="num">20</td><td class="num">2〜40</td><td>多いほど遅く、少ないと品質が落ちる</td></tr>
             <tr><th scope="row"><a href="#compute">計算方式</a></th><td>M5クラスでは高速（int8キャッシュ）、それ以外は省メモリ（SSDストリーミング）</td><td>3種類</td><td>速さと必要なメモリ・ディスク</td></tr>
             <tr><th scope="row"><a href="#speed">速度</a></th><td>標準（高品質）</td><td>標準（高品質）／高速／最速</td><td>速くなるが仕上がりが変わる</td></tr>
             <tr><th scope="row"><a href="#speed">高速モード（試験的）</a></th><td>オフ</td><td>オン／オフ（対応環境のみ表示）</td><td>長い動画ほど速くなる</td></tr>
@@ -113,11 +113,12 @@
 
     <section class="section section-narrow" id="steps" aria-labelledby="steps-title">
       <h2 id="steps-title">生成ステップ数</h2>
-      <p>ノイズから映像を少しずつ仕上げていく回数です。既定は20で、3〜40から選べます。</p>
+      <p>ノイズから映像を少しずつ仕上げていく回数です。既定は20で、2〜40から選べます。</p>
       <ul>
         <li>生成時間の大部分はこのステップの計算なので、ステップ数を増やすと、そのぶん時間がかかります。</li>
         <li>減らすと速くなりますが、細部や動きの品質が落ちます。</li>
         <li>Turbo LoRAをオンにすると、そのLoRA用のステップ数（4や8）に自動で切り替わります（<a href="guide.html#lora">LoRAを使う</a>）。</li>
+        <li>pi-H3の追加モデルをオンにすると、その追加モデル用のステップ数（2か4）に切り替わり、ほかのステップ数では生成できません。その間、「速度」と「ノイズ除去の再利用」は使われません（<a href="guide.html#lora-pi-h3">pi-H3</a>）。</li>
       </ul>
     </section>
 
