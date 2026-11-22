@@ -204,15 +204,15 @@
         <table>
           <thead><tr><th scope="col">Kind</th><th scope="col">Steps</th><th scope="col">File to download</th><th scope="col">Size</th></tr></thead>
           <tbody>
-            <tr><th scope="row" rowspan="2">With the pixel head</th><td class="num">4</td><td><code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code></td><td class="num">2.2 GB</td></tr>
-            <tr><td class="num">2</td><td><code>pi_h3_2step_dwd_adapter_int8_convrot.safetensors</code></td><td class="num">2.2 GB</td></tr>
+            <tr><th scope="row" rowspan="2">With the pixel head</th><td class="num">4</td><td><code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code>, or <code>diffusion_pytorch_model.safetensors</code> in the <code>pi_h3_4step_dwd_adapter</code> folder</td><td class="num">2.2 GB, or 3.8 GB</td></tr>
+            <tr><td class="num">2</td><td><code>pi_h3_2step_dwd_adapter_int8_convrot.safetensors</code>, or <code>diffusion_pytorch_model.safetensors</code> in the <code>pi_h3_2step_dwd_adapter</code> folder</td><td class="num">2.2 GB, or 3.8 GB</td></tr>
             <tr><th scope="row" rowspan="2">Without the pixel head</th><td class="num">4</td><td><code>diffusion_pytorch_model.safetensors</code> in the <code>pi_h3_4step_adapter</code> folder</td><td class="num">0.5 GB</td></tr>
             <tr><td class="num">2</td><td><code>diffusion_pytorch_model.safetensors</code> in the <code>pi_h3_2step_adapter</code> folder</td><td class="num">0.5 GB</td></tr>
           </tbody>
         </table>
       </div>
       <ul>
-        <li><strong>With the pixel head, use the file whose name ends in <code>_int8_convrot.safetensors</code>.</strong> H3cApp cannot read the files inside the <code>pi_h3_4step_dwd_adapter</code> and <code>pi_h3_2step_dwd_adapter</code> folders (3.8 GB each). If you choose one, it tells you to use the single-file version.</li>
+        <li><strong>With the pixel head, either of two forms works.</strong> The single file whose name ends in <code>_int8_convrot.safetensors</code> (2.2 GB), or <code>diffusion_pytorch_model.safetensors</code> in the <code>pi_h3_4step_dwd_adapter</code> and <code>pi_h3_2step_dwd_adapter</code> folders (3.8 GB each, from v0.12.1). They are the same add-on model; the single file is quantized to int8. The same seed gives almost the same scene, in the same time. The single file, a smaller download, is enough.</li>
         <li><strong>Without the pixel head, download the folder, or save the file so that its folder's name can be told.</strong> Both files are named <code>diffusion_pytorch_model.safetensors</code>, so H3cApp tells them apart by the folder's name (<code>pi_h3_4step_adapter</code>) and reads the step count from it.</li>
         <li>The publishers recommend the kind with the pixel head.</li>
       </ul>
@@ -220,7 +220,7 @@
 
     <section class="section section-narrow" id="use" aria-labelledby="use-title">
       <h2 id="use-title">How to use it</h2>
-      <div class="note"><p><strong>Available from v0.12.0.</strong></p></div>
+      <div class="note"><p><strong>Available from v0.12.0.</strong> The files in the folders with the pixel head (3.8 GB) are read from v0.12.1.</p></div>
       <figure class="shot">
         <img src="../assets/images/app-pi-h3-lora-en.jpg" width="1100" height="906" loading="lazy" alt="The “LoRA” tab of the Model Manager. The pi-H3 add-on models are listed, and the 4-step one with the pixel head is checked. Its row reads “native · 46/50 blocks · rank 64 · pi-H3 (frames from its pixel head)” and its “Steps” field holds 4.">
         <figcaption>pi-H3 registered in the “LoRA” tab of the Model Manager (the real v0.12.0 window). The kind with the pixel head reads “pi-H3 (frames from its pixel head)”; the kind without it reads “pi-H3 (decoded by the video VAE)”. The “Steps” field is the step count read from the file name.</figcaption>
@@ -313,8 +313,8 @@
         <dd>This is shown when the step count could not be read from the file name. Set “Steps” to 2 or 4. If you type the number the file is for into the “Steps” field in the “Model Manager”, the steps switch by themselves from then on.</dd>
         <dt>Right after starting: “a pi-H3 adapter needs a curve-form ("pruned", rank 8) MiniMax H3 checkpoint”</dt>
         <dd>The AdaLN of the MiniMax H3 model in use is not in the “curve” form. Switch to a model imported from a pruned GGUF (<a href="#need">What you need</a>).</dd>
-        <dt>It cannot be registered: “…is a pi-H3 adapter with the pixel head in the diffusers layout; use its single-file ComfyUI version”</dt>
-        <dd>You chose the file inside the <code>pi_h3_4step_dwd_adapter</code> folder. Use <code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code>.</dd>
+        <dt>In v0.12.0 the list says “Can't be loaded for MiniMax-H3: /Users/…” (the rest of the reason is cut off)</dt>
+        <dd>You chose the file inside the <code>pi_h3_4step_dwd_adapter</code> or <code>pi_h3_2step_dwd_adapter</code> folder. v0.12.0 cannot read that form. Update to v0.12.1, or use <code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code>. From v0.12.1 the reason a file can't be loaded is shown to its end.</dd>
         <dt>“only one pi-H3 adapter can be applied at a time”</dt>
         <dd>Two pi-H3 files are on. Leave one on.</dd>
         <dt>It is listed as “diffusion_pytorch_model.safetensors” or “LoRA”, with no step count</dt>
@@ -346,7 +346,7 @@
       <h2 id="checked-title">What was checked</h2>
       <ul>
         <li><strong>The Mac</strong>: one M5 with 24 GB. Nothing was run on an M1 to M4. On a Mac other than an M5 the pixel head computes in F32, not int8 (that path was run on the M5; it is 46 dB from the int8 result).</li>
-        <li><strong>What was checked</strong>: generating with each of the four files, a first image, first and last images, a reference picture, a continuation, the progress picture, the three compute modes, 960×544 and 1344×768 for 5 seconds, and that a step count that does not fit is refused before the generation. The videos were looked at as sheets of frames.</li>
+        <li><strong>What was checked</strong>: generating with each of the four files (with the pixel head, both the single file and the file in the folder), a first image, first and last images, a reference picture, a continuation, the progress picture, the three compute modes, 960×544 and 1344×768 for 5 seconds, and that a step count that does not fit is refused before the generation. The videos were looked at as sheets of frames.</li>
         <li><strong>The pixel head's computation</strong>: against a separate implementation (numpy) written from the publishers' description, it is within 1 of 255 in F32 and at 46 dB with the int8 the M5 uses.</li>
         <li><strong>Not checked</strong>: a model whose AdaLN is in the “dense” form, a Mac with 16 GB or less, upscaling 2x, listening to the sound against the other methods, image-quality metrics.</li>
         <li><strong>Records</strong>: the name of the add-on model that was on is kept in the video's record and in the project.</li>

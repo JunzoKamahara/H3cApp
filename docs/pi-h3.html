@@ -204,15 +204,15 @@
         <table>
           <thead><tr><th scope="col">種類</th><th scope="col">ステップ数</th><th scope="col">ダウンロードするファイル</th><th scope="col">大きさ</th></tr></thead>
           <tbody>
-            <tr><th scope="row" rowspan="2">画素ヘッドつき</th><td class="num">4</td><td><code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code></td><td class="num">2.2GB</td></tr>
-            <tr><td class="num">2</td><td><code>pi_h3_2step_dwd_adapter_int8_convrot.safetensors</code></td><td class="num">2.2GB</td></tr>
+            <tr><th scope="row" rowspan="2">画素ヘッドつき</th><td class="num">4</td><td><code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code>、または <code>pi_h3_4step_dwd_adapter</code> フォルダの <code>diffusion_pytorch_model.safetensors</code></td><td class="num">2.2GB、または3.8GB</td></tr>
+            <tr><td class="num">2</td><td><code>pi_h3_2step_dwd_adapter_int8_convrot.safetensors</code>、または <code>pi_h3_2step_dwd_adapter</code> フォルダの <code>diffusion_pytorch_model.safetensors</code></td><td class="num">2.2GB、または3.8GB</td></tr>
             <tr><th scope="row" rowspan="2">画素ヘッドなし</th><td class="num">4</td><td><code>pi_h3_4step_adapter</code> フォルダの <code>diffusion_pytorch_model.safetensors</code></td><td class="num">0.5GB</td></tr>
             <tr><td class="num">2</td><td><code>pi_h3_2step_adapter</code> フォルダの <code>diffusion_pytorch_model.safetensors</code></td><td class="num">0.5GB</td></tr>
           </tbody>
         </table>
       </div>
       <ul>
-        <li><strong>画素ヘッドつきは、名前の最後が <code>_int8_convrot.safetensors</code> のファイルを使います。</strong><code>pi_h3_4step_dwd_adapter</code> フォルダと <code>pi_h3_2step_dwd_adapter</code> フォルダの中のファイル（各3.8GB）は、H3cAppでは読み込めません。選ぶと、単一ファイルの版を使うように案内が出ます。</li>
+        <li><strong>画素ヘッドつきは、2つの形のどちらでも使えます。</strong>名前の最後が <code>_int8_convrot.safetensors</code> の単一ファイル（2.2GB）か、<code>pi_h3_4step_dwd_adapter</code>・<code>pi_h3_2step_dwd_adapter</code> の各フォルダにある <code>diffusion_pytorch_model.safetensors</code>（各3.8GB、v0.12.1から）です。中身は同じ追加モデルで、単一ファイルのほうはint8に量子化されています。同じシードでほぼ同じ場面になり、時間も変わりません。ダウンロードが小さい単一ファイルで足ります。</li>
         <li><strong>画素ヘッドなしは、フォルダごとダウンロードするか、フォルダの名前が分かるように保存します。</strong>ファイルの名前が2つとも <code>diffusion_pytorch_model.safetensors</code> なので、H3cAppはフォルダの名前（<code>pi_h3_4step_adapter</code>）で見分けて、ステップ数もそこから読み取ります。</li>
         <li>配布元は、画素ヘッドつきの版をすすめています。</li>
       </ul>
@@ -220,7 +220,7 @@
 
     <section class="section section-narrow" id="use" aria-labelledby="use-title">
       <h2 id="use-title">使い方</h2>
-      <div class="note"><p><strong>v0.12.0から使えます。</strong></p></div>
+      <div class="note"><p><strong>v0.12.0から使えます。</strong>画素ヘッドつきのフォルダの中のファイル（3.8GB）は、v0.12.1からです。</p></div>
       <figure class="shot">
         <img src="assets/images/app-pi-h3-lora.jpg" width="1100" height="906" loading="lazy" alt="「モデル管理」の「LoRA」タブ。pi-H3の追加モデルが並び、4ステップ用の画素ヘッドつきの版にチェックが入っている。行には「native・46/50ブロック・rank 64・pi-H3（画素ヘッドで映像化）」と表示され、「ステップ」欄に4が入っている。">
         <figcaption>「モデル管理」の「LoRA」タブに、pi-H3を登録した例（v0.12.0の実画面）。画素ヘッドつきの版は「pi-H3（画素ヘッドで映像化）」、画素ヘッドなしの版は「pi-H3（映像VAEで復号）」と表示されます。「ステップ」欄は、ファイル名から読み取ったステップ数です。</figcaption>
@@ -313,8 +313,8 @@
         <dd>ファイル名からステップ数が読み取れなかったときの表示です。「生成ステップ数」を2か4にします。「モデル管理」の「ステップ」欄にそのファイル用の数を入れておくと、次からは自動で切り替わります。</dd>
         <dt>生成の開始直後に「a pi-H3 adapter needs a curve-form ("pruned", rank 8) MiniMax H3 checkpoint」と出る</dt>
         <dd>使用中のMiniMax H3モデルのAdaLNが「曲線形」ではありません。prunedのGGUFから取り込んだモデルに切り替えます（<a href="#need">用意するもの</a>）。</dd>
-        <dt>「…is a pi-H3 adapter with the pixel head in the diffusers layout; use its single-file ComfyUI version」と出て登録できない</dt>
-        <dd><code>pi_h3_4step_dwd_adapter</code> フォルダの中のファイルを選んでいます。<code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code> を使います。</dd>
+        <dt>v0.12.0で、一覧に「MiniMax-H3用として読み込めません: /Users/…」と出る（理由の後半が切れて見えない）</dt>
+        <dd><code>pi_h3_4step_dwd_adapter</code>・<code>pi_h3_2step_dwd_adapter</code> フォルダの中のファイルを選んでいます。v0.12.0はこの形を読めません。v0.12.1に更新するか、<code>pi_h3_4step_dwd_adapter_int8_convrot.safetensors</code> を使います。v0.12.1からは、読み込めないときの理由が最後まで表示されます。</dd>
         <dt>「only one pi-H3 adapter can be applied at a time」と出る</dt>
         <dd>pi-H3を2つオンにしています。1つだけにします。</dd>
         <dt>一覧に「diffusion_pytorch_model.safetensors」や「LoRA」という名前で出て、ステップ数が入らない</dt>
@@ -346,7 +346,7 @@
       <h2 id="checked-title">確かめた範囲</h2>
       <ul>
         <li><strong>確かめたMac</strong>：M5・24GBの1台です。M1〜M4では動かしていません。M5以外では、画素ヘッドの計算がint8ではなくF32になります（M5でその経路に切り替えて動かしました。int8の結果との差は46dBです）。</li>
-        <li><strong>確かめたこと</strong>：4つのファイルそれぞれでの生成、最初の画像、最初と最後の画像、参照画像、続き、途中の様子の表示、3つの計算方式、960×544・5秒と1344×768・5秒、ステップ数が合わないときに生成の前に断ること。できた動画は、コマを並べて目で確かめました。</li>
+        <li><strong>確かめたこと</strong>：4つのファイルそれぞれでの生成（画素ヘッドつきは、単一ファイルとフォルダの中のファイルの両方）、最初の画像、最初と最後の画像、参照画像、続き、途中の様子の表示、3つの計算方式、960×544・5秒と1344×768・5秒、ステップ数が合わないときに生成の前に断ること。できた動画は、コマを並べて目で確かめました。</li>
         <li><strong>画素ヘッドの計算</strong>：配布元の説明をもとに別に書いた実装（numpy）と比べて、F32では255段階のうち最大1の差、M5が使うint8では46dBでした。</li>
         <li><strong>確かめていないこと</strong>：AdaLNが「密な形」のモデル、メモリ16GB以下のMac、2倍の拡大、音声の聞き比べ、画質の数値での比較。</li>
         <li><strong>記録</strong>：オンにした追加モデルの名前は、動画の記録とプロジェクトに残ります。</li>
