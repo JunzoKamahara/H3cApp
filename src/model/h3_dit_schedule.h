@@ -36,8 +36,10 @@ typedef struct h3_adaln_curve h3_adaln_curve;
 /* loras: an adapter set whose AdaLN curve-branch deltas (if any) are added
  * to the curve projections first; NULL for none. */
 typedef struct h3_lora_set h3_lora_set;
+/* overlay: a pi-H3 adapter's store; a projection weight or bias it has
+ * under the curve's own name replaces the curve's. NULL for none. */
 h3_dit_schedule *h3_dit_schedule_precompute_curve(
-    const h3_lora_set *loras,
+    const h3_lora_set *loras, const h3_weight_store *overlay,
     const h3_adaln_curve *curve, h3_gpu *gpu,
     const h3_sigma_schedule *sigmas, int visual_condition,
     int audio_condition,

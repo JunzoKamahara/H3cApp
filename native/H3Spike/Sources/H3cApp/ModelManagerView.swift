@@ -18,6 +18,8 @@ struct ModelManagerView: View {
     var onActiveModelChange: (UUID?) -> Void
     /// A generation is running (the model in use can't be removed then).
     var isGenerating = false
+    /// The section to open at ("loras", ...); nil: the H3 models.
+    var startingSection: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -108,6 +110,7 @@ struct ModelManagerView: View {
         // A file put back, or the 書類-folder permission granted since,
         // shows up on the next look.
         .onAppear {
+            if let wanted = startingSection.flatMap(Section.init(rawValue:)) { section = wanted }
             library.retryFailedLoRAInfo()
             library.retryFailedRefModInfo()
             library.syncRefModFolder()
@@ -490,7 +493,15 @@ struct ModelManagerView: View {
             var parts = [info.format,
                          String(localized: "\(info.blocks)/50ブロック") + (info.refinerBlocks > 0 ? "+refiner" : ""),
                          info.rankMin == info.rankMax ? "rank \(info.rankMax)" : "rank \(info.rankMin)–\(info.rankMax)"]
-            if info.unsupported > 0 { parts.append(String(localized: "未対応\(info.unsupported)件は無視")) }
+            // A pi-H3 adapter's other tensors are its own AdaLN, final
+            // layer, replaced blocks and pixel head, which the engine uses.
+            switch info.piH3 {
+            // (Which of 2 and 4 steps it is for is the row's ステップ field.)
+            case .pixels: parts.append(String(localized: "pi-H3（画素ヘッドで映像化）"))
+            case .latent: parts.append(String(localized: "pi-H3（映像VAEで復号）"))
+            case .none:
+                if info.unsupported > 0 { parts.append(String(localized: "未対応\(info.unsupported)件は無視")) }
+            }
             text = parts.joined(separator: summarySeparator)
         case .failure(let error)?:
             text = FileManager.default.fileExists(atPath: entry.path)

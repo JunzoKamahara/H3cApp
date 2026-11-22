@@ -15,7 +15,11 @@ import H3Engine
 /// shared with the UI, so a request while one is already running gets 409.
 /// GET /api/status polls progress. GET /api/result/video streams the
 /// current result until the next generate() call deletes it.
-let h3APIPort: UInt16 = 8420
+///
+/// H3_API_PORT is for a copy under test that runs next to the installed app
+/// (tools/perf/app_status.sh --port).
+let h3APIPort: UInt16 = ProcessInfo.processInfo.environment["H3_API_PORT"]
+    .flatMap { UInt16($0) }.flatMap { $0 >= 1024 ? $0 : nil } ?? 8420
 
 /// Where the running server's API token is kept (mode 0600, see APIToken):
 /// every request must send it as `Authorization: Bearer <token>`.
@@ -37,6 +41,17 @@ extension GenerationViewModel {
             return handleGenerateRequest(request)
         case ("POST", "/api/cancel"):
             cancel()
+            return .json(200, ["ok": true])
+        case ("POST", "/api/window/show"):
+            // {"panel": "advanced_settings" | "model_manager" | "none",
+            //  "section"?: モデル管理's section - "models", "images", "loras",
+            //  "refmods", "upscalers"}: puts that sheet up over this window,
+            // or takes the sheets down.
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard let name = json["panel"] as? String, let panel = WindowPanel(rawValue: name) else {
+                return .error(400, "\"panel\" must be \"advanced_settings\", \"model_manager\" or \"none\"")
+            }
+            showPanel(panel, json["section"] as? String)
             return .json(200, ["ok": true])
         case ("POST", "/api/upscale-file"):
             // 動画ファイルを2倍に拡大: {"path", "output", "upscaler"?} writes

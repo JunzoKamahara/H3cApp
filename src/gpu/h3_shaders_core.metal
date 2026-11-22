@@ -574,6 +574,35 @@ struct swiglu_args {
     uint width;
 };
 
+struct rows_args {
+    uint rows;
+    uint width;
+};
+
+/* out[r] = in[index[r]] and out[index[r]] = in[r], BF16 rows of `width`.
+ * Grid (width, rows). */
+kernel void h3_gather_rows_bf16(device const ushort *input [[buffer(0)]],
+                                device const uint *index [[buffer(1)]],
+                                device ushort *output [[buffer(2)]],
+                                constant rows_args &args [[buffer(3)]],
+                                uint2 gid [[thread_position_in_grid]]) {
+    uint column = gid.x, row = gid.y;
+    if (column >= args.width || row >= args.rows) return;
+    output[(size_t)row * args.width + column] =
+        input[(size_t)index[row] * args.width + column];
+}
+
+kernel void h3_scatter_rows_bf16(device const ushort *input [[buffer(0)]],
+                                 device const uint *index [[buffer(1)]],
+                                 device ushort *output [[buffer(2)]],
+                                 constant rows_args &args [[buffer(3)]],
+                                 uint2 gid [[thread_position_in_grid]]) {
+    uint column = gid.x, row = gid.y;
+    if (column >= args.width || row >= args.rows) return;
+    output[(size_t)index[row] * args.width + column] =
+        input[(size_t)row * args.width + column];
+}
+
 kernel void h3_swiglu_f32(device const float *fused [[buffer(0)]],
                           device float *output [[buffer(1)]],
                           constant swiglu_args &args [[buffer(2)]],

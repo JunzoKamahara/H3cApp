@@ -92,7 +92,28 @@ typedef struct {
      * Sharp's "curve branches": factors on the 8-dim curve input of a
      * curve-form checkpoint). Applied only with such a checkpoint. */
     int adaln_blocks;
+    /* A pi-H3 adapter (Lakonik/pi-H3, its single-file ComfyUI layout): the
+     * LoRA factors of a 2- or 4-step student plus tensors that replace the
+     * checkpoint's own - the AdaLN curve projections, the final layer and,
+     * with the pixel head, the last blocks' projections. 0: not one,
+     * H3_PI_H3_LATENT: the video VAE decodes its latents,
+     * H3_PI_H3_PIXELS: it carries the DWD pixel head. It needs a
+     * curve-form (rank 8) checkpoint and samples on its own time grid
+     * (h3_pi_h3_schedule_build) in 2 or 4 steps. */
+    int pi_h3;
+    /* Of such a file's bytes, the two parts that are not LoRA factors kept
+     * beside the blocks: the pixel head's weights (dwd_*, read after the
+     * DiT) and the whole block projections it replaces (which take the
+     * checkpoint's place - resident with the int8 attention cache, streamed
+     * with SSD streaming). 0 for a plain LoRA. */
+    uint64_t pixel_head_bytes;
+    uint64_t replaced_bytes;
 } h3_lora_info;
+
+enum {
+    H3_PI_H3_LATENT = 1,
+    H3_PI_H3_PIXELS = 2
+};
 
 typedef struct {
     int width;
@@ -525,7 +546,8 @@ typedef struct {
     uint64_t vision_encoder_bytes;
     uint64_t text_encoder_bytes;
     uint64_t dit_bytes;
-    uint64_t video_decoder_bytes; /* the video VAE turning the latent to frames */
+    uint64_t video_decoder_bytes; /* the video VAE turning the latent to frames,
+                                   * or a pi-H3 pixel head in its place */
     uint64_t peak_bytes;          /* the largest of them */
     uint64_t memory_bytes;        /* this Mac's RAM */
     char peak_stage[32];          /* "video encoder", "text encoder", "DiT",

@@ -552,6 +552,48 @@ int h3_gpu_swiglu_f32(h3_gpu *opaque, h3_gpu_tensor *output,
         });
 }
 
+typedef struct { uint32_t rows, width; } rows_args;
+
+int h3_gpu_gather_rows_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
+                            const h3_gpu_tensor *input,
+                            const h3_gpu_tensor *index, uint32_t rows,
+                            uint32_t width) {
+    H3GPU *gpu = GPU(opaque);
+    if (!rows || !width ||
+        !h3_gpu_require_bf16(gpu, output, (size_t)rows * width, @"gather output") ||
+        !h3_gpu_require_elements(gpu, index, rows, @"gather index") ||
+        TENSOR(index).dtype != H3_GPU_U32 ||
+        !h3_gpu_require_bf16(gpu, input, width, @"gather input")) return 0;
+    rows_args args = {rows, width};
+    return h3_gpu_dispatch_2d(gpu, @"h3_gather_rows_bf16", width, rows,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(index).buffer offset:0 atIndex:1];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:2];
+            [encoder setBytes:&args length:sizeof(args) atIndex:3];
+        });
+}
+
+int h3_gpu_scatter_rows_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *input,
+                             const h3_gpu_tensor *index, uint32_t rows,
+                             uint32_t width) {
+    H3GPU *gpu = GPU(opaque);
+    if (!rows || !width ||
+        !h3_gpu_require_bf16(gpu, input, (size_t)rows * width, @"scatter input") ||
+        !h3_gpu_require_elements(gpu, index, rows, @"scatter index") ||
+        TENSOR(index).dtype != H3_GPU_U32 ||
+        !h3_gpu_require_bf16(gpu, output, width, @"scatter output")) return 0;
+    rows_args args = {rows, width};
+    return h3_gpu_dispatch_2d(gpu, @"h3_scatter_rows_bf16", width, rows,
+        ^(id<MTLComputeCommandEncoder> encoder) {
+            [encoder setBuffer:TENSOR(input).buffer offset:0 atIndex:0];
+            [encoder setBuffer:TENSOR(index).buffer offset:0 atIndex:1];
+            [encoder setBuffer:TENSOR(output).buffer offset:0 atIndex:2];
+            [encoder setBytes:&args length:sizeof(args) atIndex:3];
+        });
+}
+
 int h3_gpu_scale_add_f32(h3_gpu *opaque, h3_gpu_tensor *output,
                          const h3_gpu_tensor *residual,
                          const h3_gpu_tensor *branch,

@@ -62,6 +62,9 @@ static void free_paths(char **paths, size_t count) {
     free(paths);
 }
 
+static h3_weight_store *open_paths(char **paths, size_t count,
+                                   char *error, size_t error_size);
+
 h3_weight_store *h3_weight_store_open(const char *directory,
                                       char *error, size_t error_size) {
     if (!directory || !*directory) {
@@ -109,6 +112,28 @@ h3_weight_store *h3_weight_store_open(const char *directory,
         return NULL;
     }
     qsort(paths, count, sizeof(*paths), compare_paths);
+    return open_paths(paths, count, error, error_size);
+}
+
+h3_weight_store *h3_weight_store_open_file(const char *path,
+                                           char *error, size_t error_size) {
+    if (!path || !*path) {
+        fail(error, error_size, "a weight file is required");
+        return NULL;
+    }
+    char **paths = malloc(sizeof(*paths));
+    if (paths) paths[0] = strdup(path);
+    if (!paths || !paths[0]) {
+        fail(error, error_size, "out of memory opening %s", path);
+        free(paths);
+        return NULL;
+    }
+    return open_paths(paths, 1, error, error_size);
+}
+
+/* Takes ownership of paths. */
+static h3_weight_store *open_paths(char **paths, size_t count,
+                                   char *error, size_t error_size) {
     h3_weight_store *store = calloc(1, sizeof(*store));
     if (!store) {
         fail(error, error_size, "out of memory creating weight store");
@@ -379,6 +404,31 @@ static int alias_name(const char *name, int n, char *out, size_t size) {
             if (!clip_name(rest, out, size)) out[0] = '\0';
             return 1;
         default: return 0;
+        }
+    }
+    /* A pi-H3 adapter in the diffusers layout (Lakonik/pi-H3's
+     * pi_h3_*_adapter folders): the AdaLN projections and the final layer
+     * it replaces, under diffusers' names. The values are the same; whole
+     * block projections are not aliased (ff.net.0.proj is [value; gate]). */
+    if (n == 0) {
+        int block = -1, used = 0;
+        if (sscanf(name, "blocks.%d.%n", &block, &used) == 1 && used > 0 &&
+            !strncmp(name + used, "adaln_proj.", 11)) {
+            snprintf(out, size, "transformer_blocks.%d.%s", block, name + used);
+            return 1;
+        }
+        static const struct { const char *engine, *diffusers; } final[] = {
+            {"final_layer.adaln_proj.linear.", "norm_out.linear."},
+            {"final_layer.norm.", "norm_out.norm."},
+            {"final_layer.video_out.", "proj_out."},
+            {"final_layer.audio_out.", "audio_proj_out."},
+        };
+        for (size_t i = 0; i < sizeof(final) / sizeof(*final); i++) {
+            size_t length = strlen(final[i].engine);
+            if (!strncmp(name, final[i].engine, length)) {
+                snprintf(out, size, "%s%s", final[i].diffusers, name + length);
+                return 1;
+            }
         }
     }
     return 0;

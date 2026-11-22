@@ -13,6 +13,10 @@ typedef struct h3_weight_store h3_weight_store;
  * tensor payloads. */
 h3_weight_store *h3_weight_store_open(const char *directory,
                                       char *error, size_t error_size);
+/* The same over one safetensors or GGUF file - an adapter whose tensors
+ * replace a checkpoint's by name (pi-H3). */
+h3_weight_store *h3_weight_store_open_file(const char *path,
+                                           char *error, size_t error_size);
 void h3_weight_store_free(h3_weight_store *store);
 size_t h3_weight_store_shards(const h3_weight_store *store);
 

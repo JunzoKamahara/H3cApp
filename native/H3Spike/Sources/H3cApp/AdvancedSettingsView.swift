@@ -42,6 +42,11 @@ struct AdvancedSettingsView: View {
                             Text("HyperFlow H3 Flashは4・6・8ステップで生成します（既定は6）。")
                                 .font(.caption)
                                 .foregroundStyle(palette.textSecondary)
+                        } else if viewModel.usesPiH3 {
+                            Text("pi-H3の追加モデルは、2または4ステップで生成します。")
+                                .font(.caption)
+                                .foregroundStyle(PiH3Rules.steps.contains(viewModel.effectiveSteps)
+                                                 ? palette.textSecondary : palette.errorColor)
                         }
                     }
                     computeModeSection
@@ -242,9 +247,13 @@ struct AdvancedSettingsView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(maxWidth: 300)
-            Text(speedDescription)
+            .disabled(viewModel.usesPiH3)
+            Text(viewModel.usesPiH3
+                 ? String(localized: "pi-H3の追加モデルがオンの間は、毎ステップを省略なしで計算します（速度の設定値は保持され、追加モデルをオフにすると使われます）。")
+                 : speedDescription)
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             if viewModel.fastAttentionAvailable {
                 Toggle("高速モード（試験的）", isOn: $viewModel.fastAttention)
                     .toggleStyle(.checkbox)
@@ -320,11 +329,15 @@ struct AdvancedSettingsView: View {
             .pickerStyle(.menu)
             .labelsHidden()
             .frame(maxWidth: 200)
-            .disabled(viewModel.speedMode != .quality)
+            .disabled(viewModel.speedMode != .quality || viewModel.usesPiH3)
             Text("N回に1回だけモデルを計算し、残りは前回までの結果から補って高速化します。大きいほど速く、品質は下がる可能性があります。")
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
-            if viewModel.speedMode != .quality {
+            if viewModel.usesPiH3 {
+                Text("pi-H3の追加モデルがオンの間は、reuse 1で計算します（設定値は保持され、追加モデルをオフにすると使われます）。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+            } else if viewModel.speedMode != .quality {
                 Text("速度が「\(viewModel.speedMode.label)」の間は、Transformerの使い回しと併用できないためreuse 1で計算します（設定値は保持され、「標準」に戻すと使われます）。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)

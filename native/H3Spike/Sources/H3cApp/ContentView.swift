@@ -14,11 +14,35 @@ struct ContentView: View {
     @State private var composerCollapsed = false
     @State private var presetName = ""
     @State private var showingModelManager = false
+    /// The section モデル管理 opens at when POST /api/window/show asks for one.
+    @State private var modelManagerSection: String?
     @State private var showingDownloadWizard = false
     // Auto-offer the download wizard once per launch when the engine can't
     // load a model - not on every relaunch attempt the user might trigger
     // via "もう一度試す", and not re-shown after they dismiss it once.
     @State private var hasOfferedDownloadWizard = false
+
+    /// モデル管理, as its own property: the body's chain of modifiers is as
+    /// long as the type checker takes.
+    private var modelManagerSheet: some View {
+        ModelManagerView(library: viewModel.library, tutorial: viewModel.tutorial,
+                         onActiveModelChange: { id in viewModel.switchModel(to: id) },
+                         isGenerating: viewModel.isGenerating,
+                         startingSection: modelManagerSection)
+    }
+
+    /// POST /api/window/show: the sheets this view owns.
+    private func installPanelHook() {
+        let manager = $showingModelManager
+        let managerSection = $modelManagerSection
+        let model = viewModel
+        model.showPanel = { [weak model] panel, section in
+            guard let model else { return }
+            managerSection.wrappedValue = section
+            model.showingAdvancedSettings = panel == .advancedSettings
+            manager.wrappedValue = panel == .modelManager
+        }
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -109,6 +133,7 @@ struct ContentView: View {
                     modelManager.wrappedValue = true
                 }
             }
+            installPanelHook()
             // After the window has settled, and not over the model download
             // that a first launch opens.
             try? await Task.sleep(nanoseconds: 1_500_000_000)
@@ -199,12 +224,7 @@ struct ContentView: View {
         } message: {
             Text(viewModel.projectMessage ?? "")
         }
-        .sheet(isPresented: $showingModelManager) {
-            ModelManagerView(library: viewModel.library, tutorial: viewModel.tutorial,
-                             isGenerating: viewModel.isGenerating) { id in
-                viewModel.switchModel(to: id)
-            }
-        }
+        .sheet(isPresented: $showingModelManager) { modelManagerSheet }
         .sheet(isPresented: $showingDownloadWizard) {
             ModelDownloadWizardView(
                 suggestedDestination: viewModel.library.activeModel?.path ?? defaultH3ModelDownloadPath,

@@ -281,6 +281,37 @@ int h3_gpu_sdpa_f32(h3_gpu *gpu, h3_gpu_tensor *output,
 int h3_gpu_swiglu_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                       const h3_gpu_tensor *fused, uint32_t rows,
                       uint32_t width);
+/* SDPA over a batch of equal windows ([batch, sequence, heads, head_dim]
+ * row-major BF16), and cross-attention with kv_sequence keys/values. */
+int h3_gpu_sdpa_batched_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *query, const h3_gpu_tensor *key,
+                             const h3_gpu_tensor *value, uint32_t batch,
+                             uint32_t sequence, uint32_t heads,
+                             uint32_t head_dim, float scale);
+/* Batched SDPA with separate query and key/value lengths: q [batch,
+ * sequence, heads, head_dim], k/v [batch, kv_sequence, heads, head_dim]. */
+int h3_gpu_sdpa_batched_kv_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                                const h3_gpu_tensor *query, const h3_gpu_tensor *key,
+                                const h3_gpu_tensor *value, uint32_t batch,
+                                uint32_t sequence, uint32_t kv_sequence, uint32_t heads,
+                                uint32_t head_dim, float scale);
+int h3_gpu_sdpa_cross_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                           const h3_gpu_tensor *query, const h3_gpu_tensor *key,
+                           const h3_gpu_tensor *value, uint32_t sequence,
+                           uint32_t kv_sequence, uint32_t heads,
+                           uint32_t head_dim, float scale);
+/* Rows by index, BF16 [*, width]: gather is out[r] = in[index[r]], scatter
+ * out[index[r]] = in[r], for r < rows; index is U32 [rows]. Windowed
+ * attention collects each window's rows with the one and puts the result
+ * back with the other (the pi-H3 pixel head). */
+int h3_gpu_gather_rows_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                            const h3_gpu_tensor *input,
+                            const h3_gpu_tensor *index, uint32_t rows,
+                            uint32_t width);
+int h3_gpu_scatter_rows_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                             const h3_gpu_tensor *input,
+                             const h3_gpu_tensor *index, uint32_t rows,
+                             uint32_t width);
 int h3_gpu_scale_add_f32(h3_gpu *gpu, h3_gpu_tensor *output,
                          const h3_gpu_tensor *residual,
                          const h3_gpu_tensor *branch,

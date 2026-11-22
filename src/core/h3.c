@@ -233,6 +233,11 @@ static void h3_vae_progress_bridge(int completed, int total, void *opaque) {
     h3_progress_emit(opaque, "video VAE load", completed, total);
 }
 
+static void h3_pixel_head_progress_bridge(int completed, int total,
+                                          void *opaque) {
+    h3_progress_emit(opaque, "pixel head", completed, total);
+}
+
 static void h3_preview_vae_progress_bridge(int completed, int total,
                                            void *opaque) {
     h3_progress_emit(opaque, "preview VAE load", completed, total);
@@ -515,6 +520,12 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     h3_live_preview live_preview;
     memset(&live_preview, 0, sizeof(live_preview));
     float *video = NULL, *audio = NULL;
+    /* pi-H3 with the pixel head: the last block's video rows and the head's
+     * AdaLN, taken from the DiT after the last step (h3_pixel_head.h). */
+    uint16_t *pixel_rows = NULL;
+    float *pixel_modulation = NULL;
+    const char *pixel_adapter = NULL;
+    int pixel_t = 0, pixel_h = 0, pixel_w = 0;
     float *forced_pcm = NULL, *forced_latent = NULL;
     int forced_samples = 0;
     h3_video_frames frames;
@@ -1396,6 +1407,37 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     if (family->log_name)
         fprintf(stderr, "h3: %s %d-step schedule\n", family->log_name,
                 params->steps);
+    /* A pi-H3 adapter among the LoRAs brings its own time grid. */
+    int pi_h3 = 0;
+    for (size_t index = 0; index < params->lora_count && !pi_h3; index++) {
+        h3_lora_info lora_info;
+        char ignored[256];
+        if (h3_lora_inspect(params->loras[index].path, &lora_info, ignored,
+                            sizeof(ignored)))
+            pi_h3 = lora_info.pi_h3;
+        if (pi_h3 == H3_PI_H3_PIXELS) pixel_adapter = params->loras[index].path;
+    }
+    if (pi_h3) {
+        if (!h3_pi_h3_schedule_build(params->steps, &sigmas)) {
+            h3_set_error(ctx, "a pi-H3 adapter samples in 2 or 4 steps, "
+                         "not %d", params->steps);
+            goto cleanup;
+        }
+        fprintf(stderr, "h3: pi-H3 %d-step schedule, video sigmas from "
+                "%.4f to %.4f\n", params->steps, (double)sigmas.video[0],
+                (double)sigmas.video[params->steps - 1]);
+    }
+    /* Its few steps are each evaluated whole: with token reduction the
+     * picture breaks (doubled subjects, seams), and the pixel head reads
+     * the last evaluation itself. */
+    int token_reduction = params->token_reduction;
+    int core_reuse = params->core_reuse, denoise_reuse = params->denoise_reuse;
+    if (pi_h3 && (token_reduction || core_reuse != 1 || denoise_reuse != 1)) {
+        fprintf(stderr, "h3: a pi-H3 adapter evaluates every step whole: "
+                "token reduction and step reuse are off\n");
+        token_reduction = 0;
+        core_reuse = denoise_reuse = 1;
+    }
     if (params->video_sigmas) {
         for (int step = 0; step <= sigmas.steps; step++)
             sigmas.video[step] = params->video_sigmas[step];
@@ -1428,8 +1470,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     } else if (conditioned) {
         dit = h3_dit_load_conditioned(
             dit_path, "h3_shaders.metal", &text, &layout, &sigmas,
-            (unsigned)params->dit_layers, (unsigned)params->core_reuse,
-            params->token_reduction,
+            (unsigned)params->dit_layers, (unsigned)core_reuse,
+            token_reduction,
             params->ssd_streaming,
             spatial_rope_scale,
             params->use_slower_bf16_mlp,
@@ -1450,8 +1492,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     } else {
         dit = h3_dit_load_t2va(
             dit_path, "h3_shaders.metal", &text, &layout, &sigmas,
-            (unsigned)params->dit_layers, (unsigned)params->core_reuse,
-            params->token_reduction,
+            (unsigned)params->dit_layers, (unsigned)core_reuse,
+            token_reduction,
             params->ssd_streaming,
             spatial_rope_scale,
             params->use_slower_bf16_mlp,
@@ -1570,7 +1612,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                                   ? h3_deliver_latent_preview : NULL,
                               (void *)params);
     int denoised = h3_dit_denoise_euler_preview(
-            dit, video, audio, params->denoise_reuse,
+            dit, video, audio, denoise_reuse,
             h3_dit_progress_bridge, &progress,
             preview_decoder ? h3_deliver_denoise_preview : NULL,
             preview_decoder ? &live_preview : NULL,
@@ -1591,6 +1633,25 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     h3_dit_set_cancel(dit, NULL);
     h3_dit_release_backend_scratch(dit);
     h3_dit_set_forced_audio(dit, NULL, 0, NULL, 0);
+    /* The pixel head reads the last evaluation, not the denoised latent.
+     * H3_PI_H3_VAE=1 decodes that latent with the video VAE instead (the
+     * adapter keeps its velocity head), to compare the two. */
+    const char *head_off = h3_option("H3_PI_H3_VAE");
+    if (pixel_adapter && h3_dit_has_pixel_head(dit) &&
+        !(head_off && *head_off && strcmp(head_off, "0"))) {
+        pixel_modulation = malloc(2 * H3_PIXEL_HEAD_FEATURE *
+                                  sizeof(*pixel_modulation));
+        if (!pixel_modulation ||
+            !h3_dit_pixel_head_input(dit, &pixel_rows, pixel_modulation,
+                                     &pixel_t, &pixel_h, &pixel_w, detail,
+                                     sizeof(detail))) {
+            h3_set_error(ctx, "%s", pixel_modulation ? detail :
+                         "out of memory for the pixel head's input");
+            if (!dit_is_cached) h3_dit_free(dit);
+            dit = NULL;
+            goto cleanup;
+        }
+    }
     h3_debug_hash("denoised video", video, video_count * sizeof(*video));
     h3_debug_hash("denoised audio", audio, audio_count * sizeof(*audio));
     if (params->save_latent_path &&
@@ -1636,7 +1697,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
     free(audio);
     audio = NULL;
     if (progress.cancelled) goto cleanup;
-    if (!preview_decoder && h3_cache_target(ctx, H3_CACHE_DECODER)) {
+    if (!pixel_rows && !preview_decoder &&
+        h3_cache_target(ctx, H3_CACHE_DECODER)) {
         h3_progress_emit(&progress, "video VAE load", 0, 36);
         preview_decoder = h3_acquire_video_decoder(
             ctx, decoder_key, vae_path, latent_h, latent_w,
@@ -1649,15 +1711,16 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             goto cleanup;
         }
     }
-    if (preview_decoder) {
+    if (preview_decoder || pixel_rows) {
         /* Chunked path: decode, upscale, and mux/deliver one ~17-frame
          * chunk at a time (see h3_stream_encode_chunk above) instead of
          * retaining the whole video, so encoding chunk N overlaps with
          * decoding chunk N+1 and peak host memory for the video drops from
          * the full output to about one chunk. */
-        int native_height = 0, native_width = 0;
-        h3_video_vae_decoder_pixel_size(preview_decoder, &native_height,
-                                        &native_width);
+        int native_height = pixel_h * 32, native_width = pixel_w * 32;
+        if (!pixel_rows)
+            h3_video_vae_decoder_pixel_size(preview_decoder, &native_height,
+                                            &native_width);
         int output_width = params->width, output_height = params->height;
         int chunks = (temporal.video_t - 2) / 5;
         int total_frames = chunks * 17 + 5;
@@ -1672,7 +1735,10 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
                 h3_set_error(ctx, "%s", detail);
                 goto cleanup;
             }
-            h3_progress_emit(&progress, "encode", 0, total_frames);
+            /* The pixel head gives its first frame only after its 8
+             * layers: "encode" starts counting then. */
+            if (!pixel_rows)
+                h3_progress_emit(&progress, "encode", 0, total_frames);
         }
         h3_stream_encode_ctx stream = {
             writer, params->on_frame, params->callback_opaque, &progress,
@@ -1680,9 +1746,19 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
             native_width != output_width || native_height != output_height,
             total_frames, 0, {0, 0}
         };
-        int video_ok = h3_video_vae_decoder_decode_streamed(
-            preview_decoder, video, temporal.video_t,
-            h3_stream_encode_chunk, &stream, NULL, detail, sizeof(detail));
+        if (pixel_rows)
+            fprintf(stderr, "h3: frames from the pi-H3 pixel head (no video "
+                    "VAE decoder)\n");
+        int video_ok = pixel_rows ?
+            h3_pixel_head_decode(
+                pixel_adapter, "h3_shaders.metal", pixel_rows,
+                pixel_modulation, pixel_t, pixel_h, pixel_w,
+                h3_stream_encode_chunk, &stream,
+                h3_pixel_head_progress_bridge, &progress, detail,
+                sizeof(detail)) :
+            h3_video_vae_decoder_decode_streamed(
+                preview_decoder, video, temporal.video_t,
+                h3_stream_encode_chunk, &stream, NULL, detail, sizeof(detail));
         free(video);
         video = NULL;
         if (writer) {
@@ -1799,6 +1875,8 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
 cleanup:
     h3_memory_phase(NULL);
     h3_video_vae_set_cancel(NULL);
+    free(pixel_rows);
+    free(pixel_modulation);
     free(forced_pcm);
     free(forced_latent);
     free(conditioning_key);

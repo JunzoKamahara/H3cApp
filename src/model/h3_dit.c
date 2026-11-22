@@ -81,18 +81,25 @@ void h3_dit_free_tensor(h3_gpu_tensor **tensor) {
     *tensor = NULL;
 }
 
+/* The store a named weight comes from: the pi-H3 adapter's when it has a
+ * tensor of that name, the checkpoint's otherwise. */
+const h3_weight_store *h3_dit_store_of(const h3_dit *dit, const char *name) {
+    return dit->overlay && h3_weight_find(dit->overlay, name, NULL) ?
+        dit->overlay : dit->weights;
+}
+
 h3_gpu_tensor *h3_dit_bf1(h3_dit *dit, const char *name, uint64_t width,
                           char *error, size_t error_size) {
     uint64_t shape[] = {width};
-    return h3_weight_load_bf16(dit->weights, dit->gpu, name, 1, shape,
-                               error, error_size);
+    return h3_weight_load_bf16(h3_dit_store_of(dit, name), dit->gpu, name, 1,
+                               shape, error, error_size);
 }
 
 h3_gpu_tensor *h3_dit_bf2(h3_dit *dit, const char *name, uint64_t rows,
                           uint64_t columns, char *error, size_t error_size) {
     uint64_t shape[] = {rows, columns};
-    return h3_weight_load_bf16(dit->weights, dit->gpu, name, 2, shape,
-                               error, error_size);
+    return h3_weight_load_bf16(h3_dit_store_of(dit, name), dit->gpu, name, 2,
+                               shape, error, error_size);
 }
 
 /* h3_dit_bf2() for one of the four LoRA-able projections: the LoRA delta is added
@@ -122,15 +129,15 @@ h3_gpu_tensor *h3_dit_bf2_patched(h3_dit *dit, const char *name,
 h3_gpu_tensor *h3_dit_f1(h3_dit *dit, const char *name, uint64_t width,
                          char *error, size_t error_size) {
     uint64_t shape[] = {width};
-    return h3_weight_load_f32(dit->weights, dit->gpu, name, 1, shape,
-                              error, error_size);
+    return h3_weight_load_f32(h3_dit_store_of(dit, name), dit->gpu, name, 1,
+                              shape, error, error_size);
 }
 
 h3_gpu_tensor *h3_dit_f2(h3_dit *dit, const char *name, uint64_t rows,
                          uint64_t columns, char *error, size_t error_size) {
     uint64_t shape[] = {rows, columns};
-    return h3_weight_load_f32(dit->weights, dit->gpu, name, 2, shape,
-                              error, error_size);
+    return h3_weight_load_f32(h3_dit_store_of(dit, name), dit->gpu, name, 2,
+                              shape, error, error_size);
 }
 
 int h3_dit_copy_layout(h3_dit *dit, const h3_layout *layout,
@@ -1219,6 +1226,42 @@ int h3_dit_set_forced_audio(h3_dit *dit, const float *clean_latent,
     return 1;
 }
 
+int h3_dit_has_pixel_head(const h3_dit *dit) {
+    return dit && dit->overlay_pixels && dit->pixel_modulation;
+}
+
+int h3_dit_pixel_head_input(h3_dit *dit, uint16_t **rows,
+                            float *modulation, int *latent_t, int *token_h,
+                            int *token_w, char *error, size_t error_size) {
+    if (!h3_dit_has_pixel_head(dit) || !rows || !modulation) {
+        h3_dit_fail(error, error_size, "this DiT has no pixel head adapter");
+        return 0;
+    }
+    if (dit->token_reduction_active) {
+        h3_dit_fail(error, error_size, "the pixel head needs every video row "
+                    "(token reduction is on)");
+        return 0;
+    }
+    size_t all = (size_t)dit->sequence * HIDDEN;
+    size_t count = (size_t)dit->video_rows * HIDDEN;
+    uint16_t *values = malloc(all * sizeof(*values));
+    if (!values || !h3_gpu_tensor_read_bf16(dit->hidden, values, all)) {
+        free(values);
+        h3_dit_fail(error, error_size, "cannot read the last block's rows: %s",
+                    values ? h3_gpu_error(dit->gpu) : "out of memory");
+        return 0;
+    }
+    memmove(values, values + (size_t)dit->video_target_start * HIDDEN,
+            count * sizeof(*values));
+    uint16_t *kept = realloc(values, count * sizeof(*values));
+    *rows = kept ? kept : values;
+    memcpy(modulation, dit->pixel_modulation, 2 * HIDDEN * sizeof(float));
+    if (latent_t) *latent_t = dit->latent_t;
+    if (token_h) *token_h = dit->latent_h / 2;
+    if (token_w) *token_w = dit->latent_w / 2;
+    return 1;
+}
+
 void h3_dit_release_backend_scratch(h3_dit *dit) {
     if (dit && !h3_gpu_ccv_release_scratch(dit->gpu))
         fprintf(stderr, "h3: warning: ccv scratch kept, GPU work pending\n");
@@ -1294,6 +1337,7 @@ void h3_dit_free(h3_dit *dit) {
     h3_dit_fbc_log_free(dit->fbc_log);
     dit->fbc_log = NULL;
     h3_lora_set_free(dit->loras);
+    h3_dit_free_overlay(dit);
     int steps = h3_dit_schedule_steps(dit->schedule);
     if (dit->row_maps) for (int step = 0; step < steps; step++)
         h3_gpu_tensor_free(dit->row_maps[step]);

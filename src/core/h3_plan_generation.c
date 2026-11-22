@@ -337,15 +337,6 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
     uint64_t resident = params->ssd_streaming || cached ? 0 :
         hyperflow_resident ? hyperflow_resident :
         h3_device(ctx)->apple_gpu_family >= 10 ? 18ull << 30 : 37ull << 30;
-    /* A LoRA's factors stay on the GPU beside the blocks they patch
-     * (h3_lora.h): 1.61 GiB measured for a 1.29 GiB file. */
-    uint64_t lora_bytes = 0;
-    for (size_t index = 0; index < params->lora_count; index++) {
-        struct stat status;
-        if (params->loras[index].path &&
-            stat(params->loras[index].path, &status) == 0)
-            lora_bytes += (uint64_t)((double)status.st_size * 1.3);
-    }
     /* As h3_video_vae.c picks its block linears (int8 where the GPU's
      * tensor units are in use), and as h3_generate decodes: the whole video
      * kept as F32 frames until it is written, or, with a decoder that is
@@ -361,6 +352,37 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
         decoded_frames = 17 + 5;
     double decoded_pixel_frames = (double)H3_VAE_SPATIAL_RATIO * latent_h *
         H3_VAE_SPATIAL_RATIO * latent_w * decoded_frames;
+    /* A pi-H3 adapter with its pixel head gives the frames itself, as
+     * h3_generate decides (H3_PI_H3_VAE=1 keeps the decoder): one token for
+     * each 16-pixel cell of each latent step. */
+    size_t pixel_head_tokens = 0;
+    const char *head_off = h3_option("H3_PI_H3_VAE");
+    /* A LoRA's factors stay on the GPU beside the blocks they patch
+     * (h3_lora.h): 1.61 GiB measured for a 1.29 GiB file. Of a pi-H3
+     * adapter's 2.04 GiB file only 0.44 GiB is that: 0.60 GiB is the pixel
+     * head, read after the DiT (its stage has it), and 1.00 GiB the last
+     * blocks' projections, which take the checkpoint's place - beside the
+     * streamed blocks, resident in int8, with the attention cache; streamed
+     * themselves with SSD streaming; among the resident blocks otherwise. */
+    uint64_t lora_bytes = 0;
+    for (size_t index = 0; index < params->lora_count; index++) {
+        const char *path = params->loras[index].path;
+        struct stat status;
+        if (!path || stat(path, &status) != 0) continue;
+        uint64_t factors = (uint64_t)status.st_size;
+        h3_lora_info lora_info;
+        if (h3_lora_inspect(path, &lora_info, detail, sizeof(detail))) {
+            uint64_t apart = lora_info.pixel_head_bytes +
+                             lora_info.replaced_bytes;
+            factors = apart < factors ? factors - apart : 0;
+            if (cached) lora_bytes += lora_info.replaced_bytes;
+            if (lora_info.pi_h3 == H3_PI_H3_PIXELS &&
+                !(head_off && *head_off && strcmp(head_off, "0")))
+                pixel_head_tokens =
+                    (size_t)temporal.video_t * latent_h * latent_w;
+        }
+        lora_bytes += (uint64_t)((double)factors * 1.3);
+    }
     h3_plan_input input = {
         h3_device(ctx)->physical_memory, params->ssd_streaming,
         h3_plan_full_sdpa(ctx), prefetch_depth, resident + lora_bytes,
@@ -372,7 +394,8 @@ int h3_plan_generation(const h3_ctx *ctx, const char *prompt,
             !hyperflow_resident && !params->use_slower_bf16_mlp &&
             !params->use_slower_bf16_qkv &&
             !params->use_slower_bf16_attention_output,
-        decoder_int8, decoded_pixel_frames, params->preview_denoise != 0};
+        decoder_int8, decoded_pixel_frames, params->preview_denoise != 0,
+        pixel_head_tokens};
     h3_plan_compute(&input, plan);
     ok = 1;
 

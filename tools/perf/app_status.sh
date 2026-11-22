@@ -5,6 +5,7 @@
 # does) and the app with a model in it. No Python, no Command Line Tools.
 #
 #     zsh app_status.sh /Applications/H3cApp.app <work dir> [--quick] [--only=a,b] [--redo] [--limit=minutes] [--list]
+#                        [--port=number] [--lora=file]...
 #
 # or, for a development build (from the repository, which then gives the
 # shaders and the other resources):
@@ -23,7 +24,11 @@
 # bundle, and a bundle run in place would use the installed app's settings.
 # From the installed app it takes, and only reads: the model list, the LoRA
 # list, the int8 caches (as symbolic links) and the denoise preview's decoder
-# (a copy). Port 8420 must be free, so quit H3cApp first.
+# (a copy). Port 8420 must be free, so quit H3cApp first - or, with a build
+# that reads H3_API_PORT (after v0.11.0), give the copy a port of its own with
+# --port and leave H3cApp open. --lora adds a LoRA file to the copy's list
+# only (the pi-H3 jobs want the pi-H3 adapters, which the installed app may
+# not have).
 #
 # The model is the one selected in the installed app (another when that is a
 # HyperFlow H3 Flash, which has a job of its own). A job whose model or LoRA
@@ -48,7 +53,7 @@ unalias -m '*' 2>/dev/null
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 zmodload zsh/datetime
 
-arguments=() only=() limit=60 redo=0 quick=0 list=0
+arguments=() only=() extra_loras=() limit=60 redo=0 quick=0 list=0 port=8420
 for argument in "$@"; do
     case $argument in
         --only=*) only=(${(s:,:)${argument#--only=}}) ;;
@@ -56,11 +61,14 @@ for argument in "$@"; do
         --redo) redo=1 ;;
         --quick) quick=1 ;;
         --list) list=1 ;;
+        --port=*) port=${argument#--port=} ;;
+        --lora=*) extra_loras+=("${${argument#--lora=}:A}") ;;
         --*) ;;
         *) arguments+=("$argument") ;;
     esac
 done
 typeset -F limit_seconds=$(( limit * 60.0 ))
+[[ $port == <1024-65535> ]] || { print -u2 "--port takes a number from 1024 to 65535"; exit 1 }
 repo=${0:A:h:h:h}
 eval "real_home=~$(id -un)"
 real_support="$real_home/Library/Application Support/H3cApp"
@@ -106,6 +114,46 @@ JOBS=$(jq -c . <<'EOF'
   "change": {"loras": ["$LORA:turbo_4step"], "steps": 4, "first_frame_path": "$FIRST", "seconds": 3}, "how": {}},
  {"name": "lora_dmad8", "label": "DMAD LoRA（8ステップ）、3秒",
   "change": {"loras": ["$LORA:dmad_minimax_h3_8step"], "steps": 8, "seconds": 3}, "how": {}},
+ {"name": "pi_h3_4step", "label": "pi-H3（4ステップ、画素ヘッド）、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_2step", "label": "pi-H3（2ステップ、画素ヘッド）、3秒",
+  "change": {"loras": ["$LORA:pi_h3_2step_dwd"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_fastest", "label": "pi-H3（4ステップ）＋速度モード：最速（トークン削減は効かない）、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "speed_mode": "fastest", "compute_mode": "attentionCache", "seconds": 3},
+  "how": {}},
+ {"name": "pi_h3_first_frame", "label": "pi-H3（4ステップ）＋最初の画像、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "attentionCache",
+             "first_frame_path": "$FIRST", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_first_last", "label": "pi-H3（4ステップ）＋最初と最後の画像、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "attentionCache",
+             "first_frame_path": "$FIRST", "last_frame_path": "$LAST", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_reference", "label": "pi-H3（4ステップ）＋参照画像（Ref2VA）、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "attentionCache",
+             "reference_paths": ["$FIRST"], "seconds": 3}, "how": {}},
+ {"name": "pi_h3_continue", "label": "pi-H3（4ステップ）で続きを作る（pi_h3_4stepの続き）、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "attentionCache",
+             "continue_from": "$VIDEO:pi_h3_4step", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_preview", "label": "pi-H3（4ステップ）＋途中の様子を表示、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3},
+  "how": {"preview": true}},
+ {"name": "pi_h3_large", "label": "pi-H3（4ステップ）、横長・大（960×544）、5秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "attentionCache",
+             "size_profile": "landscape-large"}, "how": {}},
+ {"name": "pi_h3_2step_large", "label": "pi-H3（2ステップ）、横長・大（960×544）、5秒",
+  "change": {"loras": ["$LORA:pi_h3_2step_dwd"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache",
+             "size_profile": "landscape-large"}, "how": {}},
+ {"name": "pi_h3_vae_4step", "label": "pi-H3（4ステップ、画素ヘッドなしの版、VAEで復号）、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_adapter"], "steps": 4, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_vae_2step", "label": "pi-H3（2ステップ、画素ヘッドなしの版、VAEで復号）、3秒",
+  "change": {"loras": ["$LORA:pi_h3_2step_adapter"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_ssd", "label": "pi-H3（4ステップ）、SSD streaming、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "ssdStreaming", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_steps_mismatch", "label": "pi-H3（4ステップ版）に2ステップを指定（始める前に断られる）",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3},
+  "how": {"declined": "pi-H3"}},
+ {"name": "pi_h3_steps_refused", "label": "pi-H3（4ステップ版）に8ステップを指定（始める前に断られる）",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 8, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3},
+  "how": {"declined": "pi-H3"}},
  {"name": "hyperflow", "label": "HyperFlow H3 Flash（別のモデル、6ステップ、reuse 1）、3秒",
   "change": {"steps": 6, "reuse": 1, "seconds": 3}, "how": {"hyperflow": true}},
  {"name": "preview", "label": "途中の様子を表示、3秒", "change": {"seconds": 3}, "how": {"preview": true}},
@@ -138,7 +186,7 @@ app=$appdir/H3cAppDevCheck
 inputs=$work/inputs
 log_path=$work/app.log
 results_path=$work/results.jsonl
-address=http://127.0.0.1:8420
+address=http://127.0.0.1:$port
 app_pid=
 main_id= main_name=      # the model the jobs run with
 hyper_looked=0 hyper_id= hyper_name=
@@ -238,7 +286,7 @@ machine() {
 
 set_up() {
     curl -s -m 1 -o /dev/null $address/
-    (( $? == 7 )) || die "port 8420 is in use: quit H3cApp (or whatever listens there) first"
+    (( $? == 7 )) || die "port $port is in use: quit H3cApp (or whatever listens there) first, or give another with --port"
     local shader folders folder
     if [[ -n $bundle ]]; then
         shader=$bundle/Contents/Resources/h3_shaders.metal folders=$bundle/Contents/Resources
@@ -270,6 +318,28 @@ set_up() {
     active=$(jq -r --arg a "$active" '([.[] | select(.id == $a)][0] // .[0]).id' <<<"$models")
     local loras_data=$(plutil -extract 'H3ModelLibrary\.loras' raw -o - - <<<"$exported" 2>/dev/null)
     [[ -n $loras_data ]] || loras_data=$(print -n '[]' | base64)
+    # --lora: an entry as the app writes one for a file it is given, with the
+    # step count its name says ("4step"). They go first in the list, in the
+    # order given, so that モデル管理 shows them without scrolling.
+    local lora steps listed added='[]'
+    for lora in $extra_loras; do
+        [[ -f $lora ]] || die "no such LoRA file: $lora"
+        # diffusers' fixed file name: listed by its folder, as the app does.
+        listed=${lora:t}
+        [[ ${(L)listed} == diffusion_pytorch_model.* ]] && listed=${lora:h:t}
+        steps=$(sed -nE 's/.*[^0-9]([0-9]{1,2})[-_ ]?steps?.*/\1/p' <<<"${(L)listed}")
+        added=$(jq -c --arg id "$(uuidgen)" --arg name "$listed" --arg path "$lora" --arg steps "$steps" \
+                   '. + [{id: $id, name: $name, path: $path, scaleText: "",
+                          recommendedSteps: (if $steps == "" then null else ($steps | tonumber) end),
+                          enabled: false, sampler: "auto", audioShiftText: "", formerPaths: []}]' <<<"$added") ||
+            die "cannot add the LoRA to the copy's list: $lora"
+    done
+    if [[ $added != '[]' ]]; then
+        loras_data=$(base64 -d <<<"$loras_data" |
+            jq -c --argjson added "$added" '($added | map(.path)) as $paths
+                                            | $added + [.[] | select(.path as $p | $paths | index($p) | not)]' | base64) ||
+            die "cannot add the LoRAs to the copy's list"
+    fi
     local own=$work/own.plist
     print '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict/></plist>' > "$own"
     plutil -insert 'H3cApp\.apiEnabled' -bool YES "$own" &&
@@ -317,7 +387,7 @@ select_model() {
 
 start() {
     rm -f -- "$support/api-token"
-    ( cd "$appdir" && CFFIXED_USER_HOME=$home H3_MEMORY_TRACE=1 exec "$app" >> "$log_path" 2>&1 ) &
+    ( cd "$appdir" && CFFIXED_USER_HOME=$home H3_MEMORY_TRACE=1 H3_API_PORT=$port exec "$app" >> "$log_path" 2>&1 ) &
     app_pid=$!
     local -F deadline=$(( EPOCHREALTIME + 60 ))
     code=000
@@ -750,8 +820,16 @@ run_job() {
     put request "$(jq -c 'del(.prompt)' <<<"$request")"
     put http $(( 10#$code ))
     local error= error_message= videos='[]'
+    # "declined": the app is to say no before anything starts, in words that
+    # hold this text.
+    local declined=$(jq -r '.declined // empty' <<<"$how")
     if [[ $code != 202 ]]; then
         error=${$(jq -c . <<<"$body" 2>/dev/null || jq -Rsc '{error: .}' <<<"$body"):0:400}
+        if [[ -n $declined && $code == 409 && $body == *"$declined"* ]]; then
+            puts declined "$(jq -r '.error // empty' <<<"$body" 2>/dev/null)"
+            error=
+            put ok true
+        fi
     else
         local -a order spent
         local last_phase= phase busy available
@@ -858,6 +936,7 @@ run_job() {
         if [[ $how == *'"cancel":true'* ]]; then
             (( cancelled )) && [[ $videos == '[]' && -z $error ]] && put ok true
         else
+            [[ -n $declined && -z $error ]] && error="the app began a generation it was to decline"
             [[ $(jq '(length > 0) and (.[0].unreadable | not)' <<<"$videos") == true && -z $error && -z $error_message ]] &&
                 put ok true
         fi
@@ -919,6 +998,7 @@ while (( number < total )); do
     fi
     print -r -- "$record" >> "$results_path"
     jq -r 'if .skipped then "    skipped: \(.skipped)"
+           elif .declined then "    \(if .ok then "ok" else "FAILED" end), declined: \(.declined)"
            else "    \(if .ok then "ok" elif .refused then "REFUSED" else "FAILED" end) \(.wall_seconds) s, peak \(.footprint_peak_gib) GiB \(.error // .error_message // "")"
            end' <<<"$record"
 done

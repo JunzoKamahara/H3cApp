@@ -132,6 +132,12 @@ int h3_serving_schedule_build_shifted(int evaluations, float audio_shift,
  * spaced base grids (steps 4, 6 or 8; anything else fails) with the video
  * shift 12 and the audio shift 3 applied to the same grid. */
 int h3_hyperflow_schedule_build(int steps, h3_sigma_schedule *schedule);
+/* pi-H3's sampler (LakonLab's FlowEulerODEScheduler as its pi-H3 pipeline
+ * sets it up): raw times spaced evenly from max_raw_t (0.93 for 2 steps,
+ * 0.96 for 4; anything else fails) down to max_raw_t * 0.6 / (steps - 0.4),
+ * then 0, with the video shift 12 and the audio shift 3 on the same raw
+ * times. */
+int h3_pi_h3_schedule_build(int steps, h3_sigma_schedule *schedule);
 
 int h3_layout_build(const h3_layout_spec *spec, h3_layout *layout,
                     char *error, size_t error_size);

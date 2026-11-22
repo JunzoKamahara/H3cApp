@@ -23,6 +23,7 @@
 #include "h3_tokenizer.h"
 #include "h3_video_encoder.h"
 #include "h3_video_vae.h"
+#include "h3_pixel_head.h"
 #include "h3_vision_encoder.h"
 #include <dirent.h>
 #include <errno.h>

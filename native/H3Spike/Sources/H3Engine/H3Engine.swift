@@ -199,6 +199,11 @@ public struct H3LoRAInfo: Sendable, Equatable {
     /// step rule, and an audio sigma shift other than the engine's 3.
     public let recommendsRenoise: Bool
     public let recommendedAudioShift: Double?
+    /// A pi-H3 adapter (h3_lora_info.pi_h3): it brings its own 2- or 4-step
+    /// time grid, and with its pixel head the frames come from the DiT's
+    /// last evaluation instead of the video VAE decoder.
+    public enum PiH3: Sendable, Equatable { case none, latent, pixels }
+    public let piH3: PiH3
 
     /// Reads only the safetensors header - cheap enough to call from the UI.
     public static func inspect(path: String) throws -> H3LoRAInfo {
@@ -214,7 +219,9 @@ public struct H3LoRAInfo: Sendable, Equatable {
             rankMin: Int(info.rank_min), rankMax: Int(info.rank_max),
             format: fixedCString(info.format), baseModel: fixedCString(info.base_model),
             recommendsRenoise: info.sampler == Int32(H3_SAMPLER_RENOISE),
-            recommendedAudioShift: info.audio_sigma_shift > 0 ? Double(info.audio_sigma_shift) : nil)
+            recommendedAudioShift: info.audio_sigma_shift > 0 ? Double(info.audio_sigma_shift) : nil,
+            piH3: info.pi_h3 == Int32(H3_PI_H3_PIXELS) ? .pixels :
+                  info.pi_h3 == Int32(H3_PI_H3_LATENT) ? .latent : .none)
     }
 }
 

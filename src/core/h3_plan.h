@@ -48,6 +48,10 @@ typedef struct {
     /* The decoder is loaded before the denoise and stays beside the DiT
      * (h3_params.preview_denoise). */
     int video_decoder_with_dit;
+    /* Tokens of a pi-H3 pixel head's grid (latent steps x 16-pixel cells),
+     * where that head gives the frames in place of the video decoder
+     * (h3_pixel_head.h); 0 otherwise. */
+    size_t pixel_head_tokens;
 } h3_plan_input;
 
 /* Qwen's causal attention: its fast kernel keeps one F32 score row per

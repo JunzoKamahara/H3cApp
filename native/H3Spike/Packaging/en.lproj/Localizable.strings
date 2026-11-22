@@ -242,6 +242,13 @@
 "追加…" = "Add…";
 "%lld/50ブロック" = "%lld/50 blocks";
 "未対応%lld件は無視" = "%lld unsupported ignored";
+"pi-H3（画素ヘッドで映像化）" = "pi-H3 (frames from its pixel head)";
+"pi-H3（映像VAEで復号）" = "pi-H3 (decoded by the video VAE)";
+"追加モデル「%@」（pi-H3）は2または4ステップで生成します。詳細設定の「生成ステップ数」を2か4にしてください" = "The add-on model “%@” (pi-H3) generates in 2 or 4 steps. Set “Steps” in Advanced Settings to 2 or 4";
+"追加モデル「%@」（pi-H3）は%lldステップ用です。詳細設定の「生成ステップ数」を%lldにしてください" = "The add-on model “%1$@” (pi-H3) is for %2$lld steps. Set “Steps” in Advanced Settings to %3$lld";
+"pi-H3の追加モデルは、2または4ステップで生成します。" = "A pi-H3 add-on model generates in 2 or 4 steps.";
+"pi-H3の追加モデルがオンの間は、毎ステップを省略なしで計算します（速度の設定値は保持され、追加モデルをオフにすると使われます）。" = "While a pi-H3 add-on model is on, every step is computed in full (the speed setting is kept and used again once the add-on model is off).";
+"pi-H3の追加モデルがオンの間は、reuse 1で計算します（設定値は保持され、追加モデルをオフにすると使われます）。" = "While a pi-H3 add-on model is on, it runs at reuse 1 (the setting is kept and used again once the add-on model is off).";
 "MiniMax-H3用として読み込めません: %@" = "Can't be loaded for MiniMax-H3: %@";
 "ファイルが見つかりません" = "File not found";
 "ステップ" = "Steps";

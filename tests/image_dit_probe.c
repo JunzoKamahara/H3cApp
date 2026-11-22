@@ -282,7 +282,7 @@ int main(int argc, char **argv) {
         memcpy(sigmas.audio, pdd_sigmas, sizeof(pdd_sigmas));
         for (int visual = 0; visual <= 1; visual++) {
             h3_dit_schedule *schedule = h3_dit_schedule_precompute_curve(
-                NULL, curve, gpu, &sigmas, visual, 0, NULL, NULL, error,
+                NULL, NULL, curve, gpu, &sigmas, visual, 0, NULL, NULL, error,
                 sizeof(error));
             if (!schedule) {
                 printf("  FAILED   PDD schedule (visual condition %d): %s\n",

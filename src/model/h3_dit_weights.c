@@ -1,5 +1,6 @@
 /* The DiT's block weights: loading them resident (plain and HyperFlow's factored blocks), streaming them from the SSD or from the int8 attention cache, and quantizing them. Split out of h3_dit.c. */
 #include "h3_dit_private.h"
+#include "h3_metal.h"
 /* refiner/index identify the block for LoRA lookup (token-refiner blocks
  * are separate targets from the 50 DiT blocks). */
 int h3_dit_load_block(h3_dit *dit, h3_dit_block *block, const char *prefix,
@@ -222,14 +223,17 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
                                uint64_t columns, uint64_t row_begin,
                                uint64_t row_count, unsigned field,
                                char *error, size_t error_size) {
+    /* A projection a pi-H3 adapter replaces streams from the adapter's file
+     * (its ComfyUI int8 form), the others from the checkpoint. */
+    const h3_weight_store *store = h3_dit_store_of(dit, name);
     const h3_st_header *header = NULL;
-    const h3_st_tensor *tensor = h3_weight_find(dit->weights, name, &header);
+    const h3_st_tensor *tensor = h3_weight_find(store, name, &header);
     if (!tensor) {
         h3_dit_fail(error, error_size, "required streaming weight is absent: %s",
              name);
         return 0;
     }
-    if (h3_weight_is_comfy_int8(dit->weights, tensor)) {
+    if (h3_weight_is_comfy_int8(store, tensor)) {
         /* The int8 payload streams as it is - half a BF16 weight's bytes -
          * and expand_streamed restores it on the GPU. Each row carries its
          * own scale and rotation, so a row range (one SwiGLU half of FC1)
@@ -245,7 +249,7 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
             return 0;
         }
         h3_dit_free_tensor(&source->comfy_scales);
-        if (!h3_weight_comfy_int8_scales(dit->weights, dit->gpu, tensor,
+        if (!h3_weight_comfy_int8_scales(store, dit->gpu, tensor,
                                          row_begin, row_count, &group,
                                          &source->comfy_scales,
                                          error, error_size))
@@ -257,7 +261,7 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
             return 0;
         }
         if (row_count == rows)
-            h3_weight_qkv_reorder(dit->weights, name, tensor, &inner,
+            h3_weight_qkv_reorder(store, name, tensor, &inner,
                                   &head_dim);
         source->path = header->path;
         source->file_offset = tensor->file_offset + row_begin * columns;
@@ -278,7 +282,7 @@ static int prepare_stream_rows(h3_dit *dit, h3_dit_stream_source *source,
                     quant != H3_QUANT_F32 && quant != H3_QUANT_BF16;
     uint32_t qkv_inner = 0, qkv_head_dim = 0;
     int whole = row_begin == 0 && row_count == rows;
-    if (whole && h3_weight_qkv_reorder(dit->weights, name, tensor,
+    if (whole && h3_weight_qkv_reorder(store, name, tensor,
                                        &qkv_inner, &qkv_head_dim) &&
         !quantized && tensor->dtype == H3_DTYPE_BF16) {
         /* A BF16 [Q; K; V] weight streams through the staging buffer too,
@@ -917,6 +921,90 @@ int h3_dit_prepare_comfy_block(h3_dit *dit, unsigned layer, char *error,
             block->group[linear] |= 0x80000000u; /* rows are reordered */
         }
     }
+    return 1;
+}
+
+/* --- pi-H3: replaced projections for the int8 slots ---------------------- */
+
+void h3_dit_free_overlay(h3_dit *dit) {
+    for (unsigned block = 0; dit->overlay_int8 && block < H3_DIT_BLOCKS; block++)
+        for (unsigned linear = 0; linear < H3_COMFY_LINEARS; linear++) {
+            h3_dit_free_tensor(&dit->overlay_int8[block][linear]);
+            h3_dit_free_tensor(&dit->overlay_scales[block][linear]);
+        }
+    free(dit->overlay_int8);
+    free(dit->overlay_scales);
+    dit->overlay_int8 = dit->overlay_scales = NULL;
+    free(dit->pixel_modulation);
+    dit->pixel_modulation = NULL;
+    h3_weight_store_free(dit->overlay);
+    dit->overlay = NULL;
+}
+
+/* A resident block loads its projections by name, which already takes the
+ * adapter's (h3_dit_store_of), and so does an SSD-streamed one
+ * (prepare_stream_rows). The int8 slots are filled from the attention
+ * cache instead, so each projection the adapter replaces is restored to
+ * BF16 here (its ComfyUI int8 form included) and quantized the way the
+ * cache's are, once, and stays resident: 0.27 GiB per replaced block. */
+int h3_dit_prepare_overlay_blocks(h3_dit *dit, char *error, size_t error_size) {
+    unsigned replaced = 0;
+    for (unsigned block = 0; block < H3_DIT_BLOCKS; block++)
+        for (unsigned linear = H3_COMFY_OUT; linear < H3_COMFY_LINEARS; linear++) {
+            char name[96];
+            snprintf(name, sizeof(name), "blocks.%u.%s", block,
+                     comfy_linears[linear].name);
+            if (!h3_weight_find(dit->overlay, name, NULL)) continue;
+            if (dit->comfy_direct) {
+                h3_dit_fail(error, error_size, "a pi-H3 adapter that "
+                     "replaces block projections (%s) does not run with int8 "
+                     "blocks streamed as stored", name);
+                return 0;
+            }
+            if (!(linear == H3_COMFY_OUT ? dit->attention_stream
+                                         : dit->mlp_stream)) continue;
+            if (!dit->overlay_int8) {
+                dit->overlay_int8 = calloc(H3_DIT_BLOCKS, sizeof(*dit->overlay_int8));
+                dit->overlay_scales = calloc(H3_DIT_BLOCKS, sizeof(*dit->overlay_scales));
+                if (!dit->overlay_int8 || !dit->overlay_scales) {
+                    h3_dit_fail(error, error_size, "out of memory for the "
+                         "pi-H3 adapter's projections");
+                    return 0;
+                }
+            }
+            uint32_t rows = comfy_linears[linear].rows;
+            uint32_t columns = comfy_linears[linear].columns;
+            /* A pool for each matrix: without it the BF16 copies made on
+             * the way (2.2 GiB for the twelve) stay until the generation
+             * ends, beside the DiT. */
+            void *pool = h3_autorelease_push();
+            h3_gpu_tensor *plain = h3_dit_bf2(dit, name, rows, columns, error,
+                                              error_size);
+            if (!plain) {
+                h3_autorelease_pop(pool);
+                return 0;
+            }
+            h3_gpu_tensor *values = h3_gpu_tensor_new_i8(
+                dit->gpu, (size_t)rows * columns);
+            h3_gpu_tensor *scales = h3_gpu_tensor_new_f32(dit->gpu, rows);
+            dit->overlay_int8[block][linear] = values;
+            dit->overlay_scales[block][linear] = scales;
+            int ok = values && scales && h3_gpu_begin(dit->gpu) &&
+                     h3_gpu_quantize_weight_int8(dit->gpu, values, scales,
+                                                 plain, rows, columns) &&
+                     h3_gpu_submit(dit->gpu);
+            h3_gpu_tensor_free(plain);
+            h3_autorelease_pop(pool);
+            if (!ok) {
+                h3_dit_fail(error, error_size, "cannot quantize %s: %s", name,
+                     h3_gpu_error(dit->gpu));
+                return 0;
+            }
+            replaced++;
+        }
+    if (replaced)
+        fprintf(stderr, "h3: pi-H3 adapter: %u replaced projections kept "
+                "resident in int8\n", replaced);
     return 1;
 }
 

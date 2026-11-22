@@ -27,7 +27,7 @@ static h3_plan run(uint64_t ram, size_t text, size_t vision, size_t dit,
                    size_t generated, size_t reference,
                    const h3_plan_visual *visuals, size_t visual_count) {
     h3_plan_input input = {ram, 1, 1, 1, 0, text, vision, dit, generated,
-                           reference, visuals, visual_count, 0, 0, 0.0, 0};
+                           reference, visuals, visual_count, 0, 0, 0.0, 0, 0};
     h3_plan plan;
     memset(&plan, 0x5a, sizeof(plan));
     h3_plan_compute(&input, &plan);
@@ -83,7 +83,7 @@ int main(void) {
          * 16000-token sequence fits 24 GB there too, and costs more than
          * the one call's mask. */
         h3_plan_input input = {ram24, 1, 0, 1, 0, 16000, 15900, 60000, 40000,
-                               20000, NULL, 0, 0, 0, 0.0, 0};
+                               20000, NULL, 0, 0, 0, 0.0, 0, 0};
         h3_plan chunked;
         h3_plan_compute(&input, &chunked);
         check(chunked.verdict != H3_PLAN_TOO_LARGE,
@@ -115,7 +115,7 @@ int main(void) {
          * estimate still covers the measured peaks (3.88 GiB at 9895
          * tokens and 20 steps, 4.87 GiB at 21735 tokens and 2 steps). */
         h3_plan_input input = {ram24, 0, 1, 1, 0, 30, 0, 9895, 9865, 0,
-                               NULL, 0, 0, 0, 0.0, 0};
+                               NULL, 0, 0, 0, 0.0, 0, 0};
         h3_plan bf16, int8;
         h3_plan_compute(&input, &bf16);
         input.dit_int8 = 1;
@@ -136,7 +136,7 @@ int main(void) {
          * estimates cover what was measured (int8 5.44 GiB and F32 12.11
          * at 960x544 and 362 frames, F32 11.76 at 512x512 and 49). */
         h3_plan_input input = {ram24, 1, 0, 1, 0, 9, 0, 4547, 4538, 0,
-                               NULL, 0, 0, 0, 512.0 * 512 * 39, 0};
+                               NULL, 0, 0, 0, 512.0 * 512 * 39, 0, 0};
         h3_plan f32, int8, longer;
         h3_plan_compute(&input, &f32);
         check((double)f32.video_decoder_bytes > 11.76 * GIB,
@@ -186,6 +186,44 @@ int main(void) {
         h3_plan_compute(&input, &int8);
         check(int8.verdict != H3_PLAN_TOO_LARGE,
               "8 GB is not refused for the int8 decoder");
+    }
+
+    {
+        /* A pi-H3 pixel head stands where the decoder would: its estimate
+         * grows with the clip and covers what was measured (2.39, 2.23 and 4.04 GiB),
+         * and it is the stage named. */
+        h3_plan_input input = {ram24, 0, 1, 1, 0, 23, 0, 2657, 2634, 0,
+                               NULL, 0, 1, 1, 384.0 * 384 * 22, 0, 0};
+        h3_plan decoder, head;
+        h3_plan_compute(&input, &decoder);
+        input.pixel_head_tokens = 17 * 24 * 24;
+        h3_plan_compute(&input, &head);
+        check(head.video_decoder_bytes < decoder.video_decoder_bytes &&
+              (double)head.video_decoder_bytes > 2.39 * GIB,
+              "a short clip's pixel head needs less than the int8 decoder");
+        check(head.dit_bytes == decoder.dit_bytes,
+              "the pixel head changes nothing of the DiT's estimate");
+        input.pixel_head_tokens = 37 * 30 * 52;
+        h3_plan_compute(&input, &head);
+        check((double)head.video_decoder_bytes > 2.23 * GIB,
+              "the pixel head's estimate covers 832x480 and 124 frames");
+        input.pixel_head_tokens = 37 * 48 * 84;
+        h3_plan_compute(&input, &head);
+        check((double)head.video_decoder_bytes > 4.04 * GIB &&
+              (double)head.video_decoder_bytes < 4.5 * GIB,
+              "the pixel head's estimate covers 1344x768 and 124 frames");
+        /* Four times that clip on a Mac the DiT's stage still fits. */
+        input.pixel_head_tokens *= 4;
+        input.memory_bytes = 8ull << 30;
+        h3_plan_compute(&input, &head);
+        check(head.verdict == H3_PLAN_TOO_LARGE &&
+              !strstr(head.message, "any size") &&
+              !strcmp(head.peak_stage, "pixel head") &&
+              strstr(head.message, "pixel head") &&
+              strstr(head.message, "smaller"),
+              "a pixel head too large is told to make the video smaller");
+        check(strcmp(head.peak_stage, "video decoder") != 0,
+              "with a pixel head no stage is the video decoder");
     }
 
     /* A long reference video: chunked VAE encode, its pixels held. */

@@ -848,6 +848,17 @@ static int allocate_activations(h3_dit *dit, char *error, size_t error_size) {
             return 0;
         }
     }
+    /* H3_DUMP_FINAL_VIDEO: the fused head keeps no normalized rows. */
+    if (!dit->final_video_norm && h3_option("H3_DUMP_FINAL_VIDEO")) {
+        dit->final_video_norm = h3_gpu_tensor_new_bf16(
+            dit->gpu, video * HIDDEN);
+        if (!dit->final_video_norm) {
+            h3_dit_fail(error, error_size,
+                 "cannot allocate the final video rows to dump: %s",
+                 h3_gpu_error(dit->gpu));
+            return 0;
+        }
+    }
     if (!dit->bf16_final) {
         dit->final_audio_f32 = h3_gpu_tensor_new_f32(
             dit->gpu, audio * HIDDEN);
@@ -1124,6 +1135,53 @@ static void schedule_report(int completed, int total, void *opaque) {
     h3_dit_report(state->callback, state->opaque, "precompute AdaLN", completed, total);
 }
 
+/* pi-H3's pixel head normalizes the last block's output itself, with an
+ * AdaLN of its own (dwd_norm_out): [scale, shift] = W silu(c) + b, c being
+ * the curve's coordinates at the last step's video time - SiLU on the
+ * coordinates and scale before shift, unlike the final layer's. */
+static int prepare_pixel_modulation(h3_dit *dit, const h3_adaln_curve *curve,
+                                    const h3_sigma_schedule *sigmas,
+                                    char *error, size_t error_size) {
+    enum { OUTPUTS = 2 * HIDDEN, RANK = 8 };
+    float time = 1.0f - sigmas->video[sigmas->steps - 1];
+    float coordinates[RANK];
+    h3_adaln_curve_coordinates(curve, &time, 1, coordinates);
+    for (int index = 0; index < RANK; index++)
+        coordinates[index] /= 1.0f + expf(-coordinates[index]);
+    uint64_t weight_shape[] = {OUTPUTS, RANK}, bias_shape[] = {OUTPUTS};
+    h3_gpu_tensor *weight = h3_weight_load_f32(
+        dit->overlay, dit->gpu, "dwd_norm_out.linear.weight", 2, weight_shape,
+        error, error_size);
+    h3_gpu_tensor *bias = weight ? h3_weight_load_f32(
+        dit->overlay, dit->gpu, "dwd_norm_out.linear.bias", 1, bias_shape,
+        error, error_size) : NULL;
+    float *values = malloc((size_t)OUTPUTS * RANK * sizeof(*values));
+    float *result = malloc((size_t)OUTPUTS * sizeof(*result));
+    int ok = weight && bias && values && result &&
+             h3_gpu_tensor_read_f32(weight, values, (size_t)OUTPUTS * RANK) &&
+             h3_gpu_tensor_read_f32(bias, result, OUTPUTS);
+    if (ok) {
+        for (int output = 0; output < OUTPUTS; output++) {
+            double sum = result[output];
+            for (int index = 0; index < RANK; index++)
+                sum += (double)values[output * RANK + index] *
+                       (double)coordinates[index];
+            result[output] = (float)sum;
+        }
+        free(dit->pixel_modulation);
+        dit->pixel_modulation = result;
+        result = NULL;
+    } else if (error && error_size && !error[0]) {
+        h3_dit_fail(error, error_size, "cannot read the pixel head's AdaLN: %s",
+                    h3_gpu_error(dit->gpu));
+    }
+    h3_gpu_tensor_free(weight);
+    h3_gpu_tensor_free(bias);
+    free(values);
+    free(result);
+    return ok;
+}
+
 static h3_dit *load_dit(const char *weight_directory,
                         const char *shader_source_path,
                         const h3_text_embedding *text,
@@ -1256,6 +1314,27 @@ static h3_dit *load_dit(const char *weight_directory,
         dit->loras = h3_lora_set_load(dit->gpu, loras, lora_count, error,
                                       error_size);
         if (!dit->loras) goto failed;
+    }
+    /* A pi-H3 adapter also replaces whole tensors of the checkpoint. */
+    for (size_t index = 0; index < lora_count; index++) {
+        h3_lora_info lora_info;
+        char ignored[256];
+        if (!h3_lora_inspect(loras[index].path, &lora_info, ignored,
+                             sizeof(ignored)) || !lora_info.pi_h3) continue;
+        if (dit->overlay || dit->hyperflow || still) {
+            h3_dit_fail(error, error_size, dit->overlay ?
+                 "only one pi-H3 adapter can be applied at a time" :
+                 "a pi-H3 adapter applies to MiniMax H3 video checkpoints only");
+            goto failed;
+        }
+        dit->overlay = h3_weight_store_open_file(loras[index].path, error,
+                                                 error_size);
+        if (!dit->overlay) goto failed;
+        dit->overlay_pixels = lora_info.pi_h3 == H3_PI_H3_PIXELS;
+        fprintf(stderr, "h3: pi-H3 adapter%s: its AdaLN, final layer and "
+                "replaced projections are taken from %s\n",
+                dit->overlay_pixels ? " with the pixel head" : "",
+                loras[index].path);
     }
     dit->nax_mlp = dit->fused_mlp && h3_gpu_has_nax_mlp(dit->gpu);
     dit->int8_mlp = !dit->ssd_streaming && dit->fused_mlp &&
@@ -1392,6 +1471,8 @@ static h3_dit *load_dit(const char *weight_directory,
         dit->mlp_stream = 1;
         fprintf(stderr, "h3: int8 blocks streamed as stored (inputs rotated)\n");
     }
+    if (dit->overlay &&
+        !h3_dit_prepare_overlay_blocks(dit, error, error_size)) goto failed;
     dit->use_slower_row_major_attention_output =
         use_slower_row_major_attention_output;
     dit->use_slower_unfused_int8_inputs =
@@ -1489,7 +1570,13 @@ static h3_dit *load_dit(const char *weight_directory,
     }
     /* LoRA AdaLN curve branches change the schedule, so it is neither
      * taken from nor stored in the prepared cache then. */
-    int adaln_patched = h3_lora_set_has_adaln(dit->loras);
+    int adaln_patched = h3_lora_set_has_adaln(dit->loras) || dit->overlay;
+    if (dit->overlay && (!curve || h3_adaln_curve_rank(curve) != 8)) {
+        h3_dit_fail(error, error_size, "a pi-H3 adapter needs a curve-form "
+             "(\"pruned\", rank 8) MiniMax H3 checkpoint");
+        h3_adaln_curve_free(curve);
+        goto failed;
+    }
     if (adaln_patched && !curve)
         fprintf(stderr, "h3: warning: a LoRA's AdaLN curve branches need a "
                         "curve-form checkpoint; ignored\n");
@@ -1517,7 +1604,8 @@ static h3_dit *load_dit(const char *weight_directory,
                     curve_path, h3_adaln_curve_rank(curve),
                     h3_adaln_curve_grid(curve));
             dit->schedule = h3_dit_schedule_precompute_curve(
-                dit->loras, curve, dit->gpu, sigmas, visual_condition,
+                dit->loras, dit->overlay, curve, dit->gpu, sigmas,
+                visual_condition,
                 audio_condition,
                 schedule_report, &schedule_state, error, error_size);
         } else {
@@ -1541,6 +1629,11 @@ static h3_dit *load_dit(const char *weight_directory,
                         (double)h3_dit_prep_bytes(prep, 1) / (1024.0 * 1024.0));
             }
         }
+    }
+    if (dit->schedule && dit->overlay_pixels &&
+        !prepare_pixel_modulation(dit, curve, sigmas, error, error_size)) {
+        h3_adaln_curve_free(curve);
+        goto failed;
     }
     h3_adaln_curve_free(curve);
     /* H3_ADALN_ULP_NOISE=<fraction> (diagnostic): a rounding-sized random
