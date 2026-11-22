@@ -365,7 +365,7 @@ struct AdvancedSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
             if viewModel.ditLayers < defaultDitLayers {
-                Text("層を減らすと音声が壊れることがあります（45層で強い雑音に変わることを確認）。映像も変わります。")
+                Text("層を減らすと音声が壊れることがあります（試した範囲では47層までは保たれ、45層で雑音に変わりました）。映像も変わります。")
                     .font(.caption)
                     .foregroundStyle(palette.errorColor)
             }

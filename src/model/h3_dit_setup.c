@@ -481,22 +481,49 @@ static int configure_named_blocks(h3_dit *dit) {
     return 1;
 }
 
+/* The order in which a smaller layer count drops blocks, taken from
+ * HyperFlow H3 Flash, a distilled H3 (plans/PI_H3_PLAN.ja.md 8.13-8.14):
+ * the three blocks it removed, then the ones it shrank to low rank, least
+ * kept first (8 12.1% of the dense size; 12, 23 13.0%; 9 13.8%; 11 13.0%;
+ * 4 13.9%; 7 14.8%; 18 17.4%; 17 18.2%; 13 18.9%; 10 19.0%; 14, 15
+ * 19.5%; 16 26.9%; 20 44.3%; 2 74.4%). 12, 23 and 9 come before 11, which
+ * ties with 12 and 23, so that 43 layers is the set measured on CUDA and
+ * here. Blocks 1 and 49 are low rank too but stay, as with the gate
+ * ranking. Past these 19, the rest go by gate rank. */
+static const unsigned hyperflow_drop_order[] = {
+    6, 21, 22, 8, 12, 23, 9, 11, 4, 7, 18, 17, 13, 10, 14, 15, 16, 20, 2,
+};
+
+/* With fewer layers (dit_layers < 50), which blocks to leave out: by
+ * default HyperFlow's order, then gate rank past its 19 blocks;
+ * H3_DIT_LAYER_POLICY=gate ranks them all by gate, =uniform spreads them
+ * evenly (configure_active_blocks). */
 static void configure_gate_ranked_blocks(h3_dit *dit) {
     if (configure_named_blocks(dit)) return;
     const char *policy = h3_option("H3_DIT_LAYER_POLICY");
     if ((policy && !strcmp(policy, "uniform")) || dit->hyperflow ||
         dit->active_block_count == H3_DIT_BLOCKS) return;
+    int by_gate = policy && !strcmp(policy, "gate");
+    unsigned skipped = H3_DIT_BLOCKS - dit->active_block_count;
+    unsigned listed = by_gate ? 0 : sizeof(hyperflow_drop_order) /
+                                    sizeof(hyperflow_drop_order[0]);
+    if (listed > skipped) listed = skipped;
+    uint8_t active[H3_DIT_BLOCKS];
+    memset(active, 1, sizeof(active));
+    for (unsigned index = 0; index < listed; index++)
+        active[hyperflow_drop_order[index]] = 0;
     typedef struct { unsigned block; double score; } block_score;
     /* The first two and final blocks establish/close the residual stream.
      * Block 1 has a small gate but proved structurally essential in decoded
      * A/B renders, so magnitude ranking must not treat it as disposable. */
     block_score scores[H3_DIT_BLOCKS - 3];
-    for (unsigned block = 2; block + 1 < H3_DIT_BLOCKS; block++) {
+    unsigned count = 0;
+    for (unsigned block = 2; listed < skipped && block + 1 < H3_DIT_BLOCKS;
+         block++) {
         double score = h3_dit_schedule_gate_score(dit->schedule, block);
         if (score < 0.0) return;
-        scores[block - 2] = (block_score){block, score};
+        if (active[block]) scores[count++] = (block_score){block, score};
     }
-    unsigned count = H3_DIT_BLOCKS - 3;
     for (unsigned left = 0; left < count; left++) {
         unsigned least = left;
         for (unsigned right = left + 1; right < count; right++)
@@ -505,13 +532,16 @@ static void configure_gate_ranked_blocks(h3_dit *dit) {
         scores[left] = scores[least];
         scores[least] = temporary;
     }
-    memset(dit->block_active, 1, sizeof(dit->block_active));
-    unsigned skipped = H3_DIT_BLOCKS - dit->active_block_count;
-    for (unsigned index = 0; index < skipped; index++)
-        dit->block_active[scores[index].block] = 0;
+    for (unsigned index = 0; index < skipped - listed; index++)
+        active[scores[index].block] = 0;
+    memcpy(dit->block_active, active, sizeof(active));
     if (h3_option("H3_PROFILE")) {
-        fprintf(stderr, "h3: gate-ranked DiT skips");
-        for (unsigned index = 0; index < skipped; index++)
+        fprintf(stderr, "h3: DiT skips");
+        if (listed) fprintf(stderr, " (HyperFlow's order)");
+        for (unsigned index = 0; index < listed; index++)
+            fprintf(stderr, " %u", hyperflow_drop_order[index]);
+        if (skipped > listed) fprintf(stderr, " (gate rank)");
+        for (unsigned index = 0; index < skipped - listed; index++)
             fprintf(stderr, " %u(%.4g)", scores[index].block,
                     scores[index].score);
         fputc('\n', stderr);

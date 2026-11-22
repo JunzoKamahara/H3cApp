@@ -319,7 +319,7 @@ enum ImageInputMode: String, CaseIterable, Identifiable {
 // LoRA stacks apply in all three (h3_lora.c patches whichever weights the
 // mode loads or streams).
 // Approximations the engine already implements and validated (h3.h):
-// gate-ranked DiT block skipping (dit_layers), transformer-core reuse across
+// DiT block skipping in HyperFlow's order (dit_layers), transformer-core reuse across
 // steps (core_reuse) and horizontal token pairing in the middle blocks
 // (token_reduction). See GenerationViewModel.speedSettings for the values
 // and the measurements behind them.

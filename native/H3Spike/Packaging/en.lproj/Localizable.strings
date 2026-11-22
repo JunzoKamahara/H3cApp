@@ -38,7 +38,7 @@
 "%lld（さらに高速）" = "%lld (fastest)";
 "使用する層数（DiTブロック）" = "Layer count (DiT blocks)";
 "50未満にすると、影響の小さいブロックから省いて高速化します。速度設定とは別に効きます。" = "Below 50, the least influential blocks are skipped to go faster. Works independently of the speed setting.";
-"層を減らすと音声が壊れることがあります（45層で強い雑音に変わることを確認）。映像も変わります。" = "Fewer layers can break the audio (45 layers was seen to turn it into loud noise). The video changes too.";
+"層を減らすと音声が壊れることがあります（試した範囲では47層までは保たれ、45層で雑音に変わりました）。映像も変わります。" = "Fewer layers can break the audio (in tests it held up to 47 layers and turned into noise at 45). The video changes too.";
 "使用する層数" = "Layer count";
 "%lld（全層・標準）" = "%lld (all layers, standard)";
 "ランダムさ" = "Randomness";

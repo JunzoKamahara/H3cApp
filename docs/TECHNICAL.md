@@ -471,7 +471,13 @@ All modes use all 50 DiT blocks. Up to 0.2.0 the faster presets also skipped
 with tonal bands), so 0.3.0 dropped it. The block count is still available
 on its own as the layer count in the advanced settings (35–50, default 50,
 the API's `dit_layers`), with a warning that fewer blocks can break the
-audio.
+audio. The blocks left out are now the ones HyperFlow H3 Flash, a
+distilled H3, removed (6, 21, 22) and then shrank the most (8, 12, 23, 9,
+11, 4, 7, ...), instead of the smallest gates: at 47 layers the audio
+stayed like 50's on the regular model and with pi-H3, where gate rank
+already made it noisy; at 45 both broke it, gate rank far worse
+(`H3_DIT_LAYER_POLICY=gate` restores the old order; plans/PI_H3_PLAN.ja.md
+8.14).
 
 ### Fast mode (experimental)
 
