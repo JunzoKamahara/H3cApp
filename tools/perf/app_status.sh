@@ -5,7 +5,7 @@
 # does) and the app with a model in it. No Python, no Command Line Tools.
 #
 #     zsh app_status.sh /Applications/H3cApp.app <work dir> [--quick] [--only=a,b] [--redo] [--limit=minutes] [--list]
-#                        [--port=number] [--lora=file]... [--language=code]
+#                        [--port=number] [--lora=file]... [--language=code] [--jobs=file]
 #
 # or, for a development build (from the repository, which then gives the
 # shaders and the other resources):
@@ -29,7 +29,9 @@
 # --port and leave H3cApp open. --lora adds a LoRA file to the copy's list
 # only (the pi-H3 jobs want the pi-H3 adapters, which the installed app may
 # not have). --language starts the copy in that language ("en", "ja") rather
-# than the Mac's, for pictures of its window.
+# than the Mac's, for pictures of its window. --jobs runs the jobs of a JSON
+# file in place of the list below, in the same form (name, label, change,
+# how); a change may give its own "prompt".
 #
 # The model is the one selected in the installed app (another when that is a
 # HyperFlow H3 Flash, which has a job of its own). A job whose model or LoRA
@@ -54,7 +56,7 @@ unalias -m '*' 2>/dev/null
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 zmodload zsh/datetime
 
-arguments=() only=() extra_loras=() limit=60 redo=0 quick=0 list=0 port=8420 language=
+arguments=() only=() extra_loras=() limit=60 redo=0 quick=0 list=0 port=8420 language= jobs_file=
 for argument in "$@"; do
     case $argument in
         --only=*) only=(${(s:,:)${argument#--only=}}) ;;
@@ -64,6 +66,7 @@ for argument in "$@"; do
         --list) list=1 ;;
         --port=*) port=${argument#--port=} ;;
         --language=*) language=${argument#--language=} ;;
+        --jobs=*) jobs_file=${${argument#--jobs=}:A} ;;
         --lora=*) extra_loras+=("${${argument#--lora=}:A}") ;;
         --*) ;;
         *) arguments+=("$argument") ;;
@@ -168,6 +171,12 @@ EOF
 )
 QUICK=(size_small base_3s ssd_3s first_frame reference cancel after_cancel)
 [[ -n $JOBS ]] || { print -u2 "this needs jq, which macOS has from version 15"; exit 1 }
+if [[ -n $jobs_file ]]; then
+    JOBS=$(jq -c 'if type == "array" and all(.[]; (.name | type) == "string" and (.label | type) == "string"
+                                             and has("change") and (.how | type) == "object")
+                  then . else error("not a list of jobs") end' "$jobs_file" 2>/dev/null) ||
+        { print -u2 "--jobs: $jobs_file is not a list of {name, label, change, how}"; exit 1 }
+fi
 if (( list )); then
     jq -r --args '.[] | [(if .name as $n | $ARGS.positional | index($n) then "quick" else "     " end), .name, "|", .label,
                          "|", (.change | tojson), (if .how == {} then "" else (.how | tojson) end)] | join(" ")' \
