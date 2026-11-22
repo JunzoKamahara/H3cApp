@@ -5,7 +5,7 @@
 # does) and the app with a model in it. No Python, no Command Line Tools.
 #
 #     zsh app_status.sh /Applications/H3cApp.app <work dir> [--quick] [--only=a,b] [--redo] [--limit=minutes] [--list]
-#                        [--port=number] [--lora=file]...
+#                        [--port=number] [--lora=file]... [--language=code]
 #
 # or, for a development build (from the repository, which then gives the
 # shaders and the other resources):
@@ -28,7 +28,8 @@
 # that reads H3_API_PORT (after v0.11.0), give the copy a port of its own with
 # --port and leave H3cApp open. --lora adds a LoRA file to the copy's list
 # only (the pi-H3 jobs want the pi-H3 adapters, which the installed app may
-# not have).
+# not have). --language starts the copy in that language ("en", "ja") rather
+# than the Mac's, for pictures of its window.
 #
 # The model is the one selected in the installed app (another when that is a
 # HyperFlow H3 Flash, which has a job of its own). A job whose model or LoRA
@@ -53,7 +54,7 @@ unalias -m '*' 2>/dev/null
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 zmodload zsh/datetime
 
-arguments=() only=() extra_loras=() limit=60 redo=0 quick=0 list=0 port=8420
+arguments=() only=() extra_loras=() limit=60 redo=0 quick=0 list=0 port=8420 language=
 for argument in "$@"; do
     case $argument in
         --only=*) only=(${(s:,:)${argument#--only=}}) ;;
@@ -62,6 +63,7 @@ for argument in "$@"; do
         --quick) quick=1 ;;
         --list) list=1 ;;
         --port=*) port=${argument#--port=} ;;
+        --language=*) language=${argument#--language=} ;;
         --lora=*) extra_loras+=("${${argument#--lora=}:A}") ;;
         --*) ;;
         *) arguments+=("$argument") ;;
@@ -148,6 +150,8 @@ JOBS=$(jq -c . <<'EOF'
   "change": {"loras": ["$LORA:pi_h3_2step_adapter"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
  {"name": "pi_h3_ssd", "label": "pi-H3（4ステップ）、SSD streaming、3秒",
   "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "ssdStreaming", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_resident", "label": "pi-H3（4ステップ）、常駐、3秒",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "resident", "seconds": 3}, "how": {}},
  {"name": "pi_h3_steps_mismatch", "label": "pi-H3（4ステップ版）に2ステップを指定（始める前に断られる）",
   "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3},
   "how": {"declined": "pi-H3"}},
@@ -387,7 +391,9 @@ select_model() {
 
 start() {
     rm -f -- "$support/api-token"
-    ( cd "$appdir" && CFFIXED_USER_HOME=$home H3_MEMORY_TRACE=1 H3_API_PORT=$port exec "$app" >> "$log_path" 2>&1 ) &
+    local -a app_arguments
+    [[ -n $language ]] && app_arguments=(-AppleLanguages "($language)")
+    ( cd "$appdir" && CFFIXED_USER_HOME=$home H3_MEMORY_TRACE=1 H3_API_PORT=$port exec "$app" $app_arguments >> "$log_path" 2>&1 ) &
     app_pid=$!
     local -F deadline=$(( EPOCHREALTIME + 60 ))
     code=000
