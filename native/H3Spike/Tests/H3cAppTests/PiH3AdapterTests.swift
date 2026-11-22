@@ -42,6 +42,12 @@ final class PiH3AdapterTests: XCTestCase {
         XCTAssertEqual(LoRAEntry.detectedSteps(fromFileName: LoRAEntry.listedName(forFileAt: diffusers)), 2)
         let single = "/models/pi_h3_4step_dwd_adapter_int8_convrot.safetensors"
         XCTAssertEqual(LoRAEntry.listedName(forFileAt: single), "pi_h3_4step_dwd_adapter_int8_convrot.safetensors")
+        // Moved into the LoRA folder, it is named after the folder it came
+        // from, so the list still tells it apart and reads its steps.
+        XCTAssertEqual(ModelLibrary.loraFolderStem(forFileAt: diffusers), "pi_h3_2step_adapter")
+        XCTAssertEqual(LoRAEntry.detectedSteps(
+            fromFileName: LoRAEntry.listedName(forFileAt: "/LoRA/pi_h3_2step_adapter.safetensors")), 2)
+        XCTAssertEqual(ModelLibrary.loraFolderStem(forFileAt: single), "pi_h3_4step_dwd_adapter_int8_convrot")
     }
 
     /// The adapter without the pixel head comes only in the diffusers

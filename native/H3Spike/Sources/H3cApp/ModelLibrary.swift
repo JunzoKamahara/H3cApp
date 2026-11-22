@@ -559,7 +559,18 @@ final class ModelLibrary: ObservableObject {
     /// free name, and returns its new path. Off the main actor: a copy to
     /// another volume takes a while for a 1.4 GB file.
     nonisolated static func moveLoRAFileToFolder(_ path: String, copy: Bool) throws -> String {
-        try moveFileToFolder(path, directory: defaultLoRADirectory, copy: copy)
+        try moveFileToFolder(path, directory: defaultLoRADirectory, copy: copy,
+                             stem: loraFolderStem(forFileAt: path))
+    }
+
+    /// The name (without its extension) a LoRA file gets in the LoRA folder:
+    /// its own, or - for a file with diffusers' fixed name
+    /// (LoRAEntry.listedName) - its folder's. In the LoRA folder that name is
+    /// all that tells such files apart, and what gives their step count.
+    nonisolated static func loraFolderStem(forFileAt path: String) -> String {
+        let fileName = (path as NSString).lastPathComponent
+        let listed = LoRAEntry.listedName(forFileAt: path)
+        return listed == fileName ? (fileName as NSString).deletingPathExtension : listed
     }
 
     /// The same for a RefMod file and the RefMods folder.
@@ -590,11 +601,13 @@ final class ModelLibrary: ObservableObject {
         return target.path
     }
 
-    nonisolated private static func moveFileToFolder(_ path: String, directory: String, copy: Bool) throws -> String {
+    nonisolated private static func moveFileToFolder(_ path: String, directory: String, copy: Bool,
+                                                     stem: String? = nil) throws -> String {
         let fm = FileManager.default
         try fm.createDirectory(atPath: directory, withIntermediateDirectories: true)
         let source = URL(fileURLWithPath: path)
-        let target = URL(fileURLWithPath: freePath(in: directory, stem: source.deletingPathExtension().lastPathComponent,
+        let target = URL(fileURLWithPath: freePath(in: directory,
+                                                   stem: stem ?? source.deletingPathExtension().lastPathComponent,
                                                    extension: source.pathExtension))
         if copy { try fm.copyItem(at: source, to: target) } else { try fm.moveItem(at: source, to: target) }
         return target.path
