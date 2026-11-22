@@ -3,6 +3,7 @@
  * Sol-H3-VAE reference decoder's (Apache-2.0); tools/pi_h3/pixel_head_ref.py
  * is the same computation in numpy. */
 #include "h3_pixel_head.h"
+#include "h3_options.h"
 
 #include "h3_weights.h"
 
@@ -56,6 +57,9 @@ typedef struct {
 typedef struct {
     h3_gpu_tensor *norm1, *qkv_w, *qkv_b, *out_w, *out_b, *scale1;
     h3_gpu_tensor *norm2, *w1, *w1_b, *w2, *w2_b, *scale2;
+    /* With int8 linears each weight above is replaced by its rows in int8
+     * and their F32 scales. */
+    h3_gpu_tensor *qkv_q, *qkv_s, *out_q, *out_s, *w1_q, *w1_s, *w2_q, *w2_s;
 } head_block;
 
 typedef struct {
@@ -73,6 +77,14 @@ typedef struct {
     /* a chunk of rows */
     h3_gpu_tensor *x, *norm, *qkv, *qf, *kf, *vf, *branch_in, *branch;
     h3_gpu_tensor *ff1, *activated, *half, *cos, *sin;
+    /* The layers' four linears in int8, as the video VAE decoder runs its
+     * own (h3_video_vae.c): the M5's tensor units, H3_VAE_INT8=0 for F32.
+     * Measured on the M5 (the head alone): 1.8 s for 4.2 s at 384 x 384 and
+     * 56 frames, 17.3 s for 59.5 s at 1344 x 768 and 124; 46 dB from the F32
+     * frames (11 of 255 at most); about 0.9 GiB more while the first layer
+     * is set up, which is the head's peak only for small clips. */
+    int int8_linears;
+    h3_gpu_tensor *lin_in, *lin_out, *lin_quantized, *lin_scales;
     /* attention */
     attention_layout global, window[2];
     h3_gpu_tensor *q_rows, *k_rows, *v_rows, *a_rows;
@@ -156,6 +168,37 @@ static void free_block(head_block *block) {
     free_tensor(&block->norm2); free_tensor(&block->w1);
     free_tensor(&block->w1_b); free_tensor(&block->w2);
     free_tensor(&block->w2_b); free_tensor(&block->scale2);
+    free_tensor(&block->qkv_q); free_tensor(&block->qkv_s);
+    free_tensor(&block->out_q); free_tensor(&block->out_s);
+    free_tensor(&block->w1_q); free_tensor(&block->w1_s);
+    free_tensor(&block->w2_q); free_tensor(&block->w2_s);
+}
+
+/* An F32 [rows, columns] weight as per-row int8 and F32 scales, staged
+ * through BF16 as the quantizer reads it (h3_video_vae.c's quantize_linear). */
+static int quantize_linear(head_context *head, h3_gpu_tensor **weight,
+                           h3_gpu_tensor **quantized, h3_gpu_tensor **scales,
+                           uint32_t rows, uint32_t columns, char *error,
+                           size_t error_size) {
+    size_t count = (size_t)rows * columns;
+    h3_gpu_tensor *staged = h3_gpu_tensor_new_bf16(head->gpu, count);
+    *quantized = h3_gpu_tensor_new_i8(head->gpu, count);
+    *scales = h3_gpu_tensor_new_f32(head->gpu, rows);
+    int ok = staged && *quantized && *scales &&
+             h3_gpu_begin(head->gpu) &&
+             h3_gpu_cast_f32_to_bf16(head->gpu, staged, *weight,
+                                     (uint32_t)count) &&
+             h3_gpu_quantize_weight_int8(head->gpu, *quantized, *scales,
+                                         staged, rows, columns) &&
+             h3_gpu_submit(head->gpu);
+    h3_gpu_tensor_free(staged);
+    if (!ok) {
+        fail(error, error_size, "pixel head: cannot quantize a weight: %s",
+             h3_gpu_error(head->gpu));
+        return 0;
+    }
+    free_tensor(weight);
+    return 1;
 }
 
 static int load_block(head_context *head, int index, head_block *block,
@@ -188,7 +231,16 @@ static int load_block(head_context *head, int index, head_block *block,
     if (block->w2_b) block->scale2 = weight1(head, NAME("scale2"), DIM, error,
                                              error_size);
 #undef NAME
-    if (block->scale2) return 1;
+    if (block->scale2 &&
+        (!head->int8_linears ||
+         (quantize_linear(head, &block->qkv_w, &block->qkv_q, &block->qkv_s,
+                          3 * DIM, DIM, error, error_size) &&
+          quantize_linear(head, &block->out_w, &block->out_q, &block->out_s,
+                          DIM, DIM, error, error_size) &&
+          quantize_linear(head, &block->w1, &block->w1_q, &block->w1_s,
+                          2 * FFN, DIM, error, error_size) &&
+          quantize_linear(head, &block->w2, &block->w2_q, &block->w2_s,
+                          DIM, FFN, error, error_size)))) return 1;
     free_block(block);
     return 0;
 }
@@ -414,6 +466,22 @@ static int allocate(head_context *head, char *error, size_t error_size) {
             if ((size_t)call->batch * call->kv_len > kv_rows)
                 kv_rows = (size_t)call->batch * call->kv_len;
         }
+    if (head->int8_linears) {
+        /* For the widest linear: FFN in, 2 * FFN out. The int8 kernels read
+         * whole 128-row tiles (CHUNK is a multiple of 128). */
+        head->lin_in = h3_gpu_tensor_new_bf16(head->gpu, (size_t)CHUNK * FFN);
+        head->lin_out = h3_gpu_tensor_new_bf16(head->gpu,
+                                               (size_t)CHUNK * 2 * FFN);
+        head->lin_quantized = h3_gpu_tensor_new_i8(head->gpu,
+                                                   (size_t)CHUNK * FFN);
+        head->lin_scales = h3_gpu_tensor_new_f32(head->gpu, CHUNK);
+        if (!head->lin_in || !head->lin_out || !head->lin_quantized ||
+            !head->lin_scales) {
+            fail(error, error_size, "pixel head: cannot allocate its int8 "
+                 "scratch: %s", h3_gpu_error(head->gpu));
+            return 0;
+        }
+    }
     head->q_rows = h3_gpu_tensor_new_bf16(head->gpu, q_rows * DIM);
     head->a_rows = h3_gpu_tensor_new_bf16(head->gpu, q_rows * DIM);
     head->k_rows = h3_gpu_tensor_new_bf16(head->gpu, kv_rows * DIM);
@@ -532,6 +600,37 @@ static int expand_features(head_context *head, const uint16_t *rows,
     return ok;
 }
 
+/* One of a layer's linears on a chunk of rows: F32, or int8 with the bias
+ * added as the result comes back to F32. The int8 kernels take whole
+ * 128-row tiles, so the int8 linear always runs CHUNK rows - a last, shorter
+ * chunk leaves stale rows after its own, which give rows nobody reads: each
+ * row's result depends on that row alone. */
+static int block_linear(head_context *head, h3_gpu_tensor *output,
+                        const h3_gpu_tensor *input,
+                        const h3_gpu_tensor *weight,
+                        const h3_gpu_tensor *quantized,
+                        const h3_gpu_tensor *scales,
+                        const h3_gpu_tensor *bias, uint32_t rows,
+                        uint32_t input_dim, uint32_t output_dim) {
+    if (!quantized)
+        return h3_gpu_linear_f32(head->gpu, output, input, weight, bias, rows,
+                                 input_dim, output_dim);
+    return h3_gpu_cast_f32_to_bf16(head->gpu, head->lin_in, input,
+                                   rows * input_dim) &&
+           h3_gpu_linear_int8_bf16(head->gpu, head->lin_out,
+                                   head->lin_quantized, head->lin_scales,
+                                   head->lin_in, quantized, scales, CHUNK,
+                                   input_dim, output_dim, 0) &&
+           h3_gpu_cast_bf16_to_f32_bias(head->gpu, output, head->lin_out, bias,
+                                        rows, output_dim);
+}
+
+/* The rows of the next pass, from `first`. */
+static uint32_t next_chunk(const head_context *head, uint32_t first) {
+    uint32_t left = head->rows - first;
+    return left < CHUNK ? left : CHUNK;
+}
+
 static int attend(head_context *head, const attention_layout *layout,
                   char *error, size_t error_size) {
     for (size_t index = 0; index < layout->count; index++) {
@@ -560,14 +659,16 @@ static int run_layer(head_context *head, int index, const head_block *block,
                      char *error, size_t error_size) {
     int shifted = (FIRST_LAYER + index) % 2;
     OP(h3_gpu_begin(head->gpu), "begin a layer");
-    for (uint32_t first = 0; first < head->rows; first += CHUNK) {
-        uint32_t chunk = head->rows - first < CHUNK ? head->rows - first : CHUNK;
+    uint32_t chunk = 0;
+    for (uint32_t first = 0; first < head->rows; first += chunk) {
+        chunk = next_chunk(head, first);
         size_t at = (size_t)first * DIM, count = (size_t)chunk * DIM;
         OP(take_rows(head, at, count), "take rows");
         OP(h3_gpu_rms_norm_f32(head->gpu, head->norm, head->x, block->norm1,
             chunk, DIM, 1e-5f), "attention norm");
-        OP(h3_gpu_linear_f32(head->gpu, head->qkv, head->norm, block->qkv_w,
-            block->qkv_b, chunk, DIM, 3 * DIM), "QKV");
+        OP(block_linear(head, head->qkv, head->norm, block->qkv_w,
+            block->qkv_q, block->qkv_s, block->qkv_b, chunk, DIM, 3 * DIM),
+           "QKV");
         OP(h3_gpu_copy_f32(head->gpu, head->cos, 0, head->rope_cos[shifted],
             (size_t)first * ROPE_HALF, (size_t)chunk * ROPE_HALF), "RoPE cos");
         OP(h3_gpu_copy_f32(head->gpu, head->sin, 0, head->rope_sin[shifted],
@@ -586,26 +687,28 @@ static int run_layer(head_context *head, int index, const head_block *block,
     }
     if (!attend(head, &head->global, error, error_size) ||
         !attend(head, &head->window[shifted], error, error_size)) return 0;
-    for (uint32_t first = 0; first < head->rows; first += CHUNK) {
-        uint32_t chunk = head->rows - first < CHUNK ? head->rows - first : CHUNK;
+    for (uint32_t first = 0; first < head->rows; first += chunk) {
+        chunk = next_chunk(head, first);
         size_t at = (size_t)first * DIM, count = (size_t)chunk * DIM;
         OP(h3_gpu_copy_bf16(head->gpu, head->half, 0, head->query, at,
             count), "take attention");
         OP(h3_gpu_cast_bf16_to_f32(head->gpu, head->branch_in, head->half,
             (uint32_t)count), "attention to F32");
-        OP(h3_gpu_linear_f32(head->gpu, head->branch, head->branch_in,
-            block->out_w, block->out_b, chunk, DIM, DIM), "attention output");
+        OP(block_linear(head, head->branch, head->branch_in, block->out_w,
+            block->out_q, block->out_s, block->out_b, chunk, DIM, DIM),
+           "attention output");
         OP(take_rows(head, at, count), "take rows");
         OP(h3_gpu_scale_add_f32(head->gpu, head->x, head->x, head->branch,
             block->scale1, chunk, DIM), "attention residual");
         OP(h3_gpu_rms_norm_f32(head->gpu, head->norm, head->x, block->norm2,
             chunk, DIM, 1e-5f), "MLP norm");
-        OP(h3_gpu_linear_f32(head->gpu, head->ff1, head->norm, block->w1,
-            block->w1_b, chunk, DIM, 2 * FFN), "MLP input");
+        OP(block_linear(head, head->ff1, head->norm, block->w1, block->w1_q,
+            block->w1_s, block->w1_b, chunk, DIM, 2 * FFN), "MLP input");
         OP(h3_gpu_swiglu_f32(head->gpu, head->activated, head->ff1, chunk,
             FFN), "SwiGLU");
-        OP(h3_gpu_linear_f32(head->gpu, head->branch, head->activated,
-            block->w2, block->w2_b, chunk, FFN, DIM), "MLP output");
+        OP(block_linear(head, head->branch, head->activated, block->w2,
+            block->w2_q, block->w2_s, block->w2_b, chunk, FFN, DIM),
+           "MLP output");
         OP(h3_gpu_scale_add_f32(head->gpu, head->x, head->x, head->branch,
             block->scale2, chunk, DIM), "MLP residual");
         OP(keep_rows(head, at, count), "keep rows");
@@ -727,6 +830,8 @@ static void free_context(head_context *head) {
     free_tensor(&head->branch_in); free_tensor(&head->branch);
     free_tensor(&head->ff1); free_tensor(&head->activated);
     free_tensor(&head->half); free_tensor(&head->cos); free_tensor(&head->sin);
+    free_tensor(&head->lin_in); free_tensor(&head->lin_out);
+    free_tensor(&head->lin_quantized); free_tensor(&head->lin_scales);
     free_tensor(&head->q_rows); free_tensor(&head->k_rows);
     free_tensor(&head->v_rows); free_tensor(&head->a_rows);
     h3_weight_store_free(head->store);
@@ -768,6 +873,15 @@ int h3_pixel_head_decode(const char *adapter_path,
     head->gpu = h3_gpu_create(shader_source_path, error, error_size);
     if (!head->gpu) goto done;
     h3_gpu_profile_set_label(head->gpu, "pi-H3 pixel head");
+    {
+        /* As the video VAE decoder decides for its own block linears. */
+        const char *value = h3_option("H3_VAE_INT8");
+        head->int8_linears = !(value && !strcmp(value, "0")) &&
+                             h3_gpu_has_int8_mlp(head->gpu);
+        if (h3_option("H3_PROFILE"))
+            fprintf(stderr, "h3: pixel head linears: %s\n",
+                    head->int8_linears ? "int8" : "F32");
+    }
     if (!build_globals(head, &head->global) ||
         !build_windows(head, 0, &head->window[0]) ||
         !build_windows(head, 1, &head->window[1]) ||

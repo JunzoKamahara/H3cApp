@@ -148,6 +148,9 @@ JOBS=$(jq -c . <<'EOF'
   "change": {"loras": ["$LORA:pi_h3_2step_adapter"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
  {"name": "pi_h3_ssd", "label": "pi-H3（4ステップ）、SSD streaming、3秒",
   "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 4, "reuse": 1, "compute_mode": "ssdStreaming", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_steps_mismatch", "label": "pi-H3（4ステップ版）に2ステップを指定（始める前に断られる）",
+  "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3},
+  "how": {"declined": "pi-H3"}},
  {"name": "pi_h3_steps_refused", "label": "pi-H3（4ステップ版）に8ステップを指定（始める前に断られる）",
   "change": {"loras": ["$LORA:pi_h3_4step_dwd"], "steps": 8, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3},
   "how": {"declined": "pi-H3"}},
@@ -316,21 +319,27 @@ set_up() {
     local loras_data=$(plutil -extract 'H3ModelLibrary\.loras' raw -o - - <<<"$exported" 2>/dev/null)
     [[ -n $loras_data ]] || loras_data=$(print -n '[]' | base64)
     # --lora: an entry as the app writes one for a file it is given, with the
-    # step count its name says ("4step").
-    local lora steps listed
+    # step count its name says ("4step"). They go first in the list, in the
+    # order given, so that モデル管理 shows them without scrolling.
+    local lora steps listed added='[]'
     for lora in $extra_loras; do
         [[ -f $lora ]] || die "no such LoRA file: $lora"
         # diffusers' fixed file name: listed by its folder, as the app does.
         listed=${lora:t}
         [[ ${(L)listed} == diffusion_pytorch_model.* ]] && listed=${lora:h:t}
         steps=$(sed -nE 's/.*[^0-9]([0-9]{1,2})[-_ ]?steps?.*/\1/p' <<<"${(L)listed}")
-        loras_data=$(base64 -d <<<"$loras_data" |
-            jq -c --arg id "$(uuidgen)" --arg name "$listed" --arg path "$lora" --arg steps "$steps" \
-               '[.[] | select(.path != $path)] + [{id: $id, name: $name, path: $path, scaleText: "",
-                  recommendedSteps: (if $steps == "" then null else ($steps | tonumber) end),
-                  enabled: false, sampler: "auto", audioShiftText: "", formerPaths: []}]' | base64) ||
+        added=$(jq -c --arg id "$(uuidgen)" --arg name "$listed" --arg path "$lora" --arg steps "$steps" \
+                   '. + [{id: $id, name: $name, path: $path, scaleText: "",
+                          recommendedSteps: (if $steps == "" then null else ($steps | tonumber) end),
+                          enabled: false, sampler: "auto", audioShiftText: "", formerPaths: []}]' <<<"$added") ||
             die "cannot add the LoRA to the copy's list: $lora"
     done
+    if [[ $added != '[]' ]]; then
+        loras_data=$(base64 -d <<<"$loras_data" |
+            jq -c --argjson added "$added" '($added | map(.path)) as $paths
+                                            | $added + [.[] | select(.path as $p | $paths | index($p) | not)]' | base64) ||
+            die "cannot add the LoRAs to the copy's list"
+    fi
     local own=$work/own.plist
     print '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict/></plist>' > "$own"
     plutil -insert 'H3cApp\.apiEnabled' -bool YES "$own" &&

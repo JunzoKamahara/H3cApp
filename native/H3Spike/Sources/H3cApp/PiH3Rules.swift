@@ -9,7 +9,14 @@ enum PiH3Rules {
 
     /// The reason the form's next generation cannot run with the adapter,
     /// for the line above the generate button and POST /api/generate's 409.
-    static func problem(adapterName: String, steps: Int) -> String? {
+    /// adapterSteps is the count the adapter was distilled for - the entry's
+    /// 推奨ステップ数, which its file name gives ("4step") and モデル管理 can
+    /// change; the file itself does not record it. The engine would run a
+    /// 2-step adapter on the 4-step schedule without a word.
+    static func problem(adapterName: String, steps: Int, adapterSteps: Int? = nil) -> String? {
+        if let adapterSteps, Self.steps.contains(adapterSteps), steps != adapterSteps {
+            return String(localized: "追加モデル「\(adapterName)」（pi-H3）は\(adapterSteps)ステップ用です。詳細設定の「生成ステップ数」を\(adapterSteps)にしてください")
+        }
         if !Self.steps.contains(steps) {
             return String(localized: "追加モデル「\(adapterName)」（pi-H3）は2または4ステップで生成します。詳細設定の「生成ステップ数」を2か4にしてください")
         }

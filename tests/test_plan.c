@@ -190,7 +190,7 @@ int main(void) {
 
     {
         /* A pi-H3 pixel head stands where the decoder would: its estimate
-         * grows with the clip and covers what was measured (1.49, 2.14 and 4.04 GiB),
+         * grows with the clip and covers what was measured (2.39, 2.23 and 4.04 GiB),
          * and it is the stage named. */
         h3_plan_input input = {ram24, 0, 1, 1, 0, 23, 0, 2657, 2634, 0,
                                NULL, 0, 1, 1, 384.0 * 384 * 22, 0, 0};
@@ -199,13 +199,13 @@ int main(void) {
         input.pixel_head_tokens = 17 * 24 * 24;
         h3_plan_compute(&input, &head);
         check(head.video_decoder_bytes < decoder.video_decoder_bytes &&
-              (double)head.video_decoder_bytes > 1.49 * GIB,
+              (double)head.video_decoder_bytes > 2.39 * GIB,
               "a short clip's pixel head needs less than the int8 decoder");
         check(head.dit_bytes == decoder.dit_bytes,
               "the pixel head changes nothing of the DiT's estimate");
         input.pixel_head_tokens = 37 * 30 * 52;
         h3_plan_compute(&input, &head);
-        check((double)head.video_decoder_bytes > 2.14 * GIB,
+        check((double)head.video_decoder_bytes > 2.23 * GIB,
               "the pixel head's estimate covers 832x480 and 124 frames");
         input.pixel_head_tokens = 37 * 48 * 84;
         h3_plan_compute(&input, &head);

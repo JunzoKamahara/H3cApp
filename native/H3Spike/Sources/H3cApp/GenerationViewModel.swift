@@ -270,6 +270,16 @@ final class GenerationViewModel: ObservableObject {
     @Published var fastAttention = false
     // The 詳細設定 dialog, opened from the composer's button.
     @Published var showingAdvancedSettings = false
+    /// A sheet POST /api/window/show puts up over this window, or takes
+    /// down (none) - for a script that photographs the window for the
+    /// documentation or a check. ContentView, which owns the sheets, sets
+    /// showPanel; the string is モデル管理's section ("loras", ...).
+    enum WindowPanel: String {
+        case none
+        case advancedSettings = "advanced_settings"
+        case modelManager = "model_manager"
+    }
+    var showPanel: (WindowPanel, String?) -> Void = { _, _ in }
     // Settings presets live in PresetStore (shared by all windows); this
     // window's active one, and one waiting for a name in the save dialog.
     @Published var activePresetID: UUID?
@@ -1134,7 +1144,8 @@ final class GenerationViewModel: ObservableObject {
             }
         }
         if let adapter = piH3Adapter,
-           let problem = PiH3Rules.problem(adapterName: adapter.name, steps: effectiveSteps) {
+           let problem = PiH3Rules.problem(adapterName: adapter.name, steps: effectiveSteps,
+                                           adapterSteps: adapter.recommendedSteps) {
             return problem
         }
         if effectiveComputeMode == .attentionCache {

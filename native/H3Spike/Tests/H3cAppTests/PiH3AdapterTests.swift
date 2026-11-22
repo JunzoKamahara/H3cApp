@@ -23,6 +23,19 @@ final class PiH3AdapterTests: XCTestCase {
         XCTAssertTrue(stepsRange.contains(2))
     }
 
+    func testAnAdaptersOwnStepCountIsRequired() {
+        XCTAssertNil(PiH3Rules.problem(adapterName: "a", steps: 4, adapterSteps: 4))
+        XCTAssertNil(PiH3Rules.problem(adapterName: "a", steps: 2, adapterSteps: 2))
+        let two = PiH3Rules.problem(adapterName: "pi_h3_2step", steps: 4, adapterSteps: 2)
+        XCTAssertNotNil(two, "a 2-step adapter at 4 steps")
+        XCTAssertNotNil(PiH3Rules.problem(adapterName: "a", steps: 2, adapterSteps: 4))
+        // A count the name does not give, or one that is not pi-H3's, leaves
+        // only the 2-or-4 rule.
+        XCTAssertNil(PiH3Rules.problem(adapterName: "a", steps: 2, adapterSteps: nil))
+        XCTAssertNil(PiH3Rules.problem(adapterName: "a", steps: 4, adapterSteps: 8))
+        XCTAssertNotNil(PiH3Rules.problem(adapterName: "a", steps: 8, adapterSteps: 8))
+    }
+
     func testDiffusersFileIsListedByItsFolder() {
         let diffusers = "/models/pi_h3_2step_adapter/diffusion_pytorch_model.safetensors"
         XCTAssertEqual(LoRAEntry.listedName(forFileAt: diffusers), "pi_h3_2step_adapter")

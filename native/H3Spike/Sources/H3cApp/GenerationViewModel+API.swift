@@ -42,6 +42,17 @@ extension GenerationViewModel {
         case ("POST", "/api/cancel"):
             cancel()
             return .json(200, ["ok": true])
+        case ("POST", "/api/window/show"):
+            // {"panel": "advanced_settings" | "model_manager" | "none",
+            //  "section"?: モデル管理's section - "models", "images", "loras",
+            //  "refmods", "upscalers"}: puts that sheet up over this window,
+            // or takes the sheets down.
+            let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
+            guard let name = json["panel"] as? String, let panel = WindowPanel(rawValue: name) else {
+                return .error(400, "\"panel\" must be \"advanced_settings\", \"model_manager\" or \"none\"")
+            }
+            showPanel(panel, json["section"] as? String)
+            return .json(200, ["ok": true])
         case ("POST", "/api/upscale-file"):
             // 動画ファイルを2倍に拡大: {"path", "output", "upscaler"?} writes
             // the video at "path" enlarged 2x to "output" (an .mp4 path).

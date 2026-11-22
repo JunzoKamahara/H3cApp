@@ -128,12 +128,15 @@ static const double video_decoder_weights_f32 = 9.7 * GIB;
  * own GPU context, one of its 8 layers' weights at a time, 512 rows of
  * scratch, and for the whole clip at once its activations (BF16 hidden, Q,
  * K and V rows of 2048, 16 KiB a token) and the DiT rows it reads (2.6
- * KiB); the frames leave as they come. Measured on the 24 GB M5
- * (plans/PI_H3_PLAN.ja.md, 8.7): 1.49 GiB at 384x384 and 56 frames (9792
- * tokens), 2.14 at 832x480 and 124 (57720), 4.04 at 1344x768 and 124
- * (149184, the head alone). */
+ * KiB); the frames leave as they come. Its int8 linears (M5) take about
+ * 0.9 GiB more while the first layer is set up, which is its peak only for
+ * a small clip: the floor. Measured on the 24 GB M5, the head alone
+ * (plans/PI_H3_PLAN.ja.md, 8.9), int8 / F32: 2.39 / 1.53 GiB at 384x384 and
+ * 56 frames (9792 tokens), 2.23 / 2.12 at 832x480 and 124 (57720), 3.95 /
+ * 4.04 at 1344x768 and 124 (149184). */
 static const double pixel_head_fixed = 1.5 * GIB;
 static const double pixel_head_per_token = 19.0 * 1024.0;
+static const double pixel_head_floor = 2.5 * GIB;
 
 /* Verdicts against RAM: past `tight` macOS starts compressing and swapping
  * heavily; past `too_large` the run risks exhausting swap, which is what
@@ -260,8 +263,10 @@ void h3_plan_compute(const h3_plan_input *input, h3_plan *plan) {
      * is loaded after the DiT. */
     if (input->pixel_head_tokens) {
         decoder_load = 0.0;
-        plan->video_decoder_bytes = (uint64_t)(pixel_head_fixed +
-            (double)input->pixel_head_tokens * pixel_head_per_token);
+        double head = pixel_head_fixed +
+            (double)input->pixel_head_tokens * pixel_head_per_token;
+        plan->video_decoder_bytes =
+            (uint64_t)(head > pixel_head_floor ? head : pixel_head_floor);
     }
 
     stage(plan, plan->video_encoder_bytes, "video encoder");
