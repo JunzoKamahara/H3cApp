@@ -1,5 +1,6 @@
 /* The DiT's block weights: loading them resident (plain and HyperFlow's factored blocks), streaming them from the SSD or from the int8 attention cache, and quantizing them. Split out of h3_dit.c. */
 #include "h3_dit_private.h"
+#include "h3_metal.h"
 /* refiner/index identify the block for LoRA lookup (token-refiner blocks
  * are separate targets from the 50 DiT blocks). */
 int h3_dit_load_block(h3_dit *dit, h3_dit_block *block, const char *prefix,
@@ -973,9 +974,16 @@ int h3_dit_prepare_overlay_blocks(h3_dit *dit, char *error, size_t error_size) {
             }
             uint32_t rows = comfy_linears[linear].rows;
             uint32_t columns = comfy_linears[linear].columns;
+            /* A pool for each matrix: without it the BF16 copies made on
+             * the way (2.2 GiB for the twelve) stay until the generation
+             * ends, beside the DiT. */
+            void *pool = h3_autorelease_push();
             h3_gpu_tensor *plain = h3_dit_bf2(dit, name, rows, columns, error,
                                               error_size);
-            if (!plain) return 0;
+            if (!plain) {
+                h3_autorelease_pop(pool);
+                return 0;
+            }
             h3_gpu_tensor *values = h3_gpu_tensor_new_i8(
                 dit->gpu, (size_t)rows * columns);
             h3_gpu_tensor *scales = h3_gpu_tensor_new_f32(dit->gpu, rows);
@@ -986,6 +994,7 @@ int h3_dit_prepare_overlay_blocks(h3_dit *dit, char *error, size_t error_size) {
                                                  plain, rows, columns) &&
                      h3_gpu_submit(dit->gpu);
             h3_gpu_tensor_free(plain);
+            h3_autorelease_pop(pool);
             if (!ok) {
                 h3_dit_fail(error, error_size, "cannot quantize %s: %s", name,
                      h3_gpu_error(dit->gpu));
