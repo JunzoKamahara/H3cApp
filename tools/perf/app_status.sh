@@ -153,6 +153,8 @@ JOBS=$(jq -c . <<'EOF'
   "change": {"loras": ["$LORA:pi_h3_2step_adapter"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
  {"name": "pi_h3_dwd_diffusers", "label": "pi-H3（4ステップ、画素ヘッドつきのdiffusers形式）、3秒",
   "change": {"loras": ["$LORA:pi_h3_4step_dwd_adapter"], "steps": 4, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
+ {"name": "pi_h3_dwd_diffusers_2step", "label": "pi-H3（2ステップ、画素ヘッドつきのdiffusers形式）、3秒",
+  "change": {"loras": ["$LORA:pi_h3_2step_dwd_adapter"], "steps": 2, "reuse": 1, "compute_mode": "attentionCache", "seconds": 3}, "how": {}},
  {"name": "pi_h3_dwd_diffusers_ssd", "label": "pi-H3（4ステップ、画素ヘッドつきのdiffusers形式）、SSD streaming、3秒",
   "change": {"loras": ["$LORA:pi_h3_4step_dwd_adapter"], "steps": 4, "reuse": 1, "compute_mode": "ssdStreaming", "seconds": 3}, "how": {}},
  {"name": "pi_h3_ssd", "label": "pi-H3（4ステップ）、SSD streaming、3秒",
