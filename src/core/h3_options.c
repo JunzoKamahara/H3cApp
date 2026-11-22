@@ -141,6 +141,8 @@ static const h3_option_info options[] = {
      "With fewer DiT layers: skip blocks evenly instead of by gate rank."},
     {"H3_DIT_MLP_CHUNK_ROWS", "dit", "<rows>",
      "The fused BF16 MLP (SSD streaming, M1 to M4) runs on at most this many rows at a time (default 4096), so what it keeps between FC1 and FC2 is a piece's rows instead of the sequence's. 0 is one piece."},
+    {"H3_DIT_SKIP_BLOCKS", "dit", "<n,n,...>",
+     "Skip (neither run nor load) these DiT blocks, 1 to 48, whatever the layer count; not for HyperFlow. For trying the blocks HyperFlow H3 Flash removed or shrank most (6,8,9,12,21,22,23) with pi-H3."},
     {"H3_DUMP_ATTENTION_BLOCK", "dump", "<n>",
      "The block H3_DUMP_ATTENTION_QKV dumps."},
     {"H3_DUMP_ATTENTION_QKV", "dump", "<prefix>",

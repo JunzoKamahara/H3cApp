@@ -445,7 +445,44 @@ unsigned h3_dit_next_active_block(const h3_dit *dit, unsigned current) {
     return H3_DIT_BLOCKS;
 }
 
+/* H3_DIT_SKIP_BLOCKS: the blocks named (base numbering, 1 to 48) are not
+ * run or loaded, whatever the layer count says. For trying the blocks
+ * HyperFlow H3 Flash removed or shrank most (6, 21, 22; 8, 9, 12, 23) with
+ * pi-H3. Returns whether it applied. */
+static int configure_named_blocks(h3_dit *dit) {
+    const char *list = h3_option("H3_DIT_SKIP_BLOCKS");
+    if (!list || !*list || dit->hyperflow) return 0;
+    uint8_t active[H3_DIT_BLOCKS];
+    memset(active, 1, sizeof(active));
+    unsigned skipped = 0;
+    const char *cursor = list;
+    while (*cursor) {
+        char *end = NULL;
+        long block = strtol(cursor, &end, 10);
+        if (end == cursor || block < 1 || block > H3_DIT_BLOCKS - 2) {
+            fprintf(stderr, "h3: H3_DIT_SKIP_BLOCKS: \"%s\" is not a list "
+                    "of blocks 1 to %d; ignored\n", list, H3_DIT_BLOCKS - 2);
+            return 0;
+        }
+        if (active[block]) skipped++;
+        active[block] = 0;
+        cursor = end;
+        while (*cursor == ',' || *cursor == ' ') cursor++;
+    }
+    if (skipped > H3_DIT_BLOCKS / 2) {
+        fprintf(stderr, "h3: H3_DIT_SKIP_BLOCKS: at most %d blocks; ignored\n",
+                H3_DIT_BLOCKS / 2);
+        return 0;
+    }
+    memcpy(dit->block_active, active, sizeof(active));
+    dit->active_block_count = H3_DIT_BLOCKS - skipped;
+    fprintf(stderr, "h3: DiT skips the named blocks %s (%u of %d run)\n",
+            list, dit->active_block_count, H3_DIT_BLOCKS);
+    return 1;
+}
+
 static void configure_gate_ranked_blocks(h3_dit *dit) {
+    if (configure_named_blocks(dit)) return;
     const char *policy = h3_option("H3_DIT_LAYER_POLICY");
     if ((policy && !strcmp(policy, "uniform")) || dit->hyperflow ||
         dit->active_block_count == H3_DIT_BLOCKS) return;
