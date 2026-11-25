@@ -514,8 +514,24 @@ Measured on an M5 with 24 GB, pi-H3 in 2 steps with the pixel head at
 each): 137.3 s → 101.3 s (0.5) and 94.7 s (1.0), about 1 GB more peak
 memory. In two scenes the pictures held, with no visible block seams, but the
 composition changed from standard and the audio came out 4 to 8 dB louder.
-Picture quality with the usual 20 steps has not been checked. The details are
-in section 8.15 of [`plans/PI_H3_PLAN.ja.md`](../plans/PI_H3_PLAN.ja.md) (in Japanese).
+
+Without pi-H3 (through the app's API, int8 attention cache, 20 steps,
+`reuse` 2, the cat prompt, seed 7, 5 s, one run each), denoising took:
+
+| Size | Standard | Fast (int8) | Sol 0.5 | Sol 1.0 |
+|---|---|---|---|---|
+| 512x512 | 307.4 s | 296.3 s (-4%) | 256.9 s (-16%) | 246.4 s (-20%) |
+| 960x544 | 861.6 s | 749.8 s (-13%) | 654.0 s (-24%) | 541.6 s (-37%) |
+
+At 960x544 the peak memory went from 4.71 GiB to 6.89 GiB (the FP16 Q/K/V
+and output handed to Sol plus ccv's scratch, which grow with the token count;
+the memory plan does not count them). The pictures held with no seams, at
+16 to 20 dB PSNR against standard, about as far from it as fast mode. The
+audio came out about 10 dB quieter at 512x512 and about the same at 960x544,
+so the louder audio seen with pi-H3 is not a general effect. Clips of 10 s or
+more, image inputs, SSD streaming and the speed presets have not been tried
+with it. The details are in sections 8.15 and 8.15.1 of
+[`plans/PI_H3_PLAN.ja.md`](../plans/PI_H3_PLAN.ja.md) (in Japanese).
 
 ### Measured generation times
 
