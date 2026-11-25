@@ -421,6 +421,7 @@ static h3_dit_attention_mode h3_resolve_attention_mode(const h3_params *params) 
                                         : H3_DIT_ATTENTION_CCV_INT8;
     }
     if (backend && !strcmp(backend, "ccv_fp16")) return H3_DIT_ATTENTION_CCV_FP16;
+    if (backend && !strcmp(backend, "ccv_sol")) return H3_DIT_ATTENTION_CCV_SOL;
     return H3_DIT_ATTENTION_MPS;
 }
 

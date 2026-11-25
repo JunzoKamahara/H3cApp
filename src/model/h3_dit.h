@@ -116,7 +116,8 @@ typedef enum {
     H3_DIT_ATTENTION_MPS = 0,         /* production MPSGraph SDPA */
     H3_DIT_ATTENTION_CCV_INT8,        /* ccv int8 via the FP16 row-major bridge */
     H3_DIT_ATTENTION_CCV_FP16,        /* ccv non-quantized FP16 (diagnostic) */
-    H3_DIT_ATTENTION_CCV_INT8_DIRECT  /* ccv int8 on the BF16 head-major Q/K/V */
+    H3_DIT_ATTENTION_CCV_INT8_DIRECT, /* ccv int8 on the BF16 head-major Q/K/V */
+    H3_DIT_ATTENTION_CCV_SOL          /* ccv int8 Sol (block-sparse), diagnostic */
 } h3_dit_attention_mode;
 void h3_dit_set_attention_mode(h3_dit *dit, h3_dit_attention_mode mode);
 /* Step rule for the following denoise calls: H3_SAMPLER_EULER (default)
