@@ -61,6 +61,7 @@ struct CreationFormView: View {
     @State private var imageModelSetup: H3ImageModel?
     @State private var showingImageSeed = false
     @State private var showingCustomImageSize = false
+    @State private var showingCustomVideoSize = false
     /// 「RefModとして保存…」 for this reference (RefModExtractSheet).
     @State private var refModSources: RefModSources?
     @State private var promptSuggestion = randomPromptSuggestion()
@@ -120,6 +121,9 @@ struct CreationFormView: View {
         }
         .sheet(isPresented: $showingCustomImageSize) {
             CustomImageSizeSheet(viewModel: viewModel) { showingCustomImageSize = false }
+        }
+        .sheet(isPresented: $showingCustomVideoSize) {
+            CustomVideoSizeSheet(viewModel: viewModel) { showingCustomVideoSize = false }
         }
         .sheet(isPresented: $showingClipEditor) {
             CustomClipsSheet(viewModel: viewModel, library: library, isPresented: $showingClipEditor)
@@ -936,6 +940,7 @@ struct CreationFormView: View {
             )) {
                 Text("2倍に拡大（\(current.canvasLabel)で生成）")
             }
+            Button("カスタム…") { showingCustomVideoSize = true }
         } label: {
             composerChip(systemImage: "arrow.up.left.and.arrow.down.right", text: sizeChipText)
         }

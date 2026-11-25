@@ -364,17 +364,23 @@
 "%@ ×2" = "%@ ×2";
 "%@（%@から2倍）" = "%1$@ (2x from %2$@)";
 "サイズ" = "Size";
-"カスタムサイズを使う" = "Use a custom size";
+"生成するサイズが上限（%@ピクセル）を超えているため、このままでは生成できません。「カスタム…」で小さくしてください。" = "The size generated is above the limit (%@ pixels), so it cannot be generated as it is. Make it smaller with Custom….";
+"プリセットはプロンプト欄の「画面の形」「大きさ」で選びます。「カスタム…」では幅と高さを打ち込めます（プロンプト欄の「大きさ」からも開けます）。" = "Presets are chosen with Shape and Size in the prompt panel. Custom… lets you type in the width and height (it also opens from Size in the prompt panel).";
+"現在: %@" = "Current: %@";
+"動画の大きさ" = "Video Size";
+"このMacでの目安: 約%lld分（いまの長さと設定・これまでの生成実績から）" = "Estimate on this Mac: about %lld min (at the current length and settings, from past generations)";
+"拡大は生成後に行うため、時間はほとんど増えません。メニューで小・中・大を選ぶとプリセットに戻ります。" = "The upscale runs after generation, so it adds almost no time. Choosing Small, Medium or Large in the menu returns to the presets.";
+"2倍に拡大するときは、幅と高さを64の倍数・512〜2688ピクセルに直して使います。" = "With the 2x upscale, the width and height are rounded to multiples of 64 within 512–2688 pixels.";
+"幅と高さは32の倍数・256〜1344ピクセルです。近い大きさに直して使います。" = "Width and height are multiples of 32 within 256–1344 pixels. The nearest such size is used.";
+"生成するサイズが上限を超えています。幅か高さを小さくしてください。" = "The size generated is above the limit. Make the width or height smaller.";
+"生成するサイズが上限を超えています。小さくするか、「半分のサイズで生成して2倍に拡大」をオンにしてください。" = "The size generated is above the limit. Make it smaller, or turn on “Generate at half size and upscale 2x”.";
 "幅" = "Width";
 "高さ" = "Height";
-"現在: %@。プリセットはプロンプト欄の「画面の形」「大きさ」で選びます。" = "Current: %@. Choose a preset with Shape and Size in the prompt area.";
 "このMacでの目安: 約%lld分（いまの設定・これまでの生成実績から）" = "Estimate on this Mac: about %lld min (from the current settings and past generations)";
 "完成まで1時間以上かかる見込みです。サイズ・長さ・ステップ数を下げることを検討してください。" = "This is expected to take over an hour. Consider a smaller size, a shorter length or fewer steps.";
 "完成 %@ ・ 生成 %@（%@ピクセル / 上限 %@）" = "Finished %1$@ · generated at %2$@ (%3$@ pixels / limit %4$@)";
-"このままでは生成できません。サイズを小さくするか、「半分のサイズで生成して2倍に拡大」をオンにしてください。" = "This size can’t be generated as is. Make it smaller, or turn on “Generate at half size and upscale 2x”.";
-"幅・高さは完成する動画のサイズです（32の倍数、2倍の拡大では64の倍数）。生成するサイズ（2倍の拡大ではその半分）が%@ピクセル以下になるようにしてください。拡大は生成後に行うため、時間はほとんど増えません。プロンプト欄の「大きさ」を選ぶとプリセットに戻ります。" = "Width and height are the finished video’s size (multiples of 32, or 64 with the 2x upscale). Keep the generated size (half of it with the 2x upscale) at %@ pixels or fewer. The upscale runs after generation, so it adds almost no time. Choosing a Size in the prompt area returns to the presets.";
 "半分のサイズで生成して2倍に拡大" = "Generate at half size and upscale 2x";
-"カスタムサイズの生成サイズが上限（%lldピクセル）を超えています。詳細設定で小さくするか、2倍の拡大を使ってください" = "The custom size is generated above the %lld-pixel limit. Make it smaller in Advanced Settings, or use the 2x upscale";
+"カスタムサイズの生成サイズが上限（%lldピクセル）を超えています。「大きさ」の「カスタム…」で小さくするか、2倍の拡大を使ってください" = "The custom size is generated above the %lld-pixel limit. Make it smaller with Size > Custom…, or use the 2x upscale";
 
 /* Several videos without a project */
 "同じプロンプトと設定で、シードを変えて続けて生成し、プロジェクトに保存します（シード固定のときは1本目だけ固定し、2本目以降はランダム）。プロジェクトがないときは、生成するときに作成または選択します" = "Makes several videos in a row with the same prompt and settings and different seeds, saved in the project (with a fixed seed, only the first video uses it; the rest are random). Without a project, you create or choose one when generating";

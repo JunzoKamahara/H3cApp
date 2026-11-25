@@ -8,6 +8,7 @@ struct AdvancedSettingsView: View {
     @Binding var showingModelManager: Bool
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
+    @State private var showingCustomSize = false
 
     private var palette: H3Palette { H3Palette(colorScheme) }
 
@@ -80,52 +81,31 @@ struct AdvancedSettingsView: View {
         }
         .frame(width: 540, height: 640)
         .background(palette.canvas)
+        .sheet(isPresented: $showingCustomSize) {
+            CustomVideoSizeSheet(viewModel: viewModel) { showingCustomSize = false }
+        }
     }
 
     // MARK: サイズ
 
-    /// Custom finished size; プロンプト欄の「大きさ」 picks a preset again.
+    /// The size in use; a custom size is set in CustomVideoSizeSheet, also
+    /// opened from プロンプト欄の「大きさ」 > カスタム….
     private var sizeSection: some View {
         let profile = viewModel.sizeProfile
         return VStack(alignment: .leading, spacing: 4) {
             Text("サイズ").font(.caption).foregroundStyle(palette.textSecondary)
-            Toggle("カスタムサイズを使う", isOn: Binding(
-                get: { profile.isCustom },
-                set: { custom in
-                    // Start from the preset's finished size and its 2x setting.
-                    let output = viewModel.sizeProfile.dimensions
-                    viewModel.sizeProfile = custom
-                        ? .custom(width: output.width, height: output.height, upscaled: profile.upscaled)
-                        : .preset(profile.shape, .medium, upscaled: profile.upscaled)
-                }
-            ))
-            if profile.isCustom {
-                HStack(spacing: H3Spacing.md) {
-                    sideField("幅", value: customSide(width: true))
-                    Text(verbatim: "×").foregroundStyle(palette.textSecondary)
-                    sideField("高さ", value: customSide(width: false))
-                }
-                Toggle("半分のサイズで生成して2倍に拡大", isOn: Binding(
-                    get: { viewModel.sizeProfile.upscaled },
-                    set: { viewModel.sizeProfile = viewModel.sizeProfile.withUpscale($0) }
-                ))
-                let pixels = profile.ditPixels
-                Text("完成 \(profile.resolutionLabel) ・ 生成 \(profile.canvasLabel)（\(pixels.formatted())ピクセル / 上限 \(SizeProfile.customMaxPixels.formatted())）")
-                    .font(.caption)
-                    .foregroundStyle(profile.isWithinCustomLimit ? palette.textSecondary : palette.errorColor)
-                if !profile.isWithinCustomLimit && !profile.upscaled {
-                    Text("このままでは生成できません。サイズを小さくするか、「半分のサイズで生成して2倍に拡大」をオンにしてください。")
-                        .font(.caption)
-                        .foregroundStyle(palette.errorColor)
-                }
-                Text("幅・高さは完成する動画のサイズです（32の倍数、2倍の拡大では64の倍数）。生成するサイズ（2倍の拡大ではその半分）が\(SizeProfile.customMaxPixels.formatted())ピクセル以下になるようにしてください。拡大は生成後に行うため、時間はほとんど増えません。プロンプト欄の「大きさ」を選ぶとプリセットに戻ります。")
-                    .font(.caption)
-                    .foregroundStyle(palette.textSecondary)
-            } else {
-                Text("現在: \(profile.label)。プリセットはプロンプト欄の「画面の形」「大きさ」で選びます。")
-                    .font(.caption)
-                    .foregroundStyle(palette.textSecondary)
+            HStack(spacing: H3Spacing.md) {
+                Text("現在: \(profile.label)")
+                Button("カスタム…") { showingCustomSize = true }
             }
+            if !profile.isWithinCustomLimit {
+                Text("生成するサイズが上限（\(SizeProfile.customMaxPixels.formatted())ピクセル）を超えているため、このままでは生成できません。「カスタム…」で小さくしてください。")
+                    .font(.caption)
+                    .foregroundStyle(palette.errorColor)
+            }
+            Text("プリセットはプロンプト欄の「画面の形」「大きさ」で選びます。「カスタム…」では幅と高さを打ち込めます（プロンプト欄の「大きさ」からも開けます）。")
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
             if let estimate = viewModel.draftEstimatedSeconds {
                 let minutes = max(Int((estimate / 60).rounded(.up)), 1)
                 Text("このMacでの目安: 約\(minutes)分（いまの設定・これまでの生成実績から）")
@@ -137,41 +117,6 @@ struct AdvancedSettingsView: View {
                         .foregroundStyle(palette.errorColor)
                 }
             }
-        }
-    }
-
-    /// One side of the custom finished size, rounded to its step within
-    /// its range (both depend on the 2x upscale).
-    private func customSide(width isWidth: Bool) -> Binding<Int> {
-        Binding(
-            get: {
-                let output = viewModel.sizeProfile.dimensions
-                return Int(isWidth ? output.width : output.height)
-            },
-            set: { newValue in
-                let upscaled = viewModel.sizeProfile.upscaled
-                let range = SizeProfile.customSideRange(upscaled: upscaled)
-                let step = Int(SizeProfile.customSideStep(upscaled: upscaled))
-                let rounded = Int32(clamping: ((newValue + step / 2) / step) * step)
-                let value = min(max(rounded, range.lowerBound), range.upperBound)
-                let output = viewModel.sizeProfile.dimensions
-                viewModel.sizeProfile = .custom(width: isWidth ? value : output.width,
-                                                height: isWidth ? output.height : value,
-                                                upscaled: upscaled)
-            })
-    }
-
-    private func sideField(_ title: LocalizedStringKey, value: Binding<Int>) -> some View {
-        let upscaled = viewModel.sizeProfile.upscaled
-        let range = SizeProfile.customSideRange(upscaled: upscaled)
-        return HStack(spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(palette.textSecondary)
-            TextField(title, value: value, format: .number.grouping(.never))
-                .labelsHidden()
-                .frame(width: 64)
-            Stepper(title, value: value, in: Int(range.lowerBound) ... Int(range.upperBound),
-                    step: Int(SizeProfile.customSideStep(upscaled: upscaled)))
-                .labelsHidden()
         }
     }
 

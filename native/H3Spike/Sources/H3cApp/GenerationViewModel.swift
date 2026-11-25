@@ -506,6 +506,16 @@ final class GenerationViewModel: ObservableObject {
     /// before starting, from this Mac's past runs (TimingCalibration).
     var draftEstimatedSeconds: Double? {
         if isChained { return chainEstimatedSeconds }
+        return draftEstimatedSeconds(for: sizeProfile)
+    }
+
+    /// draftEstimatedSeconds at another size, for the custom size sheet
+    /// before it is applied: one generation at the current length (nil for
+    /// a つなげて生成 at another size), with the current memory plan's cost
+    /// ratio, which was worked out for the current size.
+    func draftEstimatedSeconds(for sizeProfile: SizeProfile) -> Double? {
+        if sizeProfile == self.sizeProfile && isChained { return chainEstimatedSeconds }
+        if isChained { return nil }
         let frames = Int(h3AlignedFrameCount(seconds: Double(seconds.clamped(to: secondsRange))))
         let calibration = TimingCalibration.load(for: effectiveComputeMode, speed: stepReuseApplies ? speedMode : .quality,
                                                  fastAttention: useFastAttention,
@@ -1126,7 +1136,7 @@ final class GenerationViewModel: ObservableObject {
         }
         if let seedValidationMessage { return seedValidationMessage }
         if !sizeProfile.isWithinCustomLimit {
-            return String(localized: "カスタムサイズの生成サイズが上限（\(SizeProfile.customMaxPixels)ピクセル）を超えています。詳細設定で小さくするか、2倍の拡大を使ってください")
+            return String(localized: "カスタムサイズの生成サイズが上限（\(SizeProfile.customMaxPixels)ピクセル）を超えています。「大きさ」の「カスタム…」で小さくするか、2倍の拡大を使ってください")
         }
         if creationMethod == .image {
             switch imageInputMode {
