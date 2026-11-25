@@ -481,8 +481,8 @@ already made it noisy; at 45 both broke it, gate rank far worse
 
 ### Fast mode (experimental)
 
-A separate fast-mode checkbox in the advanced settings (the API's
-`fast_attention`) runs the DiT's attention through
+Fast (int8) under Attention (experimental) in the advanced settings (the
+API's `fast_attention`) runs the DiT's attention through
 [ccv](https://github.com/liuliu/ccv)'s int8 attention kernel with BF16 input
 and output instead of the engine's own path. It is off by default and shown
 only when available: the app must be built with ccv linked in (the release
@@ -497,6 +497,25 @@ at 256x256; it also applies on top of the speed presets (see the table
 below). The same seed gives a different video than standard. Side-by-side
 checks on several prompts and seeds found no consistent quality loss, which
 is not a proof of equal quality.
+
+### Sol-Attn (experimental)
+
+Sol-Attn (sparse) under Attention (experimental) (the API's `sol_attention`)
+runs the DiT's attention through ccv's int8 Sol (block-sparse) kernel
+(`NAInt8SolAttentionKernel`): blocks of 64 tokens are compared through
+summaries, and distant ones that matter little are approximated by them. As
+pi-H3's publishers do, the first 2 blocks keep the usual path and the rows
+before the video (text, conditions, audio) are never approximated. Sparsity
+is ccv's threshold `tau`: Faster is 0.5, Fastest 1.0 (the API's `sol_tau`).
+It needs what fast mode needs and cannot be combined with it.
+
+Measured on an M5 with 24 GB, pi-H3 in 2 steps with the pixel head at
+864x480 and 124 frames (command-line driver with the app's settings, one run
+each): 137.3 s → 101.3 s (0.5) and 94.7 s (1.0), about 1 GB more peak
+memory. In two scenes the pictures held, with no visible block seams, but the
+composition changed from standard and the audio came out 4 to 8 dB louder.
+Picture quality with the usual 20 steps has not been checked. The details are
+in section 8.15 of [`plans/PI_H3_PLAN.ja.md`](../plans/PI_H3_PLAN.ja.md) (in Japanese).
 
 ### Measured generation times
 

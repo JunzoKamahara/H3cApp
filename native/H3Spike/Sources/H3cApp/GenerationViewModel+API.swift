@@ -1567,6 +1567,31 @@ extension GenerationViewModel {
         } else {
             fastAttention = false
         }
+        // Sol-Attn (experimental): "sol_attention": true, with "sol_tau"
+        // 0.5 (default) or 1.0 - the two values 詳細設定 offers.
+        if let sol = json["sol_attention"] {
+            guard let sol = sol as? Bool else {
+                return .error(400, "\"sol_attention\" must be true or false")
+            }
+            if sol && !fastAttentionAvailable {
+                return .error(400, "sol_attention is not available on this build/device")
+            }
+            if sol && fastAttention {
+                return .error(400, "\"sol_attention\" and \"fast_attention\" cannot both be true")
+            }
+            solAttention = sol
+        } else {
+            solAttention = false
+        }
+        if let tauValue = json["sol_tau"] {
+            guard let tau = (tauValue as? NSNumber)?.doubleValue,
+                  let strength = SolStrength.allCases.first(where: { $0.tau == tau }) else {
+                return .error(400, "\"sol_tau\" must be 0.5 or 1.0")
+            }
+            solStrength = strength
+        } else {
+            solStrength = .moderate
+        }
 
         // A JSON number, or a decimal string for clients whose JSON numbers
         // are doubles and would round a large seed.

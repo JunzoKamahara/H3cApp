@@ -1199,6 +1199,10 @@ void h3_dit_set_attention_mode(h3_dit *dit, h3_dit_attention_mode mode) {
     if (dit) dit->attention_mode = mode;
 }
 
+void h3_dit_set_sol_tau(h3_dit *dit, float tau) {
+    if (dit) dit->sol_tau = tau;
+}
+
 void h3_dit_set_sampler(h3_dit *dit, int sampler, uint64_t seed) {
     if (!dit) return;
     dit->sampler = sampler;

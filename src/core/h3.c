@@ -414,6 +414,7 @@ int h3_fast_attention_available(void) {
  * H3_ATTENTION_BACKEND / H3_CCV_DIRECT environment (never set by the app). */
 static h3_dit_attention_mode h3_resolve_attention_mode(const h3_params *params) {
     if (params->fast_attention) return H3_DIT_ATTENTION_CCV_INT8_DIRECT;
+    if (params->sparse_attention) return H3_DIT_ATTENTION_CCV_SOL;
     const char *backend = h3_option("H3_ATTENTION_BACKEND");
     if (backend && !strcmp(backend, "ccv_dense")) {
         const char *direct = h3_option("H3_CCV_DIRECT");
@@ -1595,6 +1596,7 @@ h3_result *h3_generate(h3_ctx *ctx, const char *prompt,
         h3_debug_hash("initial video", video, video_count * sizeof(*video));
     }
     h3_dit_set_attention_mode(dit, h3_resolve_attention_mode(params));
+    h3_dit_set_sol_tau(dit, params->sparse_attention_tau);
     h3_dit_set_sampler(dit, params->sampler, params->seed);
     /* Set on every run, so a retained DiT never carries it over. */
     if (!h3_dit_set_forced_audio(dit, forced_latent,

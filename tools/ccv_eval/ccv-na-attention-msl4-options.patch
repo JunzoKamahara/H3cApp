@@ -45,3 +45,23 @@ diff -ru a/lib/nnc/mfa/kernels/NAInt8AttentionKernel.cpp b/lib/nnc/mfa/kernels/N
    CCV_NNC_MFA_CHECK_ERROR(error);
  }
  
+diff -ru a/lib/nnc/mfa/kernels/NAInt8SolAttentionKernel.cpp b/lib/nnc/mfa/kernels/NAInt8SolAttentionKernel.cpp
+--- a/lib/nnc/mfa/kernels/NAInt8SolAttentionKernel.cpp
++++ b/lib/nnc/mfa/kernels/NAInt8SolAttentionKernel.cpp
+@@ -10,9 +10,15 @@
+   blockSize = descriptor.blockSize;
+   source = createSource();
+ 
++  // Metal 4.0 APIs (metal_tensor, MetalPerformancePrimitives) are used;
++  // don't rely on the runtime's default language version, which follows
++  // the SDK the host executable was linked against (e.g. an app built for
++  // an older deployment target) and can predate them.
++  auto compileOptions = NS::TransferPtr(MTL::CompileOptions::alloc()->init());
++  compileOptions->setLanguageVersion((MTL::LanguageVersion)(4 << 16));
+   auto string = NS::String::string(source.c_str(), NS::UTF8StringEncoding);
+   NS::Error* error = nullptr;
+-  library = NS::TransferPtr(device->newLibrary(string, nullptr, &error));
++  library = NS::TransferPtr(device->newLibrary(string, compileOptions.get(), &error));
+   CCV_NNC_MFA_CHECK_ERROR(error);
+ }
+ 

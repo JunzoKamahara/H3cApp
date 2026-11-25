@@ -251,6 +251,7 @@ struct h3_dit {
     int keep_bf16_mlp;
     int activation_aliases;
     h3_dit_attention_mode attention_mode;
+    float sol_tau; /* ccv_sol's threshold from h3_params; 0: H3_SOL_TAU or 0.5 */
     int sampler;              /* H3_SAMPLER_EULER or H3_SAMPLER_RENOISE */
     uint64_t sampler_seed;    /* drives the re-noise rule's fresh noise */
     float *forced_audio;      /* clean [32,2,T] audio latent, or NULL */

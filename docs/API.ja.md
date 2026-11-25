@@ -115,7 +115,9 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `compute_mode` | このGPUでのアプリの既定値 | `attentionCache`、`resident`、`ssdStreaming`のいずれか。 |
 | `speed_mode` | `"quality"` | `quality`、`fast`、`fastest`のいずれか（[速度モード](TECHNICAL.ja.md#速度モード)参照）。 |
 | `dit_layers` | `50` | 35〜50。減らすと音声が壊れることがある。 |
-| `fast_attention` | `false` | `true`で[高速モード](TECHNICAL.ja.md#高速モード試験的)。使えない環境では`400`。 |
+| `fast_attention` | `false` | `true`で[高速モード](TECHNICAL.ja.md#高速モード試験的)（詳細設定の「注意の計算」の「高速（int8）」）。使えない環境では`400`。 |
+| `sol_attention` | `false` | `true`で[Sol-Attn](TECHNICAL.ja.md#sol-attn試験的)（「注意の計算」の「Sol-Attn（疎）」）。`fast_attention`と同時には指定できない（`400`）。使えない環境では`400`。 |
+| `sol_tau` | `0.5` | Sol-Attnの間引きの強さ。`0.5`（やや速い）か`1.0`（速い）。 |
 | `seed` | ランダム | 0〜18446744073709551615。数値か10進数の文字列（JSONの数値を倍精度で扱うクライアントでも、文字列なら大きなシードが丸められない）。 |
 | `first_frame_path` / `last_frame_path` | なし | FL2VAのアンカー。`reference_paths`とは併用不可。 |
 | `frame_latents` | `false` | `true`にすると、最初・最後の画像を再エンコードせず、その画像が生成されたときの潜在で条件付けする。対象は、このアプリで生成した画像（またはプロジェクトの`references`にあるその複製）で、大きさが動画の生成キャンバスとちょうど同じものだけ。ほかの画像は通常どおりエンコードする。VAEのエンコード（768×768で約6秒）を省けるが、最初のフレームが元の画像に近づくわけではない。試験的。 |

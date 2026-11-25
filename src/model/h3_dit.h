@@ -120,6 +120,8 @@ typedef enum {
     H3_DIT_ATTENTION_CCV_SOL          /* ccv int8 Sol (block-sparse), diagnostic */
 } h3_dit_attention_mode;
 void h3_dit_set_attention_mode(h3_dit *dit, h3_dit_attention_mode mode);
+/* ccv_sol's routing threshold; 0 leaves H3_SOL_TAU or 0.5. */
+void h3_dit_set_sol_tau(h3_dit *dit, float tau);
 /* Step rule for the following denoise calls: H3_SAMPLER_EULER (default)
  * or H3_SAMPLER_RENOISE, whose fresh noise is derived from seed. */
 void h3_dit_set_sampler(h3_dit *dit, int sampler, uint64_t seed);

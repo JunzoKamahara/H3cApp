@@ -25,7 +25,8 @@ git apply /path/to/h3c-app/tools/ccv_eval/ccv-na-int8-bf16-lse-store.patch
 git apply /path/to/h3c-app/tools/ccv_eval/ccv-na-attention-msl4-options.patch
 ```
 
-The third patch makes `NAInt8AttentionKernel` and `NAAttentionKernel`
+The third patch makes `NAInt8AttentionKernel`, `NAAttentionKernel` and
+(since 2026-11-25, for Sol-Attn in the app) `NAInt8SolAttentionKernel`
 compile their generated shaders with an explicit Metal 4.0 language
 version instead of `nil` options. With `nil`, the runtime's default
 language version follows the SDK version recorded in the host

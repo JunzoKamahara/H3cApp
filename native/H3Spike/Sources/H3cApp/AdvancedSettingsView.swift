@@ -255,18 +255,46 @@ struct AdvancedSettingsView: View {
                 .foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             if viewModel.fastAttentionAvailable {
-                Toggle("高速モード（試験的）", isOn: $viewModel.fastAttention)
-                    .toggleStyle(.checkbox)
+                Text("注意の計算（試験的）").font(.caption).foregroundStyle(palette.textSecondary)
                     .padding(.top, 6)
-                Text("M5のニューラルアクセラレータでAttentionをint8計算します。長い動画ほど効果が大きく（15秒・20ステップで約1.4倍速、メモリ約1.3GB増）、短い動画では効果が小さく、条件によっては遅くなることがあります。同じシードでも標準とは映像が変わります。上の速度設定やreuseとも併用できますが、その組み合わせでの効果と画質は十分に検証していません。")
+                Picker("注意の計算（試験的）", selection: $viewModel.attentionMethod) {
+                    ForEach(AttentionMethod.allCases) { method in
+                        Text(method.label).tag(method)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 360)
+                if viewModel.attentionMethod == .sol {
+                    Picker("間引きの強さ", selection: $viewModel.solStrength) {
+                        ForEach(SolStrength.allCases) { strength in
+                            Text(strength.label).tag(strength)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 360)
+                }
+                Text(attentionDescription)
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 if viewModel.isGenerating {
                     Text("生成中の変更は次の生成から適用されます。")
                         .font(.caption)
                         .foregroundStyle(palette.textSecondary)
                 }
             }
+        }
+    }
+
+    private var attentionDescription: String {
+        switch viewModel.attentionMethod {
+        case .standard:
+            return String(localized: "Attentionを省略なしで計算します。")
+        case .fast:
+            return String(localized: "M5のニューラルアクセラレータでAttentionをint8計算します。長い動画ほど効果が大きく（15秒・20ステップで約1.4倍速、メモリ約1.3GB増）、短い動画では効果が小さく、条件によっては遅くなることがあります。同じシードでも標準とは映像が変わります。上の速度設定やreuseとも併用できますが、その組み合わせでの効果と画質は十分に検証していません。")
+        case .sol:
+            return String(localized: "M5のニューラルアクセラレータで、Attentionの一部を間引いてint8で計算します（最初の2層と、文章・音声の部分は間引きません）。pi-H3の2ステップ・864×480・5秒では、全体が約137秒から約101秒（やや速い）・約95秒（速い）になりました（メモリ約1GB増）。同じシードでも標準とは映像が変わり、試した範囲では音声が大きくなりました。通常の20ステップでの画質は確かめていません。")
         }
     }
 

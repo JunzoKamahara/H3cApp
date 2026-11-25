@@ -115,7 +115,9 @@ language should read the file and set the header in its own code.
 | `compute_mode` | the app's own default for this GPU | `attentionCache`, `resident`, or `ssdStreaming`. |
 | `speed_mode` | `"quality"` | `quality`, `fast`, or `fastest` (see [Speed modes](TECHNICAL.md#speed-modes)). |
 | `dit_layers` | `50` | 35–50. Fewer blocks can break the audio. |
-| `fast_attention` | `false` | `true` for [fast mode](TECHNICAL.md#fast-mode-experimental); `400` where it isn't available. |
+| `fast_attention` | `false` | `true` for [fast mode](TECHNICAL.md#fast-mode-experimental) (Fast (int8) under Attention in the advanced settings); `400` where it isn't available. |
+| `sol_attention` | `false` | `true` for [Sol-Attn](TECHNICAL.md#sol-attn-experimental) (Sol-Attn (sparse) under Attention); not together with `fast_attention` (`400`); `400` where it isn't available. |
+| `sol_tau` | `0.5` | Sol-Attn's sparsity: `0.5` (Faster) or `1.0` (Fastest). |
 | `seed` | random | 0–18446744073709551615, as a number or a decimal string (a string keeps a large seed exact for clients whose JSON numbers are doubles). |
 | `first_frame_path` / `last_frame_path` | none | FL2VA anchors; cannot combine with `reference_paths`. |
 | `frame_latents` | `false` | `true` conditions the clip by the latent a first/last frame image was generated as, instead of encoding the image again - only for an image generated here (or its copy in the project's `references`) whose size is exactly the clip's generated canvas; any other frame is encoded as usual. It skips the VAE encode (about 6 s at 768x768) and does not make the first frame closer to the image; experimental. |

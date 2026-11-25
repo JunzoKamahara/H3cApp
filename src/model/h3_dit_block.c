@@ -582,7 +582,8 @@ static int run_block(h3_dit *dit, unsigned index, int step,
     }
     if (ccv_sol) {
         const char *tau_text = h3_option("H3_SOL_TAU");
-        float tau = tau_text ? (float)atof(tau_text) : 0.5f;
+        float tau = dit->sol_tau > 0.0f ? dit->sol_tau
+                  : tau_text ? (float)atof(tau_text) : 0.5f;
         OP(h3_gpu_ccv_sol_attention_bf16(
             dit->gpu, dit->attention_heads, dit->query, dit->key, dit->value,
             rows, HEADS, HEAD_DIM, 1.0f / sqrtf((float)HEAD_DIM),

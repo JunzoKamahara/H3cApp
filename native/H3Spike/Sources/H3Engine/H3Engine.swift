@@ -283,6 +283,10 @@ public struct H3GenerationParams: Sendable {
     // same seed gives a different video than the standard mode. Separate
     // from the speed settings above and never turned on by them.
     public var fastAttention = false
+    // h3_params.sparse_attention / sparse_attention_tau: opt-in Sol-Attn
+    // (experimental) - ccv's int8 block-sparse attention, same machines as
+    // fastAttention and never with it. nil: off; otherwise the threshold.
+    public var solTau: Double? = nil
     // h3_params.sampler / audio_sigma_shift: the re-noise step rule and the
     // audio schedule shift a few-step adapter was trained with (DMAD), taken
     // from its metadata; the defaults are the engine's Euler rule and 3.0.
@@ -715,6 +719,8 @@ public final class H3Engine: @unchecked Sendable {
                 cParams.ssd_streaming = params.ssdStreaming ? 1 : 0
                 cParams.cancel_requested = UnsafePointer(cancelFlag.engineFlag)
                 cParams.fast_attention = params.fastAttention ? 1 : 0
+                cParams.sparse_attention = params.solTau == nil ? 0 : 1
+                cParams.sparse_attention_tau = Float(params.solTau ?? 0)
                 cParams.video_hevc = params.videoHEVC ? 1 : 0
                 cParams.video_quality = params.videoQuality
                 cParams.sampler = params.renoise ? Int32(H3_SAMPLER_RENOISE)
@@ -724,10 +730,11 @@ public final class H3Engine: @unchecked Sendable {
                 cParams.continue_frames = params.continueFrames
                 // The values actually handed to the engine (not the form's
                 // labels), for checking presets and defaults end to end.
-                NSLog("h3: generation params - %dx%d, %d frames, %d steps, dit_layers %d, denoise_reuse %d, core_reuse %d, token_reduction %d, fast_attention %d, ssd_streaming %d, sampler %d, audio_shift %.3g, forced_audio %d (offset %.3f s), continue %d (%d frames), latent preview every %d, seed %llu",
+                NSLog("h3: generation params - %dx%d, %d frames, %d steps, dit_layers %d, denoise_reuse %d, core_reuse %d, token_reduction %d, fast_attention %d, sparse_attention %d (tau %.2f), ssd_streaming %d, sampler %d, audio_shift %.3g, forced_audio %d (offset %.3f s), continue %d (%d frames), latent preview every %d, seed %llu",
                       cParams.width, cParams.height, cParams.frames, cParams.steps,
                       cParams.dit_layers, cParams.denoise_reuse, cParams.core_reuse,
-                      cParams.token_reduction, cParams.fast_attention, cParams.ssd_streaming,
+                      cParams.token_reduction, cParams.fast_attention,
+                      cParams.sparse_attention, Double(cParams.sparse_attention_tau), cParams.ssd_streaming,
                       cParams.sampler, Double(cParams.audio_sigma_shift),
                       params.forcedAudioPath == nil ? 0 : 1, params.forcedAudioOffset,
                       params.continueLatentPath == nil ? 0 : 1, params.continueFrames,
@@ -801,8 +808,8 @@ public final class H3Engine: @unchecked Sendable {
                     let path = genResult.ccvAttentionCalls == 0 ? "standard" :
                         genResult.ccvAttentionDirectCalls == genResult.ccvAttentionCalls ?
                         "fast (direct)" : "ccv (mixed/bridge)"
-                    NSLog("h3: generation finished - fast attention requested: %@, attention path: %@ (%d ccv calls, %d direct)",
-                          params.fastAttention ? "yes" : "no", path,
+                    NSLog("h3: generation finished - fast attention requested: %@, Sol-Attn requested: %@, attention path: %@ (%d ccv calls, %d direct)",
+                          params.fastAttention ? "yes" : "no", params.solTau == nil ? "no" : "yes", path,
                           genResult.ccvAttentionCalls, genResult.ccvAttentionDirectCalls)
                     continuation.yield(.finished(genResult))
                 } else {

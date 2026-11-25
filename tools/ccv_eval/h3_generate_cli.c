@@ -138,6 +138,9 @@ int main(int argc, char **argv) {
     params.core_reuse = env_int("H3SPIKE_CORE_REUSE", 1);
     params.token_reduction = env_int("H3SPIKE_TOKEN_REDUCTION", 0);
     params.fast_attention = env_int("H3SPIKE_FAST_ATTENTION", 0);
+    params.sparse_attention = env_int("H3SPIKE_SOL", 0);
+    if (getenv("H3SPIKE_SOL_TAU"))
+        params.sparse_attention_tau = (float)atof(getenv("H3SPIKE_SOL_TAU"));
     params.use_int8_row_fc2 = env_int("H3SPIKE_INT8_ROW_FC2", 0);
     /* Ref2VA with one reference image: H3SPIKE_REF_IMAGE=<file>. */
     h3_reference reference = {H3_REFERENCE_IMAGE, getenv("H3SPIKE_REF_IMAGE"),

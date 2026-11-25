@@ -835,7 +835,11 @@ struct ProjectVideosSheet: View {
         // 5.2秒, and a joined video's draft is only its last clip's).
         parts.append(String(localized: "再生時間 \(actualLength(record))"))
         if let speed = SpeedMode(rawValue: draft.speedMode) { parts.append(speed.summaryLabel) }
-        if draft.fastAttention { parts.append(String(localized: "高速モード（試験的）")) }
+        if draft.solTau != nil {
+            parts.append(AttentionMethod.sol.label)
+        } else if draft.fastAttention {
+            parts.append(AttentionMethod.fast.label)
+        }
         parts.append(String(localized: "シード \(record.seed)"))
         parts.append(record.joinedClips != nil
                      ? String(localized: "生成時間 合計\(formatElapsed(record.generationSeconds))")
