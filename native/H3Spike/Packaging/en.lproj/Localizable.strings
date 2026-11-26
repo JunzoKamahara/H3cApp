@@ -368,7 +368,7 @@
 "速さ" = "Performance";
 "追加モデル" = "Add-on Models";
 "生成するサイズが上限（%@ピクセル）を超えているため、このままでは生成できません。プロンプト欄の「大きさ」の「カスタム…」で小さくしてください。" = "The size generated is above the limit (%@ pixels), so it cannot be generated as it is. Make it smaller with Size > Custom… in the prompt panel.";
-"サイズはプロンプト欄で選びます。プリセットは「画面の形」と「大きさ」、幅と高さを打ち込むときは「大きさ」の「カスタム…」です。" = "The size is chosen in the prompt panel: presets with Shape and Size, or a typed-in width and height with Size > Custom….";
+"サイズはプロンプト欄で選びます。プリセットは「画面の形」と「大きさ」、幅と高さを打ち込むときは「大きさ」の「カスタム…」です。" = "Choose the size in the prompt panel: a preset with Shape and Size, or a width and height of your own with Custom… in the Size menu.";
 "選択しているモデル（%@）では、追加モデル（LoRA）は使えません。オンにした追加モデルはそのまま残り、通常のMiniMax-H3モデルに切り替えると使われます。" = "The selected model (%@) cannot use add-on models (LoRA). The ones switched on stay on and are used again after switching to a regular MiniMax-H3 model.";
 "現在: %@" = "Current: %@";
 "動画の大きさ" = "Video Size";
