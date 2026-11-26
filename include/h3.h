@@ -262,6 +262,16 @@ typedef struct {
      * default. Requires h3_fast_attention_available(); fixed for the whole
      * generation. Independent of the other speed settings above. */
     int fast_attention;
+    /* Opt-in Sol attention (experimental): ccv's int8 block-sparse
+     * attention for the DiT blocks after the first two, with the rows
+     * before the target video (text, conditions, audio) kept exact - as
+     * pi-H3's publishers apply it. Faster than fast_attention on long
+     * sequences; the same seed gives a different video. Requires
+     * h3_fast_attention_available() and excludes fast_attention.
+     * sparse_attention_tau is ccv's routing threshold (higher keeps fewer
+     * exact blocks); 0 means 0.5. */
+    int sparse_attention;
+    float sparse_attention_tau;
     /* Denoising step rule: H3_SAMPLER_EULER (0, the official pipeline's
      * Euler ODE step) or H3_SAMPLER_RENOISE, which predicts the clean latent
      * at every step and adds fresh seeded noise at the next sigma - the

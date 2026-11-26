@@ -747,6 +747,29 @@ void h3_gpu_register_ccv_dense_attention(h3_gpu_ccv_dense_attention_fn fn) {
     h3_gpu_ccv_dense_attention_impl = fn;
 }
 
+static h3_gpu_ccv_sol_attention_fn h3_gpu_ccv_sol_attention_impl = NULL;
+
+void h3_gpu_register_ccv_sol_attention(h3_gpu_ccv_sol_attention_fn fn) {
+    h3_gpu_ccv_sol_attention_impl = fn;
+}
+
+int h3_gpu_ccv_sol_attention_bf16(h3_gpu *opaque, h3_gpu_tensor *output,
+                                  const h3_gpu_tensor *query,
+                                  const h3_gpu_tensor *key,
+                                  const h3_gpu_tensor *value,
+                                  uint32_t rows, uint32_t heads,
+                                  uint32_t head_dim, float scale,
+                                  uint32_t exact_rows, float tau) {
+    if (!h3_gpu_ccv_sol_attention_impl) {
+        h3_gpu_set_error(GPU(opaque), @"ccv Sol attention not compiled into "
+                         "this binary (build with CCV_DIR set)");
+        return 0;
+    }
+    return h3_gpu_ccv_sol_attention_impl(opaque, output, query, key, value,
+                                         rows, heads, head_dim, scale,
+                                         exact_rows, tau);
+}
+
 static h3_gpu_ccv_release_scratch_fn h3_gpu_ccv_release_scratch_impl = NULL;
 
 void h3_gpu_register_ccv_release_scratch(h3_gpu_ccv_release_scratch_fn fn) {

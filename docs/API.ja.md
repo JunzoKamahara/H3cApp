@@ -97,7 +97,7 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `POST` | `/api/kind` | `{"kind": "video" \| "image"}` パネルがつくるものを切り替える。プロンプトと設定は動画と画像で別々に保たれる。 |
 | `POST` | `/api/project/import-image` | `{"path"}` または `{"paths": [...]}` 画像ファイルを、開いているプロジェクトの画像として取り込む（プロジェクトの`images/`。開いていなければ無題のプロジェクトを始める）。PNGはそのまま、ほかの形式は向きを正してPNGに変換し、元のメタデータを引き継ぐ。それぞれに取り込み元のファイル名を書いた記録が付き、AI生成の印は付けない。すぐに`{"ok", "count"}`を返し、取り込みが終わると`GET /api/project`に並ぶ（実行中は`importing_images`、読めなかったファイルは`message`）。 |
 | `POST` | `/api/project/show-image` | `{"image"}` その画像（`GET /api/project`の`images`にあるファイル名）をプレビューに表示する。 |
-| `POST` | `/api/window/show` | `{"panel"}`で、ウィンドウの上にシートを出す。`"advanced_settings"`（詳細設定）か`"model_manager"`（モデル管理。`"section"`に`"models"`・`"images"`・`"loras"`・`"refmods"`・`"upscalers"`）。`"none"`でシートを閉じる。ウィンドウを撮影するスクリプト用。 |
+| `POST` | `/api/window/show` | `{"panel"}`で、ウィンドウの上にシートを出す。`"advanced_settings"`（詳細設定。`"section"`にタブ、`"basic"`（基本）・`"speed"`（速さ）・`"lora"`（追加モデル））か`"model_manager"`（モデル管理。`"section"`に`"models"`・`"images"`・`"loras"`・`"refmods"`・`"upscalers"`）。`"none"`でシートを閉じる。ウィンドウを撮影するスクリプト用。 |
 | `POST` | `/api/project/use-image` | `{"image", "as"}` その画像を動画のフォームに渡す。生成は始めない。`"as": "first_frame"`で最初の画像にする（動画のプロンプトが空なら画像のプロンプトを入れる）、`"last_frame"`で最後の画像にする、`"reference"`で参照画像に追加する（使用中のモデルにRef2VAがなければ応答に`warning`が付く）。パネルは動画に切り替わり、画像はほかの入力と同じくプロジェクトの`references`へ、記録と一緒にコピーされる。画像の編集に使う場合は、`"edit"`でその画像を画像フォームのただ1枚の参照にし（大きさは画像に合わせる。画像のプロンプトが空なら`Edit <Picture 1>. `を入れる）、`"edit_reference"`で画像フォームの参照に追加する。パネルは画像に切り替わる。 |
 | `POST` | `/api/project/delete-image` | `{"image"}` 画像と記録、潜在ファイルをゴミ箱に移動する。 |
 | `POST` | `/api/project/upscale-image` | `{"image", "method"?, "factor"?, "strength"?}` 高解像度化: その画像を大きくした新しい画像をプロジェクトにつくる。`method`は`redraw`（省略時。使用中の画像モデルで描き直す。画像の生成として進み、`GET /api/status`の`generating_image`と途中の様子で分かる）か、`standard`・`metalFX`・`realESRGANGeneral`・`realESRGANAnime`・`swiftVR`・`swiftVRFourX`・`seedVR2`（拡大として進み、`GET /api/project`の`upscaling_video`・`upscale_progress`で分かる。`POST /api/upscale/cancel`で止まる）。`factor`は1〜8（省略時2。描き直しは約8メガピクセルまで、ほかは一辺4096ピクセルまで）、`strength`は描き直しの`gentle`・`standard`（省略時）・`strong`。始めると`202`、始められないときは理由付きの`400`か`409`。新しい画像の記録には`upscaledFrom`・`upscaler`・`upscaleFactor`（描き直しは`upscaleStrength`も）が入る。 |
@@ -115,7 +115,9 @@ Network.frameworkやサードパーティ製サーバーは使っていません
 | `compute_mode` | このGPUでのアプリの既定値 | `attentionCache`、`resident`、`ssdStreaming`のいずれか。 |
 | `speed_mode` | `"quality"` | `quality`、`fast`、`fastest`のいずれか（[速度モード](TECHNICAL.ja.md#速度モード)参照）。 |
 | `dit_layers` | `50` | 35〜50。減らすと音声が壊れることがある。 |
-| `fast_attention` | `false` | `true`で[高速モード](TECHNICAL.ja.md#高速モード試験的)。使えない環境では`400`。 |
+| `fast_attention` | `false` | `true`で[高速モード](TECHNICAL.ja.md#高速モード試験的)（詳細設定の「注意の計算」の「高速（int8）」）。使えない環境では`400`。 |
+| `sol_attention` | `false` | `true`で[Sol-Attn](TECHNICAL.ja.md#sol-attn試験的)（「注意の計算」の「Sol-Attn（疎）」）。`fast_attention`と同時には指定できない（`400`）。使えない環境では`400`。 |
+| `sol_tau` | `0.5` | Sol-Attnの間引きの強さ。`0.5`（やや速い）か`1.0`（速い）。 |
 | `seed` | ランダム | 0〜18446744073709551615。数値か10進数の文字列（JSONの数値を倍精度で扱うクライアントでも、文字列なら大きなシードが丸められない）。 |
 | `first_frame_path` / `last_frame_path` | なし | FL2VAのアンカー。`reference_paths`とは併用不可。 |
 | `frame_latents` | `false` | `true`にすると、最初・最後の画像を再エンコードせず、その画像が生成されたときの潜在で条件付けする。対象は、このアプリで生成した画像（またはプロジェクトの`references`にあるその複製）で、大きさが動画の生成キャンバスとちょうど同じものだけ。ほかの画像は通常どおりエンコードする。VAEのエンコード（768×768で約6秒）を省けるが、最初のフレームが元の画像に近づくわけではない。試験的。 |

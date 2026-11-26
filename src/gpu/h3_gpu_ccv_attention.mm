@@ -273,6 +273,91 @@ int ccv_dense_attention_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
     return 1;
 }
 
+/* Experimental: ccv's int8 Sol attention (NAInt8SolAttentionKernel) on the
+ * FP16 row-major bridge. B64 key blocks, Q64 query groups, local radius 1
+ * (the configuration measured in tools/ccv_eval and plans/PI_H3_PLAN.ja.md);
+ * rows [0, exact_rows) are outside the approximation interval, so text,
+ * conditions and audio stay exact as queries and as keys. */
+int ccv_sol_attention_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                           const h3_gpu_tensor *query,
+                           const h3_gpu_tensor *key,
+                           const h3_gpu_tensor *value, uint32_t rows,
+                           uint32_t heads, uint32_t head_dim, float scale,
+                           uint32_t exact_rows, float tau) {
+    id<MTLDevice> device = (__bridge id<MTLDevice>)h3_gpu_raw_device(gpu);
+    if (!device) {
+        h3_gpu_report_error(gpu, "ccv Sol: no Metal device");
+        return 0;
+    }
+    if (head_dim != 128 || exact_rows > rows) {
+        h3_gpu_report_error(gpu, "ccv Sol: needs head_dim 128 and "
+                            "exact_rows <= rows");
+        return 0;
+    }
+    int head_major = h3_gpu_head_major_sdpa_inputs(gpu);
+    void *raw_command_buffer = h3_gpu_raw_command_buffer(gpu);
+    if (!raw_command_buffer) return 0;
+    if (g_state.device_key != (__bridge void *)device) {
+        if (g_state.context) ccv_nnc_deinit_mfa_context(g_state.context);
+        g_state.context = ccv_nnc_init_mfa_context(
+            (mtl_device_t *)(__bridge void *)device);
+        g_state.device_key = (__bridge void *)device;
+        g_state.q_f16 = g_state.k_f16 = g_state.v_f16 = g_state.out_f16 = nil;
+        g_state.capacity_elements = 0;
+    }
+    if (!g_state.context ||
+        !ccv_nnc_mfa_context_supported(g_state.context) ||
+        !ccv_nnc_mfa_has_neural_accelerators(g_state.context)) {
+        h3_gpu_report_error(gpu, "ccv Sol: context unsupported or this "
+                            "device lacks neural matrix accelerators");
+        return 0;
+    }
+    size_t count = (size_t)rows * heads * head_dim;
+    if (!ensure_scratch(device, count)) {
+        h3_gpu_report_error(gpu, "ccv Sol: scratch buffer allocation failed");
+        return 0;
+    }
+    if (!h3_gpu_ccv_cast_bf16_to_f16(gpu, (__bridge void *)g_state.q_f16,
+                                    query, rows, heads, head_dim,
+                                    head_major) ||
+        !h3_gpu_ccv_cast_bf16_to_f16(gpu, (__bridge void *)g_state.k_f16,
+                                    key, rows, heads, head_dim,
+                                    head_major) ||
+        !h3_gpu_ccv_cast_bf16_to_f16(gpu, (__bridge void *)g_state.v_f16,
+                                    value, rows, heads, head_dim,
+                                    head_major))
+        return 0;
+
+    ccv_nnc_mfa_sol_attention_params_t params = {};
+    params.N = 1; params.T = rows; params.H = heads;
+    params.block_size = 64; params.query_block_size = 64;
+    params.approximation_start = exact_rows;
+    params.approximation_end = rows;
+    params.scale = scale; params.tau = tau;
+    params.local_block_radius = 1;
+    params.use_neural_accelerators = 1;
+    auto batch = ccv_nnc_start_command_batch_from_command_buffer(
+        (mtl_command_buffer_t *)raw_command_buffer, /*commit_on_finish=*/0);
+    mtl_buffer_t *tensors[10] = {
+        (mtl_buffer_t *)(__bridge void *)g_state.q_f16,
+        (mtl_buffer_t *)(__bridge void *)g_state.k_f16,
+        (mtl_buffer_t *)(__bridge void *)g_state.v_f16,
+        (mtl_buffer_t *)(__bridge void *)g_state.out_f16,
+    };
+    size_t offsets[10] = {};
+    ccv_nnc_mfa_encode_sol_attention(g_state.context, params, batch, tensors,
+                                     offsets);
+    ccv_nnc_finish_command_batch(batch);
+    memlog_after_encode(device, rows, heads, head_dim, head_major, 1, 0);
+    if (!h3_gpu_ccv_cast_f16_to_bf16(gpu, output,
+                                    (__bridge void *)g_state.out_f16,
+                                    (uint32_t)count))
+        return 0;
+    h3_gpu_set_head_major_sdpa_inputs(gpu, 0);
+    h3_gpu_note_ccv_attention_dispatch(gpu, 0);
+    return 1;
+}
+
 void ccv_release_scratch(h3_gpu *gpu) {
     if (!g_state.q_f16 && !g_state.context) return;
     id<MTLDevice> device = (__bridge id<MTLDevice>)h3_gpu_raw_device(gpu);
@@ -307,6 +392,7 @@ void ccv_release_scratch(h3_gpu *gpu) {
 __attribute__((constructor))
 static void h3_gpu_ccv_attention_register(void) {
     h3_gpu_register_ccv_dense_attention(&ccv_dense_attention_bf16);
+    h3_gpu_register_ccv_sol_attention(&ccv_sol_attention_bf16);
     h3_gpu_register_ccv_release_scratch(&ccv_release_scratch);
     h3_gpu_register_ccv_attention_supported(&ccv_attention_supported);
 }

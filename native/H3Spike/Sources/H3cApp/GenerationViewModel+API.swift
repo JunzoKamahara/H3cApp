@@ -44,12 +44,17 @@ extension GenerationViewModel {
             return .json(200, ["ok": true])
         case ("POST", "/api/window/show"):
             // {"panel": "advanced_settings" | "model_manager" | "none",
-            //  "section"?: モデル管理's section - "models", "images", "loras",
-            //  "refmods", "upscalers"}: puts that sheet up over this window,
-            // or takes the sheets down.
+            //  "section"?: 詳細設定's tab - "basic", "speed", "lora" - or
+            //  モデル管理's section - "models", "images", "loras", "refmods",
+            //  "upscalers"}: puts that sheet up over this window, or takes
+            // the sheets down.
             let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
             guard let name = json["panel"] as? String, let panel = WindowPanel(rawValue: name) else {
                 return .error(400, "\"panel\" must be \"advanced_settings\", \"model_manager\" or \"none\"")
+            }
+            if panel == .advancedSettings, let section = json["section"] as? String,
+               AdvancedSettingsTab(rawValue: section) == nil {
+                return .error(400, "for \"advanced_settings\", \"section\" must be \"basic\", \"speed\" or \"lora\"")
             }
             showPanel(panel, json["section"] as? String)
             return .json(200, ["ok": true])
@@ -1566,6 +1571,31 @@ extension GenerationViewModel {
             fastAttention = fast
         } else {
             fastAttention = false
+        }
+        // Sol-Attn (experimental): "sol_attention": true, with "sol_tau"
+        // 0.5 (default) or 1.0 - the two values 詳細設定 offers.
+        if let sol = json["sol_attention"] {
+            guard let sol = sol as? Bool else {
+                return .error(400, "\"sol_attention\" must be true or false")
+            }
+            if sol && !fastAttentionAvailable {
+                return .error(400, "sol_attention is not available on this build/device")
+            }
+            if sol && fastAttention {
+                return .error(400, "\"sol_attention\" and \"fast_attention\" cannot both be true")
+            }
+            solAttention = sol
+        } else {
+            solAttention = false
+        }
+        if let tauValue = json["sol_tau"] {
+            guard let tau = (tauValue as? NSNumber)?.doubleValue,
+                  let strength = SolStrength.allCases.first(where: { $0.tau == tau }) else {
+                return .error(400, "\"sol_tau\" must be 0.5 or 1.0")
+            }
+            solStrength = strength
+        } else {
+            solStrength = .moderate
         }
 
         // A JSON number, or a decimal string for clients whose JSON numbers

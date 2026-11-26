@@ -209,6 +209,7 @@ extension GenerationViewModel {
         params.adalnCurveDirectory = preferences.useAdaLNCurve
             ? library.activeModel.map { modelCacheDirectory(path: $0.path, id: $0.id) } : nil
         params.fastAttention = useFastAttention
+        params.solTau = useSolAttention ? solStrength.tau : nil
         params.videoHEVC = true
         params.videoQuality = Float(VideoQuality.saved.value)
         let prompt = record.draft.prompt

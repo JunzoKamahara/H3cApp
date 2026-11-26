@@ -1016,6 +1016,24 @@ typedef int (*h3_gpu_ccv_dense_attention_fn)(
     uint32_t heads, uint32_t head_dim, float scale, int quantized,
     int *head_major_output);
 void h3_gpu_register_ccv_dense_attention(h3_gpu_ccv_dense_attention_fn fn);
+/* Experimental: ccv's int8 Sol (block-sparse) attention on the same bridge
+ * (FP16 row-major copies in, row-major BF16 out). Rows before
+ * `exact_rows` (text, conditions and audio) are never approximated, as
+ * queries or as keys; `tau` is ccv's routing threshold (higher keeps fewer
+ * exact blocks). Fails cleanly when nothing registered it. */
+int h3_gpu_ccv_sol_attention_bf16(h3_gpu *gpu, h3_gpu_tensor *output,
+                                  const h3_gpu_tensor *query,
+                                  const h3_gpu_tensor *key,
+                                  const h3_gpu_tensor *value,
+                                  uint32_t rows, uint32_t heads,
+                                  uint32_t head_dim, float scale,
+                                  uint32_t exact_rows, float tau);
+typedef int (*h3_gpu_ccv_sol_attention_fn)(
+    h3_gpu *gpu, h3_gpu_tensor *output, const h3_gpu_tensor *query,
+    const h3_gpu_tensor *key, const h3_gpu_tensor *value, uint32_t rows,
+    uint32_t heads, uint32_t head_dim, float scale, uint32_t exact_rows,
+    float tau);
+void h3_gpu_register_ccv_sol_attention(h3_gpu_ccv_sol_attention_fn fn);
 /* Drops the ccv bridge's per-process scratch (its FP16 Q/K/V/out copies and
  * ccv's own int8 scratch; compiled pipelines are kept) once no command on
  * `gpu` is open or in flight. Returns 1 when released or nothing was held,

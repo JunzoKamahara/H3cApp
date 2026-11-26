@@ -118,6 +118,21 @@ int h3_valid_params(h3_ctx *ctx, const h3_params *params) {
         h3_set_error(ctx, "fast attention must be zero or one");
         return 0;
     }
+    if (params->sparse_attention != 0 && params->sparse_attention != 1) {
+        h3_set_error(ctx, "sparse attention must be zero or one");
+        return 0;
+    }
+    if (params->sparse_attention && params->fast_attention) {
+        h3_set_error(ctx, "sparse attention and fast attention cannot be "
+                     "combined");
+        return 0;
+    }
+    if (!(params->sparse_attention_tau >= 0.0f &&
+          params->sparse_attention_tau <= 4.0f)) {
+        h3_set_error(ctx, "sparse attention tau must be 0 (default) or in "
+                     "(0, 4]");
+        return 0;
+    }
     const h3_sampler_info *sampler = h3_sampler(params->sampler);
     if (!sampler) {
         h3_set_error(ctx, "sampler must be Euler or re-noise");
@@ -185,6 +200,12 @@ int h3_valid_params(h3_ctx *ctx, const h3_params *params) {
           (params->audio_sigma_shift > 0.0f &&
            params->audio_sigma_shift <= 100.0f))) {
         h3_set_error(ctx, "audio sigma shift must be 0 (default) or in (0, 100]");
+        return 0;
+    }
+    if (params->sparse_attention && !h3_fast_attention_available()) {
+        h3_set_error(ctx, "sparse attention is not available: this build "
+                     "lacks the ccv backend or this GPU lacks neural "
+                     "matrix accelerators");
         return 0;
     }
     if (params->fast_attention && !h3_fast_attention_available()) {

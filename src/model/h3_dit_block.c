@@ -570,7 +570,27 @@ static int run_block(h3_dit *dit, unsigned index, int step,
     int ccv_int8 = ccv_direct ||
                    dit->attention_mode == H3_DIT_ATTENTION_CCV_INT8;
     int ccv_fp16 = dit->attention_mode == H3_DIT_ATTENTION_CCV_FP16;
-    if (ccv_int8 || ccv_fp16) {
+    /* Experimental ccv_sol: ccv's int8 Sol attention from block
+     * H3_SOL_FIRST_BLOCK on (default 2, as pi-H3's publishers apply Sol);
+     * the rows before the target video (text, conditions, audio) stay
+     * exact. Earlier blocks take the production path below. */
+    int ccv_sol = 0;
+    if (dit->attention_mode == H3_DIT_ATTENTION_CCV_SOL) {
+        const char *first_text = h3_option("H3_SOL_FIRST_BLOCK");
+        unsigned first = first_text ? (unsigned)atoi(first_text) : 2u;
+        ccv_sol = index >= first;
+    }
+    if (ccv_sol) {
+        const char *tau_text = h3_option("H3_SOL_TAU");
+        float tau = dit->sol_tau > 0.0f ? dit->sol_tau
+                  : tau_text ? (float)atof(tau_text) : 0.5f;
+        OP(h3_gpu_ccv_sol_attention_bf16(
+            dit->gpu, dit->attention_heads, dit->query, dit->key, dit->value,
+            rows, HEADS, HEAD_DIM, 1.0f / sqrtf((float)HEAD_DIM),
+            dit->video_target_start, tau),
+           "DiT ccv Sol attention");
+        head_major_attention_output = 0;
+    } else if (ccv_int8 || ccv_fp16) {
         /* In: whether head-major output may be written (direct mode only,
          * and only when the projection below can take it). Out: what the
          * bridge actually wrote. */

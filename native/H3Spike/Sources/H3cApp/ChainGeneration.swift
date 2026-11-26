@@ -136,6 +136,7 @@ extension GenerationViewModel {
     func chainClipEstimates(plan: [Int]) -> [Double]? {
         let calibration = TimingCalibration.load(for: effectiveComputeMode, speed: stepReuseApplies ? speedMode : .quality,
                                                  fastAttention: useFastAttention,
+                                                 solTau: useSolAttention ? solStrength.tau : nil,
                                                  ditLayers: modelFamily.can(.layerSkip) ? ditLayers.clamped(to: ditLayersRange) : defaultDitLayers,
                                                  family: modelFamily, pixelHead: usesPixelHead)
         let now = Date()

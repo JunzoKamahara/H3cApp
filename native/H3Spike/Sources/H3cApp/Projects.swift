@@ -106,6 +106,10 @@ struct ProjectDraft: Codable, Equatable {
     /// clips (while chainCustom); kept when switching back to a length.
     var chainCustom: Bool? = nil
     var customClips: [ChainClipSpec]? = nil
+    /// 注意の計算 = Sol-Attn, with its threshold (SolStrength.tau). Absent
+    /// otherwise and in drafts from before Sol-Attn (fastAttention says
+    /// whether 高速 was chosen).
+    var solTau: Double? = nil
 
     /// The draft with every path in customClips passed through `map`.
     func mappingClipPaths(_ map: (String) -> String) -> ProjectDraft {
@@ -750,7 +754,8 @@ extension GenerationViewModel {
             clipPrompts: storedClipPrompts,
             clipReferences: storedClipReferences,
             chainCustom: chainCustom ? true : nil,
-            customClips: customClips.isEmpty ? nil : customClips)
+            customClips: customClips.isEmpty ? nil : customClips,
+            solTau: solAttention ? solStrength.tau : nil)
     }
 
     /// Puts a draft into the form. Relative paths resolve against
@@ -794,6 +799,8 @@ extension GenerationViewModel {
             computeMode = mode
         }
         fastAttention = draft.fastAttention && fastAttentionAvailable
+        solAttention = draft.solTau != nil && fastAttentionAvailable
+        if let tau = draft.solTau { solStrength = SolStrength(tau: tau) }
         seedText = draft.seed
         seedFixed = draft.seedFixed
         let missing = draft.loras.filter { library.loraEntry(forPath: $0.path) == nil }.map(\.path)
@@ -1534,6 +1541,7 @@ extension ResolvedResult {
             fastAttention: draft.fastAttention,
             ccvAttentionCalls: record.ccvAttentionCalls,
             ccvAttentionDirectCalls: record.ccvAttentionDirectCalls,
+            solTau: draft.solTau,
             seed: UInt64(record.seed) ?? 0,
             seedWasRandom: record.seedWasRandom,
             loras: draft.loras.map {

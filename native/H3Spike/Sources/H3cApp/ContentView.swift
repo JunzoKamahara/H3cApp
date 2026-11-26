@@ -39,7 +39,14 @@ struct ContentView: View {
         let model = viewModel
         model.showPanel = { [weak model] panel, section in
             guard let model else { return }
-            managerSection.wrappedValue = section
+            if panel == .advancedSettings {
+                // 詳細設定's tab (AdvancedSettingsTab), read by its @AppStorage.
+                if let section, AdvancedSettingsTab(rawValue: section) != nil {
+                    UserDefaults.standard.set(section, forKey: AdvancedSettingsTab.defaultsKey)
+                }
+            } else {
+                managerSection.wrappedValue = section
+            }
             model.showingAdvancedSettings = panel == .advancedSettings
             manager.wrappedValue = panel == .modelManager
         }

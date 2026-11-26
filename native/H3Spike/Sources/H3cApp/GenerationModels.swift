@@ -344,6 +344,42 @@ enum SpeedMode: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+/// 詳細設定の「注意の計算」: how the DiT's attention is computed. Fast
+/// (ccv's int8) and Sol-Attn (ccv's int8 block-sparse, h3_params.
+/// sparse_attention) need an M5's neural accelerators and a ccv build
+/// (H3Engine.fastAttentionAvailable), and exclude each other.
+enum AttentionMethod: String, CaseIterable, Identifiable, Codable {
+    case standard, fast, sol
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .standard: return String(localized: "標準")
+        case .fast: return String(localized: "高速（int8）")
+        case .sol: return String(localized: "Sol-Attn（疎）")
+        }
+    }
+}
+
+/// Sol-Attn's routing threshold (h3_params.sparse_attention_tau): the two
+/// values measured (plans/PI_H3_PLAN.ja.md 8.15). Higher keeps fewer exact
+/// blocks: faster, further from the standard attention.
+enum SolStrength: String, CaseIterable, Identifiable, Codable {
+    case moderate, strong
+    var id: String { rawValue }
+
+    var tau: Double { self == .moderate ? 0.5 : 1.0 }
+
+    init(tau: Double) { self = tau > 0.75 ? .strong : .moderate }
+
+    var label: String {
+        switch self {
+        case .moderate: return String(localized: "やや速い（0.5）")
+        case .strong: return String(localized: "速い（1.0）")
+        }
+    }
+}
+
 enum ComputeMode: String, CaseIterable, Identifiable, Codable {
     case attentionCache, resident, ssdStreaming
     var id: String { rawValue }
@@ -401,6 +437,8 @@ struct ResolvedResult {
     let fastAttention: Bool
     let ccvAttentionCalls: Int
     let ccvAttentionDirectCalls: Int
+    /// Sol-Attn requested, and its threshold (nil: not requested).
+    var solTau: Double? = nil
     let seed: UInt64
     let seedWasRandom: Bool
     let loras: [ResolvedLoRA]
@@ -443,13 +481,19 @@ struct ResolvedResult {
     var seedDecimalString: String { String(seed) }
 
     /// From the path that actually ran; a diagnostic environment override
-    /// can route through ccv even with the checkbox off.
-    var fastAttentionSummary: String {
+    /// can route through ccv even with the setting at 標準.
+    var attentionSummary: String {
+        if let solTau {
+            let label = AttentionMethod.sol.label
+            if ccvAttentionCalls == 0 { return String(localized: "\(label)（指定したが未使用）") }
+            return String(localized: "\(label)、tau \(String(format: "%.1f", solTau))")
+        }
+        let fast = AttentionMethod.fast.label
         if ccvAttentionCalls == 0 {
-            return fastAttention ? String(localized: "指定したが未使用") : String(localized: "使用しない")
+            return fastAttention ? String(localized: "\(fast)（指定したが未使用）") : AttentionMethod.standard.label
         }
         let path = ccvAttentionDirectCalls == ccvAttentionCalls
-            ? String(localized: "使用") : String(localized: "一部使用（ccv経路）")
+            ? fast : String(localized: "\(fast)の一部（ccv経路）")
         return fastAttention ? path : path + String(localized: "（診断用の環境変数による）")
     }
 
@@ -478,7 +522,7 @@ struct ResolvedResult {
             String(localized: "使用する層数: \(ditLayers) / 50"),
             String(localized: "計算方式: \(computeMode.label)"),
             String(localized: "速度: \(speedMode.label)"),
-            String(localized: "高速モード（試験的）: \(fastAttentionSummary)"),
+            String(localized: "注意の計算: \(attentionSummary)"),
             String(localized: "生成時間: \(formatElapsed(generationSeconds))"),
             seedLine,
         ]

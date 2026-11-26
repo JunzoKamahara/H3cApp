@@ -28,6 +28,9 @@ struct SettingsPreset: Codable, Identifiable, Equatable {
     /// match a form that uses them.
     var chained: Bool? = nil
     var chainClipFrames: Int? = nil
+    /// 注意の計算 = Sol-Attn and its threshold; nil otherwise, so presets
+    /// saved before Sol-Attn still match a form that does not use it.
+    var solTau: Double? = nil
 }
 
 /// Presets are shared by every window: saving in one shows up in the
@@ -137,7 +140,8 @@ extension GenerationViewModel {
             seedFixed: seedFixed, seed: seedText,
             loras: effectiveLoRAs.map { .init(path: $0.path, strength: $0.strength) },
             chained: isChained ? true : nil,
-            chainClipFrames: chainClipLength == defaultChainClipLength ? nil : chainClipLength.frames)
+            chainClipFrames: chainClipLength == defaultChainClipLength ? nil : chainClipLength.frames,
+            solTau: solAttention ? solStrength.tau : nil)
     }
 
     /// The settings a finished generation actually used.
@@ -150,7 +154,8 @@ extension GenerationViewModel {
             seedFixed: !result.seedWasRandom, seed: result.seedDecimalString,
             loras: result.loras.map { .init(path: $0.path, strength: $0.strength) },
             chained: result.chained ? true : nil,
-            chainClipFrames: result.chainClipFrames.flatMap { $0 == defaultChainClipLength.frames ? nil : $0 })
+            chainClipFrames: result.chainClipFrames.flatMap { $0 == defaultChainClipLength.frames ? nil : $0 },
+            solTau: result.solTau)
     }
 
     /// Saves under the given name, replacing a preset of the same name;
@@ -238,6 +243,8 @@ extension GenerationViewModel {
             computeMode = mode
         }
         fastAttention = preset.fastAttention && fastAttentionAvailable
+        solAttention = preset.solTau != nil && fastAttentionAvailable
+        if let tau = preset.solTau { solStrength = SolStrength(tau: tau) }
         seedText = preset.seed
         seedFixed = preset.seedFixed
         applyLoRAs(preset.loras.map { ($0.path, $0.strength) })

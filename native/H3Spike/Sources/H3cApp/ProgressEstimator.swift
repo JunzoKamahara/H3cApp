@@ -115,18 +115,20 @@ struct TimingCalibration: Codable {
     // Faster speed modes also get their own history - their per-step times
     // would otherwise drag the standard mode's estimates down. The standard
     // mode keeps the original key so existing calibration carries over.
-    // Fast mode (ccv attention) likewise keeps separate history.
+    // Fast mode (ccv attention) likewise keeps separate history, and
+    // Sol-Attn one per threshold.
     // So does a reduced layer count.
     // HyperFlow H3 Flash (fewer blocks, factored linears) has its own too.
     // And a pi-H3 adapter with its pixel head: its "decode" is the head's 8
     // layers on the whole clip, 3 to 4 times quicker than the video VAE.
     private static func defaultsKey(_ mode: ComputeMode, _ speed: SpeedMode,
-                                    _ fastAttention: Bool, _ ditLayers: Int,
+                                    _ fastAttention: Bool, _ solTau: Double?, _ ditLayers: Int,
                                     _ family: H3ModelFamily, _ pixelHead: Bool) -> String {
         let base = mode == .attentionCache ? "h3c-app.timingCalibration.v2"
                                            : "h3c-app.timingCalibration.v2.\(mode.rawValue)"
         var key = speed == .quality ? base : base + ".speed.\(speed.rawValue)"
         if fastAttention { key += ".fastAttention" }
+        if let solTau { key += String(format: ".sol%.2f", solTau) }
         if ditLayers != 50 { key += ".layers\(ditLayers)" }
         if family == .hyperflow { key += ".hyperflow" }
         if pixelHead { key += ".pixelHead" }
@@ -176,10 +178,10 @@ struct TimingCalibration: Codable {
     }
 
     static func load(for mode: ComputeMode, speed: SpeedMode = .quality,
-                     fastAttention: Bool = false, ditLayers: Int = 50,
+                     fastAttention: Bool = false, solTau: Double? = nil, ditLayers: Int = 50,
                      family: H3ModelFamily = .h3, pixelHead: Bool = false) -> TimingCalibration {
         guard let data = UserDefaults.standard.data(
-                  forKey: defaultsKey(mode, speed, fastAttention, ditLayers, family, pixelHead)),
+                  forKey: defaultsKey(mode, speed, fastAttention, solTau, ditLayers, family, pixelHead)),
               let value = try? JSONDecoder().decode(TimingCalibration.self, from: data) else {
             return initial(for: mode, family: family, pixelHead: pixelHead)
         }
@@ -187,9 +189,10 @@ struct TimingCalibration: Codable {
     }
 
     func save(for mode: ComputeMode, speed: SpeedMode = .quality, fastAttention: Bool = false,
+              solTau: Double? = nil,
               ditLayers: Int = 50, family: H3ModelFamily = .h3, pixelHead: Bool = false) {
         if let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: Self.defaultsKey(mode, speed, fastAttention, ditLayers,
+            UserDefaults.standard.set(data, forKey: Self.defaultsKey(mode, speed, fastAttention, solTau, ditLayers,
                                                                      family, pixelHead))
         }
     }

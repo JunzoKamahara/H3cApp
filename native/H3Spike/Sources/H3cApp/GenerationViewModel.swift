@@ -268,6 +268,11 @@ final class GenerationViewModel: ObservableObject {
     // default, offered only where the engine reports it can run, and kept
     // separate from speedMode - no speed preset turns it on.
     @Published var fastAttention = false
+    // Opt-in Sol-Attn (experimental): ccv's int8 block-sparse attention,
+    // same machines as fastAttention and never together with it - the
+    // form's 注意の計算 (attentionMethod) sets one or neither.
+    @Published var solAttention = false
+    @Published var solStrength = SolStrength.moderate
     // The 詳細設定 dialog, opened from the composer's button.
     @Published var showingAdvancedSettings = false
     /// A sheet POST /api/window/show puts up over this window, or takes
@@ -458,16 +463,37 @@ final class GenerationViewModel: ObservableObject {
     }
 
     /// What a generation started now would actually request.
-    var useFastAttention: Bool { fastAttention && fastAttentionAvailable }
+    var useFastAttention: Bool { fastAttention && !solAttention && fastAttentionAvailable }
+    var useSolAttention: Bool { solAttention && fastAttentionAvailable }
+
+    /// 注意の計算 in 詳細設定: one choice over fastAttention/solAttention.
+    var attentionMethod: AttentionMethod {
+        get { solAttention ? .sol : fastAttention ? .fast : .standard }
+        set {
+            fastAttention = newValue == .fast
+            solAttention = newValue == .sol
+        }
+    }
 
     var hasAdvancedChanges: Bool {
-        sizeProfile != defaultSizeProfile || steps != defaultSteps || denoiseReuse != defaultReuse
-            || ditLayers != defaultDitLayers
-            || computeMode != defaultComputeMode || speedMode != .quality || fastAttention
-            || seedFixed
-            || !library.enabledLoRAs.isEmpty
+        hasBasicSettingsChanges || hasSpeedSettingsChanges || hasLoRASettingsChanges
+    }
+
+    /// 詳細設定's 基本 tab: size (shown there), steps, seed, clip length.
+    var hasBasicSettingsChanges: Bool {
+        sizeProfile != defaultSizeProfile || steps != defaultSteps || seedFixed
             || chainClipLength != defaultChainClipLength
     }
+
+    /// 詳細設定's 速さ tab.
+    var hasSpeedSettingsChanges: Bool {
+        denoiseReuse != defaultReuse || ditLayers != defaultDitLayers
+            || computeMode != defaultComputeMode || speedMode != .quality || fastAttention
+            || solAttention
+    }
+
+    /// 詳細設定's 追加モデル tab.
+    var hasLoRASettingsChanges: Bool { !library.enabledLoRAs.isEmpty }
 
     /// Max-resolution + long duration + SSD streaming measured as
     /// impractically slow on a 24GB M5 Mac: the run pushed past physical
@@ -490,9 +516,20 @@ final class GenerationViewModel: ObservableObject {
     /// before starting, from this Mac's past runs (TimingCalibration).
     var draftEstimatedSeconds: Double? {
         if isChained { return chainEstimatedSeconds }
+        return draftEstimatedSeconds(for: sizeProfile)
+    }
+
+    /// draftEstimatedSeconds at another size, for the custom size sheet
+    /// before it is applied: one generation at the current length (nil for
+    /// a つなげて生成 at another size), with the current memory plan's cost
+    /// ratio, which was worked out for the current size.
+    func draftEstimatedSeconds(for sizeProfile: SizeProfile) -> Double? {
+        if sizeProfile == self.sizeProfile && isChained { return chainEstimatedSeconds }
+        if isChained { return nil }
         let frames = Int(h3AlignedFrameCount(seconds: Double(seconds.clamped(to: secondsRange))))
         let calibration = TimingCalibration.load(for: effectiveComputeMode, speed: stepReuseApplies ? speedMode : .quality,
                                                  fastAttention: useFastAttention,
+                                                 solTau: useSolAttention ? solStrength.tau : nil,
                                                  ditLayers: modelFamily.can(.layerSkip) ? ditLayers.clamped(to: ditLayersRange) : defaultDitLayers,
                                                  family: modelFamily, pixelHead: usesPixelHead)
         let shape = progressShape(sizeProfile: sizeProfile, frames: frames,
@@ -1068,6 +1105,8 @@ final class GenerationViewModel: ObservableObject {
         computeMode = defaultComputeMode
         speedMode = .quality
         fastAttention = false
+        solAttention = false
+        solStrength = .moderate
         seedFixed = false
         chainClipLength = defaultChainClipLength
         library.setEnabledLoRAs([])
@@ -1107,7 +1146,7 @@ final class GenerationViewModel: ObservableObject {
         }
         if let seedValidationMessage { return seedValidationMessage }
         if !sizeProfile.isWithinCustomLimit {
-            return String(localized: "カスタムサイズの生成サイズが上限（\(SizeProfile.customMaxPixels)ピクセル）を超えています。詳細設定で小さくするか、2倍の拡大を使ってください")
+            return String(localized: "カスタムサイズの生成サイズが上限（\(SizeProfile.customMaxPixels)ピクセル）を超えています。「大きさ」の「カスタム…」で小さくするか、2倍の拡大を使ってください")
         }
         if creationMethod == .image {
             switch imageInputMode {
@@ -1183,7 +1222,8 @@ final class GenerationViewModel: ObservableObject {
             // not named as if they applied.
             parts.append("Steps \(effectiveSteps)")
             if effectiveComputeMode != defaultComputeMode { parts.append(effectiveComputeMode.summaryLabel) }
-            if fastAttention { parts.append(String(localized: "高速モード（試験的）")) }
+            if fastAttention && !solAttention { parts.append(AttentionMethod.fast.label) }
+            if solAttention { parts.append(AttentionMethod.sol.label) }
             if seedFixed { parts.append(String(localized: "シード固定")) }
             if !library.enabledLoRAs.isEmpty {
                 parts.append(String(localized: "追加モデル（LoRA）はHyperFlowでは使いません"))
@@ -1201,7 +1241,8 @@ final class GenerationViewModel: ObservableObject {
             if ditLayers != defaultDitLayers { parts.append(String(localized: "層 \(ditLayers)")) }
             if computeMode != defaultComputeMode { parts.append(computeMode.summaryLabel) }
             if speedMode != .quality && !usesPiH3 { parts.append(speedMode.summaryLabel) }
-            if fastAttention { parts.append(String(localized: "高速モード（試験的）")) }
+            if fastAttention && !solAttention { parts.append(AttentionMethod.fast.label) }
+            if solAttention { parts.append(AttentionMethod.sol.label) }
             if seedFixed { parts.append(String(localized: "シード固定")) }
             let loras = library.enabledLoRAs
             if !loras.isEmpty {
@@ -1318,6 +1359,7 @@ final class GenerationViewModel: ObservableObject {
             let now = Date()
             let calibration = TimingCalibration.load(for: request.computeMode, speed: request.speedMode,
                                                      fastAttention: request.params.fastAttention,
+                                                     solTau: request.params.solTau,
                                                      ditLayers: request.ditLayers, family: request.family,
                   pixelHead: request.pixelHead)
             planned = ProgressEstimator(shape: request.shape, calibration: calibration, start: now)
@@ -1380,6 +1422,7 @@ final class GenerationViewModel: ObservableObject {
         // Decided here, once, for this generation: the value is copied into
         // params, so later toggles in the form can't affect a running job.
         params.fastAttention = useFastAttention
+        params.solTau = useSolAttention ? solStrength.tau : nil
         params.videoHEVC = true
         params.videoQuality = Float(VideoQuality.saved.value)
         let sampling = samplingSettings
@@ -1417,6 +1460,7 @@ final class GenerationViewModel: ObservableObject {
             draft = draft.mappingClipPaths { ProjectFiles.stored($0, in: projectURL) }
         }
         draft.fastAttention = params.fastAttention
+        draft.solTau = params.solTau
         if isHyperFlow {
             // What actually ran: the form keeps its own values for when a
             // plain H3 model is used again.
@@ -1506,6 +1550,7 @@ final class GenerationViewModel: ObservableObject {
             shape: request.shape,
             calibration: TimingCalibration.load(for: request.computeMode, speed: request.speedMode,
                                                 fastAttention: request.params.fastAttention,
+                                                solTau: request.params.solTau,
                                                 ditLayers: request.ditLayers, family: request.family,
                   pixelHead: request.pixelHead),
             start: Date())
@@ -1591,7 +1636,8 @@ final class GenerationViewModel: ObservableObject {
             // diagnostic H3_ATTENTION_BACKEND can route through ccv even
             // with it off.
             .save(for: request.computeMode, speed: request.speedMode,
-                  fastAttention: result.ccvAttentionCalls > 0,
+                  fastAttention: result.ccvAttentionCalls > 0 && request.params.solTau == nil,
+                  solTau: result.ccvAttentionCalls > 0 ? request.params.solTau : nil,
                   ditLayers: request.ditLayers, family: request.family,
                   pixelHead: request.pixelHead)
         let completedAt = Date()
@@ -1662,6 +1708,7 @@ final class GenerationViewModel: ObservableObject {
             fastAttention: request.params.fastAttention,
             ccvAttentionCalls: result.ccvAttentionCalls,
             ccvAttentionDirectCalls: result.ccvAttentionDirectCalls,
+            solTau: request.params.solTau,
             seed: result.seed,
             seedWasRandom: seedWasRandom,
             loras: request.loras,
@@ -1915,6 +1962,8 @@ final class GenerationViewModel: ObservableObject {
         ditLayers = result.ditLayers
         computeMode = result.computeMode
         fastAttention = result.fastAttention && fastAttentionAvailable
+        solAttention = result.solTau != nil && fastAttentionAvailable
+        if let tau = result.solTau { solStrength = SolStrength(tau: tau) }
         // The used seed stays in the field either way, so switching to
         // 固定する later reproduces that run.
         seedText = result.seedDecimalString

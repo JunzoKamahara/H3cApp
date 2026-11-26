@@ -8,6 +8,9 @@ struct AdvancedSettingsView: View {
     @Binding var showingModelManager: Bool
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
+    /// The tab last open (AdvancedSettingsTab's raw value); the API's
+    /// window/show can set it.
+    @AppStorage(AdvancedSettingsTab.defaultsKey) private var tabName = AdvancedSettingsTab.basic.rawValue
 
     private var palette: H3Palette { H3Palette(colorScheme) }
 
@@ -23,43 +26,32 @@ struct AdvancedSettingsView: View {
             }
             .padding(H3Spacing.lg)
 
+            tabBar
+                .padding(.horizontal, H3Spacing.lg)
+                .padding(.bottom, H3Spacing.md)
+
             Divider()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: H3Spacing.lg) {
-                    sizeSection
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("生成ステップ数").font(.caption).foregroundStyle(palette.textSecondary)
-                        Picker("生成ステップ数", selection: $viewModel.steps) {
-                            ForEach(viewModel.availableSteps, id: \.self) { value in
-                                Text("\(value)").tag(value)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                        .frame(maxWidth: 120)
+                    switch tab {
+                    case .basic:
+                        sizeSection
+                        stepsSection
+                        chainSection
+                        seedSection
+                    case .speed:
+                        computeModeSection
                         if viewModel.isHyperFlow {
-                            Text("HyperFlow H3 Flashは4・6・8ステップで生成します（既定は6）。")
-                                .font(.caption)
-                                .foregroundStyle(palette.textSecondary)
-                        } else if viewModel.usesPiH3 {
-                            Text("pi-H3の追加モデルは、2または4ステップで生成します。")
-                                .font(.caption)
-                                .foregroundStyle(PiH3Rules.steps.contains(viewModel.effectiveSteps)
-                                                 ? palette.textSecondary : palette.errorColor)
+                            hyperFlowNote
+                        } else {
+                            speedSection
+                            reuseSection
+                            layersSection
                         }
+                    case .lora:
+                        loraSection
                     }
-                    computeModeSection
-                    if viewModel.isHyperFlow {
-                        hyperFlowNote
-                    } else {
-                        speedSection
-                        reuseSection
-                        layersSection
-                    }
-                    chainSection
-                    seedSection
-                    if viewModel.modelFamily.can(.lora) { loraSection }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(H3Spacing.lg)
@@ -78,54 +70,98 @@ struct AdvancedSettingsView: View {
             }
             .padding(H3Spacing.lg)
         }
-        .frame(width: 540, height: 640)
+        .frame(width: 540, height: 720)
         .background(palette.canvas)
+    }
+
+    // MARK: タブ
+
+    private var tab: AdvancedSettingsTab {
+        AdvancedSettingsTab(rawValue: tabName) ?? .basic
+    }
+
+    /// 基本・速さ・追加モデル, each marked when a setting on it differs
+    /// from the default (like 変更あり).
+    private var tabBar: some View {
+        HStack(spacing: 2) {
+            ForEach(AdvancedSettingsTab.allCases) { item in
+                let selected = item == tab
+                Button {
+                    tabName = item.rawValue
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(item.label)
+                            .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                        if hasChanges(on: item) {
+                            Circle().fill(palette.accent).frame(width: 6, height: 6)
+                                .accessibilityLabel(Text("変更あり"))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
+                    .background(selected ? palette.textSecondary.opacity(0.18) : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(palette.textSecondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func hasChanges(on tab: AdvancedSettingsTab) -> Bool {
+        switch tab {
+        case .basic: return viewModel.hasBasicSettingsChanges
+        case .speed: return viewModel.hasSpeedSettingsChanges
+        case .lora: return viewModel.hasLoRASettingsChanges
+        }
+    }
+
+    // MARK: 生成ステップ数
+
+    private var stepsSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("生成ステップ数").font(.caption).foregroundStyle(palette.textSecondary)
+            Picker("生成ステップ数", selection: $viewModel.steps) {
+                ForEach(viewModel.availableSteps, id: \.self) { value in
+                    Text("\(value)").tag(value)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .frame(maxWidth: 120)
+            if viewModel.isHyperFlow {
+                Text("HyperFlow H3 Flashは4・6・8ステップで生成します（既定は6）。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+            } else if viewModel.usesPiH3 {
+                Text("pi-H3の追加モデルは、2または4ステップで生成します。")
+                    .font(.caption)
+                    .foregroundStyle(PiH3Rules.steps.contains(viewModel.effectiveSteps)
+                                     ? palette.textSecondary : palette.errorColor)
+            }
+        }
     }
 
     // MARK: サイズ
 
-    /// Custom finished size; プロンプト欄の「大きさ」 picks a preset again.
+    /// The size in use, shown only: it is chosen in プロンプト欄の「画面の形」
+    /// 「大きさ」, a custom one through 大きさ > カスタム… (CustomVideoSizeSheet).
     private var sizeSection: some View {
         let profile = viewModel.sizeProfile
         return VStack(alignment: .leading, spacing: 4) {
             Text("サイズ").font(.caption).foregroundStyle(palette.textSecondary)
-            Toggle("カスタムサイズを使う", isOn: Binding(
-                get: { profile.isCustom },
-                set: { custom in
-                    // Start from the preset's finished size and its 2x setting.
-                    let output = viewModel.sizeProfile.dimensions
-                    viewModel.sizeProfile = custom
-                        ? .custom(width: output.width, height: output.height, upscaled: profile.upscaled)
-                        : .preset(profile.shape, .medium, upscaled: profile.upscaled)
-                }
-            ))
-            if profile.isCustom {
-                HStack(spacing: H3Spacing.md) {
-                    sideField("幅", value: customSide(width: true))
-                    Text(verbatim: "×").foregroundStyle(palette.textSecondary)
-                    sideField("高さ", value: customSide(width: false))
-                }
-                Toggle("半分のサイズで生成して2倍に拡大", isOn: Binding(
-                    get: { viewModel.sizeProfile.upscaled },
-                    set: { viewModel.sizeProfile = viewModel.sizeProfile.withUpscale($0) }
-                ))
-                let pixels = profile.ditPixels
-                Text("完成 \(profile.resolutionLabel) ・ 生成 \(profile.canvasLabel)（\(pixels.formatted())ピクセル / 上限 \(SizeProfile.customMaxPixels.formatted())）")
+            Text("現在: \(profile.label)")
+            if !profile.isWithinCustomLimit {
+                Text("生成するサイズが上限（\(SizeProfile.customMaxPixels.formatted())ピクセル）を超えているため、このままでは生成できません。プロンプト欄の「大きさ」の「カスタム…」で小さくしてください。")
                     .font(.caption)
-                    .foregroundStyle(profile.isWithinCustomLimit ? palette.textSecondary : palette.errorColor)
-                if !profile.isWithinCustomLimit && !profile.upscaled {
-                    Text("このままでは生成できません。サイズを小さくするか、「半分のサイズで生成して2倍に拡大」をオンにしてください。")
-                        .font(.caption)
-                        .foregroundStyle(palette.errorColor)
-                }
-                Text("幅・高さは完成する動画のサイズです（32の倍数、2倍の拡大では64の倍数）。生成するサイズ（2倍の拡大ではその半分）が\(SizeProfile.customMaxPixels.formatted())ピクセル以下になるようにしてください。拡大は生成後に行うため、時間はほとんど増えません。プロンプト欄の「大きさ」を選ぶとプリセットに戻ります。")
-                    .font(.caption)
-                    .foregroundStyle(palette.textSecondary)
-            } else {
-                Text("現在: \(profile.label)。プリセットはプロンプト欄の「画面の形」「大きさ」で選びます。")
-                    .font(.caption)
-                    .foregroundStyle(palette.textSecondary)
+                    .foregroundStyle(palette.errorColor)
             }
+            Text("サイズはプロンプト欄で選びます。プリセットは「画面の形」と「大きさ」、幅と高さを打ち込むときは「大きさ」の「カスタム…」です。")
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary)
             if let estimate = viewModel.draftEstimatedSeconds {
                 let minutes = max(Int((estimate / 60).rounded(.up)), 1)
                 Text("このMacでの目安: 約\(minutes)分（いまの設定・これまでの生成実績から）")
@@ -137,41 +173,6 @@ struct AdvancedSettingsView: View {
                         .foregroundStyle(palette.errorColor)
                 }
             }
-        }
-    }
-
-    /// One side of the custom finished size, rounded to its step within
-    /// its range (both depend on the 2x upscale).
-    private func customSide(width isWidth: Bool) -> Binding<Int> {
-        Binding(
-            get: {
-                let output = viewModel.sizeProfile.dimensions
-                return Int(isWidth ? output.width : output.height)
-            },
-            set: { newValue in
-                let upscaled = viewModel.sizeProfile.upscaled
-                let range = SizeProfile.customSideRange(upscaled: upscaled)
-                let step = Int(SizeProfile.customSideStep(upscaled: upscaled))
-                let rounded = Int32(clamping: ((newValue + step / 2) / step) * step)
-                let value = min(max(rounded, range.lowerBound), range.upperBound)
-                let output = viewModel.sizeProfile.dimensions
-                viewModel.sizeProfile = .custom(width: isWidth ? value : output.width,
-                                                height: isWidth ? output.height : value,
-                                                upscaled: upscaled)
-            })
-    }
-
-    private func sideField(_ title: LocalizedStringKey, value: Binding<Int>) -> some View {
-        let upscaled = viewModel.sizeProfile.upscaled
-        let range = SizeProfile.customSideRange(upscaled: upscaled)
-        return HStack(spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(palette.textSecondary)
-            TextField(title, value: value, format: .number.grouping(.never))
-                .labelsHidden()
-                .frame(width: 64)
-            Stepper(title, value: value, in: Int(range.lowerBound) ... Int(range.upperBound),
-                    step: Int(SizeProfile.customSideStep(upscaled: upscaled)))
-                .labelsHidden()
         }
     }
 
@@ -255,18 +256,46 @@ struct AdvancedSettingsView: View {
                 .foregroundStyle(palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             if viewModel.fastAttentionAvailable {
-                Toggle("高速モード（試験的）", isOn: $viewModel.fastAttention)
-                    .toggleStyle(.checkbox)
+                Text("注意の計算（試験的）").font(.caption).foregroundStyle(palette.textSecondary)
                     .padding(.top, 6)
-                Text("M5のニューラルアクセラレータでAttentionをint8計算します。長い動画ほど効果が大きく（15秒・20ステップで約1.4倍速、メモリ約1.3GB増）、短い動画では効果が小さく、条件によっては遅くなることがあります。同じシードでも標準とは映像が変わります。上の速度設定やreuseとも併用できますが、その組み合わせでの効果と画質は十分に検証していません。")
+                Picker("注意の計算（試験的）", selection: $viewModel.attentionMethod) {
+                    ForEach(AttentionMethod.allCases) { method in
+                        Text(method.label).tag(method)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 360)
+                if viewModel.attentionMethod == .sol {
+                    Picker("間引きの強さ", selection: $viewModel.solStrength) {
+                        ForEach(SolStrength.allCases) { strength in
+                            Text(strength.label).tag(strength)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 360)
+                }
+                Text(attentionDescription)
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 if viewModel.isGenerating {
                     Text("生成中の変更は次の生成から適用されます。")
                         .font(.caption)
                         .foregroundStyle(palette.textSecondary)
                 }
             }
+        }
+    }
+
+    private var attentionDescription: String {
+        switch viewModel.attentionMethod {
+        case .standard:
+            return String(localized: "Attentionを省略なしで計算します。")
+        case .fast:
+            return String(localized: "M5のニューラルアクセラレータでAttentionをint8計算します。長い動画ほど効果が大きく（15秒・20ステップで約1.4倍速、メモリ約1.3GB増）、短い動画では効果が小さく、条件によっては遅くなることがあります。同じシードでも標準とは映像が変わります。上の速度設定やreuseとも併用できますが、その組み合わせでの効果と画質は十分に検証していません。")
+        case .sol:
+            return String(localized: "M5のニューラルアクセラレータで、Attentionの一部を間引いてint8で計算します（最初の2層と、文章・音声の部分は間引きません）。画面が大きいほど効果が大きく、20ステップ・5秒のデノイズは512×512で約16〜20%、960×544で約24〜37%短くなりました（960×544でメモリ約2GB増）。pi-H3の2ステップ・864×480・5秒では、全体が約137秒から約101秒（やや速い）・約95秒（速い）になりました。同じシードでも標準とは映像も音声も変わります。10秒以上の動画、画像を使う生成、上の速度設定との組み合わせは確かめていません。")
         }
     }
 
@@ -436,6 +465,13 @@ struct AdvancedSettingsView: View {
                 }
                     .font(.caption)
             }
+            let usable = viewModel.modelFamily.can(.lora)
+            if !usable {
+                Text("選択しているモデル（\(viewModel.modelFamily.label)）では、追加モデル（LoRA）は使えません。オンにした追加モデルはそのまま残り、通常のMiniMax-H3モデルに切り替えると使われます。")
+                    .font(.caption)
+                    .foregroundStyle(palette.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if library.loras.isEmpty {
                 Text("登録された追加モデルはありません。「管理…」から追加できます。")
                     .font(.caption)
@@ -444,11 +480,12 @@ struct AdvancedSettingsView: View {
                 ForEach(library.loras) { entry in
                     loraStackRow(entry)
                 }
+                .disabled(!usable)
                 Text("オンにした追加モデルは重ねて適用されます。強さは学習時の効き具合に対する倍率です（空欄=1）。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
             }
-            let enabled = library.enabledLoRAs
+            let enabled = usable ? library.enabledLoRAs : []
             let turbo = enabled.filter { $0.recommendedSteps != nil }
             if let first = turbo.first, let turboSteps = first.recommendedSteps {
                 Text("「\(first.name)」はTurbo用の追加モデルです。生成ステップ数を\(turboSteps)に合わせました（\(turboSteps)以外では品質が落ちます）。")
@@ -504,4 +541,22 @@ struct AdvancedSettingsView: View {
         }
     }
 
+}
+
+/// 詳細設定's tabs.
+enum AdvancedSettingsTab: String, CaseIterable, Identifiable {
+    case basic, speed, lora
+
+    /// Where the tab last open is kept (UserDefaults).
+    static let defaultsKey = "h3c-app.advancedSettingsTab"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .basic: return String(localized: "基本")
+        case .speed: return String(localized: "速さ")
+        case .lora: return String(localized: "追加モデル")
+        }
+    }
 }
