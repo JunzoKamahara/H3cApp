@@ -476,14 +476,24 @@ final class GenerationViewModel: ObservableObject {
     }
 
     var hasAdvancedChanges: Bool {
-        sizeProfile != defaultSizeProfile || steps != defaultSteps || denoiseReuse != defaultReuse
-            || ditLayers != defaultDitLayers
-            || computeMode != defaultComputeMode || speedMode != .quality || fastAttention
-            || solAttention
-            || seedFixed
-            || !library.enabledLoRAs.isEmpty
+        hasBasicSettingsChanges || hasSpeedSettingsChanges || hasLoRASettingsChanges
+    }
+
+    /// 詳細設定's 基本 tab: size (shown there), steps, seed, clip length.
+    var hasBasicSettingsChanges: Bool {
+        sizeProfile != defaultSizeProfile || steps != defaultSteps || seedFixed
             || chainClipLength != defaultChainClipLength
     }
+
+    /// 詳細設定's 速さ tab.
+    var hasSpeedSettingsChanges: Bool {
+        denoiseReuse != defaultReuse || ditLayers != defaultDitLayers
+            || computeMode != defaultComputeMode || speedMode != .quality || fastAttention
+            || solAttention
+    }
+
+    /// 詳細設定's 追加モデル tab.
+    var hasLoRASettingsChanges: Bool { !library.enabledLoRAs.isEmpty }
 
     /// Max-resolution + long duration + SSD streaming measured as
     /// impractically slow on a 24GB M5 Mac: the run pushed past physical

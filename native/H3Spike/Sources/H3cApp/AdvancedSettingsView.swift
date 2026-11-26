@@ -8,7 +8,9 @@ struct AdvancedSettingsView: View {
     @Binding var showingModelManager: Bool
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
-    @State private var showingCustomSize = false
+    /// The tab last open (AdvancedSettingsTab's raw value); the API's
+    /// window/show can set it.
+    @AppStorage(AdvancedSettingsTab.defaultsKey) private var tabName = AdvancedSettingsTab.basic.rawValue
 
     private var palette: H3Palette { H3Palette(colorScheme) }
 
@@ -24,43 +26,32 @@ struct AdvancedSettingsView: View {
             }
             .padding(H3Spacing.lg)
 
+            tabBar
+                .padding(.horizontal, H3Spacing.lg)
+                .padding(.bottom, H3Spacing.md)
+
             Divider()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: H3Spacing.lg) {
-                    sizeSection
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("生成ステップ数").font(.caption).foregroundStyle(palette.textSecondary)
-                        Picker("生成ステップ数", selection: $viewModel.steps) {
-                            ForEach(viewModel.availableSteps, id: \.self) { value in
-                                Text("\(value)").tag(value)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                        .frame(maxWidth: 120)
+                    switch tab {
+                    case .basic:
+                        sizeSection
+                        stepsSection
+                        chainSection
+                        seedSection
+                    case .speed:
+                        computeModeSection
                         if viewModel.isHyperFlow {
-                            Text("HyperFlow H3 Flashは4・6・8ステップで生成します（既定は6）。")
-                                .font(.caption)
-                                .foregroundStyle(palette.textSecondary)
-                        } else if viewModel.usesPiH3 {
-                            Text("pi-H3の追加モデルは、2または4ステップで生成します。")
-                                .font(.caption)
-                                .foregroundStyle(PiH3Rules.steps.contains(viewModel.effectiveSteps)
-                                                 ? palette.textSecondary : palette.errorColor)
+                            hyperFlowNote
+                        } else {
+                            speedSection
+                            reuseSection
+                            layersSection
                         }
+                    case .lora:
+                        loraSection
                     }
-                    computeModeSection
-                    if viewModel.isHyperFlow {
-                        hyperFlowNote
-                    } else {
-                        speedSection
-                        reuseSection
-                        layersSection
-                    }
-                    chainSection
-                    seedSection
-                    if viewModel.modelFamily.can(.lora) { loraSection }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(H3Spacing.lg)
@@ -79,31 +70,96 @@ struct AdvancedSettingsView: View {
             }
             .padding(H3Spacing.lg)
         }
-        .frame(width: 540, height: 640)
+        .frame(width: 540, height: 720)
         .background(palette.canvas)
-        .sheet(isPresented: $showingCustomSize) {
-            CustomVideoSizeSheet(viewModel: viewModel) { showingCustomSize = false }
+    }
+
+    // MARK: タブ
+
+    private var tab: AdvancedSettingsTab {
+        AdvancedSettingsTab(rawValue: tabName) ?? .basic
+    }
+
+    /// 基本・速さ・追加モデル, each marked when a setting on it differs
+    /// from the default (like 変更あり).
+    private var tabBar: some View {
+        HStack(spacing: 2) {
+            ForEach(AdvancedSettingsTab.allCases) { item in
+                let selected = item == tab
+                Button {
+                    tabName = item.rawValue
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(item.label)
+                            .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                        if hasChanges(on: item) {
+                            Circle().fill(palette.accent).frame(width: 6, height: 6)
+                                .accessibilityLabel(Text("変更あり"))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
+                    .background(selected ? palette.textSecondary.opacity(0.18) : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(palette.textSecondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func hasChanges(on tab: AdvancedSettingsTab) -> Bool {
+        switch tab {
+        case .basic: return viewModel.hasBasicSettingsChanges
+        case .speed: return viewModel.hasSpeedSettingsChanges
+        case .lora: return viewModel.hasLoRASettingsChanges
+        }
+    }
+
+    // MARK: 生成ステップ数
+
+    private var stepsSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("生成ステップ数").font(.caption).foregroundStyle(palette.textSecondary)
+            Picker("生成ステップ数", selection: $viewModel.steps) {
+                ForEach(viewModel.availableSteps, id: \.self) { value in
+                    Text("\(value)").tag(value)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .frame(maxWidth: 120)
+            if viewModel.isHyperFlow {
+                Text("HyperFlow H3 Flashは4・6・8ステップで生成します（既定は6）。")
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary)
+            } else if viewModel.usesPiH3 {
+                Text("pi-H3の追加モデルは、2または4ステップで生成します。")
+                    .font(.caption)
+                    .foregroundStyle(PiH3Rules.steps.contains(viewModel.effectiveSteps)
+                                     ? palette.textSecondary : palette.errorColor)
+            }
         }
     }
 
     // MARK: サイズ
 
-    /// The size in use; a custom size is set in CustomVideoSizeSheet, also
-    /// opened from プロンプト欄の「大きさ」 > カスタム….
+    /// The size in use, shown only: it is chosen in プロンプト欄の「画面の形」
+    /// 「大きさ」, a custom one through 大きさ > カスタム… (CustomVideoSizeSheet).
     private var sizeSection: some View {
         let profile = viewModel.sizeProfile
         return VStack(alignment: .leading, spacing: 4) {
             Text("サイズ").font(.caption).foregroundStyle(palette.textSecondary)
-            HStack(spacing: H3Spacing.md) {
-                Text("現在: \(profile.label)")
-                Button("カスタム…") { showingCustomSize = true }
-            }
+            Text("現在: \(profile.label)")
             if !profile.isWithinCustomLimit {
-                Text("生成するサイズが上限（\(SizeProfile.customMaxPixels.formatted())ピクセル）を超えているため、このままでは生成できません。「カスタム…」で小さくしてください。")
+                Text("生成するサイズが上限（\(SizeProfile.customMaxPixels.formatted())ピクセル）を超えているため、このままでは生成できません。プロンプト欄の「大きさ」の「カスタム…」で小さくしてください。")
                     .font(.caption)
                     .foregroundStyle(palette.errorColor)
             }
-            Text("プリセットはプロンプト欄の「画面の形」「大きさ」で選びます。「カスタム…」では幅と高さを打ち込めます（プロンプト欄の「大きさ」からも開けます）。")
+            Text("サイズはプロンプト欄で選びます。プリセットは「画面の形」と「大きさ」、幅と高さを打ち込むときは「大きさ」の「カスタム…」です。")
                 .font(.caption)
                 .foregroundStyle(palette.textSecondary)
             if let estimate = viewModel.draftEstimatedSeconds {
@@ -409,6 +465,13 @@ struct AdvancedSettingsView: View {
                 }
                     .font(.caption)
             }
+            let usable = viewModel.modelFamily.can(.lora)
+            if !usable {
+                Text("選択しているモデル（\(viewModel.modelFamily.label)）では、追加モデル（LoRA）は使えません。オンにした追加モデルはそのまま残り、通常のMiniMax-H3モデルに切り替えると使われます。")
+                    .font(.caption)
+                    .foregroundStyle(palette.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if library.loras.isEmpty {
                 Text("登録された追加モデルはありません。「管理…」から追加できます。")
                     .font(.caption)
@@ -417,11 +480,12 @@ struct AdvancedSettingsView: View {
                 ForEach(library.loras) { entry in
                     loraStackRow(entry)
                 }
+                .disabled(!usable)
                 Text("オンにした追加モデルは重ねて適用されます。強さは学習時の効き具合に対する倍率です（空欄=1）。")
                     .font(.caption)
                     .foregroundStyle(palette.textSecondary)
             }
-            let enabled = library.enabledLoRAs
+            let enabled = usable ? library.enabledLoRAs : []
             let turbo = enabled.filter { $0.recommendedSteps != nil }
             if let first = turbo.first, let turboSteps = first.recommendedSteps {
                 Text("「\(first.name)」はTurbo用の追加モデルです。生成ステップ数を\(turboSteps)に合わせました（\(turboSteps)以外では品質が落ちます）。")
@@ -477,4 +541,22 @@ struct AdvancedSettingsView: View {
         }
     }
 
+}
+
+/// 詳細設定's tabs.
+enum AdvancedSettingsTab: String, CaseIterable, Identifiable {
+    case basic, speed, lora
+
+    /// Where the tab last open is kept (UserDefaults).
+    static let defaultsKey = "h3c-app.advancedSettingsTab"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .basic: return String(localized: "基本")
+        case .speed: return String(localized: "速さ")
+        case .lora: return String(localized: "追加モデル")
+        }
+    }
 }

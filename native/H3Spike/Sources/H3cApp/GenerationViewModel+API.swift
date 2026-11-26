@@ -44,12 +44,17 @@ extension GenerationViewModel {
             return .json(200, ["ok": true])
         case ("POST", "/api/window/show"):
             // {"panel": "advanced_settings" | "model_manager" | "none",
-            //  "section"?: モデル管理's section - "models", "images", "loras",
-            //  "refmods", "upscalers"}: puts that sheet up over this window,
-            // or takes the sheets down.
+            //  "section"?: 詳細設定's tab - "basic", "speed", "lora" - or
+            //  モデル管理's section - "models", "images", "loras", "refmods",
+            //  "upscalers"}: puts that sheet up over this window, or takes
+            // the sheets down.
             let json = ((try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]) ?? [:]
             guard let name = json["panel"] as? String, let panel = WindowPanel(rawValue: name) else {
                 return .error(400, "\"panel\" must be \"advanced_settings\", \"model_manager\" or \"none\"")
+            }
+            if panel == .advancedSettings, let section = json["section"] as? String,
+               AdvancedSettingsTab(rawValue: section) == nil {
+                return .error(400, "for \"advanced_settings\", \"section\" must be \"basic\", \"speed\" or \"lora\"")
             }
             showPanel(panel, json["section"] as? String)
             return .json(200, ["ok": true])
