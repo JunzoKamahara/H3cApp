@@ -236,7 +236,7 @@
           <strong>Check the row.</strong> If it reads “pi-H3 (frames from its pixel head)” or “pi-H3 (decoded by the video VAE)”, the file was read as pi-H3. Check too that the “<span class="ui">Steps</span>” field holds 4 or 2. If it is empty, type the number that file is for (4 or 2).
         </li>
         <li>
-          <strong>Turn on the one you will use.</strong> Use the row's checkbox, or “<span class="ui">Add-on models (LoRA)</span>” in “<span class="ui">Advanced Settings</span>”. “<span class="ui">Steps</span>” switches to the number that file is for (4 or 2). Leave “<span class="ui">Strength</span>” blank (1).
+          <strong>Turn on the one you will use.</strong> Use the row's checkbox, or “<span class="ui">Add-on models (LoRA)</span>” on the “<span class="ui">Add-on Models</span>” tab of “<span class="ui">Advanced Settings</span>”. “<span class="ui">Steps</span>” switches to the number that file is for (4 or 2). Leave “<span class="ui">Strength</span>” blank (1).
         </li>
         <li>
           <strong>Generate as usual.</strong> The prompt, the size and the length are chosen as before. Progress is shown as “Denoising 2/4 steps” and then “Decoding to video”.
@@ -250,8 +250,8 @@
     <section class="section section-narrow" id="rules" aria-labelledby="rules-title">
       <h2 id="rules-title">What changes while it is on</h2>
       <figure class="shot">
-        <img src="../assets/images/app-pi-h3-advanced-en.jpg" width="1100" height="1302" loading="lazy" alt="“Advanced Settings” with pi-H3 on. Steps is 4, and below it: “A pi-H3 add-on model generates in 2 or 4 steps.” The “Speed” choice cannot be pressed and reads “While a pi-H3 add-on model is on, every step is computed in full”. “Denoiser reuse” cannot be pressed either.">
-        <figcaption>“Advanced Settings” with pi-H3 on (the real v0.12.0 window). “Speed” and “Denoiser reuse” cannot be chosen, and the reason is shown.</figcaption>
+        <img src="../assets/images/app-pi-h3-advanced-en.jpg" width="1080" height="1440" loading="lazy" alt="The Performance tab of “Advanced Settings” with pi-H3 on. From the top: Compute mode Fast (int8 cache); Speed, greyed out, with “While a pi-H3 add-on model is on, every step is computed in full (the speed setting is kept and used again once the add-on model is off).”; Attention (experimental) at Standard; Denoiser reuse (reuse), greyed out, with “While a pi-H3 add-on model is on, it runs at reuse 1”; and Layer count (DiT blocks) 50.">
+        <figcaption>The Performance tab of “Advanced Settings” with pi-H3 on (the real v0.12.3 window). “Speed” and “Denoiser reuse” cannot be chosen, and the reason is shown. Steps is on the Basics tab.</figcaption>
       </figure>
       <ul>
         <li><strong>The step count is the one the file is for, and no other.</strong> 4 for a 4-step file, 2 for a 2-step file. With another number, a line above the generate button reads “The add-on model “…” (pi-H3) is for 4 steps. Set “Steps” in Advanced Settings to 4”, and nothing is generated.</li>
@@ -296,7 +296,8 @@
             <tr><th scope="row">Showing the progress picture</th><td>Works.</td></tr>
             <tr><th scope="row">Compute mode</th><td>“Fast (int8 cache)”, “Low memory (SSD streaming)” and “Resident” all worked. At 512×512 for 3 seconds and 4 steps (with the pixel head) they took 68 s, 107 s and 290 s in that order. Resident used up to 21.4 GiB of memory (on the M5 with 24 GB).</td></tr>
             <tr><th scope="row">Speed (Fast, Fastest), Denoiser reuse</th><td>Not used (<a href="#rules">What changes while it is on</a>).</td></tr>
-            <tr><th scope="row">Fast mode (experimental), changing the layer count</th><td>Run once each with the engine alone; the picture was not broken. Not checked in the app.</td></tr>
+            <tr><th scope="row">Attention “Fast (int8)” (the former fast mode), changing the layer count</th><td>Run once each with the engine alone; the picture was not broken. Not checked in the app.</td></tr>
+            <tr><th scope="row">Attention “Sol-Attn (sparse)” (experimental)</th><td>At 2 steps (with the pixel head), 864×480 and 5 seconds, the whole generation went from about 137 s to about 101 s (Faster (0.5)) and about 95 s (Fastest (1.0)), with about 1 GB more memory. The same seed gives a different composition and sound from Standard (M5 with 24 GB, one run each; see <a href="settings.html#attention">Attention</a>).</td></tr>
             <tr><th scope="row">Upscale 2x</th><td>Not checked.</td></tr>
             <tr><th scope="row">HyperFlow H3 Flash, still images</th><td>Not available. pi-H3 is for video with the standard MiniMax H3.</td></tr>
           </tbody>
@@ -308,7 +309,7 @@
       <h2 id="trouble-title">Troubleshooting</h2>
       <dl>
         <dt>“The add-on model “…” (pi-H3) is for 4 steps” is shown and nothing is generated</dt>
-        <dd>Set “Steps” in “Advanced Settings” to the number shown. If a 2-step file is said to be for 4 steps, change the “Steps” field of its row in the “Model Manager” to 2.</dd>
+        <dd>Set “Steps” on the Basics tab of “Advanced Settings” to the number shown. If a 2-step file is said to be for 4 steps, change the “Steps” field of its row in the “Model Manager” to 2.</dd>
         <dt>“The add-on model “…” (pi-H3) generates in 2 or 4 steps” is shown</dt>
         <dd>This is shown when the step count could not be read from the file name. Set “Steps” to 2 or 4. If you type the number the file is for into the “Steps” field in the “Model Manager”, the steps switch by themselves from then on.</dd>
         <dt>Right after starting: “a pi-H3 adapter needs a curve-form ("pruned", rank 8) MiniMax H3 checkpoint”</dt>
@@ -338,6 +339,7 @@
         <li>Without <code>steps</code>, the step count the file is for is used.</li>
         <li>A step count the file is not for is answered <code>409</code> with the reason, before the generation starts.</li>
         <li><code>speed_mode</code> and <code>reuse</code> are not used. The video's record says <code>quality</code> and reuse 1.</li>
+        <li>To use Sol-Attn (sparse), add <code>"sol_attention": true</code> and <code>sol_tau</code> (<code>0.5</code> or <code>1.0</code>); only on supported M5 setups.</li>
       </ul>
       <p class="small">The whole API is described in <a href="https://github.com/JunzoKamahara/H3cApp/blob/main/docs/API.md">the API reference</a>.</p>
     </section>

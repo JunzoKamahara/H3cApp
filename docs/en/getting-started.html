@@ -67,7 +67,7 @@
           <strong>Check your Mac.</strong> In the Apple menu, open “About This Mac” and confirm the chip is “Apple M…” and macOS is 15 (Sequoia) or later. Intel Macs and macOS 14 or earlier will not work.
         </li>
         <li>
-          <strong>Download the DMG.</strong> Open the <a href="https://github.com/JunzoKamahara/H3cApp/releases/latest">latest release page</a> and, under <strong>Assets</strong>, click <code>H3cApp-0.12.2.dmg</code> (about 26.3 MB; the number changes with the version). The files labeled “Source code” are for developers, not for installing.
+          <strong>Download the DMG.</strong> Open the <a href="https://github.com/JunzoKamahara/H3cApp/releases/latest">latest release page</a> and, under <strong>Assets</strong>, click <code>H3cApp-0.12.3.dmg</code> (about 26.5 MB; the number changes with the version). The files labeled “Source code” are for developers, not for installing.
         </li>
         <li>
           <strong>Open the DMG.</strong> Double-click the downloaded DMG file; a window with the H3cApp icon opens.
@@ -122,7 +122,7 @@
 
       <h3>Downloading later, or adding Ref2VA</h3>
       <p>“<span class="ui">Later</span>” closes the download window. To download later, use “<span class="ui">Download and Add…</span>” in “<span class="ui">Model Manager</span>” (the stacked-squares icon at the top right of the window).</p>
-      <p>To add Ref2VA later for reference images, videos and audio (from v0.6.1), choose the model's “…” → “<span class="ui">Add Ref2VA…</span>” in “<span class="ui">Model Manager</span>” (shown only for models without Ref2VA). For an official model, only the DiT weights and settings that differ from FL2VA (about 66 GB) are downloaded from the official model; the rest (text encoder, VAEs and so on) is cloned from the model's FL2VA, which takes no extra space on the same disk. For a GGUF model, download a Ref2VA DiT GGUF from Hugging Face or pick a file you have (<a href="gguf.html#after">GGUF page</a>). A stopped download resumes where it left off. Afterwards, for the M5 fast mode, build the int8 cache for reference images with “<span class="ui">Build Cache…</span>” in Advanced Settings.</p>
+      <p>To add Ref2VA later for reference images, videos and audio (from v0.6.1), choose the model's “…” → “<span class="ui">Add Ref2VA…</span>” in “<span class="ui">Model Manager</span>” (shown only for models without Ref2VA). For an official model, only the DiT weights and settings that differ from FL2VA (about 66 GB) are downloaded from the official model; the rest (text encoder, VAEs and so on) is cloned from the model's FL2VA, which takes no extra space on the same disk. For a GGUF model, download a Ref2VA DiT GGUF from Hugging Face or pick a file you have (<a href="gguf.html#after">GGUF page</a>). A stopped download resumes where it left off. Afterwards, to use the “Fast (int8 cache)” compute mode on an M5, build the int8 cache for reference images with “<span class="ui">Build Cache…</span>” on the Performance tab of Advanced Settings.</p>
 
       <h3>Is it ready?</h3>
       <p>Check the status icon at the top right of the window.</p>
@@ -164,7 +164,7 @@
           </tbody>
         </table>
       </div>
-      <p class="small">To use the reference images/videos/audio feature (Ref2VA) with “Fast (int8 cache)”, build a separate Ref2VA cache too (another 19.3 GB or so). How this differs from the speed setting and “Fast mode (experimental)” is explained in <a href="guide.html#speed">the three speed settings</a>.</p>
+      <p class="small">To use the reference images/videos/audio feature (Ref2VA) with “Fast (int8 cache)”, build a separate Ref2VA cache too (another 19.3 GB or so). How this differs from the speed setting and “Attention (experimental)” is explained in <a href="guide.html#speed">the three speed settings</a>.</p>
       <div class="checkpoint">
         <p><strong>When the status icon shows “Ready” and the compute mode is set up (cache built on an M5-class Mac), you are ready for your first generation.</strong></p>
       </div>

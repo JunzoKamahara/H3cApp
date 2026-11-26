@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="assets/js/lang.js"></script>
   <title>困ったとき — H3cApp</title>
-  <meta name="description" content="H3cAppで困ったときの確認事項。モデルが見つからない、生成が遅い、ダウンロードが止まった、高速モードが表示されない、保存先、対応OS、不具合の報告、ライセンス。">
+  <meta name="description" content="H3cAppで困ったときの確認事項。モデルが見つからない、生成が遅い、ダウンロードが止まった、注意の計算（高速（int8）・Sol-Attn）が表示されない、保存先、対応OS、不具合の報告、ライセンス。">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/faq.html">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/faq.html">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/faq.html">
@@ -55,7 +55,7 @@
           <li><a href="#model-not-found">「モデルが見つかりません」と表示される</a></li>
           <li><a href="#slow">生成がとても遅い</a></li>
           <li><a href="#download">ダウンロードが止まった・空き容量が足りない</a></li>
-          <li><a href="#fast-mode">「高速モード（試験的）」が表示されない</a></li>
+          <li><a href="#fast-mode">「注意の計算（試験的）」が表示されない</a></li>
           <li><a href="#saved">動画はどこに保存される？</a></li>
           <li><a href="#untitled">「無題のプロジェクト」とは</a></li>
           <li><a href="#old-mac">古いmacOS・Intel Macで動かない</a></li>
@@ -87,7 +87,8 @@
         <li><strong>計算方式</strong>：M5クラスのMacなら「高速（int8キャッシュ）」になっているか確認します。「省メモリ（SSDストリーミング）」は必要なメモリが少ない代わりに時間がかかります。</li>
         <li><strong>空きメモリ</strong>：ほかのアプリを閉じてから生成します。メモリが足りずにスワップが起きると、大幅に遅くなります。</li>
       </ol>
-      <p>「<span class="ui">詳細設定</span>」の「サイズ」に、今の設定でのおおよその所要時間が表示されます。1時間を超える見込みのときは注意が表示されます。</p>
+      <p>「<span class="ui">詳細設定</span>」の「<span class="ui">基本</span>」タブの「サイズ」に、今の設定でのおおよその所要時間が表示されます。1時間を超える見込みのときは注意が表示されます。</p>
+      <p>M5クラスのMacでは、「<span class="ui">速さ</span>」タブの「<span class="ui">注意の計算（試験的）</span>」で「<span class="ui">高速（int8）</span>」や、さらに試験的な「<span class="ui">Sol-Attn（疎）</span>」も選べます。どちらも同じシードでも仕上がりが変わります（<a href="settings.html#attention">注意の計算</a>）。</p>
     </section>
 
     <section class="section section-narrow" id="download" aria-labelledby="q3">
@@ -100,8 +101,8 @@
     </section>
 
     <section class="section section-narrow" id="fast-mode" aria-labelledby="q4">
-      <h2 id="q4">「高速モード（試験的）」が表示されない</h2>
-      <p>「高速モード（試験的）」は、M5クラスのGPU（ハードウェアのTensor演算ユニットを持つGPU）で、対応するビルドのときだけ詳細設定に表示されます。GitHubで配布しているDMGは対応ビルドです。M4以前のチップでは表示されません。</p>
+      <h2 id="q4">「注意の計算（試験的）」が表示されない</h2>
+      <p>詳細設定の「<span class="ui">速さ</span>」タブにある「<span class="ui">注意の計算（試験的）</span>」（標準／高速（int8）／Sol-Attn（疎））は、M5クラスのGPU（ハードウェアのTensor演算ユニットを持つGPU）で、対応するビルドのときだけ表示されます。GitHubで配布しているDMGは対応ビルドです。M4以前のチップでは表示されません。以前の「高速モード（試験的）」は、この中の「<span class="ui">高速（int8）</span>」になりました。</p>
       <p>計算方式の「高速（int8キャッシュ）」や、速度の「高速」とは別の機能です。違いは<a href="guide.html#speed">速度に関わる3つの設定</a>をご覧ください。</p>
     </section>
 
@@ -150,7 +151,7 @@
       <p><a href="https://github.com/JunzoKamahara/H3cApp/issues">GitHubのIssues</a>で受け付けています。次の情報があると調べやすくなります。</p>
       <ul>
         <li>アプリの版（例：0.4.7）、macOSの版、チップ（例：M5）、メモリ容量</li>
-        <li>作り方、画面の形・大きさ・長さ、詳細設定（計算方式・速度・高速モードなど）</li>
+        <li>作り方、画面の形・大きさ・長さ、詳細設定（計算方式・速度・注意の計算など）</li>
         <li>何をしたら、どうなったか（再現する手順）と、表示されたエラーの文言</li>
       </ul>
       <p>Issuesは公開されます。人に見せたくないプロンプトや、名前を含むファイルの場所などは書かないでください。</p>

@@ -147,7 +147,7 @@
 
     <section class="section section-narrow" id="speed" aria-labelledby="speed-title">
       <h2 id="speed-title">The three speed settings</h2>
-      <p>“<span class="ui">Advanced Settings</span>” has three settings that affect speed. Their names are similar, but they are different things.</p>
+      <p>The “<span class="ui">Performance</span>” tab of “<span class="ui">Advanced Settings</span>” has three settings that affect speed. Their names are similar, but they are different things.</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th scope="col">Setting</th><th scope="col">Choices</th><th scope="col">What changes</th></tr></thead>
@@ -163,14 +163,14 @@
               <td>Skips part of the work to go faster. Because the shortcuts differ, the result can change even with the same seed.</td>
             </tr>
             <tr>
-              <th scope="row">Fast mode (experimental)</th>
-              <td>On / off (off by default)</td>
-              <td>A separate feature shown only on supported M5 Macs. It helps most with long videos and may not speed up short or small ones. The result changes even with the same seed.</td>
+              <th scope="row">Attention (experimental)</th>
+              <td>Standard / Fast (int8) / Sol-Attn (sparse) (Standard by default)</td>
+              <td>A separate feature shown only on supported M5 Macs. “Fast (int8)” is the former fast mode: it helps most with long videos and may not speed up short or small ones. “Sol-Attn (sparse)” is a further experimental choice that skips the parts that matter little; it helps more the bigger the picture. Either way the result changes even with the same seed.</td>
             </tr>
           </tbody>
         </table>
       </div>
-      <p>Start with the defaults and a small video, and try the speed setting if the wait is too long. Under “Size” in the advanced settings, the app shows a rough estimate for the current settings, based on this Mac's past generations.</p>
+      <p>Start with the defaults and a small video, and try the speed setting if the wait is too long. Under “Size” on the Basics tab of the advanced settings, the app shows a rough estimate for the current settings, based on this Mac's past generations.</p>
       <p class="small muted">Every advanced setting is explained in <a href="settings.html">Advanced settings explained</a>, including “Steps”, “Denoiser reuse” and “Layer count”. Fewer layers can break the audio, so leave them alone until you are comfortable.</p>
     </section>
 
@@ -190,7 +190,7 @@
       </div>
       <ul>
         <li><strong>2x upscale</strong>: turn on “<span class="ui">Upscale 2x</span>” in the Size menu to enlarge the generated video 2x in each direction with high-quality resampling. It is not AI super-resolution that draws in detail. The upscale itself takes very little time. Example: Landscape, Large upscaled 2x is 1920×1088 (not exactly 1920×1080). A finished video can also be <a href="#upscale">enlarged afterwards</a>, AI upscaling included.</li>
-        <li><strong>Custom size</strong>: turn on “<span class="ui">Use a custom size</span>” under “<span class="ui">Size</span>” in the advanced settings to enter the finished width and height. The generated size is limited to 600,000 pixels.</li>
+        <li><strong>Custom size</strong>: choose “<span class="ui">Custom…</span>” in the “<span class="ui">Size</span>” menu to enter the finished width and height. The generated size is limited to 600,000 pixels. See <a href="settings.html#size">Size in Advanced settings explained</a> for details.</li>
         <li><strong>Length</strong>: 1 to 15 seconds in one generation. Because of how the model works, the actual length comes out a little longer (choosing 5 s gives about 5.2 s). Longer videos come from <a href="#chain">joined generation</a>.</li>
       </ul>
     </section>

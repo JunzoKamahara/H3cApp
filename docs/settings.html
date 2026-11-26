@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="assets/js/lang.js"></script>
   <title>詳細設定と全体設定の解説 — H3cApp</title>
-  <meta name="description" content="H3cAppの詳細設定と全体設定の解説。サイズ、生成ステップ数、計算方式、速度と高速モード、ノイズ除去の再利用、層数、シード、LoRA、プリセット、途中の様子、保存画質、API。">
+  <meta name="description" content="H3cAppの詳細設定と全体設定の解説。サイズ、生成ステップ数、計算方式、速度と注意の計算（Sol-Attnを含む）、ノイズ除去の再利用、層数、シード、LoRA、プリセット、途中の様子、保存画質、API。">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/settings.html">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/settings.html">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/settings.html">
@@ -55,12 +55,12 @@
           <li><a href="#overview">詳細設定の一覧と開き方</a></li>
           <li><a href="#size">サイズ</a></li>
           <li><a href="#steps">生成ステップ数</a></li>
-          <li><a href="#compute">計算方式</a></li>
-          <li><a href="#speed">速度と高速モード（試験的）</a></li>
-          <li><a href="#reuse">ノイズ除去の再利用（reuse）</a></li>
-          <li><a href="#layers">使用する層数（DiTブロック）</a></li>
           <li><a href="#chain">つなげて生成の1本の長さ</a></li>
           <li><a href="#seed">ランダムさ（シード）</a></li>
+          <li><a href="#compute">計算方式</a></li>
+          <li><a href="#speed">速度と注意の計算（試験的）</a></li>
+          <li><a href="#reuse">ノイズ除去の再利用（reuse）</a></li>
+          <li><a href="#layers">使用する層数（DiTブロック）</a></li>
           <li><a href="#lora">追加モデル（LoRA）</a></li>
           <li><a href="#presets">既定に戻す・プリセット</a></li>
           <li><a href="#general">全体設定の一覧と開き方</a></li>
@@ -75,25 +75,35 @@
     <section class="section section-narrow" id="overview" aria-labelledby="overview-title">
       <h2 id="overview-title">詳細設定の一覧と開き方</h2>
       <p>プロンプト欄の右上にある「<span class="ui">詳細設定</span>」ボタン、または⌘,で開きます。ウィンドウごとの設定で、開いているウィンドウの生成に使われます。変更は次の生成から使われます。生成中に変えても、実行中の生成には影響しません。</p>
-      <p>既定から変えた項目があると、ボタンの表示が「<span class="ui">詳細設定・変更あり</span>」になります。</p>
+      <p>項目は3つのタブに分かれています。下の「<span class="ui">既定に戻す</span>」と「<span class="ui">閉じる</span>」は、どのタブでも同じです。</p>
+      <ul>
+        <li><strong>基本</strong>：<a href="#size">サイズ</a>（表示のみ）、<a href="#steps">生成ステップ数</a>、<a href="#chain">つなげて生成の1本の長さ</a>、<a href="#seed">ランダムさ</a>。</li>
+        <li><strong>速さ</strong>：<a href="#compute">計算方式</a>、<a href="#speed">速度</a>、<a href="#attention">注意の計算（試験的）</a>、<a href="#reuse">ノイズ除去の再利用（reuse）</a>、<a href="#layers">使用する層数（DiTブロック）</a>。モデルにHyperFlow H3 Flashを選んでいるときは、速度・reuse・層数の代わりに、それらを使わないという説明が出ます。</li>
+        <li><strong>追加モデル</strong>：<a href="#lora">追加モデル（LoRA）</a>の一覧。</li>
+      </ul>
+      <p>既定から変えた項目があるタブには、名前の横に小さな緑の点が付きます。最後に開いたタブは覚えていて、次に開いたときもそのタブが表示されます。既定から変えた項目があると、プロンプト欄のボタンの表示も「<span class="ui">詳細設定・変更あり</span>」になります。</p>
       <figure class="shot">
-        <img src="assets/images/app-advanced.jpg" width="1064" height="1268" loading="lazy" alt="「詳細設定」の画面。上から「サイズ」（カスタムサイズを使う、現在のサイズ、このMacでの目安）、「生成ステップ数」20、「計算方式」高速（int8キャッシュ）、「速度」標準（高品質）・高速・最速、「高速モード（試験的）」のチェックボックス、「ノイズ除去の再利用（reuse）」2（高速）、「使用する層数（DiTブロック）」50（全層・標準）が並び、下に「既定に戻す」と「閉じる」のボタンがある。">
-        <figcaption>「詳細設定」を開き、「既定に戻す」を押した状態（v0.4.4の実画面、M5のMac）。この下にスクロールすると「ランダムさ」と「追加モデル（LoRA）」があります。</figcaption>
+        <img src="assets/images/app-advanced.jpg" width="1080" height="1440" loading="lazy" alt="「詳細設定」の画面の「基本」タブ。上に「基本」「速さ」「追加モデル」のタブがあり、その下に「サイズ」（現在: 正方形 512×512、このMacでの目安）、「生成ステップ数」20、「つなげて生成の1本の長さ」約7秒（標準）、「ランダムさ」毎回変えるが並び、下に「既定に戻す」と「閉じる」のボタンがある。">
+        <figcaption>「詳細設定」を開き、「既定に戻す」を押した状態の「基本」タブ（v0.12.3の実画面、M5のMac）。</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="assets/images/app-advanced-speed.jpg" width="1080" height="1440" loading="lazy" alt="「詳細設定」の画面の「速さ」タブ。上から「計算方式」高速（int8キャッシュ）、「速度」標準（高品質）・高速・最速、「注意の計算（試験的）」標準・高速（int8）・Sol-Attn（疎）、「ノイズ除去の再利用（reuse）」2（高速）、「使用する層数（DiTブロック）」が並び、下に「既定に戻す」と「閉じる」のボタンがある。">
+        <figcaption>同じ状態の「速さ」タブ（v0.12.3の実画面、M5のMac）。「注意の計算（試験的）」は「標準」です。</figcaption>
       </figure>
       <div class="table-wrap">
         <table>
-          <thead><tr><th scope="col">項目</th><th scope="col">既定</th><th scope="col">選べる値</th><th scope="col">主な影響</th></tr></thead>
+          <thead><tr><th scope="col">項目</th><th scope="col">タブ</th><th scope="col">既定</th><th scope="col">選べる値</th><th scope="col">主な影響</th></tr></thead>
           <tbody>
-            <tr><th scope="row"><a href="#size">サイズ</a></th><td>プリセット（正方形・中）</td><td>プリセット／カスタムサイズ</td><td>大きいほど遅い</td></tr>
-            <tr><th scope="row"><a href="#steps">生成ステップ数</a></th><td class="num">20</td><td class="num">2〜40</td><td>多いほど遅く、少ないと品質が落ちる</td></tr>
-            <tr><th scope="row"><a href="#compute">計算方式</a></th><td>M5クラスでは高速（int8キャッシュ）、それ以外は省メモリ（SSDストリーミング）</td><td>3種類</td><td>速さと必要なメモリ・ディスク</td></tr>
-            <tr><th scope="row"><a href="#speed">速度</a></th><td>標準（高品質）</td><td>標準（高品質）／高速／最速</td><td>速くなるが仕上がりが変わる</td></tr>
-            <tr><th scope="row"><a href="#speed">高速モード（試験的）</a></th><td>オフ</td><td>オン／オフ（対応環境のみ表示）</td><td>長い動画ほど速くなる</td></tr>
-            <tr><th scope="row"><a href="#reuse">ノイズ除去の再利用</a></th><td class="num">2</td><td class="num">1〜3</td><td>大きいほど速く、品質は下がることがある</td></tr>
-            <tr><th scope="row"><a href="#layers">使用する層数</a></th><td class="num">50（全層）</td><td class="num">35〜50</td><td>減らすと速いが、音声が壊れることがある</td></tr>
-            <tr><th scope="row"><a href="#chain">つなげて生成の1本の長さ</a></th><td>約7秒</td><td>約7秒／約5秒</td><td>長いほどつなぎ目が少ない</td></tr>
-            <tr><th scope="row"><a href="#seed">ランダムさ</a></th><td>毎回変える</td><td>毎回変える／固定する</td><td>同じ結果を再現するかどうか</td></tr>
-            <tr><th scope="row"><a href="#lora">追加モデル（LoRA）</a></th><td>なし</td><td>最大8個</td><td>見た目や必要なステップ数が変わる</td></tr>
+            <tr><th scope="row"><a href="#size">サイズ</a></th><td>基本</td><td>プリセット（正方形・中）</td><td>プロンプト欄の「大きさ」で選ぶ（ここでは表示のみ）</td><td>大きいほど遅い</td></tr>
+            <tr><th scope="row"><a href="#steps">生成ステップ数</a></th><td>基本</td><td class="num">20</td><td class="num">2〜40</td><td>多いほど遅く、少ないと品質が落ちる</td></tr>
+            <tr><th scope="row"><a href="#chain">つなげて生成の1本の長さ</a></th><td>基本</td><td>約7秒</td><td>約7秒／約5秒</td><td>長いほどつなぎ目が少ない</td></tr>
+            <tr><th scope="row"><a href="#seed">ランダムさ</a></th><td>基本</td><td>毎回変える</td><td>毎回変える／固定する</td><td>同じ結果を再現するかどうか</td></tr>
+            <tr><th scope="row"><a href="#compute">計算方式</a></th><td>速さ</td><td>M5クラスでは高速（int8キャッシュ）、それ以外は省メモリ（SSDストリーミング）</td><td>3種類</td><td>速さと必要なメモリ・ディスク</td></tr>
+            <tr><th scope="row"><a href="#speed">速度</a></th><td>速さ</td><td>標準（高品質）</td><td>標準（高品質）／高速／最速</td><td>速くなるが仕上がりが変わる</td></tr>
+            <tr><th scope="row"><a href="#attention">注意の計算（試験的）</a></th><td>速さ</td><td>標準</td><td>標準／高速（int8）／Sol-Attn（疎）（対応環境のみ表示）</td><td>速くなるが、同じシードでも仕上がりが変わる</td></tr>
+            <tr><th scope="row"><a href="#reuse">ノイズ除去の再利用</a></th><td>速さ</td><td class="num">2</td><td class="num">1〜3</td><td>大きいほど速く、品質は下がることがある</td></tr>
+            <tr><th scope="row"><a href="#layers">使用する層数</a></th><td>速さ</td><td class="num">50（全層）</td><td class="num">35〜50</td><td>減らすと速いが、音声が壊れることがある</td></tr>
+            <tr><th scope="row"><a href="#lora">追加モデル（LoRA）</a></th><td>追加モデル</td><td>なし</td><td>最大8個</td><td>見た目や必要なステップ数が変わる</td></tr>
           </tbody>
         </table>
       </div>
@@ -101,14 +111,19 @@
 
     <section class="section section-narrow" id="size" aria-labelledby="size-title">
       <h2 id="size-title">サイズ</h2>
-      <p>ふだんのサイズは、プロンプト欄の下の「<span class="ui">画面の形</span>」と「<span class="ui">大きさ</span>」で選びます（<a href="guide.html#size">サイズと2倍拡大</a>）。詳細設定では、プリセットにないサイズを指定できます。</p>
+      <p>サイズは、プロンプト欄の下の「<span class="ui">画面の形</span>」と「<span class="ui">大きさ</span>」で選びます（<a href="guide.html#size">サイズと2倍拡大</a>）。詳細設定の「<span class="ui">基本</span>」タブには、いまのサイズが「<span class="ui">現在: カスタム 864×480</span>」のように表示されるだけで、ここでは変えられません。</p>
+      <h3>プリセットにないサイズ（カスタム…）</h3>
+      <p>「<span class="ui">大きさ</span>」のメニューで「<span class="ui">カスタム…</span>」を選ぶと、「<span class="ui">動画の大きさ</span>」の画面が開きます。</p>
       <ul>
-        <li><strong>カスタムサイズを使う</strong>：オンにすると、完成する動画の「<span class="ui">幅</span>」と「<span class="ui">高さ</span>」を入力できます。32の倍数で指定します。</li>
-        <li><strong>半分のサイズで生成して2倍に拡大</strong>：オンにすると、半分のサイズで生成してから縦横2倍に拡大します。このとき幅・高さは64の倍数です。拡大は生成のあとに行うので、時間はほとんど増えません。</li>
-        <li><strong>上限</strong>：生成するサイズ（2倍拡大のときはその半分）は60万ピクセル以下、1辺256〜1344です。超えると赤字で表示され、そのままでは生成できません。</li>
+        <li><strong>幅と高さ</strong>：完成する動画の幅と高さを、ピクセルで入力します。「<span class="ui">縦横を入れ替える</span>」で、幅と高さを入れ替えられます。</li>
+        <li><strong>半分のサイズで生成して2倍に拡大</strong>：オンにすると、半分のサイズで生成してから縦横2倍に拡大します。拡大は生成のあとに行うので、時間はほとんど増えません。</li>
+        <li><strong>丸め</strong>：幅と高さは、32の倍数・256〜1344ピクセルに直して使います。2倍に拡大するときは、64の倍数・512〜2688ピクセルです。入力した値と違う大きさになるときは、そのことが表示されます。</li>
+        <li><strong>上限</strong>：生成するサイズ（2倍拡大のときはその半分）は60万ピクセル以下です。数字を変えるたびに「<span class="ui">完成 ○ ・ 生成 ○（○ピクセル / 上限 600,000）</span>」と表示され、上限を超えると赤字になります。</li>
+        <li><strong>目安</strong>：上限の中なら、このMacでのおおよその所要時間も表示されます。</li>
       </ul>
-      <p>プロンプト欄の「<span class="ui">大きさ</span>」でプリセットを選ぶと、カスタムサイズは解除されます。</p>
-      <p>この欄の下には、「<span class="ui">このMacでの目安: 約○分</span>」と、いまの設定でのおおよその所要時間が表示されます。このMacでのこれまでの生成時間から計算するので、生成を重ねるほど当たりやすくなります。1時間以上かかる見込みのときは、赤字で注意が出ます。</p>
+      <p>「<span class="ui">この大きさにする</span>」で、そのサイズになります。上限を超えているあいだは押せません。「<span class="ui">キャンセル</span>」なら、サイズは変わりません。メニューで小・中・大を選ぶと、プリセットのサイズに戻ります。</p>
+      <h3>このMacでの目安</h3>
+      <p>「<span class="ui">基本</span>」タブのサイズの下には、「<span class="ui">このMacでの目安: 約○分</span>」と、いまの設定でのおおよその所要時間が表示されます。このMacでのこれまでの生成時間から計算するので、生成を重ねるほど当たりやすくなります。1時間以上かかる見込みのときは、赤字で注意が出ます。</p>
     </section>
 
     <section class="section section-narrow" id="steps" aria-labelledby="steps-title">
@@ -120,6 +135,29 @@
         <li>Turbo LoRAをオンにすると、そのLoRA用のステップ数（4や8）に自動で切り替わります（<a href="guide.html#lora">LoRAを使う</a>）。</li>
         <li>pi-H3の追加モデルをオンにすると、その追加モデル用のステップ数（2か4）に切り替わり、ほかのステップ数では生成できません。その間、「速度」と「ノイズ除去の再利用」は使われません（<a href="pi-h3.html">pi-H3</a>）。</li>
       </ul>
+    </section>
+
+    <section class="section section-narrow" id="chain" aria-labelledby="chain-title">
+      <h2 id="chain-title">つなげて生成の1本の長さ</h2>
+      <p>15秒より長い動画（と「つないで15秒」）は、短い動画を前の動画の続きとして順につくり、重なり（約0.9秒）でつないで1本にします。ここでは、その1本の長さを選びます。既定は約7秒で、約5秒も選べます。</p>
+      <ul>
+        <li>長いほど、つなぎ目の数が少なくなります。</li>
+        <li>最後の1本は、残りの長さに合わせて短くなります。</li>
+        <li>1回で生成する長さ（1〜15秒）には関係しません。</li>
+      </ul>
+      <p>使い方は、使い方ページの<a href="guide.html#chain">長い動画をつくる（つなげて生成）</a>をご覧ください。</p>
+    </section>
+
+    <section class="section section-narrow" id="seed" aria-labelledby="seed-title">
+      <h2 id="seed-title">ランダムさ（シード）</h2>
+      <p>生成の出発点になる乱数（シード）の決め方です。</p>
+      <ul>
+        <li><strong>毎回変える</strong>：既定です。生成のたびに別のシードを使うので、同じプロンプトでも毎回違う動画になります。</li>
+        <li><strong>固定する</strong>：入力したシードを使います。切り替えたときは、直前の生成で実際に使われたシードが入っています。0〜18446744073709551615の整数を指定できます。</li>
+      </ul>
+      <p>プロンプト・サイズ・長さ・設定がすべて同じなら、同じシードで同じ動画になります。ひとつだけ設定を変えて違いを比べるときに便利です。ただし、<a href="#speed">速度</a>や<a href="#attention">注意の計算</a>、層数、<a href="#compute">計算方式</a>を変えると、同じシードでも映像は変わることがあります。</p>
+      <p>プロジェクトで複数本を続けて生成するときに「固定する」にしていると、1本目だけそのシードを使い、2本目以降はランダムなシードで生成します。</p>
+      <p>できた動画のシードは、プレビュー上部の「<span class="ui">使用した設定…</span>」で確認でき、「<span class="ui">同じシードを使う</span>」でこの欄に戻せます。</p>
     </section>
 
     <section class="section section-narrow" id="compute" aria-labelledby="compute-title">
@@ -155,7 +193,7 @@
     </section>
 
     <section class="section section-narrow" id="speed" aria-labelledby="speed-title">
-      <h2 id="speed-title">速度と高速モード（試験的）</h2>
+      <h2 id="speed-title">速度と注意の計算（試験的）</h2>
       <p>「速度」は、計算の一部を省いて速くする設定です。省き方が変わるので、<strong>同じシードでも構図や細部が変わります</strong>。</p>
       <ul>
         <li><strong>標準（高品質）</strong>：省略なしで計算します。</li>
@@ -163,14 +201,23 @@
         <li><strong>最速</strong>：高速に加えて、一部のトークンをまとめて計算します。DiT部分で約2.9倍速です。細部がわずかに甘くなることがあります。</li>
       </ul>
       <p>「高速」「最速」のあいだは、下の<a href="#reuse">ノイズ除去の再利用</a>は1で動きます。</p>
-      <h3>高速モード（試験的）</h3>
-      <p>M5の対応環境でだけ表示される、別のチェックボックスです。既定はオフです。</p>
+      <h3 id="attention">注意の計算（試験的）</h3>
+      <p>「<span class="ui">速度</span>」の下にある、Attention（注意）の計算のしかたの選択です。M5クラスのMac（ニューラルアクセラレータを持つGPU）で、対応するビルドのときだけ表示されます。既定は「<span class="ui">標準</span>」で、3つから1つを選びます。「高速（int8）」と「Sol-Attn（疎）」を同時に使うことはできません。</p>
       <ul>
-        <li>M5のニューラルアクセラレータで、Attentionの計算をint8で行います。</li>
-        <li>長い動画ほど効果が大きく、アプリの説明では15秒・20ステップで約1.4倍速、メモリは約1.3GB増えます。短い動画では効果が小さく、条件によっては遅くなることもあります。</li>
-        <li>同じシードでも映像が変わります。速度設定やreuseとの組み合わせは、十分に検証されていません。</li>
+        <li><strong>標準</strong>：Attentionを省略なしで計算します。</li>
+        <li><strong>高速（int8）</strong>：以前の「高速モード（試験的）」と同じものです。M5のニューラルアクセラレータで、Attentionの計算をint8で行います。長い動画ほど効果が大きく、アプリの説明では15秒・20ステップで約1.4倍速、メモリは約1.3GB増えます。短い動画では効果が小さく、条件によっては遅くなることもあります。同じシードでも映像が変わります。速度設定やreuseとの組み合わせは、十分に検証されていません。</li>
+        <li><strong>Sol-Attn（疎）</strong>：M5のニューラルアクセラレータでAttentionをint8で計算し、そのうえで影響の小さい部分を間引いて（近似して）計算を減らします。最初の2層と、文章・音声の部分は間引きません。選ぶと「<span class="ui">間引きの強さ</span>」が出て、「<span class="ui">やや速い（0.5）</span>」か「<span class="ui">速い（1.0）</span>」を選べます。</li>
       </ul>
-      <p class="small">例として、M5・24GBで512×512・15秒をつくったとき、標準では30分8秒、「最速」と高速モードの組み合わせでは9分25秒でした（トップページの<a href="./#performance">生成時間の目安</a>）。</p>
+      <p class="small">例として、M5・24GBで512×512・15秒をつくったとき、標準では30分8秒、「最速」と「高速（int8）」の組み合わせでは9分25秒でした（トップページの<a href="./#performance">生成時間の目安</a>）。</p>
+      <h3>Sol-Attn（疎）で確かめたこと</h3>
+      <p>Sol-Attnは試験的な機能です。次の数字は、M5のMacBook Pro（24GB）で、それぞれ1回ずつ生成して測ったものです。</p>
+      <ul>
+        <li><strong>20ステップ・5秒</strong>（計算方式は高速（int8キャッシュ）、reuse 2）：ノイズ除去にかかる時間が、512×512で16〜20%、960×544で24〜37%短くなりました。同じ条件で「高速（int8）」は4%と13%でした。画面が大きいほど効果が大きくなります。</li>
+        <li><strong>メモリ</strong>：960×544では、使うメモリの最大が4.71GiBから6.89GiBに増えました。</li>
+        <li><strong>pi-H3の2ステップ・864×480・5秒</strong>：生成全体が約137秒から、約101秒（やや速い）、約95秒（速い）になりました。メモリは約1GB増えました（<a href="pi-h3.html">pi-H3</a>）。</li>
+        <li><strong>仕上がり</strong>：同じシードでも、「標準」とは映像も音声も変わります。変わり方は「高速（int8）」と同じくらいです。絵が崩れたり、ブロック状の継ぎ目が出たりすることはありませんでした。</li>
+        <li><strong>確かめていないこと</strong>：10秒以上の動画、画像を使う生成、省メモリ（SSDストリーミング）、「<span class="ui">速度</span>」の高速・最速との組み合わせ。</li>
+      </ul>
     </section>
 
     <section class="section section-narrow" id="reuse" aria-labelledby="reuse-title">
@@ -192,32 +239,10 @@
       </div>
     </section>
 
-    <section class="section section-narrow" id="chain" aria-labelledby="chain-title">
-      <h2 id="chain-title">つなげて生成の1本の長さ</h2>
-      <p>15秒より長い動画（と「つないで15秒」）は、短い動画を前の動画の続きとして順につくり、重なり（約0.9秒）でつないで1本にします。ここでは、その1本の長さを選びます。既定は約7秒で、約5秒も選べます。</p>
-      <ul>
-        <li>長いほど、つなぎ目の数が少なくなります。</li>
-        <li>最後の1本は、残りの長さに合わせて短くなります。</li>
-        <li>1回で生成する長さ（1〜15秒）には関係しません。</li>
-      </ul>
-      <p>使い方は、使い方ページの<a href="guide.html#chain">長い動画をつくる（つなげて生成）</a>をご覧ください。</p>
-    </section>
-
-    <section class="section section-narrow" id="seed" aria-labelledby="seed-title">
-      <h2 id="seed-title">ランダムさ（シード）</h2>
-      <p>生成の出発点になる乱数（シード）の決め方です。</p>
-      <ul>
-        <li><strong>毎回変える</strong>：既定です。生成のたびに別のシードを使うので、同じプロンプトでも毎回違う動画になります。</li>
-        <li><strong>固定する</strong>：入力したシードを使います。切り替えたときは、直前の生成で実際に使われたシードが入っています。0〜18446744073709551615の整数を指定できます。</li>
-      </ul>
-      <p>プロンプト・サイズ・長さ・設定がすべて同じなら、同じシードで同じ動画になります。ひとつだけ設定を変えて違いを比べるときに便利です。ただし、<a href="#speed">速度</a>や高速モード、層数、<a href="#compute">計算方式</a>を変えると、同じシードでも映像は変わることがあります。</p>
-      <p>プロジェクトで複数本を続けて生成するときに「固定する」にしていると、1本目だけそのシードを使い、2本目以降はランダムなシードで生成します。</p>
-      <p>できた動画のシードは、プレビュー上部の「<span class="ui">使用した設定…</span>」で確認でき、「<span class="ui">同じシードを使う</span>」でこの欄に戻せます。</p>
-    </section>
-
     <section class="section section-narrow" id="lora" aria-labelledby="lora-title">
       <h2 id="lora-title">追加モデル（LoRA）</h2>
       <p>「<span class="ui">モデル管理</span>」で登録したLoRAを、ここでオン・オフし、強さを決めます。「<span class="ui">管理…</span>」からモデル管理を開けます。使わなくても動画はつくれます。くわしくは使い方ページの<a href="guide.html#lora">追加モデル（LoRA）を使う</a>をご覧ください。</p>
+      <p>「<span class="ui">追加モデル</span>」タブはいつも表示されます。選んでいるモデルがHyperFlow H3 Flashのように追加モデルを使えないモデルのときは、「<span class="ui">選択しているモデル（HyperFlow H3 Flash）では、追加モデル（LoRA）は使えません。</span>」と赤字で表示され、一覧は灰色になります。オンにした追加モデルはそのまま残り、通常のMiniMax-H3モデルに切り替えると使われます。</p>
     </section>
 
     <section class="section section-narrow" id="presets" aria-labelledby="presets-title">

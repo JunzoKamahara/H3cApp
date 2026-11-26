@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="../assets/js/lang.js"></script>
   <title>Advanced and General Settings explained — H3cApp</title>
-  <meta name="description" content="H3cApp's Advanced and General Settings explained: size, steps, compute mode, speed and fast mode, denoiser reuse, layer count, seed, LoRA, presets, progress previews, saved quality and the API.">
+  <meta name="description" content="H3cApp's Advanced and General Settings explained: size, steps, compute mode, speed and attention (including Sol-Attn), denoiser reuse, layer count, seed, LoRA, presets, progress previews, saved quality and the API.">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/settings.html">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/settings.html">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/settings.html">
@@ -54,12 +54,12 @@
           <li><a href="#overview">Advanced Settings: overview and opening</a></li>
           <li><a href="#size">Size</a></li>
           <li><a href="#steps">Steps</a></li>
-          <li><a href="#compute">Compute mode</a></li>
-          <li><a href="#speed">Speed and fast mode (experimental)</a></li>
-          <li><a href="#reuse">Denoiser reuse (reuse)</a></li>
-          <li><a href="#layers">Layer count (DiT blocks)</a></li>
           <li><a href="#chain">Clip length for joined generation</a></li>
           <li><a href="#seed">Randomness (seed)</a></li>
+          <li><a href="#compute">Compute mode</a></li>
+          <li><a href="#speed">Speed and attention (experimental)</a></li>
+          <li><a href="#reuse">Denoiser reuse (reuse)</a></li>
+          <li><a href="#layers">Layer count (DiT blocks)</a></li>
           <li><a href="#lora">Add-on models (LoRA)</a></li>
           <li><a href="#presets">Restore Defaults and presets</a></li>
           <li><a href="#general">General Settings: overview and opening</a></li>
@@ -74,25 +74,35 @@
     <section class="section section-narrow" id="overview" aria-labelledby="overview-title">
       <h2 id="overview-title">Advanced Settings: overview and opening</h2>
       <p>Open it with the “<span class="ui">Advanced Settings</span>” button at the top right of the prompt panel, or with ⌘,. These settings belong to each window and are used for that window's generations. Changes apply from the next generation; changing something while a video is being generated doesn't affect that run.</p>
-      <p>When anything differs from the defaults, the button reads “<span class="ui">Advanced Settings · modified</span>”.</p>
+      <p>The items are on three tabs. “<span class="ui">Restore Defaults</span>” and “<span class="ui">Close</span>” at the bottom are the same on every tab.</p>
+      <ul>
+        <li><strong>Basics</strong>: <a href="#size">size</a> (shown only), <a href="#steps">steps</a>, <a href="#chain">clip length for joined generation</a> and <a href="#seed">randomness</a>.</li>
+        <li><strong>Performance</strong>: <a href="#compute">compute mode</a>, <a href="#speed">speed</a>, <a href="#attention">attention (experimental)</a>, <a href="#reuse">denoiser reuse</a> and <a href="#layers">layer count (DiT blocks)</a>. With HyperFlow H3 Flash as the model, a note saying they are not used takes the place of speed, reuse and layer count.</li>
+        <li><strong>Add-on Models</strong>: the list of <a href="#lora">add-on models (LoRA)</a>.</li>
+      </ul>
+      <p>A tab with a setting changed from the default shows a small green dot next to its name. The tab you opened last is remembered and shown the next time. When anything differs from the defaults, the button in the prompt panel also reads “<span class="ui">Advanced Settings · modified</span>”.</p>
       <figure class="shot">
-        <img src="../assets/images/app-advanced-en.jpg" width="1064" height="1268" loading="lazy" alt="The Advanced Settings dialog. From the top: Size (Use a custom size, the current size and the estimate on this Mac), Steps 20, Compute mode Fast (int8 cache), Speed with Standard (best quality), Fast and Fastest, the Fast mode (experimental) checkbox, Denoiser reuse 2 (faster) and Layer count 50 (all layers, standard), with Restore Defaults and Close buttons at the bottom.">
-        <figcaption>Advanced Settings right after Restore Defaults (actual v0.4.4 screen on an M5 Mac). Randomness and Add-on models (LoRA) are further down when you scroll.</figcaption>
+        <img src="../assets/images/app-advanced-en.jpg" width="1080" height="1440" loading="lazy" alt="The Basics tab of the Advanced Settings dialog. At the top are the Basics, Performance and Add-on Models tabs; below them Size (Current: Square 512×512 and the estimate on this Mac), Steps 20, Clip length for joined generation About 7 s (standard) and Randomness Random each time, with Restore Defaults and Close buttons at the bottom.">
+        <figcaption>The Basics tab of Advanced Settings right after Restore Defaults (actual v0.12.3 screen on an M5 Mac).</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="../assets/images/app-advanced-speed-en.jpg" width="1080" height="1440" loading="lazy" alt="The Performance tab of the Advanced Settings dialog. From the top: Compute mode Fast (int8 cache), Speed with Standard (best quality), Fast and Fastest, Attention (experimental) with Standard, Fast (int8) and Sol-Attn (sparse), Denoiser reuse 2 (faster) and Layer count (DiT blocks), with Restore Defaults and Close buttons at the bottom.">
+        <figcaption>The Performance tab in the same state (actual v0.12.3 screen on an M5 Mac). Attention (experimental) is at Standard.</figcaption>
       </figure>
       <div class="table-wrap">
         <table>
-          <thead><tr><th scope="col">Item</th><th scope="col">Default</th><th scope="col">Values</th><th scope="col">Main effect</th></tr></thead>
+          <thead><tr><th scope="col">Item</th><th scope="col">Tab</th><th scope="col">Default</th><th scope="col">Values</th><th scope="col">Main effect</th></tr></thead>
           <tbody>
-            <tr><th scope="row"><a href="#size">Size</a></th><td>Preset (square, medium)</td><td>Preset / custom size</td><td>Bigger is slower</td></tr>
-            <tr><th scope="row"><a href="#steps">Steps</a></th><td class="num">20</td><td class="num">2–40</td><td>More is slower; fewer lowers quality</td></tr>
-            <tr><th scope="row"><a href="#compute">Compute mode</a></th><td>Fast (int8 cache) on M5-class Macs, otherwise Low memory (SSD streaming)</td><td>3 modes</td><td>Speed, and the memory and disk needed</td></tr>
-            <tr><th scope="row"><a href="#speed">Speed</a></th><td>Standard (best quality)</td><td>Standard (best quality) / Fast / Fastest</td><td>Faster, but the result changes</td></tr>
-            <tr><th scope="row"><a href="#speed">Fast mode (experimental)</a></th><td>Off</td><td>On / off (shown only where supported)</td><td>Faster, more so for long videos</td></tr>
-            <tr><th scope="row"><a href="#reuse">Denoiser reuse</a></th><td class="num">2</td><td class="num">1–3</td><td>Higher is faster; quality may drop</td></tr>
-            <tr><th scope="row"><a href="#layers">Layer count</a></th><td class="num">50 (all)</td><td class="num">35–50</td><td>Fewer is faster, but can break the audio</td></tr>
-            <tr><th scope="row"><a href="#chain">Clip length for joined generation</a></th><td>About 7 s</td><td>About 7 s / About 5 s</td><td>Longer means fewer seams</td></tr>
-            <tr><th scope="row"><a href="#seed">Randomness</a></th><td>Random each time</td><td>Random each time / Fixed</td><td>Whether a result can be reproduced</td></tr>
-            <tr><th scope="row"><a href="#lora">Add-on models (LoRA)</a></th><td>None</td><td>Up to 8</td><td>Changes the look or the steps needed</td></tr>
+            <tr><th scope="row"><a href="#size">Size</a></th><td>Basics</td><td>Preset (square, medium)</td><td>Chosen with Size in the prompt panel (only shown here)</td><td>Bigger is slower</td></tr>
+            <tr><th scope="row"><a href="#steps">Steps</a></th><td>Basics</td><td class="num">20</td><td class="num">2–40</td><td>More is slower; fewer lowers quality</td></tr>
+            <tr><th scope="row"><a href="#chain">Clip length for joined generation</a></th><td>Basics</td><td>About 7 s</td><td>About 7 s / About 5 s</td><td>Longer means fewer seams</td></tr>
+            <tr><th scope="row"><a href="#seed">Randomness</a></th><td>Basics</td><td>Random each time</td><td>Random each time / Fixed</td><td>Whether a result can be reproduced</td></tr>
+            <tr><th scope="row"><a href="#compute">Compute mode</a></th><td>Performance</td><td>Fast (int8 cache) on M5-class Macs, otherwise Low memory (SSD streaming)</td><td>3 modes</td><td>Speed, and the memory and disk needed</td></tr>
+            <tr><th scope="row"><a href="#speed">Speed</a></th><td>Performance</td><td>Standard (best quality)</td><td>Standard (best quality) / Fast / Fastest</td><td>Faster, but the result changes</td></tr>
+            <tr><th scope="row"><a href="#attention">Attention (experimental)</a></th><td>Performance</td><td>Standard</td><td>Standard / Fast (int8) / Sol-Attn (sparse) (shown only where supported)</td><td>Faster, but the result changes even with the same seed</td></tr>
+            <tr><th scope="row"><a href="#reuse">Denoiser reuse</a></th><td>Performance</td><td class="num">2</td><td class="num">1–3</td><td>Higher is faster; quality may drop</td></tr>
+            <tr><th scope="row"><a href="#layers">Layer count</a></th><td>Performance</td><td class="num">50 (all)</td><td class="num">35–50</td><td>Fewer is faster, but can break the audio</td></tr>
+            <tr><th scope="row"><a href="#lora">Add-on models (LoRA)</a></th><td>Add-on Models</td><td>None</td><td>Up to 8</td><td>Changes the look or the steps needed</td></tr>
           </tbody>
         </table>
       </div>
@@ -100,14 +110,19 @@
 
     <section class="section section-narrow" id="size" aria-labelledby="size-title">
       <h2 id="size-title">Size</h2>
-      <p>You normally pick the size with “<span class="ui">Shape</span>” and “<span class="ui">Size</span>” under the prompt (see <a href="guide.html#size">Sizes and 2x upscaling</a>). The advanced settings let you enter a size that isn't a preset.</p>
+      <p>The size is chosen with “<span class="ui">Shape</span>” and “<span class="ui">Size</span>” under the prompt (see <a href="guide.html#size">Sizes and 2x upscaling</a>). The Basics tab of the advanced settings only shows the current size, as in “<span class="ui">Current: Custom 864×480</span>”; it can't be changed there.</p>
+      <h3>A size that isn't a preset (Custom…)</h3>
+      <p>Choose “<span class="ui">Custom…</span>” in the “<span class="ui">Size</span>” menu to open the “<span class="ui">Video Size</span>” sheet.</p>
       <ul>
-        <li><strong>Use a custom size</strong>: lets you enter the “<span class="ui">Width</span>” and “<span class="ui">Height</span>” of the finished video, in multiples of 32.</li>
-        <li><strong>Generate at half size and upscale 2x</strong>: generates at half the size, then doubles it. Width and height are then multiples of 64. The upscale happens after generation, so it adds almost no time.</li>
-        <li><strong>Limits</strong>: the generated size (half the finished size when upscaling) must be at most 600,000 pixels, with each side 256–1344. Beyond that the line turns red and you can't generate as is.</li>
+        <li><strong>Width and height</strong>: enter the width and height of the finished video in pixels. “<span class="ui">Swap</span>” swaps them.</li>
+        <li><strong>Generate at half size and upscale 2x</strong>: generates at half the size, then doubles it. The upscale happens after generation, so it adds almost no time.</li>
+        <li><strong>Rounding</strong>: width and height are rounded to multiples of 32 within 256–1344 pixels, or to multiples of 64 within 512–2688 pixels with the 2x upscale. When the size used differs from what you typed, the sheet says so.</li>
+        <li><strong>Limit</strong>: the generated size (half the finished size when upscaling) must be at most 600,000 pixels. As the numbers change, the sheet shows “<span class="ui">Finished … · generated at … (… pixels / limit 600,000)</span>”, in red above the limit.</li>
+        <li><strong>Estimate</strong>: within the limit, the sheet also shows roughly how long it will take on this Mac.</li>
       </ul>
-      <p>Choosing a preset with “<span class="ui">Size</span>” in the prompt panel switches the custom size off again.</p>
-      <p>Below this section, “<span class="ui">Estimate on this Mac: about … min</span>” shows roughly how long the current settings will take. It's worked out from this Mac's past generations, so it gets better as you generate more. If it's expected to take over an hour, a red note appears.</p>
+      <p>“<span class="ui">Use This Size</span>” applies the size; it can't be clicked while the size is above the limit. “<span class="ui">Cancel</span>” leaves the size as it was. Choosing Small, Medium or Large in the menu returns to the presets.</p>
+      <h3>Estimate on this Mac</h3>
+      <p>Below the size on the Basics tab, “<span class="ui">Estimate on this Mac: about … min</span>” shows roughly how long the current settings will take. It's worked out from this Mac's past generations, so it gets better as you generate more. If it's expected to take over an hour, a red note appears.</p>
     </section>
 
     <section class="section section-narrow" id="steps" aria-labelledby="steps-title">
@@ -119,6 +134,29 @@
         <li>Turning on a Turbo LoRA switches to that LoRA's step count (4 or 8) automatically (see <a href="guide.html#lora">Using add-on models</a>).</li>
         <li>Turning on a pi-H3 add-on model switches to the step count it is for (2 or 4), and no other step count generates. While it is on, “Speed” and “Denoiser reuse” are not used (see <a href="pi-h3.html">pi-H3</a>).</li>
       </ul>
+    </section>
+
+    <section class="section section-narrow" id="chain" aria-labelledby="chain-title">
+      <h2 id="chain-title">Clip length for joined generation</h2>
+      <p>Lengths over 15 seconds (and “15 s Joined”) are made from short videos, each continuing the one before, joined at an overlap of about 0.9 seconds. This picks how long each of those videos is: about 7 s (the default) or about 5 s.</p>
+      <ul>
+        <li>Longer clips mean fewer seams.</li>
+        <li>The last clip is shorter, to fit what is left.</li>
+        <li>It doesn't affect lengths made in one generation (1 to 15 seconds).</li>
+      </ul>
+      <p>See <a href="guide.html#chain">Making longer videos (joined generation)</a> in the guide for how to use it.</p>
+    </section>
+
+    <section class="section section-narrow" id="seed" aria-labelledby="seed-title">
+      <h2 id="seed-title">Randomness (seed)</h2>
+      <p>How the random number the generation starts from (the seed) is chosen.</p>
+      <ul>
+        <li><strong>Random each time</strong>: the default. Each generation uses a different seed, so the same prompt gives a different video every time.</li>
+        <li><strong>Fixed</strong>: uses the seed you enter. When you switch to it, the field holds the seed the last generation actually used. Any whole number from 0 to 18446744073709551615 works.</li>
+      </ul>
+      <p>With the same prompt, size, length and settings, the same seed gives the same video, which is handy for comparing the effect of a single setting. Changing the <a href="#speed">speed</a>, the <a href="#attention">attention</a> setting, the layer count or the <a href="#compute">compute mode</a> can change the video even with the same seed.</p>
+      <p>When a project makes several videos in a row with Fixed selected, only the first video uses that seed; the rest get random seeds.</p>
+      <p>You can see a finished video's seed under “<span class="ui">Settings Used…</span>” above the preview, and “<span class="ui">Use the Same Seed</span>” puts it back in this field.</p>
     </section>
 
     <section class="section section-narrow" id="compute" aria-labelledby="compute-title">
@@ -154,7 +192,7 @@
     </section>
 
     <section class="section section-narrow" id="speed" aria-labelledby="speed-title">
-      <h2 id="speed-title">Speed and fast mode (experimental)</h2>
+      <h2 id="speed-title">Speed and attention (experimental)</h2>
       <p>“Speed” skips part of the work to go faster. Because what's skipped changes, <strong>the composition and details change even with the same seed</strong>.</p>
       <ul>
         <li><strong>Standard (best quality)</strong>: computes everything.</li>
@@ -162,14 +200,23 @@
         <li><strong>Fastest</strong>: on top of Fast, computes some tokens together. About 2.9x for the DiT part. Fine detail can get slightly softer.</li>
       </ul>
       <p>While Fast or Fastest is selected, <a href="#reuse">denoiser reuse</a> below runs at 1.</p>
-      <h3>Fast mode (experimental)</h3>
-      <p>A separate checkbox shown only on supported M5 setups. Off by default.</p>
+      <h3 id="attention">Attention (experimental)</h3>
+      <p>Below “<span class="ui">Speed</span>”, this chooses how attention is computed. It is shown only on M5-class Macs (GPUs with neural accelerators) and a build that supports it. The default is “<span class="ui">Standard</span>”, and you pick one of three, so “Fast (int8)” and “Sol-Attn (sparse)” can't be used together.</p>
       <ul>
-        <li>Computes attention in int8 on the M5's neural accelerators.</li>
-        <li>The longer the video, the bigger the gain: the app's description gives about 1.4x at 15 seconds and 20 steps, with about 1.3 GB more memory. Short videos gain little and can even be slower in some conditions.</li>
-        <li>The video changes even with the same seed. Combinations with the speed setting and reuse haven't been fully tested.</li>
+        <li><strong>Standard</strong>: computes the attention in full.</li>
+        <li><strong>Fast (int8)</strong>: the same as the former “Fast mode (experimental)”. Computes attention in int8 on the M5's neural accelerators. The longer the video, the bigger the gain: the app's description gives about 1.4x at 15 seconds and 20 steps, with about 1.3 GB more memory. Short videos gain little and can even be slower in some conditions. The video changes even with the same seed. Combinations with the speed setting and reuse haven't been fully tested.</li>
+        <li><strong>Sol-Attn (sparse)</strong>: computes attention in int8 on the M5's neural accelerators and also skips (approximates) the parts that matter little. The first 2 layers and the text and audio part are never skipped. Choosing it shows “<span class="ui">Sparsity</span>”, with “<span class="ui">Faster (0.5)</span>” and “<span class="ui">Fastest (1.0)</span>”.</li>
       </ul>
-      <p class="small">For example, a 512×512, 15-second video on an M5 with 24 GB took 30:08 at Standard and 9:25 with Fastest plus fast mode (see <a href="./#performance">How long it takes</a> on the top page).</p>
+      <p class="small">For example, a 512×512, 15-second video on an M5 with 24 GB took 30:08 at Standard and 9:25 with Fastest plus Fast (int8) (see <a href="./#performance">How long it takes</a> on the top page).</p>
+      <h3>What was checked with Sol-Attn (sparse)</h3>
+      <p>Sol-Attn is experimental. The numbers below were measured on an M5 MacBook Pro with 24 GB, one run each.</p>
+      <ul>
+        <li><strong>20 steps, 5 seconds</strong> (compute mode Fast (int8 cache), reuse 2): denoising took 16–20% less time at 512×512 and 24–37% less at 960×544. Under the same conditions, Fast (int8) took 4% and 13% less. The bigger the picture, the bigger the gain.</li>
+        <li><strong>Memory</strong>: at 960×544, peak memory went from 4.71 GiB to 6.89 GiB.</li>
+        <li><strong>pi-H3 in 2 steps at 864×480, 5 seconds</strong>: the whole generation went from about 137 s to about 101 s (Faster) and about 95 s (Fastest), with about 1 GB more memory (see <a href="pi-h3.html">pi-H3</a>).</li>
+        <li><strong>Result</strong>: the same seed gives a different picture and sound from Standard, about as different as with Fast (int8). The picture did not break up, and no blocky seams were seen.</li>
+        <li><strong>Not checked</strong>: clips of 10 seconds or more, generation from images, Low memory (SSD streaming), and combining it with Fast or Fastest under “<span class="ui">Speed</span>”.</li>
+      </ul>
     </section>
 
     <section class="section section-narrow" id="reuse" aria-labelledby="reuse-title">
@@ -191,32 +238,10 @@
       </div>
     </section>
 
-    <section class="section section-narrow" id="chain" aria-labelledby="chain-title">
-      <h2 id="chain-title">Clip length for joined generation</h2>
-      <p>Lengths over 15 seconds (and “15 s Joined”) are made from short videos, each continuing the one before, joined at an overlap of about 0.9 seconds. This picks how long each of those videos is: about 7 s (the default) or about 5 s.</p>
-      <ul>
-        <li>Longer clips mean fewer seams.</li>
-        <li>The last clip is shorter, to fit what is left.</li>
-        <li>It doesn't affect lengths made in one generation (1 to 15 seconds).</li>
-      </ul>
-      <p>See <a href="guide.html#chain">Making longer videos (joined generation)</a> in the guide for how to use it.</p>
-    </section>
-
-    <section class="section section-narrow" id="seed" aria-labelledby="seed-title">
-      <h2 id="seed-title">Randomness (seed)</h2>
-      <p>How the random number the generation starts from (the seed) is chosen.</p>
-      <ul>
-        <li><strong>Random each time</strong>: the default. Each generation uses a different seed, so the same prompt gives a different video every time.</li>
-        <li><strong>Fixed</strong>: uses the seed you enter. When you switch to it, the field holds the seed the last generation actually used. Any whole number from 0 to 18446744073709551615 works.</li>
-      </ul>
-      <p>With the same prompt, size, length and settings, the same seed gives the same video, which is handy for comparing the effect of a single setting. Changing the <a href="#speed">speed</a>, fast mode, the layer count or the <a href="#compute">compute mode</a> can change the video even with the same seed.</p>
-      <p>When a project makes several videos in a row with Fixed selected, only the first video uses that seed; the rest get random seeds.</p>
-      <p>You can see a finished video's seed under “<span class="ui">Settings Used…</span>” above the preview, and “<span class="ui">Use the Same Seed</span>” puts it back in this field.</p>
-    </section>
-
     <section class="section section-narrow" id="lora" aria-labelledby="lora-title">
       <h2 id="lora-title">Add-on models (LoRA)</h2>
       <p>Switch the LoRAs registered in the “<span class="ui">Model Manager</span>” on or off here and set their strength. “<span class="ui">Manage…</span>” opens the Model Manager. You don't need any LoRA to make videos. See <a href="guide.html#lora">Using add-on models (LoRA)</a> in the guide for details.</p>
+      <p>The Add-on Models tab is always there. When the selected model can't use add-on models, as with HyperFlow H3 Flash, it says in red “<span class="ui">The selected model (HyperFlow H3 Flash) cannot use add-on models (LoRA).</span>” and the list is greyed out. The add-on models switched on stay on and are used again after switching to a regular MiniMax-H3 model.</p>
     </section>
 
     <section class="section section-narrow" id="presets" aria-labelledby="presets-title">

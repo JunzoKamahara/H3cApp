@@ -69,9 +69,9 @@
     <section class="section updates" id="updates" aria-labelledby="updates-title">
       <h2 id="updates-title">Updates</h2>
       <ul class="update-list">
+        <li><a href="https://github.com/JunzoKamahara/H3cApp/releases/tag/v0.12.3"><strong>v0.12.3</strong><span class="update-date"> (<time datetime="2026-11-26">November 26, 2026</time>) </span>experimental Sol-Attn (sparse) under Attention (on an M5, 20-step denoising 16–20% shorter at 512x512 and 24–37% at 960x544); the custom size is set with Custom… in the prompt panel’s Size menu; the Advanced Settings in three tabs (Basics, Performance, Add-on Models); a smaller layer count leaves out blocks in HyperFlow H3 Flash’s order</a></li>
         <li><a href="https://github.com/JunzoKamahara/H3cApp/releases/tag/v0.12.2"><strong>v0.12.2</strong><span class="update-date"> (<time datetime="2026-11-22">November 22, 2026</time>) </span>with HyperFlow H3 Flash selected, add-on models (LoRA) left checked are no longer named under the prompt as if they applied; the line under the prompt and the Model Manager say they are not used</a></li>
         <li><a href="https://github.com/JunzoKamahara/H3cApp/releases/tag/v0.12.1"><strong>v0.12.1</strong><span class="update-date"> (<time datetime="2026-11-22">November 22, 2026</time>) </span>pi-H3 with the pixel head is also read from the files in the folders (<code>pi_h3_4step_dwd_adapter</code> and the like, 3.8 GB); the reason an add-on model can't be loaded is shown to its end</a></li>
-        <li><a href="https://github.com/JunzoKamahara/H3cApp/releases/tag/v0.12.0"><strong>v0.12.0</strong><span class="update-date"> (<time datetime="2026-11-22">November 22, 2026</time>) </span>pi-H3 add-on models: MiniMax H3 generates in 2 or 4 steps, and the kind with the pixel head also turns the result into video faster; steps can be set from 2</a></li>
       </ul>
       <p class="small"><a href="updates.html">All updates (every version)</a></p>
     </section>
@@ -206,7 +206,7 @@
             </tr>
             <tr>
               <th scope="row">With an M5-class GPU</th>
-              <td>The fastest compute mode, “Fast (int8 cache)”, and “Fast mode (experimental)” are available.</td>
+              <td>The fastest compute mode, “Fast (int8 cache)”, and the “Fast (int8)” and “Sol-Attn (sparse)” choices of “Attention (experimental)” are available.</td>
             </tr>
             <tr>
               <th scope="row">Other Apple Silicon</th>
@@ -276,7 +276,7 @@
             <tr>
               <th scope="col">Video length</th>
               <th scope="col">Speed “Standard”</th>
-              <th scope="col">Speed “Fastest” + Fast mode (experimental)</th>
+              <th scope="col">Speed “Fastest” + Attention “Fast (int8)”</th>
             </tr>
           </thead>
           <tbody>
@@ -292,13 +292,13 @@
 
     <section class="section" id="download" aria-labelledby="dl-title">
       <h2 id="dl-title">Download</h2>
-      <p>The latest version is on the GitHub releases page. As of November 22, 2026, the latest is v0.12.2 (released November 22, 2026).</p>
+      <p>The latest version is on the GitHub releases page. As of November 26, 2026, the latest is v0.12.3 (released November 26, 2026).</p>
       <div class="cta-row">
         <a class="button button-primary" href="https://github.com/JunzoKamahara/H3cApp/releases/latest">Download the latest version</a>
         <a class="button button-secondary" href="getting-started.html#install">Installing</a>
       </div>
       <div class="note">
-        <p>Under <strong>Assets</strong> on the releases page, choose the <strong>.dmg</strong> file, such as <code>H3cApp-0.12.2.dmg</code>. “Source code (zip)” and “Source code (tar.gz)” are for developers and are not used for a normal install.</p>
+        <p>Under <strong>Assets</strong> on the releases page, choose the <strong>.dmg</strong> file, such as <code>H3cApp-0.12.3.dmg</code>. “Source code (zip)” and “Source code (tar.gz)” are for developers and are not used for a normal install.</p>
       </div>
       <p class="small">See each release's notes for what changed.</p>
     </section>

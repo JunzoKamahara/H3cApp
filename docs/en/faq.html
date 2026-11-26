@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="../assets/js/lang.js"></script>
   <title>Troubleshooting — H3cApp</title>
-  <meta name="description" content="What to check when H3cApp says the model isn't found, generation is slow, a download stops, fast mode is missing; where files are saved, supported systems, reporting problems and licenses.">
+  <meta name="description" content="What to check when H3cApp says the model isn't found, generation is slow, a download stops, the attention setting (Fast (int8), Sol-Attn) is missing; where files are saved, supported systems, reporting problems and licenses.">
   <link rel="canonical" href="https://junzokamahara.github.io/H3cApp/en/faq.html">
   <link rel="alternate" hreflang="ja" href="https://junzokamahara.github.io/H3cApp/faq.html">
   <link rel="alternate" hreflang="en" href="https://junzokamahara.github.io/H3cApp/en/faq.html">
@@ -54,7 +54,7 @@
           <li><a href="#model-not-found">“Model not found” appears</a></li>
           <li><a href="#slow">Generation is very slow</a></li>
           <li><a href="#download">The download stopped, or there isn't enough space</a></li>
-          <li><a href="#fast-mode">“Fast mode (experimental)” isn't shown</a></li>
+          <li><a href="#fast-mode">“Attention (experimental)” isn't shown</a></li>
           <li><a href="#saved">Where are videos saved?</a></li>
           <li><a href="#untitled">What is an “Untitled Project”?</a></li>
           <li><a href="#old-mac">It doesn't run on an older macOS or an Intel Mac</a></li>
@@ -86,7 +86,8 @@
         <li><strong>Compute mode</strong>: on an M5-class Mac, check that “Fast (int8 cache)” is selected. “Low memory (SSD streaming)” needs less memory but takes longer.</li>
         <li><strong>Free memory</strong>: quit other apps before generating. Running out of memory and swapping slows things down a lot.</li>
       </ol>
-      <p>“Size” in “<span class="ui">Advanced Settings</span>” shows a rough time estimate for the current settings, with a warning when it would take more than an hour.</p>
+      <p>“Size” on the Basics tab of “<span class="ui">Advanced Settings</span>” shows a rough time estimate for the current settings, with a warning when it would take more than an hour.</p>
+      <p>On an M5-class Mac, “<span class="ui">Attention (experimental)</span>” on the Performance tab also offers “<span class="ui">Fast (int8)</span>” and the further experimental “<span class="ui">Sol-Attn (sparse)</span>”. Both change the result even with the same seed (see <a href="settings.html#attention">Attention</a>).</p>
     </section>
 
     <section class="section section-narrow" id="download" aria-labelledby="q3">
@@ -99,8 +100,8 @@
     </section>
 
     <section class="section section-narrow" id="fast-mode" aria-labelledby="q4">
-      <h2 id="q4">“Fast mode (experimental)” isn't shown</h2>
-      <p>“Fast mode (experimental)” appears in the advanced settings only on an M5-class GPU (with hardware tensor units) and a build that supports it. The DMG on GitHub is such a build. It is not shown on M4 or earlier chips.</p>
+      <h2 id="q4">“Attention (experimental)” isn't shown</h2>
+      <p>“<span class="ui">Attention (experimental)</span>” (Standard / Fast (int8) / Sol-Attn (sparse)) on the Performance tab of the advanced settings appears only on an M5-class GPU (with hardware tensor units) and a build that supports it. The DMG on GitHub is such a build. It is not shown on M4 or earlier chips. The former “Fast mode (experimental)” is now its “<span class="ui">Fast (int8)</span>” choice.</p>
       <p>It is a separate feature from the “Fast (int8 cache)” compute mode and the “Fast” speed setting. See <a href="guide.html#speed">the three speed settings</a>.</p>
     </section>
 
@@ -149,7 +150,7 @@
       <p>Please use <a href="https://github.com/JunzoKamahara/H3cApp/issues">GitHub Issues</a>. This information helps:</p>
       <ul>
         <li>App version (e.g. 0.4.7), macOS version, chip (e.g. M5), memory</li>
-        <li>How you generated (from text or images), shape, size, length, and advanced settings (compute mode, speed, fast mode, …)</li>
+        <li>How you generated (from text or images), shape, size, length, and advanced settings (compute mode, speed, attention, …)</li>
         <li>What you did and what happened (steps to reproduce), and the exact error message</li>
       </ul>
       <p>Issues are public. Leave out prompts you don't want to share and file locations that include personal names.</p>
