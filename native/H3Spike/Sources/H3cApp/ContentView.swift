@@ -125,12 +125,18 @@ struct ContentView: View {
         .task {
             let model = viewModel
             let modelManager = $showingModelManager
+            // What the panel was making before a tour's step switched it.
+            // A tour of the image side does not leave someone who was
+            // making videos - a new user, above all - on the image side.
+            var kindBeforeTour: GenerationKind?
             model.tutorial.reveal = { [weak model] what in
                 guard let model, !model.isGenerating else { return }
                 switch what {
                 case .imageSide:
+                    if kindBeforeTour == nil { kindBeforeTour = model.generationKind }
                     model.generationKind = .image
                 case .videoFromImage:
+                    if kindBeforeTour == nil { kindBeforeTour = model.generationKind }
                     model.generationKind = .video
                     model.creationMethod = .image
                 case .projectList:
@@ -140,6 +146,11 @@ struct ContentView: View {
                 case .modelManager:
                     modelManager.wrappedValue = true
                 }
+            }
+            model.tutorial.restore = { [weak model] in
+                guard let kind = kindBeforeTour else { return }
+                kindBeforeTour = nil
+                if let model, !model.isGenerating { model.generationKind = kind }
             }
             installPanelHook()
             // After the window has settled, and not over the model download

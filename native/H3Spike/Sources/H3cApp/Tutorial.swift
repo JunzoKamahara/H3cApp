@@ -227,6 +227,9 @@ final class TutorialController: ObservableObject {
     private var deferredOffers: [TutorialAnchor] = []
     /// Opens what a step shows (ContentView).
     var reveal: (TutorialReveal) -> Void = { _ in }
+    /// A tour ended: puts the panel back on the side it was on before the
+    /// tour's steps switched it (ContentView).
+    var restore: () -> Void = {}
 
     private static let seenKey = "h3c-app.tutorialsSeen"
     /// 全体設定 > チュートリアル: whether tours of new features start by
@@ -365,10 +368,12 @@ final class TutorialController: ObservableObject {
         for pending in queue { markSeen(pending.id) }
         queue = []
         tutorial = nil
+        restore()
     }
 
     private func finish() {
         tutorial = nil
+        restore()
         // A first-use tour waits for its control: one whose control has
         // gone again is offered the next time it comes back.
         while let following = queue.first {
